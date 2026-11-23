@@ -170,6 +170,73 @@ fn toggle_and_command_event_interfaces() {
 }
 
 #[test]
+fn command_and_toggle_source_follow_the_observing_listener() {
+    let e = env("<body><div id=host></div></body>");
+    assert_eq!(
+        e.eval(
+            "(() => {
+                const root = host.attachShadow({mode:'closed'});
+                const button = root.appendChild(document.createElement('button'));
+                const target = root.appendChild(document.createElement('span'));
+                const peer = document.body.appendChild(document.createElement('div'));
+                let index = 0;
+                for (const Interface of [CommandEvent, ToggleEvent]) {
+                    for (const source of [target, button, host, null, peer]) {
+                        const type = 'case' + index++;
+                        const crosses = source === null || source === peer;
+                        const ev = new Interface(type, {source, bubbles:true, composed:true});
+                        const outside = source === button || source === target ? host : source;
+                        if (new Interface(type, {source}).composed || ev.source !== outside) return false;
+                        const seen = [];
+                        for (const capture of [true, false]) {
+                            host.addEventListener(type, e => seen.push(e.source === outside), capture);
+                            root.addEventListener(type, e => seen.push(e.source === source), capture);
+                            target.addEventListener(type, e => {
+                                const path = e.composedPath();
+                                seen.push(e.source === source && path.includes(host) === crosses &&
+                                    path[0] === target && path[1] === root);
+                            }, capture);
+                        }
+                        target.dispatchEvent(ev);
+                        if (seen.length !== (crosses ? 6 : 4) || !seen.every(Boolean) || ev.source !== outside)
+                            return false;
+                    }
+                }
+                return true;
+            })()"
+        ),
+        "true"
+    );
+    e.page.dispose();
+}
+
+#[test]
+fn command_path_ends_below_the_host_that_hides_both_source_and_target() {
+    let e = env("<body><div id=outer></div></body>");
+    assert_eq!(
+        e.eval(
+            "(() => {
+                const root = outer.attachShadow({mode:'open'});
+                const inner = root.appendChild(document.createElement('div'));
+                const button = inner.attachShadow({mode:'open'}).appendChild(document.createElement('button'));
+                const log = [];
+                root.addEventListener('custom', e => log.push(e.source === inner), true);
+                inner.addEventListener('custom', e => {
+                    const path = e.composedPath();
+                    log.push(path.length === 2 && path[0] === inner && path[1] === root);
+                });
+                outer.addEventListener('custom', () => log.push(false), true);
+                document.addEventListener('custom', () => log.push(false), true);
+                inner.dispatchEvent(new CommandEvent('custom', {source:button, composed:true}));
+                return log.join();
+            })()"
+        ),
+        "true,true"
+    );
+    e.page.dispose();
+}
+
+#[test]
 fn popover_events_are_sync_beforetoggle_and_coalesced_toggle() {
     let e = env("<body><div id=p popover>P</div></body>");
     assert_eq!(
@@ -199,6 +266,39 @@ fn popover_events_are_sync_beforetoggle_and_coalesced_toggle() {
             p.showPopover(); p.matches(':popover-open')"
         ),
         "false"
+    );
+    e.page.dispose();
+}
+
+#[test]
+fn attribute_close_runs_nested_changes_before_returning_to_script() {
+    let e = env("<body><div id=a popover><div id=p popover></div></div></body>");
+    e.eval("a.showPopover(); p.showPopover()");
+    e.run_tasks();
+    assert_eq!(
+        e.eval(
+            "window.events = [];
+             p.addEventListener('toggle', ev => events.push(ev.type));
+             p.addEventListener('beforetoggle', ev => {
+                 events.push(ev.newState);
+                 p.popover = 'manual';
+                 events.push(p.matches(':popover-open'));
+             }, {once:true});
+             p.getAttributeNode('popover').value = 'hint';
+             [a.matches(':popover-open'), p.matches(':popover-open'), p.popover, ...events].join()"
+        ),
+        "true,false,manual,closed,false"
+    );
+    e.run_tasks();
+    assert_eq!(e.eval("events.join()"), "closed,false");
+    e.eval("p.popover = 'auto'; p.showPopover()");
+    assert_eq!(
+        e.eval(
+            "const child = p; child.addEventListener('beforetoggle', () => child.remove(), {once:true});
+             child.removeAttribute('popover');
+             [child.isConnected, a.matches(':popover-open')].join()"
+        ),
+        "false,true"
     );
     e.page.dispose();
 }
@@ -262,6 +362,53 @@ fn popovertarget_buttons() {
         ),
         "true,show,toggle,toggle,false,true"
     );
+    e.page.dispose();
+}
+
+#[test]
+fn command_activation_precedes_popover_applicability_and_preserves_dialog_invoker() {
+    let e = env("<body><button id=b type=button commandfor=p command=show-popover></button>
+        <div id=p></div><dialog id=d><button id=r type=button commandfor=d command=request-close></button></dialog></body>");
+    assert_eq!(e.eval(
+        "const b=document.getElementById('b'), p=document.getElementById('p'), d=document.getElementById('d'),
+               r=document.getElementById('r'), seen=[];
+         p.addEventListener('command', ev => {
+           seen.push(ev.isTrusted, ev.composed, ev.cancelable, ev.bubbles, ev.source===b);
+           p.setAttribute('popover','manual');
+         }, {once:true});
+         b.click();
+         seen.push(p.matches(':popover-open'));
+         p.hidePopover();
+         b.commandForElement=d; b.command='show-modal';
+         d.addEventListener('beforetoggle', ev => seen.push(ev.newState, ev.source===b, ev.source===r));
+         b.click(); r.click();
+         seen.join()"
+    ), "true,true,true,false,true,true,open,true,false,closed,false,true");
+    e.page.dispose();
+}
+
+#[test]
+fn command_target_reflection_observes_content_attribute_mutations() {
+    let e = env("<body><button id=inv command=--preview></button><div id=a></div><div id=b></div></body>");
+    assert_eq!(e.eval(
+        "const inv=document.getElementById('inv'), a=document.getElementById('a'), b=document.getElementById('b');
+         const result=[], clicks=[];
+         for (const target of [a,b]) target.addEventListener('command', () => clicks.push(target.id));
+         function check() {
+           const count=clicks.length;
+           inv.click();
+           result.push((inv.commandForElement?.id ?? '-') + '/' + (clicks[count] ?? '-'));
+         }
+         inv.commandForElement=a; check();
+         inv.setAttribute('commandfor','b'); check();
+         inv.setAttribute('commandfor',''); check();
+         inv.commandForElement=a; inv.getAttributeNode('commandfor').value=''; check();
+         inv.commandForElement=a; inv.setAttributeNS('urn:other','x:commandfor','b'); check();
+         inv.removeAttributeNS('urn:other','commandfor'); check();
+         inv.removeAttribute('commandfor'); check();
+         inv.setAttribute('commandfor',''); check();
+         result.join()"
+    ), "a/a,b/b,-/-,-/-,a/a,a/a,-/-,-/-");
     e.page.dispose();
 }
 

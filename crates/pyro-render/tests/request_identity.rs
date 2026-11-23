@@ -193,6 +193,7 @@ fn a_frame_shows_only_its_table_entry_for_its_client() {
     let nested = FrameContent {
         html: mask("c/green.png"),
         url: "http://test/".into(),
+        document_url: None,
         scroll: (0.0, 0.0),
         client: "NEST#L".into(),
         frames: Default::default(),
@@ -206,6 +207,7 @@ fn a_frame_shows_only_its_table_entry_for_its_client() {
             attr(&mask("evil/nested.png"))
         ),
         url: "http://test/".into(),
+        document_url: None,
         scroll: (0.0, 0.0),
         client: "F00D#L".into(),
         frames: Arc::new(FrameTableData { nonce: "n2".into(), entries: [("2".to_owned(), nested)].into_iter().collect() }),
@@ -382,6 +384,7 @@ fn each_frame_is_served_its_own_sheets_and_only_admitted_clients() {
         FrameContent {
             html: "<!doctype html><link rel=stylesheet href='http://test/s.css' data-pyro-sheet=F><body>".into(),
             url: "http://test/".into(),
+            document_url: None,
             scroll: (0.0, 0.0),
             client: client.into(),
             frames: Default::default(),
@@ -460,6 +463,7 @@ fn a_urls_policy_is_its_sheet_objects() {
     let frame = FrameContent {
         html: "<!doctype html><link rel=stylesheet href='http://test/s.css' data-pyro-sheet=Q><div id=b></div>".into(),
         url: "http://test/".into(),
+        document_url: None,
         scroll: (0.0, 0.0),
         client: "F#L".into(),
         frames: Default::default(),
@@ -792,4 +796,23 @@ fn page_data_pyro_attributes_are_ordinary_in_the_renderer() {
     for ignored in ["http://test/framed.png", "http://test/served.png"] {
         assert!(!asked.iter().any(|u| u == ignored), "{ignored}: {asked:?}");
     }
+}
+
+#[test]
+fn a_fragment_clip_uses_the_document_when_relative_images_use_another_base() {
+    let recorder = Arc::new(Recorder::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
+    let snap = Snapshot {
+        html: "<!doctype html><style>body{margin:0;background:white} div{width:20px;height:20px;background:green url(green.png);clip-path:url(#cut);mask-image:url(#local-mask)}</style><div></div><svg width='0' height='0'><mask id='local-mask'><rect width='20' height='20' fill='white'/></mask><clipPath id='cut'><rect width='10' height='20'/></clipPath></svg>".into(),
+        base_url: "http://assets.test/sub/".into(),
+        document_url: Some("http://page.test/doc".into()),
+        width: 40, height: 30, device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let img = Renderer::new().render(&snap, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+    assert_eq!(pixel(&img, 5, 10), GREEN);
+    assert_eq!(pixel(&img, 15, 10), WHITE);
+    let requests = recorder.0.lock().unwrap();
+    assert!(requests.iter().any(|(u, _)| u == "http://assets.test/sub/green.png"));
+    assert!(!requests.iter().any(|(u, _)| u.starts_with("http://page.test/doc") || u.ends_with("#cut") || u.ends_with("#local-mask")), "{requests:?}");
 }

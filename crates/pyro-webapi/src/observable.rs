@@ -15,7 +15,7 @@ use crate::window::WindowHost;
 /// Kept on the realm's `navigator` (a hidden property), itself kept per realm.
 const KEY: &str = "lpObservable";
 
-/// Adds the lazy interface names to pyro-browser's `Window` class.
+/// Adds the lazy interface names to Window and WorkerGlobalScope.
 pub(crate) fn define_globals<W>(def: &mut ClassDef<W>)
 where
     W: JsClass,
@@ -57,7 +57,7 @@ fn unavailable() -> JsError {
 
 /// This realm's module, made on first use.
 pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
-    let navigator = crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable)?;
+    let navigator = crate::worker_scope::module_holder(s, page)?;
     if let Some(module) = s.get_hidden(navigator, KEY)?.and_then(|v| v.as_object()) {
         return Ok(module);
     }
@@ -67,17 +67,31 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
     module.as_object().ok_or_else(unavailable)
 }
 
-/// URL prefixes of the engine's own scripts in a stack trace (this module's
-/// and pyro-js's helpers).
-const INTERNAL_URLS: [&str; 2] = ["pyro://", "lightpanda://"];
-
 /// HTML "report an exception" with `value`. An Error carries the location it
 /// was made at; any other value (`subscriber.error("text")`) is reported at
 /// the script that is running, where a `throw` of it would have been.
 pub(crate) fn report_exception<'s>(s: &Scope<'s>, value: Value<'s>) {
-    let mut details = JsException::from_value(s, value);
+    // Only an Error's properties describe it: another object's `message`, `name` or position
+    // getters are not invoked (`reportError({ get message() {...} })` runs none of them).
+    let error_like = value.as_object().is_none() || {
+        let error = s.global().get_atom("Error").ok().and_then(|e| e.as_object());
+        error.is_some_and(|ctor| value.instance_of(ctor).unwrap_or(false))
+    };
+    let mut details = if error_like {
+        JsException::from_value(s, value)
+    } else {
+        JsException {
+            message: value.to_string().unwrap_or_default(),
+            name: None,
+            stack: None,
+            line: None,
+            column: None,
+            url: None,
+            value: Some(Persistent::new(s, value)),
+        }
+    };
     if details.line.is_none() {
-        if let Some((url, line, column)) = running_script_location(s) {
+        if let Some((url, line, column)) = crate::csp::running_script_location(s) {
             details.url = Some(url);
             details.line = Some(line);
             details.column = Some(column);
@@ -88,21 +102,6 @@ pub(crate) fn report_exception<'s>(s: &Scope<'s>, value: Value<'s>) {
     if !crate::lifecycle::report_exception(s, &details) {
         crate::lifecycle::report_diagnostic(s, &JsError::thrown(Persistent::new(s, value)));
     }
-}
-
-/// `(url, line, column)` of the innermost frame of page script on the stack.
-fn running_script_location(s: &Scope<'_>) -> Option<(String, u32, u32)> {
-    let stack = s.current_stack().ok()?;
-    stack.lines().find_map(|frame| {
-        // JavaScriptCore: `function@url:line:column`.
-        let location = frame.split_once('@').map_or(frame, |(_, location)| location);
-        let (rest, column) = location.rsplit_once(':')?;
-        let (url, line) = rest.rsplit_once(':')?;
-        if url.is_empty() || INTERNAL_URLS.iter().any(|prefix| url.starts_with(prefix)) {
-            return None;
-        }
-        Some((url.to_owned(), line.parse().ok()?, column.parse().ok()?))
-    })
 }
 
 /// The engine's helpers of observable.js.

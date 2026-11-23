@@ -1,0 +1,72 @@
+[
+  [
+    "custom-elements/form-associated/ElementInternals-behavior-accessibility.tentative.html",
+    "error",
+    "Error",
+    "Uncaught ReferenceError: Can't find variable: HTMLSubmitButtonBehavior",
+    0
+  ],
+  [
+    "custom-elements/form-associated/ElementInternals-submit-behavior-dialog.tentative.html",
+    "error",
+    "Error",
+    "Uncaught ReferenceError: Can't find variable: HTMLSubmitButtonBehavior",
+    0
+  ],
+  [
+    "custom-elements/form-associated/ElementInternals-submit-behavior.tentative.html",
+    "error",
+    "Error",
+    "Uncaught ReferenceError: Can't find variable: HTMLSubmitButtonBehavior",
+    0
+  ],
+  [
+    "custom-elements/form-associated/form-disabled-callback.html",
+    "error",
+    "Error",
+    "Uncaught TypeError: not form-associated",
+    10
+  ],
+  [
+    "custom-elements/parser/parser-uses-constructed-element.html",
+    "error",
+    "Error",
+    "Uncaught NotSupportedError: The result of constructing a custom element \"instantiates-itself-before-super\" must be the element the parser created.",
+    0
+  ],
+  [
+    "custom-elements/registries/Document-createElement.html",
+    "error",
+    "Error",
+    "Uncaught TypeError: Illegal constructor",
+    0
+  ],
+  [
+    "custom-elements/registries/Document-createElementNS.html",
+    "error",
+    "Error",
+    "Uncaught TypeError: Illegal constructor",
+    0
+  ],
+  [
+    "custom-elements/registries/Document-importNode.html",
+    "error",
+    "Error",
+    "Uncaught TypeError: Illegal constructor",
+    0
+  ],
+  [
+    "custom-elements/registries/scoped-registry-effective-global-registry.html",
+    "error",
+    "Error",
+    "Uncaught TypeError: Illegal constructor",
+    0
+  ],
+  [
+    "custom-elements/registries/scoped-registry-initialize.html",
+    "error",
+    "Error",
+    "Uncaught TypeError: Illegal constructor",
+    0
+  ]
+]

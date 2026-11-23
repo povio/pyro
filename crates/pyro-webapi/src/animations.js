@@ -38,6 +38,7 @@
   const isConnected = getter(Node.prototype, 'isConnected');
   const getRootNode = Node.prototype.getRootNode;
   const contains = Node.prototype.contains;
+  const comparePosition = Node.prototype.compareDocumentPosition;
   const htmlInlineStyle = getter(HTMLElement.prototype, 'style');
   const SVGElement_ = typeof SVGElement === 'function' ? SVGElement : null;
   const svgInlineStyle = SVGElement_ !== null ? getter(SVGElement_.prototype, 'style') : null;
@@ -172,7 +173,7 @@
     if (m) {
       const [x1, y1, x2, y2] = m.slice(1).map(Number);
       if (x1 >= 0 && x1 <= 1 && x2 >= 0 && x2 <= 1) {
-        return { text: `cubic-bezier(${fmt(x1)}, ${fmt(y1)}, ${fmt(x2)}, ${fmt(y2)})`, fn: bezier(x1, y1, x2, y2) };
+        return { text: `cubic-bezier(${x1}, ${y1}, ${x2}, ${y2})`, fn: bezier(x1, y1, x2, y2) };
       }
     }
     m = STEPS.exec(text);
@@ -868,6 +869,50 @@
     return c;
   }
 
+  function keyframeMember(property) {
+    if (property.startsWith('--')) return property;
+    if (property === 'offset') return 'cssOffset';
+    if (property === 'float') return 'cssFloat';
+    return property.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  }
+
+  function exposedFrames(st) {
+    if (!st.cssFrameSource) return st.cssFrames ?? st.frames;
+    const { target, name, easing } = st.cssFrameSource;
+    const steps = native.animationFrames(target, name);
+    if (!steps) return st.cssFrames ?? [];
+    const frames = [];
+    const underlying = new Map();
+    for (const [offset, timing, composition, properties] of steps) {
+      const frameEasing = timing ?? easing, composite = composition ?? 'auto';
+      let frame = frames.find(f => f.offset === offset && f.easing === frameEasing && f.composite === composite);
+      if (!frame) {
+        frame = { offset, easing: frameEasing, composite };
+        frames.push(frame);
+      }
+      for (const [property, value, base] of properties) {
+        const member = keyframeMember(property);
+        frame[member] = value;
+        underlying.set(member, base);
+      }
+    }
+    if (!underlying.size) return st.cssFrames = [];
+    for (const offset of [0, 1]) {
+      const missing = [...underlying].filter(([key]) => !frames.some(f => f.offset === offset && Object.hasOwn(f, key)));
+      if (missing.length) {
+        const endpoint = frames.find(f => f.offset === offset && f.easing === easing &&
+          (f.composite === 'auto' || f.composite === 'replace'));
+        if (endpoint) Object.assign(endpoint, Object.fromEntries(missing));
+        else {
+          const neutral = { offset, easing, composite: 'replace', ...Object.fromEntries(missing) };
+          const index = frames.findIndex(f => f.offset > offset);
+          frames.splice(index < 0 ? frames.length : index, 0, neutral);
+        }
+      }
+    }
+    return st.cssFrames = processKeyframes(frames);
+  }
+
   class KeyframeEffect extends AnimationEffect {
     constructor(target, keyframes, options) {
       const self = Reflect.construct(Object, [], new.target);
@@ -875,7 +920,7 @@
       if (arguments.length === 1 && effects.has(target) && effects.get(target).keyframe) {
         const src = effects.get(target);
         st = {
-          keyframe: true, target: src.target, pseudo: src.pseudo, frames: src.frames, composite: src.composite,
+          keyframe: true, target: src.target, pseudo: src.pseudo, frames: exposedFrames(src), composite: src.composite,
           iterationComposite: src.iterationComposite, timing: { ...src.timing }, animation: null,
         };
       } else {
@@ -931,15 +976,23 @@
     }
     getKeyframes() {
       const st = brand(effects, this, 'a KeyframeEffect');
-      return st.frames.map(f => {
+      return exposedFrames(st).map(f => {
         const out = { offset: f.offset, computedOffset: f.computed, easing: f.easing.text, composite: f.composite };
-        for (const [key, { value }] of f.values) out[key] = value;
+        for (const [key, { prop, value }] of f.values) {
+          if (st.cssFrames) out[key] = value;
+          else {
+            const serialized = native.keyframeValue(prop, value);
+            if (serialized !== null) out[key] = serialized;
+          }
+        }
         return out;
       });
     }
     setKeyframes(keyframes) {
       const st = brand(effects, this, 'a KeyframeEffect');
       st.frames = processKeyframes(keyframes);
+      st.cssFrames = null;
+      st.cssFrameSource = null;
       effectChanged(st);
     }
   }
@@ -1043,12 +1096,18 @@
     a.pendingGen++;
   }
 
-  function schedulePending(a, kind) {
+  function schedulePending(a, kind, generationTime) {
     a.pending = kind;
     const gen = ++a.pendingGen;
     let tries = 0;
     const attempt = () => {
       if (a.pendingGen !== gen || a.pending !== kind) return;
+      // A CSS run's pending task first takes the engine's state: a style change event may have
+      // canceled it (a transition then goes idle with `ready` rejected, not resolved here).
+      if (a.cssOwner) {
+        native.flushPlayback();
+        if (a.pendingGen !== gen || a.pending !== kind) return;
+      }
       // (On a progress-based timeline the task runs at the frame: the timeline takes its scroll
       // position first.)
       if (progressBased(a)) pushScroll();
@@ -1062,7 +1121,7 @@
         }
         return;
       }
-      if (kind === 'play') runPendingPlay(a); else runPendingPause(a);
+      if (kind === 'play') runPendingPlay(a, generationTime); else runPendingPause(a);
     };
     // A progress-based timeline's pending task runs after the next frame, as the timeline moves.
     // (At the start of that frame, before its callbacks that script requested later, as the
@@ -1107,8 +1166,7 @@
     });
   }
 
-  function runPendingPlay(a) {
-    const ready = timelineTime(a.timeline);
+  function runPendingPlay(a, ready = timelineTime(a.timeline)) {
     // On a progress-based timeline the start time aligns with its start (or end, playing
     // backwards): the animation's progress is the timeline's (Web Animations 2, auto-aligned
     // start time), unless script seeked it.
@@ -1306,6 +1364,8 @@
       t.delay, t.endDelay, t.fill === 'auto' ? 'none' : t.fill, t.iterationStart, t.iterations,
       iterationDuration(t), t.direction, t.easing.text === 'linear' ? null : t.easing.text, e.composite,
       gone ? 1 : 0, pseudo, scrollRef,
+      // A CSS run's object whose keyframes script replaced (even with none).
+      a.css !== undefined && e.cssFrames == null && !e.cssFrameSource ? 1 : 0,
     ]);
   }
 
@@ -1546,11 +1606,11 @@
       if (previous !== null) seekTo(a, previous);
       else updateFinished(a, false, false);
     }
-    get playState() { return playStateOf(brand(animations, this, 'an Animation')); }
+    get playState() { return playStateOf(playbackState(this)); }
     get replaceState() { return brand(animations, this, 'an Animation').replaceState; }
-    get pending() { return brand(animations, this, 'an Animation').pending !== null; }
-    get ready() { return brand(animations, this, 'an Animation').ready.promise; }
-    get finished() { return brand(animations, this, 'an Animation').finished.promise; }
+    get pending() { return playbackState(this).pending !== null; }
+    get ready() { return playbackState(this).ready.promise; }
+    get finished() { return playbackState(this).finished.promise; }
     get overallProgress() {
       const a = brand(animations, this, 'an Animation');
       const ct = currentTimeOf(a);
@@ -1560,8 +1620,8 @@
       if (end === Infinity) return 0;
       return Math.min(Math.max(ct / end, 0), 1);
     }
-    play() { play(override(scripted(brand(animations, this, 'an Animation')), 'playState'), true); }
-    pause() { pause(override(scripted(brand(animations, this, 'an Animation')), 'playState')); }
+    play() { const a = scripted(playbackState(this)); play(a, true); override(a, 'playState'); }
+    pause() { const a = scripted(playbackState(this)); pause(a); override(a, 'playState'); }
     finish() {
       const a = scripted(brand(animations, this, 'an Animation'));
       const rate = effectiveRate(a);
@@ -1696,6 +1756,11 @@
   // state after.
   const CSS_TRANSITION = 0, CSS_ANIMATION = 1;
   const cssRuns = new Map();
+  function playbackState(object) {
+    const a = brand(animations, object, 'an Animation');
+    if (a.cssOwner) native.flushPlayback();
+    return a;
+  }
   class CSSAnimation extends Animation {
     constructor() { throw illegal(); }
     get animationName() { return brand(animations, this, 'a CSSAnimation').cssName; }
@@ -1758,7 +1823,7 @@
     }
     return null;
   }
-  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText, trigger]) {
+  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText, trigger, keyframeEasing, generation]) {
     // The engine hands over computed easings; one it could not compute is
     // the initial `ease`, as an easing invalid at computed-value time is.
     let parsed;
@@ -1770,6 +1835,14 @@
     if (scrollDriven && timing.duration === 0) timing.duration = 'auto';
     const [timelineValue, rangeStartText, rangeEndText] = scrollDriven ? timelineText : [null, 'normal', 'normal'];
     const effect = new KeyframeEffect(target, null, timing);
+    if (!transition && id != null && !pseudo) effects.get(effect).cssFrameSource = { target, name, easing: keyframeEasing };
+    if (transition && id != null) {
+      const frames = native.transitionFrames(id).map(([offset, property, value]) => {
+        const member = keyframeMember(property);
+        return { offset, [member]: value };
+      });
+      effects.get(effect).cssFrames = processKeyframes(frames);
+    }
     // A scroll-driven one: on its scroll or view timeline, its `auto` duration filling it, its
     // start time at the timeline's start.
     const timeline = scrollDriven ? cssTimeline(timelineValue, target, pseudo) : documentTimeline;
@@ -1778,6 +1851,12 @@
     a.css = transition ? CSS_TRANSITION : CSS_ANIMATION;
     a.cssName = name;
     a.cssId = id;
+    // A transition's generation: the style change event that started it (one event's
+    // transitions share it, and list by property name; two events in one task differ).
+    a.cssGeneration = generation;
+    a.cssOwner = id == null ? null : target;
+    a.cssPaused = held !== null;
+    a.cssPseudoOrder = pseudo === '::marker' ? 1 : pseudo === '::before' ? 2 : pseudo === '::after' ? 3 : 0;
     a.cssTimelineKey = scrollDriven ? JSON.stringify(timelineText) : null;
     if (trigger !== null && trigger !== undefined && !scrollDriven) {
       armTrigger(a, trigger, held);
@@ -1809,7 +1888,7 @@
       a.startTime = null;
       a.holdTime = 0;
       a.ready = deferred();
-      schedulePending(a, 'play');
+      schedulePending(a, 'play', id == null ? undefined : start);
     } else {
       a.startTime = start;
       a.holdTime = null;
@@ -1954,15 +2033,20 @@
   // (canceled) leave the list.
   function cssSync(runs) {
     const seen = new Set();
-    for (const run of runs) {
+    for (const [index, run] of runs.entries()) {
       seen.add(run[0]);
       const known = cssRuns.get(run[0]);
       if (known !== undefined) {
+        animations.get(known).cssListOrder = index;
         cssFollow(known, run);
         continue;
       }
       // One run that cannot be made is left out; the others are listed.
-      try { cssRuns.set(run[0], cssRun(run)); } catch {}
+      try {
+        const object = cssRun(run);
+        animations.get(object).cssListOrder = index;
+        cssRuns.set(run[0], object);
+      } catch {}
     }
     for (const [id, object] of cssRuns) {
       if (seen.has(id)) continue;
@@ -1970,7 +2054,11 @@
       live.delete(object);
       // (A run the style dropped no longer waits for its trigger.)
       const gone = animations.get(object);
-      if (gone) triggered.delete(gone);
+      if (gone) {
+        gone.cssOwner = null;
+        triggered.delete(gone);
+        if (gone.css === CSS_ANIMATION || playStateOf(gone) !== 'finished') cancel(gone);
+      }
     }
   }
 
@@ -2087,6 +2175,25 @@
     // `animation-play-state`: the engine's run times one CSS controls alone; script's (or a
     // progress-based one) is paused or played.
     if (ov.has('playState')) return;
+    if (a.cssOwner && !a.scrollDriven && !a.trigger) {
+      const paused = held !== null;
+      if (a.cssPaused !== paused) {
+        a.cssPaused = paused;
+        if (playStateOf(a) !== 'idle') {
+          if (paused) pause(a); else play(a, false);
+        }
+      }
+      return;
+    }
+    // pyro: a view transition's run follows `animation-play-state` once script controls it only
+    // when the property changes (CSS Animations 1 § 3): one script finished while paused stays
+    // finished, and its transition ends (Chrome; WPT css-view-transitions `scoped/run_in_parallel`).
+    if (a.viewRun) {
+      const paused = held !== null;
+      const changed = a.cssPaused !== paused;
+      a.cssPaused = paused;
+      if (a.scripted && !a.scrollDriven && !changed) return;
+    }
     if (!a.scripted && !a.scrollDriven) return cssFollowPlayState(a, run);
     const state = playStateOf(a);
     if (held !== null) {
@@ -2173,7 +2280,7 @@
     return animation;
   }
 
-  // In composite order: the order the animations were made.
+  // In composite order.
   function relevant(filter) {
     const out = [];
     for (const o of [...live]) {
@@ -2186,8 +2293,20 @@
       if (target && filter(target, a)) out.push(a);
     }
     // CSS transitions, then CSS animations, then script animations.
-    const rank = a => (a.css === undefined ? 2 : a.css);
-    out.sort((x, y) => rank(x) - rank(y) || x.seq - y.seq);
+    const rank = a => a.cssOwner ? a.css : a.viewRun ? 1.5 : 2;
+    out.sort((x, y) => {
+      const type = rank(x) - rank(y);
+      if (type || !x.cssOwner) return type || x.seq - y.seq;
+      if (x.cssOwner !== y.cssOwner) {
+        const pos = apply(comparePosition, x.cssOwner, [y.cssOwner]);
+        return pos & 1 ? x.seq - y.seq : pos & 4 ? -1 : 1;
+      }
+      // (Transitions: by generation, then by property name in code point order, as Chrome;
+      // WPT css-transitions Element-getAnimations 'sorts simultaneous transitions by name'.)
+      return x.cssPseudoOrder - y.cssPseudoOrder ||
+        (x.css === CSS_ANIMATION ? x.cssListOrder - y.cssListOrder :
+          (x.cssGeneration - y.cssGeneration) || (x.cssName < y.cssName ? -1 : x.cssName > y.cssName ? 1 : 0) || x.seq - y.seq);
+    });
     return out.map(a => a.self);
   }
 
@@ -2209,6 +2328,10 @@
     Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent,
     ScrollTimeline, ViewTimeline,
     CSSAnimation, CSSTransition,
+    validateEventAnimation(value, transition) {
+      if (animations.get(value)?.css !== (transition ? CSS_TRANSITION : CSS_ANIMATION))
+        throw new TypeError(transition ? 'Expected a CSSTransition' : 'Expected a CSSAnimation');
+    },
     animate, elementAnimations, rootAnimations, cssSync, viewRuns, timeline: () => documentTimeline,
   };
 })

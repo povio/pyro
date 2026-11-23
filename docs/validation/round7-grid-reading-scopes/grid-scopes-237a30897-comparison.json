@@ -1,0 +1,152 @@
+{
+  "rows": [
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-across-scopes.html",
+      "name": "Grid items in shadow host that is a display contents grid item",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-on-shadow-host.html",
+      "name": "Grid items in shadow host with delegatesFocus",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-on-shadow-host.html",
+      "name": "Grid items in shadow host without delegatesFocus",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-with-display-contents.html",
+      "name": "Grid items are in nested display contents containers.",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Fail"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-with-display-contents.html",
+      "name": "Items in display contents are sorted in same grid container and are placed in the position where their first child resides.",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-with-display-contents.html",
+      "name": "Items in display contents are sorted in same grid container and are placed in the position where their first child resides. The display contents have tabindex and should be focusable.",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Fail"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html",
+      "name": "Slot assigned element is a grid with reading-flow.",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html",
+      "name": "Slot is a display block inside a grid container.",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html",
+      "name": "Slot is a display contents inside a grid container.",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html",
+      "name": "Slot is a grid with reading-flow inside a grid container with reading-flow.",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html",
+      "name": "Slot is a grid with reading-flow.",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html",
+      "name": "Slot is inside a grid container with reading-flow.",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    },
+    {
+      "url": "shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html",
+      "name": "Slot is not inside a shadow host.",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass"
+    }
+  ],
+  "parentPages": {
+    "shadow-dom/focus-navigation/reading-flow/grid-order-with-display-contents.html": [
+      "330c3dd0e495c9a36e92b7a5e1ee78cf28586731",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html": [
+      "d8773bb301b3024411194d68060846fe6f43808b",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/grid-order-across-scopes.html": [
+      "95b9762845db6a73a84769d301f07e69b1e53376",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/grid-order-on-shadow-host.html": [
+      "8eec1303c2f495dff5c962373a2bf363da5c6f0d",
+      "complete",
+      "OK"
+    ]
+  },
+  "candidatePages": {
+    "shadow-dom/focus-navigation/reading-flow/grid-order-with-display-contents.html": [
+      "330c3dd0e495c9a36e92b7a5e1ee78cf28586731",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/grid-order-with-slots.html": [
+      "d8773bb301b3024411194d68060846fe6f43808b",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/grid-order-across-scopes.html": [
+      "95b9762845db6a73a84769d301f07e69b1e53376",
+      "complete",
+      "OK"
+    ],
+    "shadow-dom/focus-navigation/reading-flow/grid-order-on-shadow-host.html": [
+      "8eec1303c2f495dff5c962373a2bf363da5c6f0d",
+      "complete",
+      "OK"
+    ]
+  }
+}

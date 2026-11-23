@@ -16,11 +16,18 @@ pub type Point = (NodeId, u32);
 /// The two boundary points of one Range. Each holds an external reference on
 /// its node; the owner releases the final two when it drops the range.
 pub struct LiveRange {
+    shadow_including: Cell<bool>,
     start: Cell<Point>,
     end: Cell<Point>,
 }
 
 impl LiveRange {
+    /// Composed selection endpoints follow a removed shadow host to its
+    /// former position. Ordinary DOM ranges stay within their own tree.
+    pub fn track_shadow_host_removal(&self) {
+        self.shadow_including.set(true);
+    }
+
     pub fn start(&self) -> Point {
         self.start.get()
     }
@@ -34,7 +41,7 @@ impl Dom {
     pub fn new_live_range(&mut self, node: NodeId) -> DomResult<Rc<LiveRange>> {
         self.add_ref(node)?;
         self.add_ref(node)?;
-        let range = Rc::new(LiveRange { start: Cell::new((node, 0)), end: Cell::new((node, 0)) });
+        let range = Rc::new(LiveRange { shadow_including: Cell::new(false), start: Cell::new((node, 0)), end: Cell::new((node, 0)) });
         self.live_ranges.push(Rc::downgrade(&range));
         Ok(range)
     }
@@ -57,12 +64,12 @@ impl Dom {
 
     /// Runs `f` over every boundary point of every live range; a `Some` moves
     /// the point. Sweeps ranges that have been dropped.
-    fn adjust_ranges(&mut self, mut f: impl FnMut(&Dom, Point) -> Option<Point>) {
+    fn adjust_ranges(&mut self, mut f: impl FnMut(&Dom, Point, bool) -> Option<Point>) {
         let mut list: Vec<Weak<LiveRange>> = std::mem::take(&mut self.live_ranges);
         list.retain(|weak| {
             let Some(range) = weak.upgrade() else { return false };
             for cell in [&range.start, &range.end] {
-                if let Some(to) = f(self, cell.get()) {
+                if let Some(to) = f(self, cell.get(), range.shadow_including.get()) {
                     // Both nodes are alive: one is referenced, the other in the tree.
                     let _ = self.set_cell(cell, to);
                 }
@@ -88,7 +95,7 @@ impl Dom {
     pub(crate) fn ranges_before_insert(&mut self, parent: u32, child: u32, count: u32) {
         let index = self.index_idx(child);
         let parent = self.id_of(parent);
-        self.adjust_ranges(|_, (n, o)| (n == parent && o > index).then_some((n, o + count)));
+        self.adjust_ranges(|_, (n, o), _| (n == parent && o > index).then_some((n, o + count)));
     }
 
     /// Remove steps: `node`, still linked, is about to leave its parent.
@@ -97,13 +104,14 @@ impl Dom {
         let parent = self.n(node).parent;
         let index = self.index_idx(node);
         let parent = self.id_of(parent);
-        self.adjust_ranges(|dom, (n, o)| {
-            let mut i = n.idx;
-            while i != NIL {
-                if i == node {
-                    return Some((parent, index));
-                }
-                i = dom.n(i).parent;
+        self.adjust_ranges(|dom, (n, o), shadow_including| {
+            let removed = if shadow_including {
+                dom.is_host_including_inclusive_ancestor(node, n.idx)
+            } else {
+                dom.is_inclusive_ancestor(node, n.idx)
+            };
+            if removed {
+                return Some((parent, index));
             }
             (n == parent && o > index).then(|| (n, o - 1))
         });
@@ -113,7 +121,7 @@ impl Dom {
     #[cold]
     pub(crate) fn ranges_after_replace_data(&mut self, node: u32, offset: u32, count: u32, added: u32) {
         let node = self.id_of(node);
-        self.adjust_ranges(|_, (n, o)| {
+        self.adjust_ranges(|_, (n, o), _| {
             if n != node || o <= offset {
                 None
             } else if o <= offset + count {
@@ -131,7 +139,7 @@ impl Dom {
         let parent = self.id_of(self.n(node).parent);
         let index = self.index_idx(node);
         let (node, new) = (self.id_of(node), self.id_of(new));
-        self.adjust_ranges(|_, (n, o)| {
+        self.adjust_ranges(|_, (n, o), _| {
             if n == node && o > offset {
                 Some((new, o - offset))
             } else if n == parent && o == index + 1 {
@@ -149,7 +157,7 @@ impl Dom {
         let parent = self.id_of(self.n(sibling).parent);
         let index = self.index_idx(sibling);
         let (base, sibling) = (self.id_of(base), self.id_of(sibling));
-        self.adjust_ranges(|_, (n, o)| {
+        self.adjust_ranges(|_, (n, o), _| {
             if n == sibling {
                 Some((base, o + base_len))
             } else if n == parent && o == index {

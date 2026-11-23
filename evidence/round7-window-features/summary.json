@@ -1,0 +1,69 @@
+{
+  "scores": {
+    "baseFull": 4,
+    "candidateFull": 24,
+    "chrome158Full": 19,
+    "baseNamed": 63,
+    "candidateNamed": 396,
+    "chrome158Named": 391,
+    "lost": 0,
+    "new": 242,
+    "missing": 0,
+    "chromeOnly": 28,
+    "lpOnly": 33,
+    "gained": 333
+  },
+  "gainsByPage": {
+    "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?combination": 14,
+    "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?position": 10,
+    "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-1": 21,
+    "html/browsers/the-window-object/open-close/open-features-is-popup-condition.html?single-2": 24,
+    "html/browsers/the-window-object/open-close/open-features-non-integer-height.html": 9,
+    "html/browsers/the-window-object/open-close/open-features-non-integer-innerheight.html": 9,
+    "html/browsers/the-window-object/open-close/open-features-non-integer-innerwidth.html": 9,
+    "html/browsers/the-window-object/open-close/open-features-non-integer-left.html": 9,
+    "html/browsers/the-window-object/open-close/open-features-non-integer-screenx.html": 9,
+    "html/browsers/the-window-object/open-close/open-features-non-integer-top.html": 9,
+    "html/browsers/the-window-object/open-close/open-features-non-integer-width.html": 9,
+    "html/browsers/the-window-object/open-close/open-features-split.tentative.html?fallback": 8,
+    "html/browsers/the-window-object/open-close/open-features-split.tentative.html?misc": 1,
+    "html/browsers/the-window-object/open-close/open-features-split.tentative.html?split-basic": 2,
+    "html/browsers/the-window-object/open-close/open-features-tokenization-innerheight-innerwidth.html": 14,
+    "html/browsers/the-window-object/open-close/open-features-tokenization-noopener.html": 5,
+    "html/browsers/the-window-object/open-close/open-features-tokenization-noreferrer.html": 5,
+    "html/browsers/the-window-object/open-close/open-features-tokenization-screenx-screeny.html": 14,
+    "html/browsers/the-window-object/open-close/open-features-tokenization-top-left.html": 16,
+    "html/browsers/the-window-object/open-close/open-features-tokenization-width-height.html": 18,
+    "html/browsers/the-window-object/window-open-popup-behavior.html": 25,
+    "html/browsers/the-window-object/window-open-windowfeatures-values.html": 93
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "timeout": 10,
+        "complete": 19
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "523a89ee4293cc42bcf6970d4f16f0a595141ac836a113e1efa649edaa5784f7"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 28,
+        "timeout": 1
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "b2ecfd58f7d70adc003abafc263f47b4f4f40f9a7e151e2c3a9df47739514041"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 28,
+        "timeout": 1
+      },
+      "restarts": null,
+      "watchdogKills": null,
+      "receiptSHA256": "0e83d09c4f78a57a2b51c4646f65068ca932f1b0419ce6d93ce6ac50bb1bb96e"
+    }
+  }
+}

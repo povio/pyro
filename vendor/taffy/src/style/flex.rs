@@ -1,5 +1,5 @@
 //! Style types for Flexbox layout
-use super::{AlignContent, AlignItems, AlignSelf, CoreStyle, Dimension, JustifyContent, LengthPercentage, Style};
+use super::{AlignContent, AlignItems, AlignSelf, CoreStyle, Dimension, Direction, JustifyContent, LengthPercentage, Style};
 use crate::geometry::Size;
 
 /// The set of styles required for a Flexbox container
@@ -10,6 +10,15 @@ pub trait FlexboxContainerStyle: CoreStyle {
     #[inline(always)]
     fn block_baseline_synthesis(&self) -> f32 {
         1.0
+    }
+    /// pyro: for the baseline alignment of `column` containers' items, across the inline axis (Taffy's x): where
+    /// an item without a baseline in that axis synthesizes one, as a fraction of its border box from its left
+    /// edge (in Taffy's axes), and whether such an item's baseline-sharing group is measured from its right
+    /// edge (Blink reads its baseline in a writing mode whose block-start is that edge: `vertical-rl` for an
+    /// item of an `rtl` horizontal container). Horizontal containers: the line-left edge (css-align-3 §9.1).
+    #[inline(always)]
+    fn inline_baseline_synthesis(&self) -> (f32, bool) {
+        (0.0, self.direction() == Direction::Rtl)
     }
     /// Which direction does the main axis flow in?
     #[inline(always)]
@@ -63,6 +72,10 @@ pub trait FlexboxItemStyle: CoreStyle {
     fn flex_basis(&self) -> Dimension {
         Style::<Self::CustomIdent>::DEFAULT.flex_basis
     }
+    #[inline(always)]
+    fn flex_basis_calculation(&self) -> Option<super::CalcSizeFunction> {
+        None
+    }
     /// The relative rate at which this item grows when it is expanding to fill space
     #[inline(always)]
     fn flex_grow(&self) -> f32 {
@@ -79,6 +92,19 @@ pub trait FlexboxItemStyle: CoreStyle {
     #[inline(always)]
     fn align_self(&self) -> Option<AlignSelf> {
         Style::<Self::CustomIdent>::DEFAULT.align_self
+    }
+    /// pyro: the item's block flow across the flex container's `axis` (`Horizontal`: Taffy's x, the container's
+    /// inline axis; `Vertical`: Taffy's y, its block axis), which places its baselines in that axis for baseline
+    /// alignment (css-align-3 §9.1): `Some(far)` when the item's block axis lies along `axis`, `far` being whether
+    /// its block-start is the far (right, bottom) side in Taffy's axes; `None` when its block axis is
+    /// perpendicular to `axis` (it has no baseline across it and one is synthesized). Default: a parallel,
+    /// horizontal-tb item.
+    #[inline(always)]
+    fn baseline_flow(&self, axis: AbsoluteAxis) -> Option<bool> {
+        match axis {
+            AbsoluteAxis::Horizontal => None,
+            AbsoluteAxis::Vertical => Some(false),
+        }
     }
     /// pyro: whether the item is a table (its wrapper box): it is never smaller than its min-content
     /// size in the main axis, as in Blink (WPT `css/css-flexbox/table-as-item-*`)

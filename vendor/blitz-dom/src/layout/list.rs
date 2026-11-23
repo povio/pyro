@@ -265,9 +265,12 @@ fn node_list_item_child(
         }
         ListStylePosition::Outside => {
             let mut parley_style = stylo_to_parley::style(brush, text_style);
-            // The marker's suffix space takes room (`white-space: pre` in the UA sheet), as a
-            // no-break space of a `content` string does.
+            // pyro: an outside marker is `white-space: pre` whatever its style says, as Chrome's
+            // style adjuster makes it (the UA sheet leaves inside markers the item's white-space):
+            // its suffix space takes room, as a no-break space of a `content` string does, and
+            // it never wraps.
             parley_style.white_space_collapse = parley::WhiteSpaceCollapse::Preserve;
+            parley_style.text_wrap_mode = parley::TextWrapMode::NoWrap;
             if tabular_nums {
                 parley_style.font_features = parley::FontFeatures::List(std::borrow::Cow::Owned(
                     stylo_to_parley::with_tabular_nums(&parley_style.font_features),
@@ -404,15 +407,7 @@ fn item_marker_style(
     Option<style::servo_arc::Arc<style::properties::ComputedValues>>,
 ) {
     let rule_style = marker_pseudo_style(doc, node_id, item_style);
-    let style = match doc.nodes[node_id].element_data().and_then(|element| element.sampled_marker.clone()) {
-        Some(block) => {
-            let read_guard = doc.guard.read();
-            let guards = style::shared_lock::StylesheetGuards::same(&read_guard);
-            let base = rule_style.as_ref().unwrap_or(item_style);
-            Some(doc.stylist.compute_for_declarations::<&crate::Node>(&guards, base, block))
-        }
-        None => rule_style.clone(),
-    };
+    let style = doc.animated_marker_style(&doc.nodes[node_id], item_style, rule_style.as_ref()).or_else(|| rule_style.clone());
     (style, rule_style)
 }
 
@@ -444,7 +439,7 @@ pub(crate) fn item_restyled(doc: &mut BaseDocument, item: NodeId) {
 }
 
 /// pyro: the `::marker` style of the list item `node_id`, when a rule matches its marker.
-pub(super) fn marker_pseudo_style(
+pub(crate) fn marker_pseudo_style(
     doc: &BaseDocument,
     node_id: NodeId,
     item_style: &style::servo_arc::Arc<style::properties::ComputedValues>,
@@ -608,6 +603,7 @@ fn custom_counter_marker(doc: &BaseDocument, item: NodeId, list_style_type: &Lis
     let symbol = |symbol: &Symbol| match symbol {
         Symbol::String(text) => text.to_string(),
         Symbol::Ident(ident) => ident.0.to_string(),
+        Symbol::Image(_) => "\u{fffc}".to_string(),
     };
     let descriptors = rule.descriptors();
     let System::Extends(base) = rule.resolved_system() else {
@@ -726,6 +722,7 @@ fn marker_for_style(list_style_type: &ListStyleType, number: i32) -> Option<Mark
                 let marker_str = match sym {
                     style::counter_style::Symbol::String(s) => s.to_string(),
                     style::counter_style::Symbol::Ident(id) => id.0.to_string(),
+                    style::counter_style::Symbol::Image(_) => "\u{fffc}".to_string(),
                 };
                 Marker::String(marker_str)
             }

@@ -186,9 +186,9 @@ impl ToComputedValue for LineWidth {
     fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
         match *self {
             // https://drafts.csswg.org/css-backgrounds-3/#line-width
-            Self::Thin => Au::from_px(1),
-            Self::Medium => Au::from_px(3),
-            Self::Thick => Au::from_px(5),
+            Self::Thin => Au::from_f32_px(context.builder.effective_zoom.zoom(1.0)),
+            Self::Medium => Au::from_f32_px(context.builder.effective_zoom.zoom(3.0)),
+            Self::Thick => Au::from_f32_px(context.builder.effective_zoom.zoom(5.0)),
             Self::Length(ref length) => Au::from_f32_px(length.to_computed_value(context).px()),
         }
     }
@@ -233,16 +233,10 @@ impl Parse for BorderSideWidth {
 
 // https://drafts.csswg.org/css-values-4/#snap-a-length-as-a-border-width
 fn snap_as_border_width(len: Au, context: &Context) -> Au {
-    debug_assert!(len >= Au(0));
-
-    // Round `width` down to the nearest device pixel, but any non-zero value that would round
-    // down to zero is clamped to 1 device pixel.
-    if len == Au(0) {
-        return len;
-    }
-
-    let au_per_dev_px = context.device().app_units_per_device_pixel();
-    std::cmp::max(Au(au_per_dev_px), Au(len.0 / au_per_dev_px * au_per_dev_px))
+    crate::values::computed::border::snap_as_border_width(
+        len,
+        context.device().app_units_per_device_pixel(),
+    )
 }
 
 impl ToComputedValue for BorderSideWidth {

@@ -1,0 +1,21 @@
+[
+  "xhr/getallresponseheaders.htm",
+  "xhr/response-data-gzip.htm",
+  "xhr/send-blob-with-no-mime-type.html",
+  "xhr/send-content-type-charset.htm",
+  "xhr/send-content-type-string.htm",
+  "xhr/send-data-arraybuffer.any.html",
+  "xhr/send-data-arraybuffer.any.worker.html",
+  "xhr/send-data-arraybufferview.any.html",
+  "xhr/send-data-arraybufferview.any.worker.html",
+  "xhr/send-data-blob.htm",
+  "xhr/send-data-formdata.any.html",
+  "xhr/send-data-formdata.any.worker.html",
+  "xhr/send-entity-body-basic.htm",
+  "xhr/send-entity-body-document-bogus.htm",
+  "xhr/send-entity-body-document.htm",
+  "xhr/send-entity-body-empty.htm",
+  "xhr/send-entity-body-get-head.htm",
+  "xhr/send-entity-body-none.htm",
+  "xhr/send-redirect.htm"
+]

@@ -1,0 +1,5 @@
+{
+  "scope": "Ordinary same-origin DOM canvas, OffscreenCanvas and ImageBitmap snapshots; existing raw-buffer and VideoFrame constructor guards.",
+  "excluded": "Cross-origin policy fixtures, mixed native crash-regression pages, all previous native fault/target exit holds, and unowned media element/GPU/encoder implementations.",
+  "execution": "Frozen 16 targets plus 12 guards. No replay of withheld cases."
+}

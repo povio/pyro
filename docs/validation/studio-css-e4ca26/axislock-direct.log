@@ -1,0 +1,12 @@
+axislock-direct 239 page passes 120 named passes 1420 observed names 1761 statuses {'complete:0': 230, 'complete:2': 8, 'complete:1': 1}
+axislock-direct-parent 239 page passes 116 named passes 1361 observed names 1760 statuses {'complete:0': 230, 'complete:2': 8, 'complete:1': 1}
+axislock-direct-parent pages left only 4 right only 0
+axislock-direct-parent passes left only 59 right only 0
+axislock-direct-parent observed left only 1 right only 0
+axislock-direct-stable 239 page passes 216 named passes 1696 observed names 1790 statuses {'complete:0': 234, 'complete:2': 5}
+axislock-direct-stable pages left only 3 right only 99
+axislock-direct-stable passes left only 52 right only 328
+axislock-direct-stable observed left only 29 right only 58
+losses set()
+['css/css-overflow/parsing/scroll-axis-lock-computed.html', 'css/css-overflow/parsing/scroll-axis-lock-valid.html', 'css/css-overflow/scroll-axis-lock-inheritance.html', 'css/css-overflow/scroll-axis-lock-interpolation.html']
+Counter({'css/css-overflow/scroll-axis-lock-interpolation.html': 42, 'css/css-overflow/parsing/scroll-axis-lock-computed.html': 8, 'css/css-overflow/parsing/scroll-axis-lock-valid.html': 6, 'css/css-overflow/scroll-axis-lock-inheritance.html': 2, 'css/css-cascade/all-prop-initial-xml.html': 1})

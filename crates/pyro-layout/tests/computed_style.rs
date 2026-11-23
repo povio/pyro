@@ -48,6 +48,41 @@ impl Page {
     }
 }
 
+#[test]
+fn max_size_samples_keep_the_intrinsic_axis_and_policy() {
+    use ::style::properties::animated_properties::AnimationValue;
+    use ::style::values::animated::Procedure;
+    use ::style::values::computed::{length::CSSPixelLength, MaxSize, Size};
+
+    let page = Page::new(r#"<div id=keyword style="max-width:min-content;max-height:min-content"></div><div id=numeric style="max-width:80px;max-height:80px"></div>"#);
+    let position = |selector| page.layout.style().stylo_style(&page.dom.borrow(), page.find(selector)).unwrap();
+    let keyword = position("#keyword");
+    let numeric = position("#numeric");
+    for (from, to) in [
+        (AnimationValue::MaxWidth(keyword.get_position().max_width.clone()), AnimationValue::MaxWidth(numeric.get_position().max_width.clone())),
+        (AnimationValue::MaxHeight(keyword.get_position().max_height.clone()), AnimationValue::MaxHeight(numeric.get_position().max_height.clone())),
+    ] {
+        let midpoint = Procedure::Interpolate { progress: 0.5 };
+        assert!(from.animate_with_size_policy(&to, midpoint, false).is_err());
+        for (procedure, expected) in [(midpoint, 60.0), (Procedure::Add, 120.0)] {
+            let sample = from.animate_with_size_policy(&to, procedure, true).unwrap();
+            let (AnimationValue::MaxWidth(MaxSize::Calculation(value)) | AnimationValue::MaxHeight(MaxSize::Calculation(value))) = sample else { panic!("lost max-size formula") };
+            let Size::CalcSizeMinContent(calculation) = value.as_ref() else { panic!("lost min-content basis") };
+            assert_eq!(calculation.0.resolve_size(CSSPixelLength::new(40.0), CSSPixelLength::new(200.0)).px(), expected);
+        }
+    }
+}
+
+#[test]
+fn computed_custom_names_exclude_invalid_and_unrelated_values() {
+    let page = Page::new(r#"<style>@property --count { syntax: '<integer>'; inherits: false; initial-value: 2 } #parent { --shared: 1; } #target { --cyclic: var(--cyclic); } #other { --other: 0; }</style><div id=parent><i id=target></i><i id=other></i></div>"#);
+    let target = page.find("#target");
+    let names = || page.layout.style().computed_custom_names(&page.dom.borrow(), target, &stylo::PseudoArg::Element);
+    assert_eq!(names(), ["--count", "--shared"]);
+    page.dom.borrow_mut().set_attribute(target, "style", "--local: 1").unwrap();
+    assert_eq!(names(), ["--count", "--local", "--shared"]);
+}
+
 const PAGE: &str = r#"<!doctype html><html><head><style>
   body { color: rgb(1, 2, 3); font-size: 20px }
   .box { width: 100px; margin: 1em; display: flex }
@@ -412,6 +447,231 @@ fn scroll_margin_follows_media_queries_and_restyles() {
     assert_eq!(p.value("#c", "scroll-margin-top"), "6px", "an inline change restyles");
 }
 
+#[test]
+fn flex_items_report_the_used_size_after_flexing() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:120px"><div style="display:contents">
+        <div id=row style="width:15px;flex:1"></div></div></div>
+        <div style="display:flex;flex-direction:column;height:100px"><div id=column style="height:20px;flex:0 0 60px;padding:5px;box-sizing:border-box"></div></div>
+        <div id=ordinary style="width:15px"></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#row", "width"), "120px");
+    assert_eq!(used("#column", "height"), "60px");
+    assert_eq!(used("#ordinary", "width"), "15px");
+}
+
+#[test]
+fn flex_target_size_is_not_an_intrinsic_calculation_basis() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:200px">
+        <div id=row style="flex:0 0 70px;width:calc-size(fit-content,size + 12px)"></div></div>
+        <div style="display:flex;flex-direction:column;height:100px">
+        <div id=column style="flex:0 0 60px;height:calc-size(auto,size * 2)"></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#row", "width"), "70px");
+    assert_eq!(used("#column", "height"), "60px");
+}
+
+#[test]
+fn flex_basis_calculates_from_content_independently_of_height() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;flex-direction:column;height:280px">
+        <div id=item style="flex:0 0 calc-size(calc-size(content,size * 2),size + 7px);height:100px">
+        <div style="height:20px"></div></div></div>
+        <div id=ordinary style="width:50px;width:calc-size(content,size * 2)"></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#item", "height"), "47px");
+    assert_eq!(used("#ordinary", "width"), "50px");
+}
+
+#[test]
+fn intrinsic_size_and_container_percentage_are_independent() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:300px">
+        <div id=row style="min-width:0;flex:0 0 calc-size(max-content,size + 10%)"><div style="width:45px"></div></div></div>
+        <div style="display:flex;flex-direction:column;height:200px">
+        <div id=column style="flex:0 0 calc-size(calc-size(content,size + 10%),size + 20%)"><div style="height:25px"></div></div></div>
+        <div style="display:flex;flex-direction:column"><div id=indefinite style="flex:0 0 calc-size(content,size + 50%)"><div style="height:35px"></div></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#row", "width"), "75px");
+    assert_eq!(used("#column", "height"), "85px");
+    assert_eq!(used("#indefinite", "height"), "35px");
+}
+
+#[test]
+fn sampled_auto_basis_is_not_the_live_any_endpoint() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=live style="width:calc-size(any,50px);height:calc-size(any,50px)"><div style="height:100px"></div></div></div><div id=sample style="width:calc-size(auto,size * 0.25 + 37.5px);height:calc-size(auto,size * 0.25 + 37.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    for (axis, expected) in [("width", "87.5px"), ("height", "62.5px")] {
+        let used = || page.layout.computed_style_value(&dom, live, axis);
+        assert_eq!(used(), "50px");
+        assert_eq!(style.with_style_override(live, sample.clone(), used).unwrap(), expected);
+        assert_eq!(used(), "50px");
+    }
+}
+
+#[test]
+fn sampled_intrinsic_block_height_uses_fixed_child_not_endpoint() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=live style="height:calc-size(any,50px);box-sizing:border-box;padding:5px"><div style="height:90px"></div></div></div><div id=min style="height:calc-size(min-content,size * 0.25 + 37.5px)"></div><div id=max style="height:calc-size(max-content,size * 0.25 + 37.5px)"></div><div id=fit style="height:calc-size(fit-content,size * 0.25 + 37.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let used = || page.layout.computed_style_value(&dom, live, "height");
+    for selector in ["#min", "#max", "#fit"] {
+        let sample = style.stylo_style(&dom, page.find(selector)).unwrap();
+        assert_eq!(used(), "50px");
+        assert_eq!(style.with_style_override(live, sample, used).unwrap(), "62.5px");
+        assert_eq!(used(), "50px");
+    }
+}
+
+#[test]
+fn sampled_auto_height_with_percentage_endpoint() {
+    let page = Page::new(r#"<!doctype html><div style="height:300px"><div id=live style="height:50%"><div style="height:100px"></div></div></div><div id=sample style="height:calc-size(auto,size * 0.25 + 37.5%)"></div>"#);
+    let dom = page.dom.borrow();
+    let style = page.layout.style();
+    let live = page.find("#live");
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    let used = || page.layout.computed_style_value(&dom, live, "height");
+    assert_eq!(used(), "150px");
+    assert_eq!(style.with_style_override(live, sample, used).unwrap(), "137.5px");
+    assert_eq!(used(), "150px");
+}
+
+#[test]
+fn sampled_keyword_is_independent_of_live_calc_endpoint() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=intrinsic style="width:calc-size(fit-content,size);height:calc-size(auto,size)"><div style="width:100px;height:100px"></div></div><div id=stretch style="width:calc-size(stretch,size);height:calc-size(stretch,size)"><div style="width:100px;height:100px"></div></div></div><div id=available style="width:auto;height:stretch"></div><div id=content style="width:max-content;height:max-content"></div>"#);
+    let dom = page.dom.borrow();
+    let style = page.layout.style();
+    for (target, sampled, dimensions) in [
+        ("#intrinsic", "#available", [("width", "100px", "200px"), ("height", "100px", "300px")]),
+        ("#stretch", "#content", [("width", "200px", "100px"), ("height", "300px", "100px")]),
+    ] {
+        let live = page.find(target);
+        let sample = style.stylo_style(&dom, page.find(sampled)).unwrap();
+        for (axis, endpoint, expected) in dimensions {
+            let used = || page.layout.computed_style_value(&dom, live, axis);
+            assert_eq!(used(), endpoint);
+            assert_eq!(style.with_style_override(live, sample.clone(), used).unwrap(), expected);
+            assert_eq!(used(), endpoint);
+        }
+    }
+}
+
+#[test]
+fn sampled_discrete_keyword_uses_selected_endpoint_geometry() {
+    let page = Page::new(r#"<!doctype html><div style="width:150px;height:200px"><div id=live style="width:fit-content;height:stretch"><div style="width:100px;height:50px"></div></div></div><div id=sample style="width:auto;height:max-content"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    for (axis, endpoint, selected) in [("width", "100px", "150px"), ("height", "200px", "50px")] {
+        let used = || page.layout.computed_style_value(&dom, live, axis);
+        assert_eq!(used(), endpoint);
+        assert_eq!(style.with_style_override(live, sample.clone(), used).unwrap(), selected);
+        assert_eq!(used(), endpoint);
+    }
+}
+
+#[test]
+fn sampled_keyword_endpoint_does_not_replace_intermediate_size() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=live style="width:fit-content;height:auto"><div style="width:100px;height:50px"></div></div></div><div id=sample style="width:calc-size(fit-content,size * 0.5 + 100px);height:calc-size(auto,size * 0.5)"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    for (axis, endpoint, midpoint) in [("width", "100px", "150px"), ("height", "50px", "25px")] {
+        let used = || page.layout.computed_style_value(&dom, live, axis);
+        assert_eq!(used(), endpoint);
+        assert_eq!(style.with_style_override(live, sample.clone(), used).unwrap(), midpoint);
+        assert_eq!(used(), endpoint);
+    }
+}
+
+#[test]
+fn sampled_max_content_with_auto_parent_and_fixed_maximum() {
+    let page = Page::new(r#"<!doctype html><style>#live::before{content:'';display:block;width:125px;height:75px}</style><div><div id=live style="width:100px;height:25px;max-height:42px"></div></div><div id=sample style="inline-size:calc-size(max-content,size * 0.5 + 50px);block-size:calc-size(max-content,size * 0.5 + 12.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    for (axis, endpoint, expected) in [("inline-size", "100px", "112.5px"), ("block-size", "25px", "42px")] {
+        let used = || page.layout.computed_style_value(&dom, live, axis);
+        assert_eq!(used(), endpoint);
+        assert_eq!(style.with_style_override(live, sample.clone(), used).unwrap(), expected);
+        assert_eq!(used(), endpoint);
+    }
+}
+
+#[test]
+fn sampled_keyword_basis_with_plain_length_endpoint() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=live style="width:50px;height:50px"><div style="width:100px;height:100px"></div></div></div><div id=sample style="width:calc-size(auto,size * 0.25 + 37.5px);height:calc-size(auto,size * 0.25 + 37.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+    for (axis, expected) in [("width", "87.5px"), ("height", "62.5px")] {
+        let used = || page.layout.computed_style_value(&dom, live, axis);
+        assert_eq!(used(), "50px");
+        assert_eq!(style.with_style_override(live, sample.clone(), used).unwrap(), expected);
+        assert_eq!(used(), "50px");
+    }
+}
+
+#[test]
+fn sampled_intrinsic_width_uses_fixed_child_border_box() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px"><div id=live style="width:calc-size(any,50px);box-sizing:border-box;padding:5px"><div style="width:80px;border:5px solid"></div></div></div><div id=min style="width:calc-size(min-content,size * 0.25 + 37.5px)"></div><div id=max style="width:calc-size(max-content,size * 0.25 + 37.5px)"></div><div id=fit style="width:calc-size(fit-content,size * 0.25 + 37.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let live = page.find("#live");
+    let style = page.layout.style();
+    let used = || page.layout.computed_style_value(&dom, live, "width");
+    for selector in ["#min", "#max", "#fit"] {
+        let sample = style.stylo_style(&dom, page.find(selector)).unwrap();
+        assert_eq!(used(), "50px");
+        assert_eq!(style.with_style_override(live, sample, used).unwrap(), "62.5px");
+        assert_eq!(used(), "50px");
+    }
+}
+
+#[test]
+fn sampled_stretch_uses_containing_block_margin_box_on_both_axes() {
+    let page = Page::new(r#"<!doctype html><div style="width:200px;height:300px"><div id=content style="width:calc-size(any,50px);height:calc-size(any,50px);margin:5%;padding:5px"></div><div id=border style="width:calc-size(any,50px);height:calc-size(any,50px);margin:5%;padding:5px;box-sizing:border-box"></div></div><div id=sample style="width:calc-size(stretch,size * 0.25 + 37.5px);height:calc-size(stretch,size * 0.25 + 37.5px)"></div>"#);
+    let dom = page.dom.borrow();
+    let style = page.layout.style();
+    for (selector, property, expected) in [("#content", "width", "80px"), ("#content", "height", "105px"), ("#border", "width", "82.5px"), ("#border", "height", "107.5px")] {
+        let live = page.find(selector);
+        let sample = style.stylo_style(&dom, page.find("#sample")).unwrap();
+        let used = || page.layout.computed_style_value(&dom, live, property);
+        assert_eq!(used(), "50px");
+        assert_eq!(style.with_style_override(live, sample, used).unwrap(), expected);
+        assert_eq!(used(), "50px");
+    }
+}
+
+#[test]
+fn percentage_endpoint_interpolates_with_intrinsic_size() {
+    use ::style::values::animated::{Animate, Procedure};
+    use ::style::values::computed::{length::CSSPixelLength, Size};
+
+    let page = Page::new(r#"<div id=start style="height:calc-size(auto, size * 2)"></div><div id=end style="height:50%"></div>"#);
+    let height = |selector| page.layout.style().stylo_style(&page.dom.borrow(), page.find(selector)).unwrap().get_position().height.clone();
+    let Size::CalcSizeAuto(sample) = height("#start").animate(&height("#end"), Procedure::Interpolate { progress: 0.75 }).unwrap() else { panic!("lost intrinsic basis") };
+    assert_eq!(sample.0.resolve_size(CSSPixelLength::new(100.0), CSSPixelLength::new(300.0)).px(), 162.5);
+    assert_eq!(sample.0.resolve_size(CSSPixelLength::new(100.0), CSSPixelLength::new(0.0)).px(), 50.0);
+}
+
+#[test]
+fn flex_basis_calculation_uses_the_items_box_sizing() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:240px">
+        <div id=content style="width:40px;padding:5px;flex:0 0 calc-size(auto,size * 2)"></div>
+        <div id=border style="width:40px;padding:5px;box-sizing:border-box;flex:0 0 calc-size(auto,size * 2)"></div></div>
+        <div style="display:flex;writing-mode:vertical-rl;height:120px"><div id=vertical style="height:20px;width:10px;flex:1"></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#content", "width"), "80px");
+    assert_eq!(used("#border", "width"), "80px");
+    assert_eq!(used("#vertical", "width"), "10px");
+    assert_eq!(used("#vertical", "height"), "120px");
+}
+
 /// pyro (lane G): a subgrid's `grid-template-columns` resolves to `subgrid` with the names of each of
 /// the lines it spans (its own), which only its layout knows (css-grid-2 §7.2.6.2).
 #[test]
@@ -439,6 +699,19 @@ fn a_grid_containers_template_resolves_to_its_used_tracks() {
     assert_eq!(p.layout.computed_style_value(&dom, el, "grid-template-rows"), "20px 20px 20px 20px 20px");
 }
 
+/// A grid container with `grid-template: none` reports the shorthand from its used tracks, as Chromium does;
+/// a set template keeps its computed value (WPT css-grid `grid-layout-properties`).
+#[test]
+fn an_untemplated_grid_reports_grid_template_from_its_used_tracks() {
+    let p = Page::new(
+        r#"<!doctype html><div id=g style="display:grid;width:100px;grid-auto-rows:20px">
+        <div></div><div></div></div><div id=t style="display:grid;width:100px;grid-template:[a] auto / 50px"></div>"#,
+    );
+    let dom = p.dom.borrow();
+    assert_eq!(p.layout.computed_style_value(&dom, p.find("#g"), "grid-template"), "20px 20px / 100px");
+    assert_eq!(p.layout.computed_style_value(&dom, p.find("#t"), "grid-template"), "[a] auto / 50px");
+}
+
 #[test]
 fn svg_presentation_attributes_participate_in_the_cascade() {
     let p = Page::new(
@@ -464,4 +737,19 @@ fn svg_presentation_attributes_participate_in_the_cascade() {
     let literal = p.find("#literal");
     p.dom.borrow_mut().remove_attribute(literal, "font-weight").unwrap();
     assert_eq!(p.value("#literal", "font-weight"), "700");
+}
+
+#[test]
+fn auto_min_size_of_an_unrendered_grid_child_resolves_to_zero() {
+    // WPT css-grid grid-item-min-auto-size-001: only a box laid out as a grid item keeps `auto`.
+    let page = Page::new(r#"<!doctype html><style>.g{display:grid} .m{min-width:auto;min-height:auto}</style>
+        <div class=g><div id=item class=m></div></div>
+        <div style="display:none"><div class=g><div id=inside class=m></div></div></div>
+        <div class=g><div style="display:contents"><div id=contents class=m></div></div></div>
+        <div class=g><div id=none class=m style="display:none"></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    for (selector, expected) in [("#item", "auto"), ("#inside", "0px"), ("#contents", "auto"), ("#none", "0px")] {
+        assert_eq!(used(selector, "min-width"), expected, "{selector}");
+        assert_eq!(used(selector, "min-height"), expected, "{selector}");
+    }
 }

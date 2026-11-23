@@ -1,0 +1,19 @@
+{
+  "available": "function",
+  "support": true,
+  "rate": 48000,
+  "channels": 2,
+  "packetCount": 21,
+  "tones": [
+    {
+      "samples": 19848,
+      "rms": 0.28253342500771433,
+      "frequency": 328.54864433811804
+    },
+    {
+      "samples": 19848,
+      "rms": 0.1413245394227997,
+      "frequency": 660.2870813397129
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "version": "158.0.8127.37",
+  "results": {
+    "parent": [
+      "flex-flow",
+      "5"
+    ],
+    "child": [
+      "normal",
+      "3"
+    ],
+    "override": [
+      "normal",
+      "-2"
+    ],
+    "invalid": [
+      "normal",
+      "-2"
+    ],
+    "removed": [
+      "normal",
+      "3"
+    ],
+    "inherit": [
+      "flex-flow",
+      "3"
+    ]
+  }
+}

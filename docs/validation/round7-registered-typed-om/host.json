@@ -1,0 +1,380 @@
+{
+ "start": "2026-11-21T21:37:06.869Z",
+ "end": "2026-11-21T21:37:09.862Z",
+ "preciseHost": {
+  "durationSeconds": 2.993,
+  "hostBusyPct": 23.869
+ },
+ "perArm": {
+  "registered-base-c8ac2292b": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 1.559,
+   "weightedHostBusyPct": 22.44
+  },
+  "registered-6886fc523": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 1.434,
+   "weightedHostBusyPct": 25.42
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "registered-base-c8ac2292b",
+   "start": "2026-11-21T21:37:06.869Z",
+   "end": "2026-11-21T21:37:07.383Z",
+   "durationSeconds": 0.514,
+   "hostBusyPct": 21.693
+  },
+  {
+   "order": 2,
+   "binary": "registered-6886fc523",
+   "start": "2026-11-21T21:37:07.383Z",
+   "end": "2026-11-21T21:37:07.749Z",
+   "durationSeconds": 0.366,
+   "hostBusyPct": 29.3
+  },
+  {
+   "order": 3,
+   "binary": "registered-6886fc523",
+   "start": "2026-11-21T21:37:07.749Z",
+   "end": "2026-11-21T21:37:08.108Z",
+   "durationSeconds": 0.359,
+   "hostBusyPct": 29.3
+  },
+  {
+   "order": 4,
+   "binary": "registered-base-c8ac2292b",
+   "start": "2026-11-21T21:37:08.108Z",
+   "end": "2026-11-21T21:37:08.464Z",
+   "durationSeconds": 0.356,
+   "hostBusyPct": 24.946
+  },
+  {
+   "order": 5,
+   "binary": "registered-6886fc523",
+   "start": "2026-11-21T21:37:08.464Z",
+   "end": "2026-11-21T21:37:08.820Z",
+   "durationSeconds": 0.356,
+   "hostBusyPct": 23.1
+  },
+  {
+   "order": 6,
+   "binary": "registered-base-c8ac2292b",
+   "start": "2026-11-21T21:37:08.820Z",
+   "end": "2026-11-21T21:37:09.162Z",
+   "durationSeconds": 0.342,
+   "hostBusyPct": 23.1
+  },
+  {
+   "order": 7,
+   "binary": "registered-base-c8ac2292b",
+   "start": "2026-11-21T21:37:09.162Z",
+   "end": "2026-11-21T21:37:09.509Z",
+   "durationSeconds": 0.347,
+   "hostBusyPct": 20.323
+  },
+  {
+   "order": 8,
+   "binary": "registered-6886fc523",
+   "start": "2026-11-21T21:37:09.509Z",
+   "end": "2026-11-21T21:37:09.862Z",
+   "durationSeconds": 0.353,
+   "hostBusyPct": 19.8
+  }
+ ],
+ "benchmarkSHA256": "5af1edbca22a059a219e9e546d94ecf4cd9100ea34d028a3172554513c2a3275",
+ "minOneSecondBusyPct": 17.9,
+ "maxOneSecondBusyPct": 29.3,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-21T21:37:06.211Z",
+   "end": "2026-11-21T21:37:07.212Z",
+   "cpuBusyPct": 17.9
+  },
+  {
+   "start": "2026-11-21T21:37:07.212Z",
+   "end": "2026-11-21T21:37:08.214Z",
+   "cpuBusyPct": 29.3
+  },
+  {
+   "start": "2026-11-21T21:37:08.214Z",
+   "end": "2026-11-21T21:37:09.217Z",
+   "cpuBusyPct": 23.1
+  },
+  {
+   "start": "2026-11-21T21:37:09.217Z",
+   "end": "2026-11-21T21:37:10.219Z",
+   "cpuBusyPct": 19.8
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-21T21:37:07.218Z",
+   "elapsedMs": 30000,
+   "cpuBusyPct": 20.6,
+   "load": [
+    10.07666015625,
+    19.251953125,
+    25.91455078125
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 85,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1117,
+     "pctCpu": 65.5,
+     "rssMiB": 33890
+    },
+    "other-wpt": {
+     "n": 34,
+     "pctCpu": 11.4,
+     "rssMiB": 1171
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 97
+    },
+    "css-values": {
+     "n": 3,
+     "pctCpu": 51.5,
+     "rssMiB": 229
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T21:37:37.220Z",
+   "elapsedMs": 30002,
+   "cpuBusyPct": 37.8,
+   "load": [
+    8.23828125,
+    17.9345703125,
+    25.2060546875
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 85,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1117,
+     "pctCpu": 179.3,
+     "rssMiB": 33623
+    },
+    "other-wpt": {
+     "n": 16,
+     "pctCpu": 30,
+     "rssMiB": 435
+    },
+    "independent-feature": {
+     "n": 9,
+     "pctCpu": 173.7,
+     "rssMiB": 768
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 97
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-21T21:36:45.620Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T21:31:28.181743+00:00",
+    "hostSlots": null,
+    "lead": 0,
+    "editing": 1,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 0,
+    "censusShards": 0,
+    "policy": "At 44.5% with one CSS compiler, editing is sole owner of exact c130cd924 warm LP then inline-edit candidate serial in one private slot. Lead VideoDecoder shares archived base and stages source first. No competing exact-base build."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [
+      {
+       "pid": 9776,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      },
+      {
+       "pid": 10041,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "1"
+      },
+      {
+       "pid": 10044,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 10104,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 20.1
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [
+      {
+       "pid": 9746,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "1"
+      },
+      {
+       "pid": 9749,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 3.6
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T21:37:15.627Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T21:37:11.143927+00:00",
+    "hostSlots": null,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 1,
+    "diagnostics": 0,
+    "censusShards": 0,
+    "policy": "CSS 6886fc523 QA and previous build completed; direct START single ABBA/BAAB performance browser on 25.0\u219215.2% intervals, initial 1s host tick 18%, no local compiler or external CI Worker. Separate ad7467f57 QA one runtime; lead 40-URL decoder baseline and scratch warm candidate pending source."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [
+      {
+       "pid": 10041,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "1"
+      },
+      {
+       "pid": 10044,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 10104,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 4.5
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-21T21:35:19.310551+00:00",
+ "qaEnd": "2026-11-21T21:35:20.074551+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "paragraphQAEstimatedWindow": {
+  "start": "2026-11-21T21:36:27.681+00:00",
+  "end": "2026-11-21T21:37:10.967+00:00",
+  "wptWallMs": 43286,
+  "overlapSeconds": 2.993,
+  "method": "Raw WPT receipt mtime minus reported wallMs; direct host-control probes may run separately."
+ }
+}

@@ -1,6 +1,7 @@
 // `guard(value)` is native: whether `value` is an ordinary object. With a
 // mode it is `host(value, mode, extra)`: mode 0 clones a serializable host
-// object (Blob, File, FileList) into this realm or returns undefined; mode 1
+// object (Blob, File, FileList, encoded media chunk or AudioData) into this realm
+// or returns undefined; extra signals serialization for storage. Mode 1
 // prepares the transfer of a transferable one (a MessagePort: its new port
 // here, undefined if the value is not transferable, DataCloneError if it is
 // detached); mode 2 completes the transfer prepared for `value` as `extra`;
@@ -12,8 +13,10 @@
 // mode 8 prepares the transfer of an ImageBitmap or OffscreenCanvas (its copy
 // here, undefined for anything else, DataCloneError if it is detached) and
 // mode 9 detaches the original. Mode 3 also copies an ImageBitmap.
+// Mode 12 prepares transfer of AudioData, mode 13 revalidates that it is
+// still open, and mode 14 closes the sender after successful serialization.
 ((guard, fail, DOMExceptionC) => {
-    const host = (value, mode, extra) => guard(value, mode, extra);
+    const host = (value, mode, extra, attachment) => guard(value, mode, extra, attachment);
     const O = Object, A = Array, M = Map, S = Set, D = Date, R = RegExp, TE = TypeError;
     const AB = ArrayBuffer, U8 = Uint8Array, DV = DataView;
     const errors = {Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError};
@@ -45,6 +48,22 @@
     const boxed = {Boolean: Boolean.prototype.valueOf, Number: Number.prototype.valueOf,
         String: String.prototype.valueOf, BigInt: BigInt.prototype.valueOf};
     const call = (fn, self, args = []) => apply(fn, self, args);
+    // A view whose length tracks its resizable buffer's (built without a length) serializes so.
+    // ECMAScript has no getter for that: a view ending at its buffer's end is probed by growing
+    // the buffer by up to 8 bytes and back (at its maximum, it counts as tracking).
+    const abResize = AB.prototype.resize, typedByteLength = getter(typedProto, 'byteLength');
+    function tracksLength(view, buffer, offset, viewBytes) {
+        if (!call(abResizable, buffer)) return false;
+        const length = call(abLength, buffer), before = call(viewBytes, view);
+        const room = call(abMax, buffer) - length;
+        if (length - offset - before >= 8 || length - offset - before < 0) return false;
+        if (room <= 0) return true;
+        call(abResize, buffer, [length + (room < 8 ? room : 8)]);
+        const grew = call(viewBytes, view) !== before;
+        call(abResize, buffer, [length]);
+        return grew;
+    }
+
     const put = (object, key, value) => define(object, key,
         {value, enumerable:true, writable:true, configurable:true});
     const hide = (object, key, value) => define(object, key, {value, writable:true, configurable:true});
@@ -59,11 +78,18 @@
     // `keep` (worker_wire.js) lists MessagePorts and streams, already
     // validated, that stay themselves in the copy: the cross-VM format
     // transfers them afterwards. `streams` (internal callers) receives the
-    // transferred streams' new streams, `canvases` the transferred
-    // ImageBitmaps' and OffscreenCanvases' copies.
-    function clone(value, options, ports, keep, streams, canvases) {
+    // transferred streams' new streams, `resources` the transferred
+    // canvas objects' and AudioData frames' copies.
+    // A VideoFrame's copy (`new VideoFrame(frame)` shares the frame's resource); DataCloneError
+    // for a closed frame.
+    function videoFrameCopy(frame) {
+        const VF = globalThis.VideoFrame;
+        if (typeof VF !== 'function') fail('Object type is not supported');
+        try { return new VF(frame); } catch (_) { fail('A VideoFrame is closed and could not be cloned'); }
+    }
+    function clone(value, options, ports, keep, streams, resources, forStorage = false, clusterBound) {
         const memory = new M(), buffers = [], moved = [];
-        let piped, detached;
+        let piped, detached, audio, deferred, closing;
         if (keep) for (let i = 0; i < keep.length; ++i) call(mapSet, memory, [keep[i], keep[i]]);
         if (options != null) {
             if (typeof options !== 'object' && typeof options !== 'function')
@@ -80,6 +106,16 @@
                 }
                 // Nothing is detached unless the whole value clones.
                 const listed = new M();
+                // HTML checks that no listed object is detached only once the value is serialized:
+                // a getter's exception comes first. A DataCloneError of an already detached entry
+                // waits until then.
+                const later = (f) => {
+                    try { return f(); } catch (e) {
+                        if (!e || e.name !== 'DataCloneError') throw e;
+                        if (!deferred) deferred = e;
+                        return null;
+                    }
+                };
                 for (let i = 0; i < list.length; ++i) {
                     const entry = list[i];
                     if (call(mapHas, listed, [entry])) fail('An object is listed twice in the transfer list');
@@ -87,17 +123,43 @@
                     let length = -1;
                     try { length = call(abLength, entry); } catch (_) {}
                     if (length >= 0) {
-                        try { new U8(entry); } catch (_) { fail('An ArrayBuffer is detached and could not be transferred'); }
+                        let live = true;
+                        try { new U8(entry); } catch (_) { live = false; }
+                        if (!live) {
+                            later(() => fail('An ArrayBuffer is detached and could not be transferred'));
+                            continue;
+                        }
                         if (!abTransfer) fail('ArrayBuffer transfer is not available', true);
                         put(buffers, buffers.length, entry);
                         continue;
                     }
                     const ordinary = guard(entry);
-                    const port = ordinary ? undefined : host(entry, 1);
+                    const port = ordinary ? undefined : later(() => host(entry, 1));
+                    if (port === null) continue;
                     if (port === undefined) {
+                        if (!ordinary) {
+                            const frame = host(entry, 12, clusterBound);
+                            if (frame === undefined) fail('Value is not transferable');
+                            call(mapSet, memory, [entry, frame]);
+                            if (!audio) audio = [];
+                            put(audio, audio.length, entry);
+                            put(audio, audio.length, frame);
+                            continue;
+                        }
+                        // A VideoFrame (video_frame.js): a frame sharing its resource, the
+                        // original closed once the whole value cloned.
+                        if (call(objectTag, entry) === '[object VideoFrame]') {
+                            const frame = later(() => videoFrameCopy(entry));
+                            if (frame === null) continue;
+                            call(mapSet, memory, [entry, frame]);
+                            if (!closing) closing = [];
+                            put(closing, closing.length, entry);
+                            continue;
+                        }
                         // An ImageBitmap or OffscreenCanvas: its copy, the
                         // original detached once the whole value cloned.
-                        const canvas = ordinary ? host(entry, 8) : undefined;
+                        const canvas = later(() => host(entry, 8));
+                        if (canvas === null) continue;
                         if (canvas !== undefined) {
                             call(mapSet, memory, [entry, canvas]);
                             if (!detached) detached = [];
@@ -107,7 +169,7 @@
                         }
                         // A stream: its new stream, over new ports that the
                         // original is piped into once the whole value cloned.
-                        const stream = ordinary ? host(entry, 5) : undefined;
+                        const stream = host(entry, 5);
                         if (stream === undefined) fail('Value is not transferable');
                         call(mapSet, memory, [entry, stream[0]]);
                         if (!piped) piped = [];
@@ -129,7 +191,7 @@
             if (source === null || type !== 'object') return source;
             if (call(mapHas, memory, [source])) return call(mapGet, memory, [source]);
             if (!guard(source)) {
-                const copy = host(source, 0);
+                const copy = host(source, 0, forStorage, clusterBound);
                 if (copy === undefined) fail('Proxy and host objects are not cloneable');
                 return remember(source, copy);
             }
@@ -143,14 +205,19 @@
                 const name = call(typedName, source);
                 if (name !== undefined) {
                     try { call(typedValues, source); } catch (_) { fail('Invalid typed array'); }
-                    const buffer = copy(call(typedBuffer, source), depth + 1);
-                    result = new typed[name](buffer, call(typedOffset, source), call(typedLength, source));
+                    const original = call(typedBuffer, source), offset = call(typedOffset, source);
+                    const length = call(typedLength, source);
+                    // Before the buffer is copied (or transferred and detached).
+                    const tracking = tracksLength(source, original, offset, typedByteLength);
+                    const buffer = copy(original, depth + 1);
+                    result = tracking ? new typed[name](buffer, offset) : new typed[name](buffer, offset, length);
                 } else {
                     let buffer, offset, length;
                     try {
                         buffer = call(dvBuffer, source); offset = call(dvOffset, source); length = call(dvLength, source);
                     } catch (_) { fail('Invalid DataView'); }
-                    result = new DV(copy(buffer, depth + 1), offset, length);
+                    const tracking = tracksLength(source, buffer, offset, dvLength);
+                    result = tracking ? new DV(copy(buffer, depth + 1), offset) : new DV(copy(buffer, depth + 1), offset, length);
                 }
                 return remember(source, result);
             } else {
@@ -165,6 +232,10 @@
                         fail('Custom object tags are not supported', true);
                 }
                 const kind = call(objectTag, source);
+                // Modules and shared buffers cannot be serialized for storage.
+                // Apply this at the point of traversal, before any general clone support.
+                if (forStorage && (kind === '[object WebAssembly.Module]' || kind === '[object SharedArrayBuffer]'))
+                    fail('Object cannot be serialized for storage');
                 if (kind === '[object Date]') return remember(source, new D(call(dateTime, source)));
                 if (kind === '[object RegExp]') {
                     let text = '';
@@ -187,6 +258,21 @@
                     try { name = call(domName, source); message = call(domMessage, source); }
                     catch (_) { fail('Object type is not supported'); }
                     return errorParts(source, remember(source, new DOMExceptionC(message, name)));
+                }
+                // A QuotaExceededError (a DOMException subclass) is serializable with its message,
+                // quota and requested (HTML; WPT structuredclone_0).
+                if (kind === '[object QuotaExceededError]') {
+                    const QEE = globalThis.QuotaExceededError;
+                    let message, quota, requested;
+                    try {
+                        message = call(domMessage, source);
+                        quota = call(descriptor(QEE.prototype, 'quota').get, source);
+                        requested = call(descriptor(QEE.prototype, 'requested').get, source);
+                    } catch (_) { fail('Object type is not supported'); }
+                    const options = {};
+                    if (quota !== null) options.quota = quota;
+                    if (requested !== null) options.requested = requested;
+                    return errorParts(source, remember(source, new QEE(message, options)));
                 }
                 if (kind === '[object ArrayBuffer]') {
                     let length, view;
@@ -217,18 +303,32 @@
                     }
                     return result;
                 }
+                if (kind === '[object DOMPoint]' || kind === '[object DOMPointReadOnly]' ||
+                    kind === '[object DOMRect]' || kind === '[object DOMRectReadOnly]' ||
+                    kind === '[object DOMMatrix]' || kind === '[object DOMMatrixReadOnly]' || kind === '[object DOMQuad]') {
+                    const parts = host(source, 10);
+                    if (!parts) fail('Object type is not supported');
+                    // Quad points participate in the outer graph's identity map.
+                    const slots = parts[0] === 'DOMQuad' ? copy(parts[1], depth + 1) : parts[1];
+                    return remember(source, host(parts[0], 11, slots));
+                }
+                // A VideoFrame is serializable (not for storage): a frame sharing its resource.
+                if (kind === '[object VideoFrame]') {
+                    if (forStorage) fail('Object cannot be serialized for storage');
+                    return remember(source, videoFrameCopy(source));
+                }
                 if (kind === '[object ImageData]') {
                     // Serializable: width, height, color space and a copy of the pixels, read
                     // through the interface's own getters (the realm's ImageData).
                     const IDC = globalThis.ImageData, P = IDC && IDC.prototype;
-                    let width, height, data, colorSpace;
+                    let width, height, data, colorSpace, pixelFormat;
                     try {
                         const get = (k) => call(descriptor(P, k).get, source);
-                        width = get('width'); height = get('height'); data = get('data'); colorSpace = get('colorSpace');
+                        width = get('width'); height = get('height'); data = get('data'); colorSpace = get('colorSpace'); pixelFormat = get('pixelFormat');
                     } catch (_) { fail('Object type is not supported'); }
                     bytes += data.length;
                     if (bytes > 64 * 1024 * 1024) fail('Clone buffer limit exceeded', true);
-                    return remember(source, new IDC(copy(data, depth + 1), width, height, {colorSpace}));
+                    return remember(source, new IDC(copy(data, depth + 1), width, height, {colorSpace, pixelFormat}));
                 }
                 const name = call(stringSlice, kind, [8, -1]);
                 if (descriptor(boxed, name)) return remember(source, O(call(boxed[name], source)));
@@ -248,6 +348,21 @@
             return result;
         }
         const result = copy(value, 0);
+        if (deferred) throw deferred;
+        // A getter may have detached a listed buffer, ImageBitmap or OffscreenCanvas meanwhile.
+        for (let i = 0; i < buffers.length; ++i) {
+            try { new U8(buffers[i]); } catch (_) { fail('An ArrayBuffer is detached and could not be transferred'); }
+        }
+        if (detached) for (let i = 0; i < detached.length; i += 2) {
+            if (!host(detached[i], 17)) fail('The object is detached and could not be transferred');
+        }
+        // Transferred VideoFrames are closed: their copies hold the resource.
+        if (closing) for (let i = 0; i < closing.length; ++i) {
+            const close = globalThis.VideoFrame && globalThis.VideoFrame.prototype.close;
+            if (close) call(close, closing[i]);
+        }
+        // A getter can close a listed frame during serialization.
+        if (audio) for (let i = 0; i < audio.length; i += 2) host(audio[i], 13);
         for (let i = 0; i < buffers.length; ++i) call(abTransfer, buffers[i]);
         for (let i = 0; i < moved.length; i += 2) {
             host(moved[i], 2, moved[i + 1]);
@@ -259,7 +374,11 @@
         }
         if (detached) for (let i = 0; i < detached.length; i += 2) {
             host(detached[i], 9);
-            if (canvases) put(canvases, canvases.length, detached[i + 1]);
+            if (resources) put(resources, resources.length, detached[i + 1]);
+        }
+        if (audio) for (let i = 0; i < audio.length; i += 2) {
+            host(audio[i], 14);
+            if (resources) put(resources, resources.length, audio[i + 1]);
         }
         return result;
     }

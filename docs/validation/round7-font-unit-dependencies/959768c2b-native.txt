@@ -1,0 +1,6 @@
+running 2 tests
+test css_declarations::registered_font_inputs_select_inherited_metrics_only_for_used_references ... ok
+test css_declarations::registered_numeric_font_units_follow_the_computing_element ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 536 filtered out; finished in 0.07s
+

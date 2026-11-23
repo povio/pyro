@@ -429,8 +429,35 @@ fn navigator_storage_reports_usage_and_no_persistence() {
     );
     assert_eq!(
         out,
-        "true|true|quota,usage,usageDetails|8|true|false|false|TypeError|TypeError|estimate,persisted,persist|0"
+        "true|true|quota,usage,usageDetails|8|true|false|false|TypeError|TypeError|estimate,persisted,getDirectory,persist|0"
     );
+}
+
+#[test]
+fn dedicated_worker_file_system_interfaces_are_own_data_properties() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    let script = r#"
+        const names = ['FileSystemHandle', 'FileSystemDirectoryHandle', 'FileSystemFileHandle',
+                       'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle'];
+        const valid = names.every(name => {
+            const d = Object.getOwnPropertyDescriptor(self, name);
+            return d && !('get' in d) && !('set' in d) && d.writable && !d.enumerable && d.configurable &&
+                typeof d.value === 'function' && d.value === self[name] &&
+                !Object.hasOwn(WorkerGlobalScope.prototype, name) &&
+                !Object.hasOwn(DedicatedWorkerGlobalScope.prototype, name);
+        });
+        self.FileSystemHandle = 42;
+        postMessage([valid, self.FileSystemHandle === 42,
+                     delete self.FileSystemHandle, !('FileSystemHandle' in self)].join());
+    "#;
+    env.eval(&format!(
+        "globalThis.answer = ''; const worker = new Worker(URL.createObjectURL(new Blob([{}], {{type:'text/javascript'}})));
+         worker.onmessage = e => answer = e.data; worker.onerror = e => answer = e.message;",
+        serde_json_string(script)
+    ));
+    env.until("answer.length > 0");
+    assert_eq!(env.eval("answer"), "true,true,true,true");
 }
 
 #[test]
@@ -481,4 +508,28 @@ fn serde_json_string(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[test]
+fn file_stream_writes_observe_queued_bytes_and_abort_preserves_the_file() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert_eq!(run(&env, r#"
+        const root = await navigator.storage.getDirectory();
+        const entry = await root.getFileHandle('sequence.bin', {create:true});
+        const bytes = async () => Array.from(new Uint8Array(await (await entry.getFile()).arrayBuffer())).join(',');
+        const stream = await entry.createWritable();
+        const writer = stream.getWriter(), view = Uint8Array.of(2);
+        const first = writer.write(new Blob([Uint8Array.of(1)]));
+        const second = writer.write(view);
+        view[0] = 9;
+        await Promise.all([first, second]);
+        const beforeClose = await bytes();
+        await writer.close();
+        const discard = await entry.createWritable({keepExistingData:true});
+        await discard.write(Uint8Array.of(7));
+        await discard.abort();
+        const final = await bytes();
+        return [beforeClose, final, await root.isSameEntry(await navigator.storage.getDirectory())].join('|');
+    "#), "|1,9|true");
 }

@@ -1,0 +1,19 @@
+running 15 tests
+test popover_dialog_js::attribute_close_runs_nested_changes_before_returning_to_script ... ok
+test popover_dialog_js::auto_popover_stack_and_nesting ... ok
+test popover_dialog_js::details_toggle_events_and_exclusive_accordion ... ok
+test popover_dialog_js::popovertarget_buttons ... ok
+test popover_dialog_js::popover_events_are_sync_beforetoggle_and_coalesced_toggle ... ok
+test popover_dialog_js::toggle_and_command_event_interfaces ... ok
+test popover_dialog_js::dialog_show_hides_popovers_that_do_not_contain_it ... ok
+test popover_dialog_js::removing_open_from_a_modal_dialog_unblocks_the_document ... ok
+test popover_dialog_js::details_summary_keyboard_activation_and_cancellation ... ok
+test popover_dialog_js::command_invokers ... ok
+test popover_dialog_js::dialog_close_requests_and_closed_by ... ok
+test popover_dialog_js::dialog_focusing_steps_and_method_dialog ... ok
+test popover_dialog_js::modal_dialog_makes_the_rest_inert_and_is_hit_first ... ok
+test popover_dialog_js::popover_light_dismiss_and_escape ... ok
+test popover_dialog_js::hiding_popovers_until_an_endpoint_ends_whatever_focus_handlers_do ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 644 filtered out; finished in 0.08s
+

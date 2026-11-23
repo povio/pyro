@@ -1,0 +1,50 @@
+{
+  "idlA": [
+    "",
+    "targetA",
+    [
+      "A"
+    ]
+  ],
+  "attrB": [
+    "targetB",
+    "targetB",
+    [
+      "B"
+    ]
+  ],
+  "emptyAfterB": [
+    "",
+    null,
+    []
+  ],
+  "removedAfterB": [
+    null,
+    null,
+    []
+  ],
+  "sameEmptyAfterIDL": [
+    "",
+    null,
+    []
+  ],
+  "otherNamespace": [
+    "",
+    "targetA",
+    [
+      "A"
+    ]
+  ],
+  "otherNamespaceRemoved": [
+    "",
+    "targetA",
+    [
+      "A"
+    ]
+  ],
+  "removedIDL": [
+    null,
+    null,
+    []
+  ]
+}

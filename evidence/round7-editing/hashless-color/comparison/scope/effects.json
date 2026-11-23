@@ -1,0 +1,452 @@
+[
+  {
+    "fixture": {
+      "css": false,
+      "shape": "backColor",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "backColor",
+      "value": "  123  "
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "backColor",
+      "value": "0af"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "hiliteColor",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "hiliteColor",
+      "value": "  123  "
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "hiliteColor",
+      "value": "0af"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "spanning",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 15, 255)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 15, 255)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 15, 255)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "spanning",
+      "value": "  123  "
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(17, 34, 51)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 1, 35)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 1, 35)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "spanning",
+      "value": "0af"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 170, 255)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "backColor",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "backColor",
+      "value": "  123  "
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "backColor",
+      "value": "0af"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "hiliteColor",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "hiliteColor",
+      "value": "  123  "
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "hiliteColor",
+      "value": "0af"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 0, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "spanning",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 15, 255)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 15, 255)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 15, 255)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "spanning",
+      "value": "  123  "
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 0, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(17, 34, 51)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 1, 35)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 1, 35)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "spanning",
+      "value": "0af"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 170, 255)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 170, 255)"
+      ]
+    }
+  }
+]

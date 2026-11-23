@@ -1,0 +1,206 @@
+{
+  "pcm": [
+    {
+      "quantum": 128,
+      "actualQuantum": 128,
+      "channels": [
+        {
+          "bad": 0,
+          "worst": 9.93587523367978e-9,
+          "length": 957,
+          "tail": 0.25
+        },
+        {
+          "bad": 0,
+          "worst": 1.987175046735956e-8,
+          "length": 957,
+          "tail": 0.5
+        }
+      ]
+    },
+    {
+      "quantum": 13,
+      "actualQuantum": 13,
+      "channels": [
+        {
+          "bad": 0,
+          "worst": 5.948228576357906e-9,
+          "length": 842,
+          "tail": 0.25
+        },
+        {
+          "bad": 0,
+          "worst": 1.1896457152715811e-8,
+          "length": 842,
+          "tail": 0.5
+        }
+      ]
+    },
+    {
+      "quantum": 441,
+      "actualQuantum": 441,
+      "channels": [
+        {
+          "bad": 0,
+          "worst": 1.0090756674685508e-8,
+          "length": 1270,
+          "tail": 0.25
+        },
+        {
+          "bad": 0,
+          "worst": 2.0181513349371016e-8,
+          "length": 1270,
+          "tail": 0.5
+        }
+      ]
+    },
+    {
+      "quantum": 33001,
+      "actualQuantum": 33001,
+      "channels": [
+        {
+          "bad": 0,
+          "worst": 1.0962992291752016e-8,
+          "length": 33830,
+          "tail": 0.25
+        },
+        {
+          "bad": 0,
+          "worst": 2.1925984583504032e-8,
+          "length": 33830,
+          "tail": 0.5
+        }
+      ]
+    }
+  ],
+  "offlineaudiocontext-rendersizehint.html": {
+    "status": 0,
+    "tests": [
+      [
+        "OfflineAudioContext with no hint hint",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext with \"default\" hint",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext with \"hardware\" hint",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 1",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 13",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 127",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 129",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 256",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 500",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 16383",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 3000, renderSizeHint 18000",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 48000, renderSizeHint 288000",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Honored Exactly]: sampleRate 44100.1, renderSizeHint 264600",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Throws Exception]: sampleRate 48000, renderSizeHint 0",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Throws Exception]: sampleRate 3000, renderSizeHint 18001",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Throws Exception]: sampleRate 48000, renderSizeHint 288001",
+        0,
+        null
+      ],
+      [
+        "OfflineAudioContext [Throws Exception]: sampleRate 48000, renderSizeHint -1",
+        0,
+        null
+      ]
+    ]
+  },
+  "offlineaudiocontext-suspend-rendersizehint.https.html": {
+    "status": 0,
+    "tests": [
+      [
+        "Offline suspend quantizes to custom render quantum size",
+        0,
+        null
+      ]
+    ]
+  },
+  "offlineaudiocontext-close.html": {
+    "status": 0,
+    "tests": [
+      [
+        "close before rendering closes the context",
+        0,
+        null
+      ],
+      [
+        "calling close twice rejects the second call",
+        0,
+        null
+      ],
+      [
+        "close after rendering a chunk closes the context",
+        0,
+        null
+      ],
+      [
+        "close while rendering a large chunk stops the context",
+        0,
+        null
+      ],
+      [
+        "close while suspended rejects current and queued incremental renders",
+        0,
+        null
+      ]
+    ]
+  }
+}

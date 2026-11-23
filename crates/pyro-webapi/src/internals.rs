@@ -16,7 +16,7 @@ use pyro_dom::forms::Validity;
 use pyro_dom::NodeId;
 use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
-use crate::collections::{CollectionKind, NodeHold};
+use crate::collections::NodeHold;
 use crate::file::{File, FileEntry};
 use crate::form_data::FormData;
 use crate::formdata::EntryValue;
@@ -177,7 +177,9 @@ impl JsClass for ElementInternals {
         });
         def.getter("form", |s, d| {
             let el = d.face("form")?;
-            let form = d.page().dom.borrow().face_form(el);
+            let dom = d.page().dom.borrow();
+            let form = dom.face_form(el).and_then(|f| dom.retarget_node(f, dom.root_node(el, false).ok()?));
+            drop(dom);
             node_value(s, d.page(), form)
         });
         def.method("setValidity", 0, |s, d, a| {
@@ -234,7 +236,8 @@ impl JsClass for ElementInternals {
         });
         def.getter("labels", |s, d| {
             let el = d.face("labels")?;
-            Ok(crate::collections::collection(s, d.page(), el, CollectionKind::Labels)?.value())
+            // The custom element's labels: the same live NodeList as `element.labels`.
+            Ok(crate::collections::labels(s, d.page(), el)?.value())
         });
         def.getter("states", |s, d| states(s, d.page(), d.id()));
         aria_accessors!(
@@ -302,7 +305,7 @@ pub(crate) fn attach<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsRes
     };
     // The definition of the element's name in the realm that defined it
     // (`is` customized built-ins are not supported).
-    let Some(disabled) = crate::custom::internals_disabled(page, &custom_name) else {
+    let Some(disabled) = crate::custom::internals_disabled(page, el, &custom_name) else {
         return not_supported("Unable to attach ElementInternals to non-custom elements.");
     };
     if disabled {

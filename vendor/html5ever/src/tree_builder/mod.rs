@@ -88,6 +88,13 @@ pub struct TreeBuilder<Handle, Sink> {
     /// Consumer of tree modifications.
     pub sink: Sink,
 
+    /// Whether a reconstructed formatting element or furthest block is
+    /// removed by the parser sanitizer. Ordinary parsers leave this unset.
+    pub removed_formatting_element: Option<fn(&Sink, &Handle) -> bool>,
+    /// An explicit template end tag finalizes a content patch before its
+    /// template is popped. EOF unwinding does not perform these steps.
+    pub close_patch: Option<fn(&Sink, &Handle)>,
+
     /// Insertion mode.
     mode: Cell<InsertionMode>,
 
@@ -152,6 +159,8 @@ where
     pub fn new(sink: Sink, opts: TreeBuilderOpts) -> TreeBuilder<Handle, Sink> {
         let doc_handle = sink.get_document();
         TreeBuilder {
+            removed_formatting_element: None,
+            close_patch: None,
             opts,
             sink,
             mode: Cell::new(InsertionMode::Initial),
@@ -192,6 +201,8 @@ where
         };
 
         let tb = TreeBuilder {
+            removed_formatting_element: None,
+            close_patch: None,
             opts,
             sink,
             mode: Cell::new(InsertionMode::Initial),
@@ -544,8 +555,10 @@ where
     }
 
     fn end(&self) {
-        for elem in self.open_elems.borrow_mut().drain(..).rev() {
+        let popped: Vec<Handle> = self.open_elems.borrow_mut().drain(..).rev().collect();
+        for elem in popped {
             self.sink.pop(&elem);
+            self.popped_off_stack(&elem);
         }
     }
 
@@ -778,7 +791,7 @@ where
 
             let Some((furthest_block_index, furthest_block)) = maybe_furthest_block else {
                 // 10.
-                self.open_elems.borrow_mut().truncate(fmt_elem_stack_index);
+                self.truncate_open_elems(fmt_elem_stack_index);
                 self.active_formatting.borrow_mut().remove(fmt_elem_index);
                 return;
             };
@@ -792,7 +805,9 @@ where
             // 13.
             let mut node;
             let mut node_index = furthest_block_index;
-            let mut last_node = furthest_block.clone();
+            let removed = |node: &Handle| self.removed_formatting_element.is_some_and(|f| f(&self.sink, node));
+            let mut last_node = (!removed(&furthest_block)).then(|| furthest_block.clone());
+            let mut bookmark_moved = false;
 
             // 13.1.
             let mut inner_counter = 0;
@@ -845,23 +860,31 @@ where
                 node = new_element;
 
                 // 13.8.
-                if self.sink.same_node(&last_node, &furthest_block) {
+                if !bookmark_moved {
+                    bookmark_moved = true;
                     bookmark = Bookmark::InsertAfter(node.clone());
                 }
 
                 // 13.9.
-                self.sink.remove_from_parent(&last_node);
-                self.sink.append(&node, AppendNode(last_node.clone()));
+                let keep = !removed(&node);
+                if let Some(last) = last_node {
+                    self.sink.remove_from_parent(&last);
+                    if keep {
+                        self.sink.append(&node, AppendNode(last));
+                    }
+                }
 
                 // 13.10.
-                last_node = node.clone();
+                last_node = keep.then(|| node.clone());
 
                 // 13.11.
             }
 
             // 14.
-            self.sink.remove_from_parent(&last_node);
-            self.insert_appropriately(AppendNode(last_node.clone()), Some(common_ancestor));
+            if let Some(last_node) = last_node {
+                self.sink.remove_from_parent(&last_node);
+                self.insert_appropriately(AppendNode(last_node), Some(common_ancestor));
+            }
 
             // 15.
             // FIXME: Is there a way to avoid cloning the attributes twice here (once on their own,
@@ -932,7 +955,32 @@ where
             .expect("no current element");
 
         self.sink.pop(&elem);
+        self.popped_off_stack(&elem);
         elem
+    }
+
+    /// The HTML element popped off the stack of open elements steps: an
+    /// `<option>` runs "maybe clone an option into selectedcontent". Every
+    /// way the tree builder takes elements off the stack reports here, so the
+    /// steps run for implicitly closed options and at EOF too
+    /// (servo/html5ever#712).
+    fn popped_off_stack(&self, elem: &Handle) {
+        if self.html_elem_named(elem, local_name!("option")) {
+            self.sink.maybe_clone_an_option_into_selectedcontent(elem);
+        }
+    }
+
+    /// Takes every element above `len` off the stack of open elements, the
+    /// current node first.
+    fn truncate_open_elems(&self, len: usize) {
+        let popped: Vec<Handle> = {
+            let mut open_elems = self.open_elems.borrow_mut();
+            let len = len.min(open_elems.len());
+            open_elems.drain(len..).rev().collect()
+        };
+        for elem in &popped {
+            self.popped_off_stack(elem);
+        }
     }
 
     fn remove_from_stack(&self, elem: &Handle) {
@@ -944,6 +992,7 @@ where
         if let Some(position) = position {
             self.open_elems.borrow_mut().remove(position);
             self.sink.pop(elem);
+            self.popped_off_stack(elem);
         }
     }
 
@@ -1112,6 +1161,13 @@ where
         *elem_name.ns() == ns!(html) && *elem_name.local_name() == name
     }
 
+    // HTML "parsing template contents": the template insertion mode stack
+    // has an entry for each open template and, in a fragment parser, for
+    // a template context element even though it is not on the open stack.
+    fn parsing_template_contents(&self) -> bool {
+        !self.template_modes.borrow().is_empty()
+    }
+
     fn in_html_elem_named(&self, name: LocalName) -> bool {
         self.open_elems
             .borrow()
@@ -1167,7 +1223,10 @@ where
         TagSet: Fn(ExpandedName) -> bool,
     {
         while !self.current_node_in(&tag_set) {
-            self.open_elems.borrow_mut().pop();
+            let popped = self.open_elems.borrow_mut().pop();
+            if let Some(elem) = popped {
+                self.popped_off_stack(&elem);
+            }
         }
     }
 
@@ -1180,9 +1239,11 @@ where
         let mut n = 0;
         loop {
             n += 1;
-            match self.open_elems.borrow_mut().pop() {
+            let popped = self.open_elems.borrow_mut().pop();
+            match popped {
                 None => break,
                 Some(elem) => {
+                    self.popped_off_stack(&elem);
                     if pred(self.sink.elem_name(&elem).expanded()) {
                         break;
                     }
@@ -1385,7 +1446,8 @@ where
         let qname = QualName::new(None, ns, name);
         let form_is_associatable = form_associatable(qname.expanded())
             && self.form_elem.borrow().is_some()
-            && !self.in_html_elem_named(local_name!("template"))
+            && !self.is_fragment()
+            && !self.parsing_template_contents()
             && !(listed(qname.expanded())
                 && attrs
                     .iter()
@@ -1581,7 +1643,7 @@ where
             // mis-nested tags
             self.unexpected(&tag);
         }
-        self.open_elems.borrow_mut().truncate(match_idx);
+        self.truncate_open_elems(match_idx);
     }
 
     fn handle_misnested_a_tags(&self, tag: &Tag) {
@@ -1850,7 +1912,18 @@ where
         }
         self.adjust_foreign_attributes(&mut tag);
         if tag.self_closing {
-            // FIXME(#118): <script /> in SVG
+            // pyro: `<script/>` in SVG acknowledges the flag and acts as its end tag: the element
+            // is pushed, popped and processed (the parser yields it like an HTML script).
+            if current_ns == ns!(svg) && tag.name == local_name!("script") {
+                self.insert_element(
+                    PushFlag::Push,
+                    current_ns,
+                    tag.name,
+                    tag.attrs,
+                    tag.had_duplicate_attributes,
+                );
+                return ProcessResult::Script(self.pop());
+            }
             self.insert_element(
                 PushFlag::NoPush,
                 current_ns,

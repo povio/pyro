@@ -2020,12 +2020,19 @@ fn has_explicit_name(dom: &Dom, id: NodeId) -> bool {
 /// `getIdRefs`), or `None` without the attribute.
 pub(super) fn id_refs(dom: &Dom, doc: NodeId, id: NodeId, name: &str) -> Option<Vec<NodeId>> {
     let refs = attr(dom, id, name)?;
+    let root = dom.root_node(id, false).unwrap_or(doc);
     let mut out = Vec::new();
-    for r in refs.split_ascii_whitespace() {
-        if let Ok(Some(n)) = dom.get_element_by_id(doc, r) {
-            if !out.contains(&n) {
-                out.push(n);
-            }
+    for token in refs.split_ascii_whitespace() {
+        let Some(target) = dom.get_element_by_id(root, token).ok().flatten() else { continue };
+        // The reference target proposal leaves aria-owns outside its scope.
+        let target = if name == "aria-owns" {
+            target
+        } else {
+            let Some(target) = dom.resolve_reference_target(target).ok().flatten() else { continue };
+            target
+        };
+        if !out.contains(&target) {
+            out.push(target);
         }
     }
     Some(out)

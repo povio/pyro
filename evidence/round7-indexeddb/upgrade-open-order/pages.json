@@ -1,0 +1,106 @@
+{
+  "parent": {
+    "IndexedDB/transaction-create_in_versionchange.any.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 0,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.serviceworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 0,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.sharedworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 0,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.worker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 0,
+      "n": 1
+    }
+  },
+  "candidate": {
+    "IndexedDB/transaction-create_in_versionchange.any.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.serviceworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.sharedworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.worker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    }
+  },
+  "repeat": {
+    "IndexedDB/transaction-create_in_versionchange.any.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.serviceworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.sharedworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.worker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    }
+  },
+  "chrome158": {
+    "IndexedDB/transaction-create_in_versionchange.any.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.sharedworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.serviceworker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    },
+    "IndexedDB/transaction-create_in_versionchange.any.worker.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 1,
+      "n": 1
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "again": {
+    "again": 72
+  },
+  "twice": {
+    "eligible": 60,
+    "html": 46,
+    "glyphs": 72,
+    "anchor": 64,
+    "focus": 64,
+    "direction": 72,
+    "text": 72,
+    "value": 72,
+    "mixed": 72,
+    "connected": 66
+  },
+  "after": {
+    "eligible": 60,
+    "html": 46,
+    "glyphs": 72,
+    "anchor": 64,
+    "focus": 64,
+    "direction": 72,
+    "text": 72,
+    "value": 72,
+    "mixed": 72,
+    "connected": 66
+  },
+  "returned": {
+    "returned": 72
+  },
+  "undo": {
+    "undo": 60
+  },
+  "restored": {
+    "direction": 72,
+    "text": 72,
+    "mixed": 62,
+    "html": 28,
+    "glyphs": 48,
+    "anchor": 36,
+    "focus": 36,
+    "value": 54,
+    "connected": 12,
+    "eligible": 32
+  },
+  "redo": {
+    "redo": 60
+  },
+  "redone": {
+    "eligible": 60,
+    "html": 46,
+    "glyphs": 72,
+    "anchor": 57,
+    "focus": 57,
+    "direction": 72,
+    "text": 72,
+    "value": 72,
+    "mixed": 72,
+    "connected": 12
+  }
+}

@@ -30,7 +30,8 @@ pub use self::angle::{AllowUnitlessZeroAngle, Angle, NoCalcAngle};
 pub use self::animation::{
     AnimationComposition, AnimationDirection, AnimationDuration, AnimationFillMode,
     AnimationIterationCount, AnimationName, AnimationPlayState, AnimationRangeEnd,
-    AnimationRangeStart, AnimationTimeline, ScrollAxis, TimelineName, TransitionBehavior,
+    AnimationRangeStart, AnimationTimeline, InterestDelay, ScrollAxis, TimelineName,
+    TransitionBehavior,
     TransitionProperty, ViewTimelineInset, ViewTransitionClass, ViewTransitionName,
 };
 pub use self::background::{
@@ -46,9 +47,9 @@ pub use self::box_::{
     AlignmentBaseline, Appearance, BackfaceVisibility, BaselineShift, BaselineSource, BoxAlign,
     BoxCollapse, BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain,
     ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
-    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
+    Display, DominantBaseline, Float, ImageOrientation, InterpolateSize, Isolation, ReadingFlow, Speak, LineClamp, MarginTrim, Orient, ViewTransitionScope,
     Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
-    PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
+    PositionProperty, Resize, ScrollAxisLock, ScrollBehavior, ScrollInitialTarget, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
     ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,
     TopLayer, TouchAction, Visibility, WillChange, WillChangeBits, WritingModeProperty, Zoom,
 };
@@ -95,6 +96,9 @@ pub use self::outline::OutlineStyle;
 pub use self::page::{PageName, PageOrientation, PageSize, PageSizeOrientation, PaperSize};
 pub use self::param::LinkParameters;
 pub use self::percentage::{NoCalcPercentage, NonNegativePercentage, Percentage};
+
+/// The specified text inflation control.
+pub type TextAdjustment = super::generics::text::GenericTextAdjustment<NonNegativePercentage>;
 pub use self::position::{
     AnchorFunction, AnchorName, AnchorNameIdent, AspectRatio, BoxSizing, FrameSizing, FlexDirection, FlexWrap,
     GridAutoFlow, GridTemplateAreas, Inset, ObjectFit, Position, PositionAnchor,
@@ -190,6 +194,7 @@ pub mod url;
 pub enum AngleOrPercentage {
     Percentage(Percentage),
     Angle(Angle),
+    Calc(Box<calc::CalcNumeric>),
 }
 
 impl AngleOrPercentage {
@@ -201,21 +206,12 @@ impl AngleOrPercentage {
         if let Ok(per) = input.try_parse(|i| Percentage::parse(context, i)) {
             return Ok(AngleOrPercentage::Percentage(per));
         }
-        // pyro: a math function mixing angles and percentages, a percentage being that fraction
-        // of a full turn (the only use of this type is a conic gradient's stops).
-        if let Ok(angle) = input.try_parse(|i| -> Result<Angle, ParseError> {
-            let name = match i.next()? {
-                Token::Function(name) => name.clone(),
-                _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
-            };
-            let function = calc::CalcNode::math_function(context, &name)?;
-            calc::CalcNode::parse_angle_percentage_of_turn(context, i, function)
-                .map(|calc| Angle::new_calc(Box::new(calc)))
-        }) {
-            return Ok(AngleOrPercentage::Angle(angle));
+        if let Ok(angle) = input.try_parse(|i| Angle::parse_internal(context, i, allow_unitless_zero)) {
+            return Ok(Self::Angle(angle));
         }
-
-        Angle::parse_internal(context, input, allow_unitless_zero).map(AngleOrPercentage::Angle)
+        let function = calc::CalcNode::math_function(context, input.expect_function()?)?;
+        calc::CalcNode::parse_angle_percentage_of_turn(context, input, function)
+            .map(|calc| Self::Calc(Box::new(calc)))
     }
 
     /// Allow unitless angles, used for conic-gradients as specified by the spec.

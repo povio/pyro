@@ -197,7 +197,8 @@ export class ElementHandle<T = Node> extends JSHandle<T> {
   selectText(o?: Timeout) { return this.marked((l) => l.selectText(o)); }
   setInputFiles(files: Parameters<Locator['setInputFiles']>[0], o?: Parameters<Locator['setInputFiles']>[1]) { return this.marked((l) => l.setInputFiles(files, o)); }
   dispatchEvent(type: string, init?: Record<string, unknown>) { return this.marked((l) => l.dispatchEvent(type, init)); }
-  scrollIntoViewIfNeeded() { return this._eval((el: Element) => el.scrollIntoView({ block: 'nearest', inline: 'nearest' })); }
+  // A block body: scrollIntoView returns a promise in Pyro, and Playwright's method resolves to undefined.
+  scrollIntoViewIfNeeded() { return this._eval((el: Element) => { el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' }); }); }
   screenshot(o?: Parameters<Locator['screenshot']>[0]) { return this.marked((l) => l.screenshot(o)); }
   isVisible() { return this.marked((l) => l.isVisible()); }
   async isHidden() { return !(await this.isVisible()); }

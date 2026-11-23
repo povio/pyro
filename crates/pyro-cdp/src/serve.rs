@@ -98,6 +98,11 @@ options:
                                         Applies to line breaking and min-content
                                         widths (table columns). Default: off;
                                         env PYRO_HYPHEN_DIGIT_BREAKS=on|off
+  --navigation-rate-limit <on|off>      ignore history updates and navigations past 200
+                                        in 10 seconds, as Chrome does. The Playwright
+                                        drop-in turns it off, as Playwright's Chromium
+                                        runs without it. Default: on;
+                                        env PYRO_NAVIGATION_RATE_LIMIT=on|off
   --text-antialiasing <on|off>          off: screenshots draw text aliased, each pixel
                                         painted fully or not at all, as Chrome draws it
                                         when WPT's runner starts it without font
@@ -270,6 +275,10 @@ pub struct ServeOptions {
     /// Chrome's line break between a hyphen and a digit
     /// (`pyro_render::set_hyphen_digit_breaks`). Off by default.
     pub hyphen_digit_breaks: bool,
+    /// `--navigation-rate-limit` (or `PYRO_NAVIGATION_RATE_LIMIT`): Chrome's
+    /// limit of 200 history updates and navigations in 10 seconds
+    /// (`pyro_browser::set_navigation_rate_limit`). On by default.
+    pub navigation_rate_limit: bool,
     /// `--text-antialiasing` (or `PYRO_TEXT_ANTIALIASING`): off draws the
     /// text of screenshots aliased, as Chrome under WPT's runner
     /// (`pyro_render::set_text_antialiasing`). On by default.
@@ -407,6 +416,10 @@ impl Default for ServeOptions {
                 .ok()
                 .and_then(|v| parse_switch(HYPHEN_DIGIT_BREAKS_ENV, &v).ok())
                 .unwrap_or(false),
+            navigation_rate_limit: std::env::var(NAVIGATION_RATE_LIMIT_ENV)
+                .ok()
+                .and_then(|v| parse_switch(NAVIGATION_RATE_LIMIT_ENV, &v).ok())
+                .unwrap_or(true),
             text_antialiasing: std::env::var(TEXT_ANTIALIASING_ENV)
                 .ok()
                 .and_then(|v| parse_switch(TEXT_ANTIALIASING_ENV, &v).ok())
@@ -422,6 +435,9 @@ impl Default for ServeOptions {
         }
     }
 }
+
+/// Environment equivalent of `--navigation-rate-limit` (`on`/`off`).
+pub const NAVIGATION_RATE_LIMIT_ENV: &str = "PYRO_NAVIGATION_RATE_LIMIT";
 
 /// Environment equivalent of `--hyphen-digit-breaks` (`on`/`off`).
 pub const HYPHEN_DIGIT_BREAKS_ENV: &str = "PYRO_HYPHEN_DIGIT_BREAKS";
@@ -553,6 +569,7 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             "--engine-reuse" => o.engine_reuse = EngineReuse::parse("--engine-reuse", &value()?)?,
             "--render-prewarm" => o.render_prewarm = Some(parse_switch("--render-prewarm", &value()?)?),
             "--hyphen-digit-breaks" => o.hyphen_digit_breaks = parse_switch("--hyphen-digit-breaks", &value()?)?,
+            "--navigation-rate-limit" => o.navigation_rate_limit = parse_switch("--navigation-rate-limit", &value()?)?,
             "--text-antialiasing" => o.text_antialiasing = parse_switch("--text-antialiasing", &value()?)?,
             "--scrollbars" => o.classic_scrollbars = parse_scrollbars("--scrollbars", &value()?)?,
             "--font" => o.fonts.push(PathBuf::from(value()?)),
@@ -645,6 +662,7 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    pyro_browser::set_navigation_rate_limit(options.navigation_rate_limit);
     // Before any renderer exists, in the template process too (it gets the
     // same arguments): every renderer takes the default when it is made.
     #[cfg(feature = "render")]
@@ -1768,6 +1786,17 @@ mod tests {
         assert!(!args(&["--hyphen-digit-breaks", "off"]).unwrap().hyphen_digit_breaks);
         assert!(args(&["--hyphen-digit-breaks", "maybe"]).is_err());
         assert!(args(&["--hyphen-digit-breaks"]).is_err());
+    }
+
+    #[test]
+    fn navigation_rate_limit_flag() {
+        let args = |a: &[&str]| parse_args(&a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+        if std::env::var_os(NAVIGATION_RATE_LIMIT_ENV).is_none() {
+            assert!(args(&[]).unwrap().navigation_rate_limit);
+        }
+        assert!(!args(&["--navigation-rate-limit", "off"]).unwrap().navigation_rate_limit);
+        assert!(args(&["--navigation-rate-limit", "on"]).unwrap().navigation_rate_limit);
+        assert!(args(&["--navigation-rate-limit", "maybe"]).is_err());
     }
 
     #[test]

@@ -24,7 +24,8 @@ fn target_end(text: &str) -> Option<usize> {
         return None;
     }
     let end = text.find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')).unwrap_or(text.len());
-    if text.len() >= 3 && text[..3].eq_ignore_ascii_case("xml") {
+    // Bytes: the first three need not end on a char boundary ("x\u{3c3e}", a UTF-16 "<?x>").
+    if text.as_bytes().get(..3).is_some_and(|p| p.eq_ignore_ascii_case(b"xml")) {
         return None;
     }
     Some(end)
@@ -73,7 +74,7 @@ mod tests {
 
     #[test]
     fn comments() {
-        for text in ["?a$", "?xml", "?XML-stylesheet", "?1st-place", "?-prefix", "?data.v1", "?namespace:tag", "? ", "?", "?\u{665}-star", "?fire-\u{1f525}", "no mark"] {
+        for text in ["?x\u{3c3e}<meta", "?xm\u{e9}", "?a$", "?xml", "?XML-stylesheet", "?1st-place", "?-prefix", "?data.v1", "?namespace:tag", "? ", "?", "?\u{665}-star", "?fire-\u{1f525}", "no mark"] {
             assert_eq!(parse(text), None, "{text}");
         }
     }

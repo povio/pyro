@@ -12,7 +12,7 @@
 //   registration(json, updateFound): a registration's new state
 //   worker(json): a version no registration holds any more became redundant
 //   controller(json, fire): the new controller (controllerchange if fire)
-//   message(versionJson, data, ports, origin), messageError(versionJson, origin)
+//   message(versionJson, nativeMessageEvent)
 // `initial`: {controller, ready, clientId, url} (JSON strings or null).
 (function (native, initial) {
   'use strict';
@@ -23,7 +23,6 @@
   const PromiseC = Promise;
   const EventTargetC = EventTarget;
   const EventC = Event;
-  const MessageEventC = MessageEvent;
   const DOMExceptionC = DOMException;
   const TypeErrorC = TypeError;
   const addListener = EventTargetC.prototype.addEventListener;
@@ -164,6 +163,10 @@
       if (t !== token) throw illegal('ServiceWorkerRegistration');
       super();
       ownTag(this, 'ServiceWorkerRegistration');
+      // Keep both the factory and its result in the receiver's realm. The
+      // same-origin private slot also recognizes receivers from another Window.
+      let cookies;
+      native.registrationCookies.set(this, () => cookies ??= native.cookieManager(r.id, r.scope));
       registrationData.set(this, {
         id: r.id, seq: -1, scope: r.scope, updateViaCache: r.updateViaCache,
         installing: null, waiting: null, active: null, preload: new NavigationPreloadManager(token),
@@ -184,6 +187,11 @@
     get active() {
       return registrationData.get(this).active;
     }
+    get cookies() {
+      const get = native.registrationCookies.get(this);
+      if (!get) throw illegal('ServiceWorkerRegistration.cookies');
+      return get();
+    }
     get navigationPreload() {
       return registrationData.get(this).preload;
     }
@@ -200,6 +208,7 @@
       return PromiseC.resolve([]);
     }
   }
+  defineProperty(ServiceWorkerRegistration.prototype, 'cookies', { enumerable: true });
   tag(ServiceWorkerRegistration, 'ServiceWorkerRegistration');
   handler(ServiceWorkerRegistration, 'updatefound');
 
@@ -213,14 +222,15 @@
     const d = registrationData.get(registration);
     if (r.seq > d.seq) {
       d.seq = r.seq;
-      const before = d.installing;
       d.installing = workerOf(r.installing);
       d.waiting = workerOf(r.waiting);
       d.active = workerOf(r.active);
-      if (updateFound && d.installing !== null && d.installing !== before) {
-        dispatchEvent.call(registration, new EventC('updatefound'));
-      }
       if (r.matches && d.active !== null) resolveReady(registration);
+    }
+    // The job promise can already have applied this snapshot. Its event
+    // is a separate task, delivered after the promise reaction.
+    if (updateFound && d.seq === r.seq && d.installing !== null) {
+      dispatchEvent.call(registration, new EventC('updatefound'));
     }
     return registration;
   }
@@ -243,7 +253,7 @@
     if (messagesEnabled) return;
     messagesEnabled = true;
     const list = queued.splice(0);
-    for (const event of list) dispatchEvent.call(container, event);
+    for (const event of list) native.deliverMessage(container, event);
   }
 
   class ServiceWorkerContainer extends EventTargetC {
@@ -320,7 +330,7 @@
   }
 
   const deliver = (event) => {
-    if (messagesEnabled) dispatchEvent.call(container, event);
+    if (messagesEnabled) native.deliverMessage(container, event);
     else queued.push(event);
   };
 
@@ -341,13 +351,7 @@
       controller = json === null ? null : workerOf(parse(json));
       if (fire) dispatchEvent.call(container, new EventC('controllerchange'));
     },
-    message(json, data, ports, origin) {
-      const event = new MessageEventC('message', { data, origin, ports: ports || [] });
-      defineProperty(event, 'source', { value: workerOf(parse(json)), configurable: true });
-      deliver(event);
-    },
-    messageError(json, origin) {
-      const event = new MessageEventC('messageerror', { origin });
+    message(json, event) {
       defineProperty(event, 'source', { value: workerOf(parse(json)), configurable: true });
       deliver(event);
     },

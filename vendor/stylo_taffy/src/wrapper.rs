@@ -100,6 +100,18 @@ pub struct TaffyStyloStyle<T: Deref<Target = ComputedValues>> {
     pub scrollbar_size_limit: Option<taffy::Size<f32>>,
 }
 
+/// pyro: whether the tracks or lines along a writing mode's inline (`Horizontal`) or block (`Vertical`) axis run
+/// right to left or bottom to top
+#[inline]
+fn axis_runs_reversed(wm: WritingMode, axis: taffy::AbsoluteAxis) -> bool {
+    match (axis, wm.is_vertical()) {
+        (taffy::AbsoluteAxis::Horizontal, false) => !wm.is_bidi_ltr(),
+        (taffy::AbsoluteAxis::Horizontal, true) => !wm.is_inline_tb(),
+        (taffy::AbsoluteAxis::Vertical, false) => false,
+        (taffy::AbsoluteAxis::Vertical, true) => !wm.is_vertical_lr(),
+    }
+}
+
 impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
     /// The display used for contents layout, including button-input fixups.
     #[inline]
@@ -164,6 +176,23 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
         {
             self.style.writing_mode
         }
+    }
+
+    /// pyro: this box's own axis that is its layout parent's `axis` (the other one in an orthogonal flow)
+    #[inline]
+    fn own_axis(&self, axis: taffy::AbsoluteAxis) -> taffy::AbsoluteAxis {
+        if self.style.writing_mode.is_vertical() != self.layout_wm().is_vertical() {
+            axis.other_axis()
+        } else {
+            axis
+        }
+    }
+
+    /// pyro: whether this box's own axis that is its parent's `axis` runs the other way on the screen from the
+    /// parent's (another `direction`, block flow or inline flow)
+    #[inline]
+    fn own_axis_reversed(&self, axis: taffy::AbsoluteAxis) -> bool {
+        axis_runs_reversed(self.layout_wm(), axis) != axis_runs_reversed(self.style.writing_mode, self.own_axis(axis))
     }
 
     #[inline(always)]
@@ -332,7 +361,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     #[inline]
     fn contain(&self) -> taffy::Contain {
         let box_styles = self.style.get_box();
-        convert::contain(box_styles.contain, self.effective_display())
+        convert::contain(box_styles.used_containment(), self.effective_display())
     }
 
     #[inline]
@@ -372,6 +401,19 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
             width: convert::calc_size_auto(&position_styles.min_width),
             height: convert::calc_size_auto(&position_styles.min_height),
         })
+    }
+
+    fn max_size_percentage_basis(&self) -> taffy::Size<Option<bool>> {
+        let position = self.style.get_position();
+        let classify = |max: &stylo::MaxSize| {
+            let stylo::MaxSize::Calculation(size) = max else { return None };
+            match size.prepared_size() {
+                stylo::Size::CalcSizeAny(_) => Some(false),
+                stylo::Size::CalcSizePercentage(_) => Some(true),
+                _ => None,
+            }
+        };
+        self.size(taffy::Size { width: classify(&position.max_width), height: classify(&position.max_height) })
     }
 
     #[inline]
@@ -717,6 +759,17 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
 // BlockItemStyle impl
 #[cfg(feature = "block")]
 impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyle<T> {
+    fn max_size_calculation(&self) -> taffy::Size<Option<(taffy::Dimension, taffy::CalcSizeFunction)>> {
+        if self.flags.contains(StyleFlags::IS_SPLIT_INLINE) {
+            return taffy::Size { width: None, height: None };
+        }
+        let position = self.style.get_position();
+        self.size(taffy::Size {
+            width: convert::max_size_calculation(&position.max_width),
+            height: convert::max_size_calculation(&position.max_height),
+        })
+    }
+
     /// pyro: a block container with a standard `line-clamp` (not `-webkit-line-clamp`, whose
     /// box is a flow root already) establishes an independent formatting context.
     #[inline]
@@ -841,6 +894,23 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxContainerStyle for TaffySt
             1.0
         }
     }
+    /// pyro: Blink reads the baseline of an item with none across a column container's inline axis in a
+    /// writing mode orthogonal to the container's (`DetermineBaselineWritingMode`): `horizontal-tb` in a
+    /// vertical container (block-start at the top, Taffy's left; the synthesized baseline in the middle on a
+    /// central baseline, else at the bottom), `vertical-lr`/`vertical-rl` (`ltr`/`rtl`) in a horizontal one
+    /// (the synthesized baseline at the line-left edge either way; WPT css-flexbox
+    /// `align-items-baseline-column-horz`, `-column-vert`).
+    #[inline]
+    fn inline_baseline_synthesis(&self) -> (f32, bool) {
+        let wm = self.style.writing_mode;
+        if !wm.is_vertical() {
+            (0.0, !wm.is_bidi_ltr())
+        } else if !wm.is_sideways() {
+            (0.5, false)
+        } else {
+            (1.0, false)
+        }
+    }
     #[inline]
     fn flex_direction(&self) -> taffy::FlexDirection {
         convert::flex_direction(self.style.get_position().flex_direction)
@@ -901,6 +971,27 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxItemStyle for TaffyStyloSt
     #[inline]
     fn flex_basis(&self) -> taffy::Dimension {
         convert::flex_basis(&self.style.get_position().flex_basis)
+    }
+
+    fn flex_basis_calculation(&self) -> Option<taffy::CalcSizeFunction> {
+        let stylo::FlexBasis::Size(size) = &self.style.get_position().flex_basis else { return None };
+        match size.prepared_size() {
+            stylo::Size::CalcSizeAuto(calc) | stylo::Size::CalcSizeStretch(calc) |
+            stylo::Size::CalcSizeFitContent(calc) | stylo::Size::CalcSizeMinContent(calc) |
+            stylo::Size::CalcSizeContent(calc) | stylo::Size::CalcSizeMaxContent(calc) => Some(convert::calc_size_function(&calc.0)),
+            _ => None,
+        }
+    }
+
+    /// pyro: the block axis of the item lies along the container's `axis` when it is parallel (block axis) or
+    /// orthogonal (inline axis) to the container; Taffy's y runs from the container's block-start and its x is
+    /// physical (left to right, or top to bottom in a vertical container), whatever the `direction`.
+    #[inline]
+    fn baseline_flow(&self, axis: taffy::AbsoluteAxis) -> Option<bool> {
+        (self.own_axis(axis) == taffy::AbsoluteAxis::Vertical).then(|| match axis {
+            taffy::AbsoluteAxis::Vertical => self.own_axis_reversed(axis),
+            taffy::AbsoluteAxis::Horizontal => axis_runs_reversed(self.style.writing_mode, taffy::AbsoluteAxis::Vertical),
+        })
     }
 
     #[inline]
@@ -1330,6 +1421,11 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
     }
 
     #[inline]
+    fn grid_max_size_keyword(&self) -> taffy::Size<taffy::Dimension> {
+        <Self as taffy::BlockItemStyle>::max_size_keyword(self)
+    }
+
+    #[inline]
     fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
         self.grid_row_placement()
     }
@@ -1345,7 +1441,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
         if matches!(self.style.clone_position(), stylo::Position::Absolute | stylo::Position::Fixed) {
             return false;
         }
-        if self.style.get_box().contain.intersects(Contain::LAYOUT | Contain::PAINT) {
+        if self.style.get_box().used_containment().intersects(Contain::LAYOUT | Contain::PAINT) {
             return false;
         }
         // A size container has layout containment too (css-contain-3 §2)
@@ -1363,25 +1459,13 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
 
     /// pyro: the parent's inline axis is this box's block axis in an orthogonal flow
     fn subgrid_axis(&self, axis: taffy::AbsoluteAxis) -> taffy::AbsoluteAxis {
-        if self.style.writing_mode.is_vertical() != self.layout_wm().is_vertical() {
-            axis.other_axis()
-        } else {
-            axis
-        }
+        self.own_axis(axis)
     }
 
     /// pyro: whether the parent's tracks in `axis` and this subgrid's in the matching axis of its own run
     /// opposite ways on the screen
     fn subgrid_reversed(&self, axis: taffy::AbsoluteAxis) -> bool {
-        // Whether the tracks along a writing mode's inline (`Horizontal`) or block axis run right to left or
-        // bottom to top
-        let reversed = |wm: WritingMode, axis: taffy::AbsoluteAxis| match (axis, wm.is_vertical()) {
-            (taffy::AbsoluteAxis::Horizontal, false) => !wm.is_bidi_ltr(),
-            (taffy::AbsoluteAxis::Horizontal, true) => !wm.is_inline_tb(),
-            (taffy::AbsoluteAxis::Vertical, false) => false,
-            (taffy::AbsoluteAxis::Vertical, true) => !wm.is_vertical_lr(),
-        };
-        reversed(self.layout_wm(), axis) != reversed(self.style.writing_mode, self.subgrid_axis(axis))
+        self.own_axis_reversed(axis)
     }
 
     #[inline]

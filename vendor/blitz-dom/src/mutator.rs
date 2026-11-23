@@ -289,6 +289,7 @@ impl DocumentMutator<'_> {
 
         let changed = text.content != value;
         if changed {
+            let emptiness_flipped = text.content.is_empty() != value.is_empty();
             self.mutations_occurred |= node_is_in_document;
             text.content.clear();
             text.content.push_str(value);
@@ -309,6 +310,10 @@ impl DocumentMutator<'_> {
             if let Some(parent_id) = parent_id {
                 let parent = &mut self.doc.nodes[parent_id];
                 parent.insert_damage(CHILDREN_CHANGED);
+                self.respace_operators(parent_id);
+                if emptiness_flipped {
+                    self.restyle_for_text_emptiness_change(parent_id);
+                }
             }
 
             self.maybe_record_node(parent_id);
@@ -327,6 +332,7 @@ impl DocumentMutator<'_> {
         let parent_id = node.parent;
         match node.text_data_mut() {
             Some(data) => {
+                let emptiness_flipped = data.content.is_empty() && !text.is_empty();
                 data.content += text;
                 self.mutations_occurred |= node_is_in_document;
                 if node_is_in_document {
@@ -337,6 +343,10 @@ impl DocumentMutator<'_> {
                 }
                 if let Some(parent_id) = parent_id {
                     self.doc.nodes[parent_id].insert_damage(CHILDREN_CHANGED);
+                    self.respace_operators(parent_id);
+                    if emptiness_flipped {
+                        self.restyle_for_text_emptiness_change(parent_id);
+                    }
                 }
                 Ok(())
             }
@@ -372,6 +382,25 @@ impl DocumentMutator<'_> {
         }
         let node = &mut self.doc.nodes[node_id];
         if node.data.downcast_element().is_some_and(|el| el.name.local == local_name!("select")) {
+            node.insert_damage(ALL_DAMAGE);
+            node.mark_ancestors_dirty();
+        }
+    }
+
+    /// pyro: a customizable select's picker (`appearance: base-select`) lays its options out
+    /// while it is open (`:open`, from pyro-dom's state tokens): the select's boxes are built
+    /// again when that state flips.
+    fn rebuild_select_for_open_state(&mut self, node_id: NodeId, name: &QualName, value: Option<&str>) {
+        if !is_lp_state(name) {
+            return;
+        }
+        let node = &mut self.doc.nodes[node_id];
+        let Some(el) = node.element_data() else { return };
+        if el.name.local != local_name!("select") {
+            return;
+        }
+        let open = crate::has_invalidation::pyro_state_bits(value).contains(ElementState::OPEN);
+        if el.element_state.contains(ElementState::OPEN) != open {
             node.insert_damage(ALL_DAMAGE);
             node.mark_ancestors_dirty();
         }
@@ -420,6 +449,7 @@ impl DocumentMutator<'_> {
         // `:has()` search visited it.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
+        self.rebuild_select_for_open_state(node_id, &name, Some(value));
         self.rebuild_text_input_for_attribute(node_id, &name);
         let shadow_marker = self.state_write && crate::shadow::is_shadow_marker(&name);
         // pyro: `quotes: auto` follows the language (`layout::counters`).
@@ -550,7 +580,8 @@ impl DocumentMutator<'_> {
             element.id = Some(Atom::from(value))
         }
 
-        if *attr == local_name!("class") {
+        // pyro: the `class` attribute in no namespace only, as for `id`.
+        if *attr == local_name!("class") && name.ns == markup5ever::ns!() {
             element.classes = crate::node::parse_classes(value);
         }
 
@@ -566,7 +597,7 @@ impl DocumentMutator<'_> {
             return;
         }
 
-        if *attr == local_name!("style") {
+        if *attr == local_name!("style") || (engine && &**attr == "inline-declarations") {
             element.flush_style_attribute(&self.doc.guard, &self.doc.url.url_extra_data());
             node.set_restyle_hint(RestyleHint::RESTYLE_STYLE_ATTRIBUTE);
             return;
@@ -639,6 +670,14 @@ impl DocumentMutator<'_> {
         if node_is_in_document {
             self.doc.snapshot_node(node_id, &markup5ever::LocalName::from(field));
             self.restyle_for_attribute_change(node_id, &markup5ever::LocalName::from(field));
+            // pyro: a responsive iframe's content size is its natural size (layout reads it when
+            // it sizes the replaced box): no selector sees the engine's attribute, so the box is
+            // laid out again here (css-sizing-4 `frame-sizing`, WPT css-sizing responsive-iframe).
+            if field == "data-pyro-frame-content-size" {
+                let node = &mut self.doc.nodes[node_id];
+                node.insert_damage(ALL_DAMAGE);
+                node.mark_ancestors_dirty();
+            }
         }
         if field != crate::FRAME_ATTRIBUTE {
             return;
@@ -680,6 +719,7 @@ impl DocumentMutator<'_> {
         // pyro: as in `set_attribute`.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
+        self.rebuild_select_for_open_state(node_id, &name, None);
         self.rebuild_text_input_for_attribute(node_id, &name);
         let shadow_marker = self.state_write && crate::shadow::is_shadow_marker(&name);
         // pyro: `quotes: auto` follows the language (`layout::counters`).
@@ -779,7 +819,7 @@ impl DocumentMutator<'_> {
             element.id = None;
         }
 
-        if name.local == local_name!("class") {
+        if name.local == local_name!("class") && name.ns == markup5ever::ns!() {
             element.classes.clear();
         }
 
@@ -822,7 +862,7 @@ impl DocumentMutator<'_> {
             return;
         }
 
-        if *attr == local_name!("style") {
+        if *attr == local_name!("style") || (engine && &**attr == "inline-declarations") {
             element.flush_style_attribute(&self.doc.guard, &self.doc.url.url_extra_data());
             node.set_restyle_hint(RestyleHint::RESTYLE_STYLE_ATTRIBUTE);
         } else if (tag, attr) == tag_and_attr!("input", "checked") {
@@ -1041,6 +1081,26 @@ impl DocumentMutator<'_> {
                 }
                 node.mark_ancestors_dirty();
             }
+            // pyro: the `view-transition-contain` token (the scope of an element-scoped view
+            // transition until its update callback is done): the element keeps the border-box size
+            // of its last layout, from before the token came, until the token goes
+            // (`LayoutData::view_transition_size`).
+            let contain = |v: &str| v.split_ascii_whitespace().any(|t| t == "view-transition-contain");
+            let was_contained = self.doc.nodes[node_id]
+                .element_data()
+                .and_then(|e| e.attrs.state(&name.local))
+                .is_some_and(contain);
+            let contained = value.is_some_and(contain);
+            if was_contained != contained {
+                // (Physical and unrounded: a fractional size stays what script saw.)
+                let size = contained.then(|| self.doc.physical_unrounded_layout(node_id).size);
+                let node = &mut self.doc.nodes[node_id];
+                node.layout_data_mut().view_transition_size = size;
+                if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+                    data.damage.insert(ALL_DAMAGE);
+                }
+                node.mark_damaged();
+            }
         }
         let Some(parent_id) = self.doc.nodes[node_id].parent else {
             return;
@@ -1127,12 +1187,54 @@ impl DocumentMutator<'_> {
     /// unchanged): they are restyled whenever the parent carries a sibling-dependent flag. The
     /// same conditions inside a `:has()` argument reach their anchors through
     /// `invalidate_relative_selectors_for_ts_state`.
+    /// pyro: an `<mo>`'s spacing follows its text and its position in its row
+    /// (`mathml_operator`): `node_id`'s children or text changed, so its operators, or it when it is
+    /// one, build their presentational hints again.
+    fn respace_operators(&mut self, node_id: NodeId) {
+        if !crate::mathml_operator::affects_spacing(&self.doc.nodes[node_id]) {
+            return;
+        }
+        let node = &self.doc.nodes[node_id];
+        let is_mo = |n: &crate::node::Node| {
+            n.element_data().is_some_and(|e| e.name.ns == markup5ever::ns!(mathml) && e.name.local == local_name!("mo"))
+        };
+        let operators: Vec<NodeId> = if is_mo(node) {
+            vec![node_id]
+        } else {
+            node.children.iter().copied().filter(|c| is_mo(&self.doc.nodes[*c])).collect()
+        };
+        for id in operators {
+            let node = &mut self.doc.nodes[id];
+            if let Some(element) = node.element_data_mut() {
+                element.attrs.forget_presentational_hints();
+            }
+            node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
+        }
+    }
+
+    /// pyro: a text child became empty or stopped being empty. Empty text leaves an element
+    /// `:empty` (`stylo.rs` `is_empty`), so the parent restyles where a `:empty` selector looked at
+    /// it, and so do the `:has()` anchors whose argument tests its `:empty`.
+    fn restyle_for_text_emptiness_change(&mut self, parent_id: NodeId) {
+        let parent = &mut self.doc.nodes[parent_id];
+        if !parent.selector_flags().get().contains(ElementSelectorFlags::HAS_EMPTY_SELECTOR) {
+            return;
+        }
+        if let Some(mut data) = parent.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+            data.hint |= RestyleHint::RESTYLE_SELF;
+        }
+        parent.set_dirty_descendants();
+        parent.mark_ancestors_dirty();
+        self.doc.invalidate_relative_selectors_for_ts_state(parent_id, TSStateForInvalidation::EMPTY);
+    }
+
     fn restyle_for_child_list_change(
         &mut self,
         parent_id: NodeId,
         changed: Range<usize>,
         removed_element: bool,
     ) {
+        self.respace_operators(parent_id);
         // pyro: the scroll markers of the groups around a changed child (`layout::scroll_markers`).
         self.doc.scroll_markers_dirty = true;
         let parent = &self.doc.nodes[parent_id];
@@ -1380,6 +1482,7 @@ impl DocumentMutator<'_> {
         // Any child may hold styled elements: a new element (no style data) may hold a moved
         // one (pyro-dom builds a new wrapper by moving children into it before inserting it).
         let under_display_none = self.is_under_display_none(parent_id);
+        let mut moved_document_sheets = Vec::new();
         for child_id in child_ids.iter().copied() {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
@@ -1443,6 +1546,9 @@ impl DocumentMutator<'_> {
                 let mut moved_styles = Vec::new();
                 self.doc.iter_subtree_mut(child_id, |id, doc| {
                     let node = &doc.nodes[id];
+                    if doc.nodes_to_stylesheet.contains_key(&id) && node.containing_shadow_host_id().is_none() {
+                        moved_document_sheets.push(id);
+                    }
                     if node.data.is_element_with_tag_name(&local_name!("style"))
                         && crate::document::sheet_has_scope_rules(&node.text_content())
                     {
@@ -1452,6 +1558,7 @@ impl DocumentMutator<'_> {
                 self.style_nodes.extend(moved_styles);
             }
         }
+        self.doc.reposition_document_stylesheets(moved_document_sheets);
         // pyro: the `:has()` anchors that can see the new positions,
         // once every child is linked (a sibling inserted with it counts).
         if new_parent_is_in_document {
@@ -1971,6 +2078,7 @@ impl<'doc> DocumentMutator<'doc> {
                 // attribute page content cannot write).
                 policy: self.doc.engine_attr(target_id, crate::document::SHEET_POLICY_ATTRIBUTE).map(str::to_owned),
                 policies: self.doc.sheet_policies.clone(),
+                quirks_mode: self.doc.sheet_quirks_mode(),
             },
         );
 

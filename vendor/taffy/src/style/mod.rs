@@ -73,8 +73,8 @@ impl<T> CheapCloneStr for T where
 /// basis gives.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum CalcSizeFunction {
-    /// `size` times this factor
-    Scale(f32),
+    /// A fraction of the percentage reference length
+    Percentage(f32),
     /// This length, whatever the size
     Length(f32),
     /// A `calc()` whose percentage basis is the size (an opaque handle, as `CompactLength::calc`)
@@ -84,11 +84,11 @@ pub enum CalcSizeFunction {
 impl CalcSizeFunction {
     /// The calculation applied to `size`, never negative.
     #[inline]
-    pub fn apply(self, size: f32, calc_resolver: impl Fn(*const (), f32) -> f32) -> f32 {
+    pub fn apply(self, size: f32, percent_basis: Option<f32>, calc_resolver: impl Fn(*const (), f32, f32) -> f32) -> f32 {
         let value = match self {
-            Self::Scale(factor) => size * factor,
+            Self::Percentage(factor) => percent_basis.unwrap_or_default() * factor,
             Self::Length(length) => length,
-            Self::Calc(calc) => calc_resolver(calc, size),
+            Self::Calc(calc) => calc_resolver(calc, size, percent_basis.unwrap_or_default()),
         };
         value.max(0.0)
     }
@@ -243,6 +243,10 @@ pub trait CoreStyle {
     /// calculation, applied to the automatic minimum size the axis would have with `auto`.
     #[inline(always)]
     fn calc_size_min(&self) -> Size<Option<CalcSizeFunction>> {
+        Size { width: None, height: None }
+    }
+    /// Whether a numeric calculated maximum has a percentage basis (`None` for other maxima).
+    fn max_size_percentage_basis(&self) -> Size<Option<bool>> {
         Size { width: None, height: None }
     }
     /// pyro: the natural aspect ratio of a replaced element whose `aspect-ratio` is `auto` (its
@@ -1229,6 +1233,9 @@ impl<T: CoreStyle> CoreStyle for &'_ T {
     fn max_size(&self) -> Size<LengthPercentageAuto> {
         (*self).max_size()
     }
+    fn max_size_percentage_basis(&self) -> Size<Option<bool>> {
+        (*self).max_size_percentage_basis()
+    }
     #[inline(always)]
     fn aspect_ratio(&self) -> Option<f32> {
         (*self).aspect_ratio()
@@ -1363,6 +1370,10 @@ impl<S: CheapCloneStr> BlockItemStyle for Style<S> {
 
 #[cfg(feature = "block_layout")]
 impl<T: BlockItemStyle> BlockItemStyle for &'_ T {
+    fn max_size_calculation(&self) -> Size<Option<(Dimension, CalcSizeFunction)>> {
+        (*self).max_size_calculation()
+    }
+
     #[inline(always)]
     fn is_table(&self) -> bool {
         (*self).is_table()
@@ -1441,6 +1452,10 @@ impl<T: FlexboxContainerStyle> FlexboxContainerStyle for &'_ T {
         (*self).block_baseline_synthesis()
     }
     #[inline(always)]
+    fn inline_baseline_synthesis(&self) -> (f32, bool) {
+        (*self).inline_baseline_synthesis()
+    }
+    #[inline(always)]
     fn flex_direction(&self) -> FlexDirection {
         (*self).flex_direction()
     }
@@ -1496,6 +1511,14 @@ impl<T: FlexboxItemStyle> FlexboxItemStyle for &'_ T {
     #[inline(always)]
     fn flex_basis(&self) -> Dimension {
         (*self).flex_basis()
+    }
+    #[inline(always)]
+    fn baseline_flow(&self, axis: crate::geometry::AbsoluteAxis) -> Option<bool> {
+        (*self).baseline_flow(axis)
+    }
+    #[inline(always)]
+    fn flex_basis_calculation(&self) -> Option<CalcSizeFunction> {
+        (*self).flex_basis_calculation()
     }
     #[inline(always)]
     fn flex_grow(&self) -> f32 {
@@ -1746,6 +1769,14 @@ impl<S: CheapCloneStr> GridItemStyle for Style<S> {
 
 #[cfg(feature = "grid")]
 impl<T: GridItemStyle> GridItemStyle for &'_ T {
+    #[inline(always)]
+    fn grid_min_size_keyword(&self) -> Size<Dimension> {
+        (*self).grid_min_size_keyword()
+    }
+    #[inline(always)]
+    fn grid_max_size_keyword(&self) -> Size<Dimension> {
+        (*self).grid_max_size_keyword()
+    }
     #[inline(always)]
     fn grid_row(&self) -> Line<GridPlacement<Self::CustomIdent>> {
         (*self).grid_row()

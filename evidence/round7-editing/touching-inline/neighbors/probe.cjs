@@ -1,0 +1,18 @@
+const fs=require('fs'),path=require('path'),net=require('net'),cp=require('child_process'),os=require('os');
+const cache=path.join(os.homedir(),'Library/Caches/lightningpanda'),pw=require(path.join(cache,'round6-reference-158/census/runner/node_modules/playwright-core'));
+(async()=>{const [label,bin]=process.argv.slice(2),s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const port=s.address().port;await new Promise(r=>s.close(r));
+const proc=cp.spawn(bin,['serve','--port',String(port),'--host','127.0.0.1','--log-level','error'],{stdio:'ignore',env:{...process.env,WPT_CHROME_STATE_DIR:fs.mkdtempSync(path.join(os.tmpdir(),'qa-enter-'))}});let b;
+try{const endpoint='http://127.0.0.1:'+port;let version;for(let i=0;i<100;i++){try{version=await(await fetch(endpoint+'/json/version')).json();break}catch{}await new Promise(r=>setTimeout(r,100))}
+b=await pw.chromium.connectOverCDP(endpoint);const p=await b.newPage(),rows=[];
+for(const css of [false,true])for(const reverse of [false,true])for(const repeat of [false,true])for(const cmd of ['bold','italic','strikethrough','subscript','superscript','underline'])for(const shape of ['nested','block','atomic','image','nbsp','hidden','empty','locked-end']){
+ const sep=({image:'<img width=8 height=8>',nbsp:'&nbsp;',hidden:'<span hidden>x</span>',empty:'<i></i>'})[shape]||'';
+ const left=shape==='nested'?'<i>foo</i>':'foo',right=shape==='nested'?'<b>bar</b>':'bar';
+ await p.setContent('<div id=h contenteditable><span'+(shape==='block'?' style="display:block"':shape==='atomic'?' style="display:inline-block"':'')+'>'+left+'</span>'+sep+'<span'+(shape==='locked-end'?' contenteditable=false':'')+'>'+right+'</span></div>');
+ rows.push(await p.evaluate(({css,reverse,repeat,cmd,shape})=>{const h=document.querySelector('#h'),s=getSelection(),l=h.firstChild,r=h.lastChild,lt=l.firstElementChild?.firstChild||l.firstChild,rt=r.firstElementChild?.firstChild||r.firstChild,events=[];h.focus();document.execCommand('styleWithCSS',false,css);
+ s.setBaseAndExtent(reverse?rt:lt,reverse?0:3,reverse?lt:rt,reverse?3:0);h.oninput=e=>events.push(e.inputType);
+ const point=n=>{let p=[];while(n&&n!==h){if(!n.parentNode)return null;p.unshift([...n.parentNode.childNodes].indexOf(n));n=n.parentNode}return n?p:null};
+ const snap=()=>{const w=document.createTreeWalker(h,NodeFilter.SHOW_TEXT),glyphs=[];let t;while(t=w.nextNode()){const st=getComputedStyle(t.parentElement);let lines=new Set(),script='baseline';for(let e=t.parentElement;e&&e!==h;e=e.parentElement){const a=getComputedStyle(e);for(const v of a.textDecorationLine.split(' '))if(v!=='none')lines.add(v);if(script==='baseline'&&['sub','super'].includes(a.verticalAlign))script=a.verticalAlign}for(const ch of t.data)glyphs.push([ch,st.fontWeight,st.fontStyle,[...lines].sort(),script,st.color]);}return {html:h.innerHTML,state:document.queryCommandState(cmd),anchor:[point(s.anchorNode),s.anchorOffset],focus:[point(s.focusNode),s.focusOffset],text:s.toString(),direction:s.direction,connected:[l,r,lt,rt].map(e=>e.isConnected),events:[...events],eligible:document.queryCommandEnabled('undo'),glyphs}};
+ const before=snap(),ok=document.execCommand(cmd),after=snap(),again=repeat?document.execCommand(cmd):null,pretype=snap(),insert=document.execCommand('insertText',false,'Q'),typed=snap(),undo=document.execCommand('undo'),restored=snap();return {css,reverse,repeat,cmd,shape,before,ok,after,again,pretype,insert,typed,undo,restored};
+ },{css,reverse,repeat,cmd,shape}));}
+fs.writeFileSync(path.join(__dirname,'scripts-'+label+'.json'),JSON.stringify({version,rows},null,2));
+}finally{if(b)await b.close();proc.kill()}})().catch(e=>{console.error(e);process.exitCode=1});

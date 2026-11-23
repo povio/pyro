@@ -68,7 +68,7 @@ pub(super) fn overflow_clip_path(frame: &CssBox, style: &style::properties::Comp
     let box_style = style.get_box();
     let (visible_x, visible_y) = (box_style.overflow_x == Overflow::Visible, box_style.overflow_y == Overflow::Visible);
     // Paint containment clips as `overflow: clip` does, on both axes.
-    let contains = box_style.contain.contains(style::values::computed::Contain::PAINT);
+    let contains = box_style.used_containment().contains(style::values::computed::Contain::PAINT);
     let (clip_x, clip_y) = (
         box_style.overflow_x == Overflow::Clip || contains && visible_x,
         box_style.overflow_y == Overflow::Clip || contains && visible_y,
@@ -231,7 +231,7 @@ impl ElementCx<'_, '_> {
             let b = style.get_box();
             b.overflow_x == Overflow::Visible && b.overflow_y == Overflow::Visible
         };
-        let contains_paint = style.get_box().contain.contains(style::values::computed::Contain::PAINT);
+        let contains_paint = style.get_box().used_containment().contains(style::values::computed::Contain::PAINT);
         if let blitz_dom::node::SpecialElementData::TableRoot(table) = &self.element.special_data
             && visible
             && contains_paint
@@ -571,7 +571,18 @@ impl ElementCx<'_, '_> {
             // a clip to the padding box (no layers: the colour blends as a box's does).
             if blur == 0.0 {
                 let mut path = padding_box.clone();
-                if let Some(shape) = &hole_shape {
+                // pyro: shaped corners: the hole is the border box inset by the border and the
+                // spread along its contour, its radii not scaled to fit the hole (Blink). (A
+                // negative spread keeps the padding box's own corners.)
+                let b = self.frame.border_width;
+                let contour = (hole.width() > 0.0 && hole.height() > 0.0 && spread >= 0.0)
+                    .then(|| self.frame.inset_contour(Insets::new(b.x0 + spread, b.y0 + spread, b.x1 + spread, b.y1 + spread)))
+                    .flatten();
+                if let Some(contour) = contour {
+                    let mut hole_path = contour.path();
+                    hole_path.apply_affine(kurbo::Affine::translate(offset));
+                    path.extend(&hole_path);
+                } else if let Some(shape) = &hole_shape {
                     let mut hole_path = shape.border_box_path();
                     hole_path.apply_affine(kurbo::Affine::translate(offset));
                     path.extend(&hole_path);

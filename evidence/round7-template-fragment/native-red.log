@@ -1,0 +1,131 @@
+warning: unused field `repository` in `workspace.package`
+  --> Cargo.toml:31:1
+   |
+31 | repository = "https://github.com/povio/pyro"
+   | ^^^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.repository`
+warning: workspace (manifest) generated 1 warning
+warning: unused import: `CalcNode`
+   --> vendor/stylo/values/computed/mod.rs:934:39
+    |
+934 |                 use specified::calc::{CalcNode, Leaf};
+    |                                       ^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Cached` is never constructed
+    --> vendor/stylo/stylist.rs:3507:5
+     |
+3505 | enum StylistImplicitScopeRoot {
+     |      ------------------------ variant in this enum
+3506 |     Normal(ImplicitScopeRoot),
+3507 |     Cached(usize),
+     |     ^^^^^^
+     |
+     = note: `StylistImplicitScopeRoot` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused logical operation that must be used
+    --> vendor/stylo/properties/cascade.rs:2330:17
+     |
+2311 |         macro_rules! check_declaration_value_cycle {
+...
+2330 |                 arg_lowlink != usize::MAX || arg_self_ref
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the logical operation produces a value
+...
+2355 |                         for arg in &function.arguments { check_declaration_value_cycle!(arg); }
+     |                                                          ----------------------------------- in this macro invocation
+     |
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+2355 |                         for arg in &function.arguments { let _ = check_declaration_value_cycle!(arg);; }
+     |                                                          +++++++                                    +
+
+warning: `stylo` (lib) generated 3 warnings (run `cargo fix --lib -p stylo` to apply 1 suggestion)
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> crates/pyro-raster/src/lib.rs:204:19
+    |
+204 |         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |                   ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+204 -         self.used.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+204 +         self.used.try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+    |
+
+warning: `pyro-raster` (lib) generated 1 warning (run `cargo fix --lib -p pyro-raster` to apply 1 suggestion)
+   Compiling pyro-dom v0.0.17 (/Users/xban1x/Library/Caches/lightningpanda/round7-interest/build-base/crates/pyro-dom)
+warning: unused import: `style::values::computed::ToComputedValue as _`
+   --> crates/pyro-dom/src/animation.rs:338:9
+    |
+338 |     use style::values::computed::ToComputedValue as _;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `nonce` is never read
+   --> crates/pyro-dom/src/snapshot.rs:452:5
+    |
+450 | struct TreeSink {
+    |        -------- field in this struct
+451 |     /// pyro: as [`HtmlSink::nonce`].
+452 |     nonce: String,
+    |     ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pyro-dom` (lib) generated 2 warnings (run `cargo fix --lib -p pyro-dom` to apply 1 suggestion)
+warning: unnecessary parentheses around closure body
+   --> crates/pyro-dom/tests/render_html.rs:677:49
+    |
+677 | ...   let tag = attrs.iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.t...
+    |                                       ^                                                                        ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+677 -                 let tag = attrs.iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.to_uppercase());
+677 +                 let tag = attrs.iter().find(|a| a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag")).map(|a| a.value.to_uppercase());
+    |
+
+warning: unnecessary parentheses around closure body
+   --> crates/pyro-dom/tests/render_html.rs:727:74
+    |
+727 | ...).unwrap().iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.to_upperc...
+    |                               ^                                                                        ^
+    |
+help: remove these parentheses
+    |
+727 -                     let own = dom.attributes(e).unwrap().iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.to_uppercase());
+727 +                     let own = dom.attributes(e).unwrap().iter().find(|a| a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag")).map(|a| a.value.to_uppercase());
+    |
+
+warning: `pyro-dom` (test "integration") generated 2 warnings (run `cargo fix --test "integration" -p pyro-dom` to apply 2 suggestions)
+    Finished `wptiter` profile [optimized + debuginfo] target(s) in 26.17s
+     Running tests/integration.rs (/Users/xban1x/Library/Caches/lightningpanda/round7-interest/target/wptiter/build/pyro-dom/75466d68b0622067/out/integration-75466d68b0622067)
+
+running 1 test
+test fragment_context::range_patches_its_output_while_editing_and_external_templates_keep_their_contents ... FAILED
+
+failures:
+
+---- fragment_context::range_patches_its_output_while_editing_and_external_templates_keep_their_contents stdout ----
+
+thread 'fragment_context::range_patches_its_output_while_editing_and_external_templates_keep_their_contents' (34746266) panicked at crates/pyro-dom/tests/fragment_context.rs:92:5:
+assertion `left == right` failed
+  left: "<p><?marker name='a'?></p><template for=\"a\">range</template>"
+ right: "<p>range</p>"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    fragment_context::range_patches_its_output_while_editing_and_external_templates_keep_their_contents
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 252 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p pyro-dom --test integration`

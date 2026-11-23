@@ -141,3 +141,21 @@ fn event_source_in_a_worker() {
     env.eval("w.terminate()");
     std::thread::sleep(Duration::from_millis(50));
 }
+
+#[test]
+fn event_source_message_retains_its_response_origin() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(r#"
+        globalThis.result = '';
+        const source = new EventSource('/sse-retry');
+        source.onmessage = event => {
+            source.close();
+            const expected = Origin.from(document.URL);
+            Object.defineProperty(event, 'origin', {value:'unrelated'});
+            result = [event.isTrusted, Origin.from(event).isSameOrigin(expected)].join(',');
+        };
+    "#);
+    env.until("result !== ''");
+    assert_eq!(env.eval("result"), "true,true");
+}

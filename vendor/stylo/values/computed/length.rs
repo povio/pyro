@@ -453,6 +453,8 @@ impl From<NonNegativeLength> for Au {
 pub type NonNegativeLengthPercentageOrNormal =
     GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
 
+/// An inset at a gap decoration endpoint.
+pub type RuleInset = crate::values::generics::length::GenericRuleInset<LengthPercentage>;
 /// A computed `fit-tolerance` value.
 pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
 
@@ -462,8 +464,149 @@ pub type NonNegativeLengthOrNumber = GenericLengthOrNumber<NonNegativeLength, No
 /// A computed value for `min-width`, `min-height`, `width` or `height` property.
 pub type Size = GenericSize<NonNegativeLengthPercentage>;
 
+impl crate::values::animated::Animate for Size {
+    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
+        self.animate_size(other, procedure, false)
+    }
+}
+
+impl Size {
+    /// Returns the sizing basis and calculation used by layout and interpolation.
+    pub fn prepared_size(&self) -> &Self {
+        match self {
+            Self::CalcSizeBasis(value) => value.prepared.as_ref().unwrap(),
+            other => other,
+        }
+    }
+
+    pub(crate) fn compose_size(&self, calculation: &NonNegativeLengthPercentage) -> Self {
+        let (basis, wrap): (_, fn(NonNegativeLengthPercentage) -> Self) = match self {
+            Self::LengthPercentage(value) if value.0.has_percentage() => (value, Self::CalcSizePercentage),
+            Self::CalcSizePercentage(value) => (value, Self::CalcSizePercentage),
+            Self::LengthPercentage(value) | Self::CalcSizeAny(value) => (value, Self::CalcSizeAny),
+            Self::CalcSizeAuto(value) => (value, Self::CalcSizeAuto),
+            Self::CalcSizeStretch(value) => (value, Self::CalcSizeStretch),
+            Self::CalcSizeMinContent(value) => (value, Self::CalcSizeMinContent),
+            Self::CalcSizeContent(value) => (value, Self::CalcSizeContent),
+            Self::CalcSizeMaxContent(value) => (value, Self::CalcSizeMaxContent),
+            Self::CalcSizeFitContent(value) => (value, Self::CalcSizeFitContent),
+            _ => unreachable!(),
+        };
+        wrap(NonNegative(calculation.0.substitute_size(&basis.0)))
+    }
+    pub(crate) fn animate_size(&self, other: &Self, procedure: crate::values::animated::Procedure, allow_keywords: bool) -> Result<Self, ()> {
+        use crate::values::animated::Animate;
+        if matches!(self, Self::CalcSizeBasis(_)) || matches!(other, Self::CalcSizeBasis(_)) {
+            return self.prepared_size().animate_size(other.prepared_size(), procedure, allow_keywords);
+        }
+        let identity = NonNegative(LengthPercentage::size_identity());
+        let calculation = |value: &Self, basis: &Self| -> Option<NonNegativeLengthPercentage> {
+            match (value, basis) {
+                (Self::CalcSizeAuto(value), Self::CalcSizeAuto(_))
+                | (Self::CalcSizeStretch(value), Self::CalcSizeStretch(_))
+                | (Self::CalcSizeMinContent(value), Self::CalcSizeMinContent(_))
+                | (Self::CalcSizeContent(value), Self::CalcSizeContent(_))
+                | (Self::CalcSizeMaxContent(value), Self::CalcSizeMaxContent(_))
+                | (Self::CalcSizeFitContent(value), Self::CalcSizeFitContent(_)) => Some(value.clone()),
+                (Self::Auto, Self::CalcSizeAuto(_))
+                | (Self::Stretch, Self::CalcSizeStretch(_))
+                | (Self::MinContent, Self::CalcSizeMinContent(_))
+                | (Self::MaxContent, Self::CalcSizeMaxContent(_))
+                | (Self::FitContent, Self::CalcSizeFitContent(_)) => Some(identity.clone()),
+                (Self::LengthPercentage(value) | Self::CalcSizeAny(value), _) => Some(value.clone()),
+                _ => None,
+            }
+        };
+        match (self, other) {
+            (Self::CalcSizePercentage(from), Self::CalcSizePercentage(to) | Self::LengthPercentage(to)) |
+            (Self::LengthPercentage(from), Self::CalcSizePercentage(to)) => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
+            (Self::CalcSizeAny(from), Self::CalcSizePercentage(to)) |
+            (Self::CalcSizePercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
+            (Self::Auto, Self::Auto) => Ok(Self::Auto),
+            (Self::CalcSizeAny(from), Self::CalcSizeAny(to) | Self::LengthPercentage(to)) |
+            (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),
+            (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
+            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
+            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) if from.animate(to, procedure).is_ok() => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
+            // pyro: other `anchor-size()` values, or a length at the other end: through a
+            // `calc()` of both, which layout resolves (Chrome interpolates their px).
+            (Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_) | Self::LengthPercentage(_)) |
+            (Self::LengthPercentage(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_)) => {
+                use crate::values::computed::length_percentage::anchor_interpolation as anchor;
+                let from = anchor::size_node(self).ok_or(())?;
+                let to = anchor::size_node(other).ok_or(())?;
+                Ok(Self::AnchorContainingCalcFunction(NonNegative(anchor::mix(from, to, procedure, style_traits::values::specified::AllowedNumericType::NonNegative))))
+            },
+            _ => {
+                let any = matches!(self, Self::CalcSizeAny(_)) || matches!(other, Self::CalcSizeAny(_)) ||
+                    (allow_keywords && (matches!(self, Self::LengthPercentage(_)) || matches!(other, Self::LengthPercentage(_))));
+                for basis in [self, other] {
+                    let wrap: fn(NonNegativeLengthPercentage) -> Self = match basis {
+                        Self::Auto if any => Self::CalcSizeAuto,
+                        Self::Stretch if any => Self::CalcSizeStretch,
+                        Self::MinContent if any => Self::CalcSizeMinContent,
+                        Self::MaxContent if any => Self::CalcSizeMaxContent,
+                        Self::FitContent if any => Self::CalcSizeFitContent,
+                        Self::CalcSizeAuto(_) => Self::CalcSizeAuto,
+                        Self::CalcSizeStretch(_) => Self::CalcSizeStretch,
+                        Self::CalcSizeMinContent(_) => Self::CalcSizeMinContent,
+                        Self::CalcSizeContent(_) => Self::CalcSizeContent,
+                        Self::CalcSizeMaxContent(_) => Self::CalcSizeMaxContent,
+                        Self::CalcSizeFitContent(_) => Self::CalcSizeFitContent,
+                        _ => continue,
+                    };
+                    let basis = wrap(identity.clone());
+                    let from = calculation(self, &basis).ok_or(())?;
+                    let to = calculation(other, &basis).ok_or(())?;
+                    return Ok(wrap(from.animate(&to, procedure)?));
+                }
+                Err(())
+            },
+        }
+    }
+}
+
 /// A computed value for `max-width` or `max-height` property.
 pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
+
+impl crate::values::animated::Animate for MaxSize {
+    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
+        self.animate_size(other, procedure, false)
+    }
+}
+
+impl MaxSize {
+    pub(crate) fn animate_size(&self, other: &Self, procedure: crate::values::animated::Procedure, allow_keywords: bool) -> Result<Self, ()> {
+        use crate::values::animated::Animate;
+        use std::borrow::Cow;
+        fn operand(value: &MaxSize) -> Result<Cow<'_, Size>, ()> {
+            Ok(match value {
+                MaxSize::Calculation(value) => Cow::Borrowed(value.as_ref()),
+                MaxSize::LengthPercentage(value) => Cow::Owned(Size::LengthPercentage(value.clone())),
+                MaxSize::MinContent => Cow::Owned(Size::MinContent),
+                MaxSize::MaxContent => Cow::Owned(Size::MaxContent),
+                MaxSize::FitContent => Cow::Owned(Size::FitContent),
+                MaxSize::Stretch => Cow::Owned(Size::Stretch),
+                _ => return Err(()),
+            })
+        }
+        match (self, other) {
+            (Self::None, Self::None) => Ok(Self::None),
+            (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
+            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
+            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) if from.animate(to, procedure).is_ok() => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
+            // pyro: as `Size::animate_size`.
+            (Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_) | Self::LengthPercentage(_)) |
+            (Self::LengthPercentage(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_)) => {
+                use crate::values::computed::length_percentage::anchor_interpolation as anchor;
+                let from = anchor::max_size_node(self).ok_or(())?;
+                let to = anchor::max_size_node(other).ok_or(())?;
+                Ok(Self::AnchorContainingCalcFunction(NonNegative(anchor::mix(from, to, procedure, style_traits::values::specified::AllowedNumericType::NonNegative))))
+            },
+            _ => Ok(Self::Calculation(Box::new(operand(self)?.animate_size(operand(other)?.as_ref(), procedure, allow_keywords)?))),
+        }
+    }
+}
 
 #[cfg(feature = "gecko")]
 use crate::{
@@ -512,6 +655,7 @@ impl TryTacticAdjustment for MaxSize {
             "Sizes should only change axes"
         );
         match self {
+            Self::Calculation(value) => value.try_tactic_adjustment(old_side, new_side),
             Self::FitContentFunction(lp)
             | Self::LengthPercentage(lp)
             | Self::AnchorContainingCalcFunction(lp) => {
@@ -537,7 +681,10 @@ impl TryTacticAdjustment for Size {
             "Sizes should only change axes"
         );
         match self {
+            Self::CalcSizeBasis(_) => {},
             Self::FitContentFunction(lp)
+            | Self::CalcSizeAny(lp)
+            | Self::CalcSizePercentage(lp)
             | Self::LengthPercentage(lp)
             | Self::AnchorContainingCalcFunction(lp) => {
                 lp.try_tactic_adjustment(old_side, new_side);
@@ -550,8 +697,10 @@ impl TryTacticAdjustment for Size {
             | Self::WebkitFillAvailable
             | Self::Stretch
             | Self::CalcSizeAuto(_)
+            | Self::CalcSizeStretch(_)
             | Self::CalcSizeFitContent(_)
             | Self::CalcSizeMinContent(_)
+            | Self::CalcSizeContent(_)
             | Self::CalcSizeMaxContent(_) => {},
             #[cfg(feature = "gecko")]
             Self::MozAvailable => {},

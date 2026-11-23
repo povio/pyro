@@ -1,0 +1,30 @@
+rounded-main-candidate 8082 page passes 5607 named passes 180220 observed names 194541 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+rounded-main-parent 8082 page passes 5597 named passes 180072 observed names 194541 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+rounded-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+rounded-main-parent pages left only 10 right only 0
+rounded-main-parent passes left only 148 right only 0
+rounded-main-parent observed left only 0 right only 0
+rounded-main-stable pages left only 272 right only 1615
+rounded-main-stable passes left only 5802 right only 8545
+rounded-main-stable observed left only 309 right only 680
+Losses vs parent by URL: Counter()
+rounded-focus-candidate 63 page passes 59 named passes 7274 observed names 7288 statuses {'complete:0': 63}
+rounded-focus-parent 63 page passes 49 named passes 7126 observed names 7288 statuses {'complete:0': 63}
+rounded-focus-stable 63 page passes 56 named passes 7249 observed names 7288 statuses {'complete:0': 63}
+rounded-focus-parent pages left only 10 right only 0
+rounded-focus-parent passes left only 148 right only 0
+rounded-focus-parent observed left only 0 right only 0
+rounded-focus-stable pages left only 7 right only 4
+rounded-focus-stable passes left only 39 right only 14
+rounded-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+rounded-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+rounded-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+rounded-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+rounded-supplement-parent pages left only 0 right only 0
+rounded-supplement-parent passes left only 0 right only 0
+rounded-supplement-parent observed left only 0 right only 0
+rounded-supplement-stable pages left only 0 right only 8
+rounded-supplement-stable passes left only 0 right only 42
+rounded-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

@@ -1,0 +1,22 @@
+{
+  "named": 24,
+  "parent": 21,
+  "candidate": 24,
+  "chrome": 24,
+  "changes": [
+    [
+      "css/cssom-view/scrollIntoView-scrollPadding.html",
+      "scrollIntoView({block: \"center\", inline: \"center\"})"
+    ],
+    [
+      "css/cssom-view/scrollIntoView-scrollPadding.html",
+      "scrollIntoView({block: \"start\", inline: \"start\"})"
+    ],
+    [
+      "css/cssom-view/scrollIntoView-scrollPadding.html",
+      "scrollIntoView({block: \"end\", inline: \"end\"})"
+    ]
+  ],
+  "integration": "0e6341d8b4404ce168c4ad3544960ec04b2fb436",
+  "layoutBlob": "8f6b27ecc32cac1ceffe464835674d918ab67aff"
+}

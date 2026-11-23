@@ -25,7 +25,8 @@ use crate::stylist::Stylist;
 use crate::substitution;
 use crate::substitution::AttrTaint;
 use crate::values::{AtomString, DashedIdent, computed};
-use crate::values::specified::position::PositionTryFallbacksItem;
+use crate::values::computed::ToComputedValue;
+use super::anchored::AnchoredQuery;
 use crate::{error_reporting::ContextualParseError, parser::Parse, parser::ParserContext};
 use cssparser::{
     Parser, SourceLocation, SourcePosition, Token, match_ignore_ascii_case, parse_important,
@@ -53,6 +54,8 @@ enum AllowOr {
 
 #[derive(Clone, Debug, PartialEq, ToShmem)]
 enum StyleFeatureValue {
+    /// A registered inline style-query operand parsed in its declaration’s early random scope.
+    Typed(Arc<SpecifiedRegisteredValue>),
     Value(Option<Arc<custom_properties::SpecifiedValue>>),
     Keyword(CSSWideKeyword),
 }
@@ -257,22 +260,19 @@ impl StyleQuery {
     ) -> KleeneValue {
         ctx.builder
             .add_flags(ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY);
-        match *self {
-            StyleQuery::Feature(ref f) => f.matches(ctx, attribute_tracker),
-            StyleQuery::Not(ref c) => !c.matches(ctx, attribute_tracker),
-            StyleQuery::InParens(ref c) => c.matches(ctx, attribute_tracker),
-            StyleQuery::Operation(ref conditions, op) => {
-                debug_assert!(!conditions.is_empty(), "We never create an empty op");
-                match op {
-                    Operator::And => KleeneValue::any_false(conditions.iter(), |c| {
-                        c.matches(ctx, attribute_tracker)
-                    }),
-                    Operator::Or => {
-                        KleeneValue::any(conditions.iter(), |c| c.matches(ctx, attribute_tracker))
-                    },
-                }
-            },
-            StyleQuery::GeneralEnclosed(_) => KleeneValue::Unknown,
+        self.evaluate(&mut |feature| feature.matches(ctx, attribute_tracker))
+    }
+
+    fn evaluate(&self, feature: &mut impl FnMut(&StyleFeature) -> KleeneValue) -> KleeneValue {
+        match self {
+            Self::Feature(f) => feature(f),
+            Self::Not(c) => !c.evaluate(feature),
+            Self::InParens(c) => c.evaluate(feature),
+            Self::Operation(conditions, Operator::And) =>
+                KleeneValue::any_false(conditions.iter(), |c| c.evaluate(feature)),
+            Self::Operation(conditions, Operator::Or) =>
+                KleeneValue::any(conditions.iter(), |c| c.evaluate(feature)),
+            Self::GeneralEnclosed(_) => KleeneValue::Unknown,
         }
     }
 
@@ -382,6 +382,10 @@ impl ToCss for StyleFeaturePlain {
         dest.write_str("--")?;
         crate::values::serialize_atom_identifier(&self.name, dest)?;
         match self.value {
+            StyleFeatureValue::Typed(ref value) => {
+                dest.write_str(": ")?;
+                value.to_css(dest)?;
+            },
             StyleFeatureValue::Keyword(k) => {
                 dest.write_str(": ")?;
                 k.to_css(dest)?;
@@ -408,6 +412,12 @@ impl StyleFeaturePlain {
             input.skip_whitespace();
             if let Ok(keyword) = input.try_parse(|i| CSSWideKeyword::parse(i)) {
                 StyleFeatureValue::Keyword(keyword)
+            } else if let Some(syntax) = context.property_declaration_context.inline_style_syntax(&name).filter(|s| !s.is_universal())
+                && let Ok(value) = input.try_parse(|i| i.parse_until_before(cssparser::Delimiter::Bang,
+                    |i| SpecifiedRegisteredValue::parse_with_context(context, i, syntax)))
+            {
+                let _ = input.try_parse(parse_important);
+                StyleFeatureValue::Typed(Arc::new(value))
             } else {
                 let value = custom_properties::SpecifiedValue::parse(context, input)?;
                 // `!important` is allowed (but ignored) after the value.
@@ -418,6 +428,34 @@ impl StyleFeaturePlain {
             StyleFeatureValue::Value(None)
         };
         Ok(Self { name, value })
+    }
+
+    fn matches_element(&self, context: &substitution::SubstitutionReplacementContext, attr_tainted: &mut bool) -> bool {
+        let ctx = context.computed_context;
+        let registration = context.stylist.get_custom_property_registration(&self.name);
+        let current = context.substitution_functions.get_var(registration, &self.name);
+        *attr_tainted |= current.is_some_and(|v| v.attr_tainted);
+        let initial = context.stylist.get_custom_property_initial_values().get(registration, &self.name);
+        let inherited = ctx.builder.inherited_style.custom_properties().get(registration, &self.name);
+        match &self.value {
+            StyleFeatureValue::Typed(value) => current == Some(&value.as_ref().to_computed_value(ctx)),
+            StyleFeatureValue::Value(None) => current != initial,
+            StyleFeatureValue::Value(Some(value)) => {
+                let query = custom_properties::compute_variable_value(value, registration, ctx, None);
+                query.is_some() && query.as_ref() == current
+            }
+            StyleFeatureValue::Keyword(CSSWideKeyword::Initial) => current == initial,
+            StyleFeatureValue::Keyword(CSSWideKeyword::Inherit) => {
+                *attr_tainted |= inherited.is_some_and(|v| v.attr_tainted);
+                current == inherited
+            }
+            StyleFeatureValue::Keyword(CSSWideKeyword::Unset) if registration.inherits() => {
+                *attr_tainted |= inherited.is_some_and(|v| v.attr_tainted);
+                current == inherited
+            }
+            StyleFeatureValue::Keyword(CSSWideKeyword::Unset) => current == initial,
+            StyleFeatureValue::Keyword(_) => false,
+        }
     }
 
     // Substitute custom-property references in `value`, then re-parse and compute it,
@@ -480,6 +518,7 @@ impl StyleFeaturePlain {
             .inherited_custom_properties()
             .get(registration, &self.name);
         KleeneValue::from(match self.value {
+            StyleFeatureValue::Typed(ref value) => current_value == Some(&value.as_ref().to_computed_value(ctx)),
             StyleFeatureValue::Value(Some(ref v)) => {
                 if ctx.container_info.is_none() {
                     // If no container, custom props are guaranteed-unknown.
@@ -676,8 +715,12 @@ pub enum QueryCondition {
     InParens(Box<QueryCondition>),
     /// A <style> query.
     Style(StyleQuery),
-    /// A fallback query, optionally comparing against none or a descriptor.
-    Anchored(Option<Option<PositionTryFallbacksItem>>),
+    /// pyro: an `anchored()` query on the applied fallback option (CSS Anchor Positioning 2).
+    Anchored(AnchoredQuery),
+    /// pyro: a `scroll-state()` query: its condition, and whether that is a bare
+    /// `<scroll-state-feature>` (`scroll-state(scrollable: top)`), which serializes without
+    /// parentheses.
+    ScrollState(Box<QueryCondition>, bool),
     /// A -moz-pref() query.
     MozPref(MozPrefFeature),
     /// [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]
@@ -713,13 +756,15 @@ impl ToCss for QueryCondition {
                 dest.write_char(')')
             },
             Self::Anchored(ref query) => {
-                dest.write_str("anchored(fallback")?;
-                if let Some(value) = query {
-                    dest.write_str(": ")?;
-                    match value {
-                        Some(item) => item.to_css(dest)?,
-                        None => dest.write_str("none")?,
-                    }
+                dest.write_str("anchored(")?;
+                query.to_css(dest)?;
+                dest.write_char(')')
+            },
+            Self::ScrollState(ref c, bare) => {
+                dest.write_str("scroll-state(")?;
+                match **c {
+                    Self::Feature(ref f) if bare => f.to_css_unparenthesized(dest)?,
+                    ref c => c.to_css(dest)?,
                 }
                 dest.write_char(')')
             },
@@ -770,6 +815,7 @@ impl QueryCondition {
             | Self::GeneralEnclosed(..)
             | Self::Style(..)
             | Self::Anchored(..)
+            | Self::ScrollState(..)
             | Self::MozPref(..) => {},
             Self::Not(ref cond) => cond.visit(visitor),
             Self::Operation(ref conds, _op) => {
@@ -781,6 +827,24 @@ impl QueryCondition {
         }
     }
 
+    /// pyro: whether the condition has an unknown or unsupported part: a `<general-enclosed>`,
+    /// except one with substitution references (`var()`, `attr()`, `env()`), which is parsed
+    /// again once they are substituted at match time (`matches_general`). A container query with
+    /// one selects no query container (CSS Conditional 5 § 7.1).
+    pub fn contains_unknown(&self, context: &ParserContext) -> bool {
+        let mut unknown = false;
+        self.visit(&mut |condition| {
+            if let Self::GeneralEnclosed(ref text, ..) = *condition
+                && !unknown
+            {
+                let references = custom_properties::SpecifiedValue::parse(context, &mut Parser::new(text))
+                    .is_ok_and(|value| value.has_references());
+                unknown = !references;
+            }
+        });
+        unknown
+    }
+
     /// Returns the union of all flags in the expression. This is useful for
     /// container queries.
     pub fn cumulative_flags(&self) -> FeatureFlags {
@@ -788,6 +852,7 @@ impl QueryCondition {
         self.visit(&mut |condition| match condition {
             Self::Style(..) => result.insert(FeatureFlags::STYLE),
             Self::Anchored(..) => result.insert(FeatureFlags::ANCHORED),
+            Self::ScrollState(..) => result.insert(FeatureFlags::SCROLL_STATE),
             Self::Feature(f) => result.insert(f.feature_flags()),
             Self::GeneralEnclosed(_, _, flags) => result.insert(*flags),
             _ => {},
@@ -851,8 +916,10 @@ impl QueryCondition {
             Self::Not(ref c) => !c.matches(context, custom, attribute_tracker),
             Self::Style(ref c) => c.matches(context, attribute_tracker),
             Self::Anchored(ref query) => context.container_info.as_ref().map_or(KleeneValue::Unknown, |info| {
-                query.as_ref().map_or_else(|| info.fallback.is_some(), |value| value == &info.fallback).into()
+                query.matches(info.fallback.as_ref(), info.wm, info.anchored_cb_wm).into()
             }),
+            // pyro: its features read the container's scroll state (`ContainerInfo::scrollable`).
+            Self::ScrollState(ref c, _) => c.matches(context, custom, attribute_tracker),
             Self::MozPref(ref c) => c.matches(context),
             Self::Operation(ref conditions, op) => {
                 debug_assert!(!conditions.is_empty(), "We never create an empty op");
@@ -983,13 +1050,32 @@ impl OperationParser for QueryCondition {
                 match_ignore_ascii_case! { name,
                     "anchored" if feature_type == FeatureType::Container => {
                         if let Some(query) = try_parse_block(context, input, start, start_location, |input| {
-                            input.expect_ident_matching("fallback")?;
-                            if input.is_exhausted() { return Ok(None); }
-                            input.expect_colon()?;
-                            if input.try_parse(|input| input.expect_ident_matching("none")).is_ok() { return Ok(Some(None)); }
-                            PositionTryFallbacksItem::parse(context, input).map(|item| Some(Some(item)))
+                            AnchoredQuery::parse(context, input)
                         }) { return Ok(Self::Anchored(query)); }
                         flags.insert(FeatureFlags::ANCHORED);
+                    },
+                    // pyro: CSS Conditional 5 § 7.3: `scroll-state( <scroll-state-query> )`, a
+                    // condition of scroll-state features or a bare one.
+                    "scroll-state" if feature_type == FeatureType::Container
+                        && crate::pref!("layout.css.scroll-state.enabled") =>
+                    {
+                        let query = try_parse_block(context, input, start, start_location, |input| {
+                            if let Ok(feature) = input.try_parse(|input| {
+                                QueryFeatureExpression::parse_in_parenthesis_block(
+                                    context,
+                                    input,
+                                    FeatureType::ScrollState,
+                                )
+                            }) {
+                                return Ok(Self::ScrollState(Box::new(Self::Feature(feature)), true));
+                            }
+                            let condition = Self::parse(context, input, FeatureType::ScrollState)?;
+                            Ok(Self::ScrollState(Box::new(condition), false))
+                        });
+                        if let Some(query) = query {
+                            return Ok(query);
+                        }
+                        flags.insert(FeatureFlags::SCROLL_STATE);
                     },
                     "style" if StyleQuery::enabled(feature_type) => {
                         let query = try_parse_block(context, input, start, start_location, |input| {
@@ -1028,4 +1114,160 @@ impl OperationParser for QueryCondition {
     fn new_operation(conditions: Box<[Self]>, operator: Operator) -> Self {
         Self::Operation(conditions, operator)
     }
+}
+
+/// A computed-time if() test. Its tokens have already undergone arbitrary substitution.
+pub(crate) enum IfCondition {
+    Else,
+    Not(Box<Self>),
+    Operation(Box<[Self]>, Operator),
+    Style(StyleQuery),
+    Media(QueryCondition),
+    Supports(crate::stylesheets::supports_rule::SupportsCondition),
+    Unknown,
+}
+
+impl IfCondition {
+    pub(crate) fn parse(cx: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if input.try_parse(|i| i.expect_ident_matching("else")).is_ok() {
+            return Ok(Self::Else);
+        }
+        Self::parse_internal(cx, input, FeatureType::Container, AllowOr::Yes)
+    }
+
+    /// Walks only the predicates needed to determine the result. The cascade uses the
+    /// same walk as substitution so untaken boolean arms add no cycle edges.
+    pub(crate) fn evaluate(&self, f: &mut impl FnMut(IfPredicate) -> KleeneValue) -> KleeneValue {
+        match self {
+            Self::Else => KleeneValue::True,
+            Self::Unknown => KleeneValue::Unknown,
+            Self::Not(c) => !c.evaluate(f),
+            Self::Operation(conditions, Operator::And) =>
+                KleeneValue::any_false(conditions.iter(), |c| c.evaluate(f)),
+            Self::Operation(conditions, Operator::Or) =>
+                KleeneValue::any(conditions.iter(), |c| c.evaluate(f)),
+            Self::Style(q) => q.evaluate(&mut |feature| f(IfPredicate::Style(feature))),
+            Self::Media(q) => f(IfPredicate::Media(q)),
+            Self::Supports(q) => f(IfPredicate::Supports(q)),
+        }
+    }
+}
+
+pub(crate) enum IfPredicate<'a> {
+    Style(&'a StyleFeature),
+    Media(&'a QueryCondition),
+    Supports(&'a crate::stylesheets::supports_rule::SupportsCondition),
+}
+
+impl IfPredicate<'_> {
+    pub(crate) fn for_each_property(&self, f: &mut impl FnMut(custom_properties::Name)) {
+        match self {
+            Self::Style(StyleFeature::Plain(p)) => f(p.name.clone()),
+            Self::Style(StyleFeature::Range(r)) => r.for_each_custom_property(f),
+            _ => {},
+        }
+    }
+
+    pub(crate) fn matches(
+        &self,
+        source: &custom_properties::VariableValue,
+        cx: &mut substitution::SubstitutionReplacementContext,
+        attr_tainted: &mut bool,
+    ) -> KleeneValue {
+        match self {
+            Self::Style(feature) => {
+                if let Some(frame) = cx.function_frame.clone() {
+                    return match feature {
+                        StyleFeature::Plain(p) => {
+                            if frame.guarded(&p.name) { return KleeneValue::False; }
+                            let current = frame.query_value(&p.name, cx);
+                            *attr_tainted |= current.as_ref().is_some_and(|(_, taint)| *taint);
+                            let current = current.as_ref().map(|(v, _)| v.css.as_str());
+                            match &p.value {
+                                StyleFeatureValue::Value(None) => current != frame.initial(&p.name).as_ref().map(|(v, _)| v.css.as_str()),
+                                StyleFeatureValue::Value(Some(v)) => current == Some(v.css.as_str()),
+                                StyleFeatureValue::Typed(v) => current == Some(v.as_ref().to_computed_value(cx.computed_context).to_css_string().as_str()),
+                                StyleFeatureValue::Keyword(CSSWideKeyword::Initial) => current == frame.initial(&p.name).as_ref().map(|(v, _)| v.css.as_str()),
+                                StyleFeatureValue::Keyword(CSSWideKeyword::Inherit | CSSWideKeyword::Unset) => {
+                                    let outer = frame.outer(&p.name, cx);
+                                    *attr_tainted |= outer.as_ref().is_some_and(|(_, taint)| *taint);
+                                    current == outer.as_ref().map(|(v, _)| v.css.as_str())
+                                }
+                                StyleFeatureValue::Keyword(_) => false,
+                            }.into()
+                        },
+                        StyleFeature::Range(r) => {
+                            let mut values = cx.substitution_functions.clone();
+                            let mut guarded = false;
+                            r.for_each_custom_property(&mut |name| {
+                                let reg = cx.stylist.get_custom_property_registration(&name);
+                                if frame.guarded(&name) { guarded = true; return; }
+                                if let Some((v, tainted)) = frame.query_value(&name, cx) {
+                                    let mut value = ComputedRegisteredValue::universal(Arc::new(v));
+                                    value.attr_tainted |= tainted;
+                                    values.insert_var(reg, &name, value);
+                                } else { values.remove_var(reg, &name); }
+                            });
+                            if guarded { KleeneValue::False } else {
+                                r.evaluate_with_properties(cx.computed_context, cx.attribute_tracker, &values.custom_properties, attr_tainted)
+                            }
+                        },
+                    };
+                }
+                // Active properties still contain their specified substitutions. Other
+                // properties queried by this predicate have been visited before this call.
+                let mut guarded = false;
+                self.for_each_property(&mut |name| {
+                    let registration = cx.stylist.get_custom_property_registration(&name);
+                    guarded |= cx.seen.contains(&name)
+                        || matches!(cx.property_id, Some(crate::properties::PropertyIdRef::Custom(n)) if *n == name)
+                        || cx.substitution_functions.get_var(registration, &name)
+                            .and_then(|v| v.as_universal()).is_some_and(|v| v.has_references());
+                });
+                if guarded {
+                    return KleeneValue::False;
+                }
+                match feature {
+                    StyleFeature::Plain(p) => p.matches_element(cx, attr_tainted).into(),
+                    StyleFeature::Range(r) => r.evaluate_with_properties(
+                        cx.computed_context, cx.attribute_tracker, &cx.substitution_functions.custom_properties, attr_tainted),
+                }
+            },
+            Self::Media(q) => {
+                #[cfg(feature = "servo")]
+                cx.stylist.device().note_style_media_condition();
+                cx.computed_context.builder.add_flags(ComputedValueFlags::USES_VIEWPORT_UNITS);
+                computed::Context::for_media_query_evaluation(cx.stylist.device(), cx.computed_context.quirks_mode,
+                    |ctx| q.matches(ctx, &mut CustomMediaEvaluator::none(), cx.attribute_tracker))
+            },
+            Self::Supports(q) => cx.parser_context(&source.url_data)
+                .nest_for_rule(CssRuleType::Style, |parser| q.eval(parser)).into(),
+        }
+    }
+}
+
+impl OperationParser for IfCondition {
+    fn parse_in_parens(cx: &ParserContext, input: &mut Parser, feature_type: FeatureType) -> Result<Self, ParseError> {
+        match input.next()?.clone() {
+            Token::ParenthesisBlock => input.parse_nested_block(|i| Self::parse_internal(cx, i, feature_type, AllowOr::Yes)),
+            Token::Function(name) => input.parse_nested_block(|i| {
+                match_ignore_ascii_case! { &name,
+                    "style" => StyleQuery::parse(cx, i, FeatureType::Container).map(Self::Style),
+                    "supports" => crate::stylesheets::supports_rule::parse_condition_or_declaration(i).map(Self::Supports),
+                    "media" => {
+                        if let Ok(f) = i.try_parse(|i| i.parse_entirely(|i| QueryFeatureExpression::parse_in_parenthesis_block(cx, i, FeatureType::Media))) {
+                            Ok(Self::Media(QueryCondition::Feature(f)))
+                        } else {
+                            QueryCondition::parse(cx, i, FeatureType::Media).map(Self::Media)
+                        }
+                    },
+                    _ => { consume_any_value(i)?; Ok(Self::Unknown) }
+                }
+            }),
+            _ => Err(ParseError::unexpected_token()),
+        }
+    }
+
+    fn new_not(inner: Box<Self>) -> Self { Self::Not(inner) }
+    fn new_operation(conditions: Box<[Self]>, operator: Operator) -> Self { Self::Operation(conditions, operator) }
 }

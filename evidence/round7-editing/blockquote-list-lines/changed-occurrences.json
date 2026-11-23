@@ -1,0 +1,146 @@
+[
+  [
+    "editing/run/insertorderedlist.html?1-1000",
+    "[[\"insertorderedlist\",\"\"]] \"<p>foo<blockquote>[bar]</blockquote><p>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<p>foo<blockquote><p>[bar]</blockquote><p>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<p>foo<blockquote><p>[bar]</blockquote><p>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"[foo]<blockquote><ol><li>bar</ol></blockquote>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Fail"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"[foo]<blockquote>bar</blockquote>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"foo<blockquote>[bar]</blockquote>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"]] \"foo<blockquote>[bar]<br>baz</blockquote>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1-1000",
+    "[[\"insertunorderedlist\",\"\"]] \"<p>foo<blockquote>[bar]</blockquote><p>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ol><li>foo</ol><blockquote><p>[bar]</blockquote><p>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<p>foo<blockquote><p>[bar]</blockquote><p>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ol><li>foo</ol><blockquote><p>[bar]</blockquote><p>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<p>foo<blockquote><p>[bar]</blockquote><p>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo</ol><blockquote>[bar]</blockquote>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo</ol><blockquote>[bar]<br>baz</blockquote>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"insertunorderedlist\",\"\"]] \"[foo]<blockquote><ol><li>bar</ol></blockquote>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"insertunorderedlist\",\"\"]] \"[foo]<blockquote>bar</blockquote>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"insertunorderedlist\",\"\"]] \"foo<blockquote>[bar]</blockquote>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"insertunorderedlist\",\"\"]] \"foo<blockquote>[bar]<br>baz</blockquote>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]

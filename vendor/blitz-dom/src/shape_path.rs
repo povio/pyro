@@ -9,6 +9,36 @@ use style::values::generics::position::GenericPosition;
 
 pub type GenericPathCommand<Angle, N> = GenericShapeCommand<Angle, N, GenericPosition<N, N>, N>;
 
+pub fn polygon_path(points: impl Iterator<Item = Point>, radius: f64) -> BezPath {
+    let mut path = BezPath::new();
+    if radius <= 0.0 {
+        for (index, point) in points.enumerate() {
+            if index == 0 { path.move_to(point); } else { path.line_to(point); }
+        }
+    } else {
+        let points: Vec<_> = points.collect();
+        for (index, &vertex) in points.iter().enumerate() {
+            let incoming = vertex - points[(index + points.len() - 1) % points.len()];
+            let outgoing = points[(index + 1) % points.len()] - vertex;
+            let limit = incoming.hypot().min(outgoing.hypot()) * 0.5;
+            let turn = incoming.cross(outgoing).atan2(incoming.dot(outgoing));
+            let tangent = (turn.abs() * 0.5).tan();
+            let distance = (radius * tangent).min(limit);
+            let arc = if distance > 0.0 && incoming.cross(outgoing) != 0.0 {
+                let from = vertex - incoming.normalize() * distance;
+                let to = vertex + outgoing.normalize() * distance;
+                kurbo::Arc::from_svg_arc(&SvgArc { from, to, radii: Vec2::splat(distance / tangent),
+                    x_rotation: 0.0, large_arc: false, sweep: turn > 0.0 }).map(|arc| (from, arc))
+            } else { None };
+            let start = arc.as_ref().map_or(vertex, |(from, _)| *from);
+            if index == 0 { path.move_to(start); } else { path.line_to(start); }
+            if let Some((_, arc)) = arc { path.extend(arc.append_iter(0.01)); }
+        }
+    }
+    path.close_path();
+    path
+}
+
 /// Convert an SVG path() or a shape() to a kurbo BezPath.
 /// The returned path is in the path's own coordinate system (origin at 0,0).
 /// The caller is responsible for translating it to the reference box origin.

@@ -18,6 +18,9 @@ use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
 use crate::util::*;
 
+mod svg_aspect;
+pub(crate) use svg_aspect::animated_aspect;
+
 const COLL_NS: u64 = 1 << 61;
 
 fn coll_identity(page: &PageDom, slot: u64, id: NodeId) -> IdentityKey {
@@ -78,6 +81,8 @@ pub enum NodeListSource {
     Children(NodeHold),
     /// Live controls of the held form with this id or name (`RadioNodeList`).
     FormNamed(NodeHold, String),
+    /// Live elements of the held root's collection kind (`getElementsByName`).
+    Members(NodeHold, CollectionKind),
 }
 
 pub struct NodeListData {
@@ -107,6 +112,7 @@ impl NodeListData {
                 c.1.clone()
             }
             NodeListSource::FormNamed(h, name) => form_candidates(&h.page, dom, h.id, name),
+            NodeListSource::Members(h, kind) => shared_members(&h.page, dom, h.id, kind).to_vec(),
         }
     }
     fn len(&self) -> usize {
@@ -114,6 +120,7 @@ impl NodeListData {
             NodeListSource::Static(v) => v.as_ref().map_or(0, |h| h.ids.len()),
             NodeListSource::Children(h) => h.page.dom.borrow().child_count(h.id).unwrap_or(0) as usize,
             NodeListSource::FormNamed(h, _) => self.items(&h.page.dom.borrow()).len(),
+            NodeListSource::Members(h, kind) => shared_members(&h.page, &h.page.dom.borrow(), h.id, kind).len(),
         }
     }
     /// Member `i` and the page it belongs to (borrowed: an indexed read
@@ -135,6 +142,10 @@ impl NodeListData {
             NodeListSource::FormNamed(h, _) => {
                 let items = self.items(&h.page.dom.borrow());
                 items.get(i).map(|&id| (&h.page, id))
+            }
+            NodeListSource::Members(h, kind) => {
+                let id = *shared_members(&h.page, &h.page.dom.borrow(), h.id, kind).get(i)?;
+                Some((&h.page, id))
             }
         }
     }
@@ -258,6 +269,30 @@ pub fn static_node_list<'s>(s: &Scope<'s>, page: &PageDom, ids: impl Into<Box<[N
     )
 }
 
+/// `document.getElementsByName(name)`: a live `NodeList`.
+pub fn elements_by_name<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, name: String) -> JsResult<Object<'s>> {
+    let page = page_rc(s)?;
+    let data = NodeListData {
+        source: NodeListSource::Members(NodeHold::new(&page, root)?, CollectionKind::Name(name)),
+        cache: RefCell::new((u64::MAX, Vec::new())),
+    };
+    s.wrap::<NodeList>(data, None)
+}
+
+/// A labelable element's `labels`: a live `NodeList`, the same object on each access.
+pub fn labels<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, 10, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    let page = page_rc(s)?;
+    let data = NodeListData {
+        source: NodeListSource::Members(NodeHold::new(&page, id)?, CollectionKind::Labels),
+        cache: RefCell::new((u64::MAX, Vec::new())),
+    };
+    s.wrap::<NodeList>(data, Some(key))
+}
+
 pub fn child_nodes<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
     let key = coll_identity(page, 1, id);
     if let Some(o) = s.lookup_identity(key) {
@@ -378,7 +413,8 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
                     names.split_ascii_whitespace().all(|w| c.split_ascii_whitespace().any(|h| same(h, w)))
                 })
         }
-        CollectionKind::Name(n) => e.attr("name") == Some(n.as_str()),
+        // DOM getElementsByName: HTML elements only.
+        CollectionKind::Name(n) => html && e.attr("name") == Some(n.as_str()),
         CollectionKind::WindowNamed(n) => {
             e.id() == Some(n.as_str())
                 || (html && matches!(local, "embed" | "form" | "img" | "object") && e.attr("name") == Some(n.as_str()))
@@ -388,18 +424,25 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
                 && matches!(local, "embed" | "form" | "iframe" | "img" | "object")
                 && e.attr("name") == Some(n.as_str()))
                 || (html
-                    && local == "img"
-                    && e.id() == Some(n.as_str())
-                    && e.attr("name").is_some_and(|v| !v.is_empty()))
+                    && (local == "object" || (local == "img" && e.attr("name").is_some_and(|v| !v.is_empty())))
+                    && e.id() == Some(n.as_str()))
         }
         CollectionKind::Links => html && matches!(local, "a" | "area") && e.attr("href").is_some(),
         CollectionKind::Anchors => html && local == "a" && e.attr("name").is_some(),
         CollectionKind::Empty => false,
         CollectionKind::FormElements => {
-            html && (matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
-                || e.flags & pyro_dom::node::element_flags::FORM_ASSOCIATED != 0)
-                && !(local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")))
-                && dom.form_owner(id).ok().flatten() == Some(root)
+            let listed = html
+                && matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
+                || e.flags & pyro_dom::node::element_flags::FORM_ASSOCIATED != 0;
+            // HTML: a fieldset's `elements` are its listed descendants (whatever their form owner,
+            // image buttons included); a form's are the listed elements it owns, but image buttons.
+            if is_fieldset(dom, root) {
+                listed
+            } else {
+                listed
+                    && !(local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")))
+                    && dom.form_owner(id).ok().flatten() == Some(root)
+            }
         }
         _ => false,
     }
@@ -417,6 +460,11 @@ fn qualified_name_is(e: &pyro_dom::node::ElementData, wanted: &str) -> bool {
     }
 }
 
+/// Whether `root` is an HTML `<fieldset>` (whose `elements` are its listed descendants).
+fn is_fieldset(dom: &Dom, root: NodeId) -> bool {
+    dom.element(root).is_ok_and(|e| e.is_html() && &*e.name.local == "fieldset")
+}
+
 fn compute(dom: &Dom, root: NodeId, kind: &CollectionKind) -> Vec<NodeId> {
     match kind {
         CollectionKind::Children => dom.element_children(root).map(|i| i.collect()).unwrap_or_default(),
@@ -427,13 +475,8 @@ fn compute(dom: &Dom, root: NodeId, kind: &CollectionKind) -> Vec<NodeId> {
         | CollectionKind::SectionRows
         | CollectionKind::RowCells => crate::html::table_collection(dom, root, kind),
         CollectionKind::Labels => crate::html::labels_for(dom, root),
-        CollectionKind::FormElements => {
-            // Listed elements anywhere in the form's tree (form attribute
-            // associations included), in tree order.
-            let Ok(tree_root) = dom.root_node(root, false) else { return Vec::new() };
-            dom.descendants(tree_root)
-                .map(|d| d.skip(1).filter(|&n| matches_kind(dom, root, n, kind)).collect())
-                .unwrap_or_default()
+        CollectionKind::FormElements if !is_fieldset(dom, root) => {
+            dom.owned_form_elements(root).unwrap_or_default().into_iter().filter(|&n| matches_kind(dom, root, n, kind)).collect()
         }
         _ => dom
             .descendants(root)
@@ -631,12 +674,82 @@ pub(crate) fn options_add<'s>(
     Ok(())
 }
 
+/// Setting `HTMLOptionsCollection.length` and `HTMLSelectElement.length`
+/// (HTML §2.7.3): a longer length appends options without attributes or
+/// children to the select, a shorter one removes the last options of the
+/// collection from their parents. As browsers, a length past 100,000 options
+/// does nothing.
+pub(crate) fn options_set_length(page: &Rc<PageDom>, select: NodeId, v: Value<'_>) -> JsResult<()> {
+    const MAX_OPTIONS: usize = 100_000;
+    let length = to_u32(v)? as usize;
+    let mut dom = page.dom.borrow_mut();
+    let options = dom.select_options(select).js()?;
+    if length > options.len() {
+        if length > MAX_OPTIONS {
+            return Ok(());
+        }
+        let doc = dom.node_document(select).js()?;
+        for _ in options.len()..length {
+            let option = dom.create_element_ns(doc, Some("http://www.w3.org/1999/xhtml"), "option").js()?;
+            dom.insert_before(select, option, None).js()?;
+        }
+    } else {
+        for &option in options[length..].iter().rev() {
+            dom.remove_node(option).js()?;
+        }
+    }
+    Ok(())
+}
+
+/// `form.elements` / `fieldset.elements` (HTML §2.7.2): `namedItem` (and the named getter)
+/// gives the one listed element with that id or name, or a live `RadioNodeList` of several.
+pub struct HtmlFormControlsCollection;
+impl JsClass for HtmlFormControlsCollection {
+    const NAME: &'static str = "HTMLFormControlsCollection";
+    type Data = CollectionData;
+    type Parent = HtmlCollection;
+    fn define(def: &mut ClassDef<Self>) {
+        def.pure_method("namedItem", 1, |s, c, a| {
+            a.require(1, "HTMLFormControlsCollection.namedItem")?;
+            let name = dom_string(a.get(0))?;
+            Ok(controls_named(s, c, &name)?.unwrap_or_else(|| s.null()))
+        });
+        def.named(false, |s, c, name| controls_named(s, c, name));
+    }
+}
+
+fn controls_named<'s>(s: &Scope<'s>, c: &CollectionData, name: &str) -> JsResult<Option<Value<'s>>> {
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let items = c.items();
+    let matches: Vec<NodeId> = {
+        let dom = c.root.page.dom.borrow();
+        items
+            .iter()
+            .copied()
+            .filter(|&n| dom.element(n).is_ok_and(|e| e.id() == Some(name) || (e.is_html() && e.attr("name") == Some(name))))
+            .collect()
+    };
+    match matches[..] {
+        [] => Ok(None),
+        [one] => Ok(Some(wrap_node(s, &c.root.page, one)?.value())),
+        // The listed elements are non-empty: `form_named` gives their RadioNodeList.
+        _ => form_named(s, &c.root.page, c.root.id, name),
+    }
+}
+
 pub struct HtmlOptionsCollection;
 impl JsClass for HtmlOptionsCollection {
     const NAME: &'static str = "HTMLOptionsCollection";
     type Data = CollectionData;
     type Parent = HtmlCollection;
     fn define(def: &mut ClassDef<Self>) {
+        def.accessor(
+            "length",
+            |s, c| Ok(s.number(c.root.page.dom.borrow().select_options(c.root.id).js()?.len() as f64)),
+            |_s, c, v| options_set_length(&c.root.page, c.root.id, v),
+        );
         def.accessor(
             "selectedIndex",
             |s, c| Ok(s.number(c.root.page.dom.borrow().selected_index(c.root.id).js()? as f64)),
@@ -724,20 +837,55 @@ fn kind_slot(kind: &CollectionKind) -> Option<u64> {
         CollectionKind::SectionRows => 9,
         CollectionKind::Labels => 10,
         CollectionKind::Links => 11,
+        // pyro: `document.anchors` and `document.applets` are [SameObject].
+        CollectionKind::Anchors => 62,
+        CollectionKind::Empty => 63,
         _ => return None,
     })
 }
 
 /// Live collection over `root` (cached wrapper per element for fixed kinds).
 pub fn collection<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, kind: CollectionKind) -> JsResult<Object<'s>> {
-    let key = kind_slot(&kind).map(|k| coll_identity(page, k, root));
+    // A named-property collection (`document.foo`, `window.foo` with several elements) is the
+    // same object on each access while script holds it: its key folds in a hash of the name,
+    // and a found wrapper is checked to be for this name (a collision gets an uncached one).
+    // pyro: so are `getElementsByTagName(NS)` collections and the Document's [SameObject] ones
+    // built from them (`document.embeds` and `document.plugins` are one object): by the name, the
+    // namespace and the name for a namespaced one.
+    let ns_name;
+    let named = match &kind {
+        CollectionKind::DocumentNamed(n) => Some((30, n)),
+        CollectionKind::WindowNamed(n) => Some((31, n)),
+        CollectionKind::TagName(n) => Some((60, n)),
+        CollectionKind::TagNameNs(ns, n) => {
+            ns_name = format!("{ns}\u{0}{n}");
+            Some((61, &ns_name))
+        }
+        _ => None,
+    };
+    let mut key = match named {
+        Some((slot, name)) => {
+            let base = coll_identity(page, slot, root);
+            let hash =
+                name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+            Some(IdentityKey(base.0, base.1 ^ hash))
+        }
+        None => kind_slot(&kind).map(|k| coll_identity(page, k, root)),
+    };
     if let Some(k) = key {
         if let Some(o) = s.lookup_identity(k) {
-            return Ok(o);
+            if named.is_none()
+                || s.unwrap::<HtmlCollection>(o.value()).is_some_and(|d| d.kind == kind && d.root.id == root)
+            {
+                return Ok(o);
+            }
+            key = None;
         }
     }
     let page = page_rc(s)?;
     let options = kind == CollectionKind::Options;
+    // HTML: form.elements is an HTMLFormControlsCollection, fieldset.elements a plain HTMLCollection.
+    let controls = kind == CollectionKind::FormElements && !is_fieldset(&page.dom.borrow(), root);
     let kind = match kind {
         // DOM "list of elements with qualified name": whether HTML elements
         // are matched against the lowercased name is decided here, by the
@@ -762,6 +910,8 @@ pub fn collection<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, kind: Collect
         CollectionData { root: NodeHold::new(&page, root)?, kind, cache: RefCell::new((u64::MAX, Rc::default())) };
     if options {
         s.wrap::<HtmlOptionsCollection>(data, key)
+    } else if controls {
+        s.wrap::<HtmlFormControlsCollection>(data, key)
     } else {
         s.wrap::<HtmlCollection>(data, key)
     }
@@ -793,7 +943,7 @@ impl TokenListData {
                 e.classes().iter().for_each(|c| add(c));
             }
         } else {
-            dom.get_attribute(self.el.id, self.attr)
+            dom.get_attribute_ns(self.el.id, None, self.attr)
                 .ok()
                 .flatten()
                 .unwrap_or("")
@@ -818,24 +968,26 @@ impl TokenListData {
         if self.attr == "class" {
             return Ok(crate::util::class_name(s, dom.element(self.el.id).js()?));
         }
-        Ok(s.string(dom.get_attribute(self.el.id, self.attr).js()?.unwrap_or("")))
+        Ok(s.string(dom.get_attribute_ns(self.el.id, None, self.attr).js()?.unwrap_or("")))
     }
     fn contains(&self, token: &str) -> bool {
         let dom = self.el.page.dom.borrow();
         if self.attr == "class" {
             return dom.element(self.el.id).is_ok_and(|e| e.classes().iter().any(|c| &**c == token));
         }
-        let value = dom.get_attribute(self.el.id, self.attr).ok().flatten().unwrap_or("");
+        let value = dom.get_attribute_ns(self.el.id, None, self.attr).ok().flatten().unwrap_or("");
         value.split_ascii_whitespace().any(|t| t == token)
     }
     /// The "update steps" with `tokens` serialized: an absent attribute
-    /// stays absent for an empty set.
+    /// stays absent for an empty set. The token list's attribute is the one
+    /// in no namespace, read and written (DOM "set an attribute value"): an
+    /// attribute of that name in another namespace is left alone.
     fn write(&self, empty: bool, value: &str) -> JsResult<()> {
         let mut dom = self.el.page.dom.borrow_mut();
-        if empty && !dom.has_attribute(self.el.id, self.attr).js()? {
+        if empty && dom.get_attribute_ns(self.el.id, None, self.attr).js()?.is_none() {
             return Ok(());
         }
-        dom.set_attribute(self.el.id, self.attr, value).js()
+        dom.set_attribute_ns(self.el.id, None, self.attr, value).js()
     }
 }
 
@@ -885,7 +1037,9 @@ impl JsClass for DomTokenList {
         def.accessor(
             "value",
             |s, t| t.value(s),
-            |_s, t, v| with_str(v, |value| t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.attr, value).js()),
+            |_s, t, v| {
+                with_str(v, |value| t.el.page.dom.borrow_mut().set_attribute_ns(t.el.id, None, t.attr, value).js())
+            },
         );
         def.pure_method("toString", 0, |s, t, _a| t.value(s));
         def.pure_method("item", 1, |s, t, a| {
@@ -968,7 +1122,35 @@ impl JsClass for DomTokenList {
         });
         def.pure_method("supports", 1, |s, t, a| {
             let tok = dom_string(a.get(0))?;
+            // `rel` per element, as Chromium answers: a `<link>`'s fetch and resource types;
+            // `<a>`, `<area>` and `<form>`'s opener and referrer types.
+            let rel_of = |t: &TokenListData| {
+                t.el.page.dom.borrow().element(t.el.id).ok().filter(|e| e.is_html()).map(|e| match &*e.name.local {
+                    "link" => 0,
+                    "a" | "area" | "form" => 1,
+                    _ => 2,
+                })
+            };
             let supported: &[&str] = match t.attr {
+                "rel" if rel_of(t) == Some(0) => &[
+                    "modulepreload",
+                    "preload",
+                    "preconnect",
+                    "dns-prefetch",
+                    "stylesheet",
+                    "icon",
+                    "alternate",
+                    "prefetch",
+                    "prerender",
+                    "next",
+                    "manifest",
+                    "apple-touch-icon",
+                    "apple-touch-icon-precomposed",
+                    "canonical",
+                    "expect",
+                    "compression-dictionary",
+                ],
+                "rel" if rel_of(t) == Some(1) => &["noreferrer", "noopener", "opener"],
                 "rel" => &[
                     "alternate",
                     "canonical",
@@ -1014,6 +1196,33 @@ impl JsClass for DomTokenList {
                     "allow-top-navigation-to-custom-protocols",
                 ],
                 "blocking" => &["render"],
+                // Scoped focusgroup tokens (WPT focusgroup/tentative/idl-reflection.html).
+                // Chromium's media controlsList (WICG): what `supports()` answers there.
+                "controlslist" => &["nodownload", "nofullscreen", "noplaybackrate", "noremoteplayback"],
+                "focusgroup" => &[
+                    "toolbar",
+                    "tablist",
+                    "radiogroup",
+                    "listbox",
+                    "menu",
+                    "menubar",
+                    "wrap",
+                    "nowrap",
+                    "inline",
+                    "block",
+                    "nomemory",
+                    "none",
+                    "feed",
+                    "grid",
+                    "itemcontrols",
+                    "noitemcontrols",
+                    "manual",
+                    "rowwrap",
+                    "colwrap",
+                    "flow",
+                    "rowflow",
+                    "colflow",
+                ],
                 _ => {
                     return Err(JsError::Type(format!(
                         "DOMTokenList has no supported tokens for the '{}' attribute.",
@@ -1035,6 +1244,7 @@ pub fn token_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, attr: &'static 
         "sandbox" => 15,
         // `link` has both `sizes` (16) and `blocking`.
         "blocking" => 17,
+        "focusgroup" => 18,
         _ => 16,
     };
     let key = coll_identity(page, slot, id);
@@ -1385,6 +1595,130 @@ pub fn dataset<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object
     s.wrap::<DomStringMap>(StringMapData { el: NodeHold::new(&page, id)? }, Some(key))
 }
 
+// ----- SVGStringList -----------------------------------------------------------
+
+use pyro_dom::svg_string_list::StringListAttribute;
+
+pub struct StringListData {
+    el: NodeHold,
+    kind: StringListAttribute,
+}
+
+impl StringListData {
+    fn with_items<R>(&self, f: impl FnOnce(&[String]) -> R) -> JsResult<R> {
+        let mut dom = self.el.page.dom.borrow_mut();
+        Ok(f(dom.svg_string_list(self.el.id, self.kind).js()?))
+    }
+
+    fn edit<R>(&self, f: impl FnOnce(&mut Vec<String>) -> JsResult<R>) -> JsResult<R> {
+        let mut dom = self.el.page.dom.borrow_mut();
+        let mut items = dom.svg_string_list(self.el.id, self.kind).js()?.to_vec();
+        let result = f(&mut items)?;
+        dom.set_svg_string_list(self.el.id, self.kind, items).js()?;
+        Ok(result)
+    }
+
+    fn replace(&self, index: usize, value: String) -> JsResult<()> {
+        self.edit(|items| {
+            *items.get_mut(index).ok_or_else(string_list_index_error)? = value;
+            Ok(())
+        })
+    }
+}
+
+/// Web IDL unsigned long conversion uses modulo after truncation, even for
+/// doubles outside Rust's signed integer range. NaN and infinities map to zero.
+fn svg_list_index(value: Value<'_>) -> JsResult<usize> {
+    Ok(value.to_number()?.trunc().rem_euclid(4_294_967_296.0) as u32 as usize)
+}
+
+fn string_list_index_error() -> JsError {
+    JsError::dom("IndexSizeError", "The index is outside the SVG string list.")
+}
+
+pub struct SvgStringList;
+impl JsClass for SvgStringList {
+    const NAME: &'static str = "SVGStringList";
+    type Data = StringListData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for name in ["length", "numberOfItems"] {
+            def.getter(name, |s, l| l.with_items(|v| s.number(v.len() as f64)));
+        }
+        def.legacy_platform_object();
+        def.indexed(|s, l, i| l.with_items(|v| v.get(i as usize).map(|item| s.string(item))));
+        def.indexed_iterator();
+        def.named_setter(|_, l, name, value| {
+            let Some(i) = name.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == name) else {
+                return Ok(false);
+            };
+            l.replace(i as usize, dom_string(value)?)?;
+            Ok(true)
+        });
+        def.method("clear", 0, |s, l, _| {
+            l.el.page.dom.borrow_mut().set_svg_string_list(l.el.id, l.kind, Vec::new()).js()?;
+            Ok(s.undefined())
+        });
+        def.method("getItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.getItem")?;
+            let i = svg_list_index(a.get(0))?;
+            l.with_items(|v| v.get(i).map(|item| s.string(item)))?.ok_or_else(string_list_index_error)
+        });
+        def.method("initialize", 1, |s, l, a| {
+            a.require(1, "SVGStringList.initialize")?;
+            let value = dom_string(a.get(0))?;
+            let result = s.string(&value);
+            l.el.page.dom.borrow_mut().set_svg_string_list(l.el.id, l.kind, vec![value]).js()?;
+            Ok(result)
+        });
+        def.method("appendItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.appendItem")?;
+            let value = dom_string(a.get(0))?;
+            let result = s.string(&value);
+            l.edit(|items| { items.push(value); Ok(()) })?;
+            Ok(result)
+        });
+        def.method("insertItemBefore", 2, |s, l, a| {
+            a.require(2, "SVGStringList.insertItemBefore")?;
+            let value = dom_string(a.get(0))?;
+            let i = svg_list_index(a.get(1))?;
+            let result = s.string(&value);
+            l.edit(|items| { items.insert(i.min(items.len()), value); Ok(()) })?;
+            Ok(result)
+        });
+        def.method("replaceItem", 2, |s, l, a| {
+            a.require(2, "SVGStringList.replaceItem")?;
+            let value = dom_string(a.get(0))?;
+            let i = svg_list_index(a.get(1))?;
+            let result = s.string(&value);
+            l.replace(i, value)?;
+            Ok(result)
+        });
+        def.method("removeItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.removeItem")?;
+            let i = svg_list_index(a.get(0))?;
+            let value = l.edit(|items| {
+                if i >= items.len() { return Err(string_list_index_error()); }
+                Ok(items.remove(i))
+            })?;
+            Ok(s.string(&value))
+        });
+    }
+}
+
+pub fn svg_string_list<'s>(s: &Scope<'s>, n: &NodeData, kind: StringListAttribute) -> JsResult<Value<'s>> {
+    let slot = match kind {
+        StringListAttribute::RequiredExtensions => 440,
+        StringListAttribute::SystemLanguage => 441,
+    };
+    let key = coll_identity(n.page(), slot, n.id);
+    if let Some(obj) = s.lookup_identity(key) {
+        return Ok(obj.value());
+    }
+    let el = NodeHold::new(n.page(), n.id)?;
+    Ok(s.wrap::<SvgStringList>(StringListData { el, kind }, Some(key))?.value())
+}
+
 // ----- SVGAnimatedEnumeration ---------------------------------------------------
 
 /// An SVG element's enumerated attribute (`clipPathUnits`, `spreadMethod`, ...):
@@ -1406,9 +1740,9 @@ pub struct AnimatedEnumData {
 impl AnimatedEnumData {
     fn value(&self) -> u16 {
         let dom = self.el.page.dom.borrow();
-        let keyword = dom.get_attribute(self.el.id, self.e.attr).ok().flatten();
+        let keyword = dom.get_attribute_ns(self.el.id, None, self.e.attr).ok().flatten();
         keyword
-            .and_then(|k| self.e.keywords.iter().position(|w| *w == k.trim()))
+            .and_then(|k| self.e.keywords.iter().position(|w| *w == k))
             .map_or(self.e.initial, |i| i as u16 + 1)
     }
 }
@@ -1434,7 +1768,15 @@ impl JsClass for SvgAnimatedEnumeration {
                         format!("The enumeration value provided ({n}) is not a valid value for '{}'.", t.e.attr).into(),
                     ));
                 };
-                t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.e.attr, keyword).js()
+                // Selecting ANGLE preserves a current angle and resets a keyword
+                // or invalid attribute to the initial zero angle.
+                if t.e.attr == "orient" && n == 2 {
+                    let dom = t.el.page.dom.borrow();
+                    if dom.get_attribute_ns(t.el.id, None, "orient").js()?.and_then(Angle::parse).is_some() {
+                        return Ok(());
+                    }
+                }
+                t.el.page.dom.borrow_mut().set_attribute_ns(t.el.id, None, t.e.attr, keyword).js()
             },
         );
         def.getter("animVal", |s, t| Ok(s.number(t.value() as f64)));
@@ -1464,6 +1806,7 @@ pub fn animated_enumeration<'s>(
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SvgPart {
     Whole,
+    NumberOrPercentage,
     First,
     Second,
 }
@@ -1484,30 +1827,59 @@ pub struct AnimatedAttrData {
 }
 
 impl AnimatedAttrData {
+    /// SVG 2 linking: href is reflected in no namespace unless only the
+    /// legacy XLink attribute exists. Its DOM prefix is immaterial.
+    fn name(&self, dom: &Dom) -> (Option<&'static str>, &'static str) {
+        let primary = self.a.attrs[0];
+        if self.a.attrs.len() == 1 || dom.get_attribute_ns(self.el.id, None, primary).ok().flatten().is_some() {
+            return (None, primary);
+        }
+        for alias in &self.a.attrs[1..] {
+            let (ns, local) = match alias.strip_prefix("xlink:") {
+                Some(local) => (Some("http://www.w3.org/1999/xlink"), local),
+                None => (None, *alias),
+            };
+            if dom.get_attribute_ns(self.el.id, ns, local).ok().flatten().is_some() {
+                return (ns, local);
+            }
+        }
+        (None, primary)
+    }
     fn text(&self) -> Option<String> {
         let dom = self.el.page.dom.borrow();
-        self.a.attrs.iter().find_map(|name| dom.get_attribute(self.el.id, name).ok().flatten().map(|v| v.to_string()))
-    }
-    /// The attribute to write: the first present one, else the first name.
-    fn write_name(&self) -> &'static str {
-        let dom = self.el.page.dom.borrow();
-        self.a.attrs.iter().copied().find(|name| dom.has_attribute(self.el.id, name).unwrap_or(false)).unwrap_or(self.a.attrs[0])
+        let (ns, name) = self.name(&dom);
+        dom.get_attribute_ns(self.el.id, ns, name).ok().flatten().map(str::to_owned)
     }
     fn set(&self, value: &str) -> JsResult<()> {
-        let name = self.write_name();
-        self.el.page.dom.borrow_mut().set_attribute(self.el.id, name, value).js()
+        let mut dom = self.el.page.dom.borrow_mut();
+        let (ns, name) = self.name(&dom);
+        dom.set_attribute_ns(self.el.id, ns, name, value).js()
     }
     /// The attribute's numbers (separated by whitespace and/or a comma); `None` when it does not parse
     /// as one number (or, for a pair, one or two).
     fn numbers(&self) -> Option<Vec<f64>> {
         let text = self.text()?;
-        let parts: Vec<&str> =
-            text.split(|c: char| c.is_ascii_whitespace() || c == ',').filter(|p| !p.is_empty()).collect();
-        let max = if self.a.part == SvgPart::Whole { 1 } else { 2 };
-        if parts.is_empty() || parts.len() > max {
+        let text = text.trim_matches(|c: char| c.is_ascii_whitespace());
+        if self.a.part == SvgPart::NumberOrPercentage {
+            let n = match text.strip_suffix('%') {
+                Some(percent) => svg_number(percent)? / 100.0,
+                None => svg_number(text)?,
+            };
+            return Some(vec![n]);
+        }
+        if self.a.part == SvgPart::Whole {
+            return Some(vec![svg_number(text)?]);
+        }
+        let parts: Vec<_> = if let Some((x, y)) = text.split_once(',') {
+            let whitespace = |c: char| c.is_ascii_whitespace();
+            vec![x.trim_matches(whitespace), y.trim_matches(whitespace)]
+        } else {
+            text.split_ascii_whitespace().collect()
+        };
+        if parts.is_empty() || parts.len() > 2 {
             return None;
         }
-        parts.iter().map(|p| svg_number(p)).collect()
+        parts.into_iter().map(svg_number).collect()
     }
     fn number(&self) -> f64 {
         self.number_as(self.a.part)
@@ -1515,7 +1887,7 @@ impl AnimatedAttrData {
     /// Writes `v` as this part, keeping the other number of a pair.
     fn set_number(&self, v: f64) -> JsResult<()> {
         let text = match self.a.part {
-            SvgPart::Whole => fmt_number(v),
+            SvgPart::Whole | SvgPart::NumberOrPercentage => fmt_number(v),
             SvgPart::First => format!("{} {}", fmt_number(v), fmt_number(self.number_as(SvgPart::Second))),
             SvgPart::Second => format!("{} {}", fmt_number(self.number_as(SvgPart::First)), fmt_number(v)),
         };
@@ -1535,6 +1907,9 @@ fn svg_number(text: &str) -> Option<f64> {
     if text.is_empty() || text.contains(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))) {
         return None;
     }
+    if text.split(['e', 'E']).next()?.ends_with('.') {
+        return None;
+    }
     text.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
@@ -1542,7 +1917,9 @@ fn fmt_number(v: f64) -> String {
     if v == v.trunc() && v.abs() < 1e15 {
         format!("{}", v as i64)
     } else {
-        format!("{v}")
+        // SVGAnimatedNumber is a WebIDL float. Serializing the widened
+        // JS double would expose extra digits for values such as 0.2.
+        (v as f32).to_string()
     }
 }
 
@@ -1564,6 +1941,30 @@ impl JsClass for SvgAnimatedString {
         def.accessor("baseVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())), |_s, t, v| t.set(&dom_string(v)?));
         def.getter("animVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())));
     }
+}
+
+use pyro_dom::svg_point_list::{NumberItem, NumberLists};
+
+pub struct SvgNumber;
+impl JsClass for SvgNumber {
+    const NAME: &'static str = "SVGNumber";
+    type Data = Rc<NumberItem>;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor("value", |s, n| Ok(s.number(f64::from(n.value()))), |_s, n, v| {
+            n.set_value(finite_float(v, "SVGNumber")? as f32).js()
+        });
+    }
+}
+
+pub(crate) fn number_value<'s>(s: &Scope<'s>, item: Rc<NumberItem>) -> JsResult<Value<'s>> {
+    let key = IdentityKey((1 << 59) | (2 << 56), Rc::as_ptr(&item) as u64);
+    Ok(s.wrap::<SvgNumber>(item, Some(key))?.value())
+}
+
+fn number_argument(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<NumberItem>> {
+    let item = s.unwrap::<SvgNumber>(value).ok_or_else(|| JsError::Type("Expected an SVGNumber.".into()))?;
+    Ok((*item).clone())
 }
 
 /// `SVGAnimatedNumber`: `baseVal` is the attribute's number (its initial value when absent or
@@ -1634,6 +2035,195 @@ pub fn animated_attr<'s, C: JsClass<Data = AnimatedAttrData>>(
     s.wrap::<C>(AnimatedAttrData { el: NodeHold::new(&page, id)?, a }, Some(key))
 }
 
+// SVG angles are stored in their specified units. The unitless form is in
+// degrees, and a turn is accepted by CSS but has no SVGAngle unit constant.
+#[derive(Clone, Copy)]
+struct Angle {
+    value: f32,
+    unit: u16,
+}
+impl Angle {
+    const ZERO: Self = Self { value: 0.0, unit: 1 };
+    const UNITS: [&'static str; 6] = ["", "", "deg", "rad", "grad", "turn"];
+    fn parse(text: &str) -> Option<Self> {
+        let text = text.trim_matches(|c: char| c.is_ascii_whitespace());
+        // grad precedes rad because the suffixes overlap.
+        for unit in [4, 3, 2, 5, 1] {
+            let suffix = Self::UNITS[unit];
+            let Some(n) = text.len().checked_sub(suffix.len()) else { continue };
+            if text.is_char_boundary(n) && text[n..].eq_ignore_ascii_case(suffix) {
+                let value = svg_number(&text[..n])? as f32;
+                return value.is_finite().then_some(Self { value, unit: unit as u16 });
+            }
+        }
+        None
+    }
+    fn factor(unit: u16) -> f64 {
+        match unit {
+            3 => 180.0 / std::f64::consts::PI,
+            4 => 0.9,
+            5 => 360.0,
+            _ => 1.0,
+        }
+    }
+    fn degrees(self) -> f64 {
+        f64::from(self.value) * Self::factor(self.unit)
+    }
+    fn clamp(value: f64) -> f32 {
+        value.clamp(-f64::from(f32::MAX), f64::from(f32::MAX)) as f32
+    }
+    fn string(self) -> String {
+        let value = if self.value == 0.0 { 0.0 } else { self.value };
+        format!("{value}{}", Self::UNITS[self.unit as usize])
+    }
+}
+
+pub enum SvgAngleData {
+    Detached(Cell<(f32, u16)>),
+    Reflected { el: NodeHold, anim: bool },
+}
+impl SvgAngleData {
+    fn get(&self) -> Angle {
+        match self {
+            Self::Detached(cell) => {
+                let (value, unit) = cell.get();
+                Angle { value, unit }
+            }
+            Self::Reflected { el, .. } => el
+                .page
+                .dom
+                .borrow()
+                .get_attribute_ns(el.id, None, "orient")
+                .ok()
+                .flatten()
+                .and_then(Angle::parse)
+                .unwrap_or(Angle::ZERO),
+        }
+    }
+    fn writable(&self) -> JsResult<()> {
+        if matches!(self, Self::Reflected { anim: true, .. }) {
+            return Err(JsError::dom("NoModificationAllowedError", "The animated value is read-only."));
+        }
+        Ok(())
+    }
+    fn set(&self, angle: Angle) -> JsResult<()> {
+        self.writable()?;
+        match self {
+            Self::Detached(cell) => {
+                cell.set((angle.value, angle.unit));
+                Ok(())
+            }
+            Self::Reflected { el, .. } => el.page.dom.borrow_mut().set_attribute_ns(el.id, None, "orient", &angle.string()).js(),
+        }
+    }
+}
+
+pub struct SvgAngle;
+impl JsClass for SvgAngle {
+    const NAME: &'static str = "SVGAngle";
+    type Data = SvgAngleData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for (i, key) in [
+            "SVG_ANGLETYPE_UNKNOWN",
+            "SVG_ANGLETYPE_UNSPECIFIED",
+            "SVG_ANGLETYPE_DEG",
+            "SVG_ANGLETYPE_RAD",
+            "SVG_ANGLETYPE_GRAD",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            def.constant(key, i as f64);
+        }
+        def.getter("unitType", |s, t| {
+            let k = t.get().unit;
+            Ok(s.number(if k == 5 { 0.0 } else { f64::from(k) }))
+        });
+        def.accessor(
+            "value",
+            |s, t| Ok(s.number(f64::from(Angle::clamp(t.get().degrees())))),
+            |_s, t, v| {
+                let n = finite_float(v, "SVGAngle")?;
+                let unit = t.get().unit;
+                t.set(Angle { value: Angle::clamp(n / Angle::factor(unit)), unit })
+            },
+        );
+        def.accessor(
+            "valueInSpecifiedUnits",
+            |s, t| Ok(s.number(f64::from(t.get().value))),
+            |_s, t, v| {
+                let value = finite_float(v, "SVGAngle")? as f32;
+                t.set(Angle { value, unit: t.get().unit })
+            },
+        );
+        def.accessor(
+            "valueAsString",
+            |s, t| Ok(s.string(&t.get().string())),
+            |_s, t, v| {
+                let input = dom_string(v)?;
+                t.writable()?;
+                t.set(Angle::parse(&input).ok_or_else(|| JsError::dom("SyntaxError", "Invalid SVG angle."))?)
+            },
+        );
+        def.method("newValueSpecifiedUnits", 2, |s, t, a| {
+            a.require(2, "SVGAngle.newValueSpecifiedUnits")?;
+            let unit = to_u32(a.get(0))? as u16;
+            let value = finite_float(a.get(1), "SVGAngle")? as f32;
+            t.writable()?;
+            check_angle_unit(unit)?;
+            t.set(Angle { value, unit })?;
+            Ok(s.undefined())
+        });
+        def.method("convertToSpecifiedUnits", 1, |s, t, a| {
+            a.require(1, "SVGAngle.convertToSpecifiedUnits")?;
+            let unit = to_u32(a.get(0))? as u16;
+            t.writable()?;
+            check_angle_unit(unit)?;
+            t.set(Angle { value: Angle::clamp(t.get().degrees() / Angle::factor(unit)), unit })?;
+            Ok(s.undefined())
+        });
+    }
+}
+fn check_angle_unit(unit: u16) -> JsResult<()> {
+    if (1..=4).contains(&unit) {
+        Ok(())
+    } else {
+        Err(JsError::dom("NotSupportedError", "Unsupported SVG angle unit."))
+    }
+}
+pub fn create_svg_angle<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
+    s.wrap::<SvgAngle>(SvgAngleData::Detached(Cell::new((0.0, 1))), None)
+}
+pub fn angle_string(s: &Scope<'_>, value: Value<'_>) -> JsResult<String> {
+    let angle = s.unwrap::<SvgAngle>(value).ok_or_else(|| JsError::Type("Expected an SVGAngle.".into()))?;
+    Ok(angle.get().string())
+}
+pub struct SvgAnimatedAngle;
+impl JsClass for SvgAnimatedAngle {
+    const NAME: &'static str = "SVGAnimatedAngle";
+    type Data = NodeHold;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("baseVal", |s, el| Ok(reflected_angle(s, el, false)?.value()));
+        def.getter("animVal", |s, el| Ok(reflected_angle(s, el, true)?.value()));
+    }
+}
+fn reflected_angle<'s>(s: &Scope<'s>, el: &NodeHold, anim: bool) -> JsResult<Object<'s>> {
+    let key = coll_identity(&el.page, 429 + u64::from(anim), el.id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    s.wrap::<SvgAngle>(SvgAngleData::Reflected { el: NodeHold::new(&el.page, el.id)?, anim }, Some(key))
+}
+pub fn animated_angle<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, 428, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    s.wrap::<SvgAnimatedAngle>(NodeHold::new(&page_rc(s)?, id)?, Some(key))
+}
+
 // ----- SVGAnimatedLength, SVGLength ------------------------------------------------------------
 
 /// The direction a length attribute's percentages resolve in: the nearest `svg` viewport's width,
@@ -1655,11 +2245,8 @@ pub struct SvgLengthAttr {
     pub slot: u64,
 }
 
-/// SVGLength unit types, in the order of their constants (0 is unknown, 1 a plain number), then
-/// the CSS units without a constant, whose `unitType` is `SVG_LENGTHTYPE_UNKNOWN` (SVG 2: any CSS
-/// `<length>` is a length; Chromium and Firefox convert them too).
-const LENGTH_UNITS: [&str; 17] =
-    ["", "", "%", "em", "ex", "px", "cm", "mm", "in", "pt", "pc", "rem", "vw", "vh", "vmin", "vmax", "q"];
+use pyro_dom::svg_point_list::{LengthItem, LengthLists, LENGTH_UNITS};
+
 /// The unit types a script can name (`SVG_LENGTHTYPE_*`).
 const NAMED_LENGTH_UNITS: usize = 11;
 
@@ -1684,70 +2271,88 @@ fn length_to_string(value: f64, kind: u16) -> String {
     format!("{}{}", value as f32, LENGTH_UNITS[kind as usize])
 }
 
-pub struct SvgLengthData {
-    el: NodeHold,
-    a: &'static SvgLengthAttr,
-    anim: bool,
-    /// The value and unit of a length that reflects no attribute (`SVGSVGElement.createSVGLength()`):
-    /// it has no element, so its font-relative units use the initial font size and a percentage is
-    /// its number of user units (SVG 2, as Chromium).
-    detached: Option<Cell<(f64, u16)>>,
+pub enum SvgLengthData {
+    Attribute { el: NodeHold, a: &'static SvgLengthAttr, anim: bool },
+    /// A list item or a detached length from createSVGLength. Insertion
+    /// attaches the same object to its new element and percentage direction.
+    Item { page: Rc<PageDom>, item: Rc<LengthItem> },
 }
 
 impl SvgLengthData {
     fn get(&self) -> (f64, u16) {
-        if let Some(own) = &self.detached {
-            return own.get();
+        match self {
+            Self::Item { item, .. } => item.value(),
+            Self::Attribute { el, a, .. } => el.page.dom.borrow().get_attribute(el.id, a.attr)
+                .ok()
+                .flatten()
+                .and_then(parse_svg_length)
+                .or_else(|| parse_svg_length(a.initial))
+                .unwrap_or((0.0, 1)),
         }
-        let dom = self.el.page.dom.borrow();
-        dom.get_attribute(self.el.id, self.a.attr)
-            .ok()
-            .flatten()
-            .and_then(|v| parse_svg_length(&v))
-            .or_else(|| parse_svg_length(self.a.initial))
-            .unwrap_or((0.0, 1))
     }
+
     fn writable(&self) -> JsResult<()> {
-        if self.anim {
+        let animated = match self {
+            Self::Attribute { anim, .. } => *anim,
+            Self::Item { item, .. } => item.is_read_only(),
+        };
+        if animated {
             return Err(JsError::dom("NoModificationAllowedError", "The object is read-only."));
         }
         Ok(())
     }
+
     fn write(&self, value: f64, kind: u16) -> JsResult<()> {
-        if let Some(own) = &self.detached {
-            own.set((value, kind));
-            return Ok(());
+        match self {
+            Self::Item { item, .. } => item.set_value((value, kind)).js(),
+            Self::Attribute { el, a, .. } => {
+                el.page.dom.borrow_mut().set_attribute(el.id, a.attr, &length_to_string(value, kind)).js()
+            }
         }
-        self.el.page.dom.borrow_mut().set_attribute(self.el.id, self.a.attr, &length_to_string(value, kind)).js()
     }
-    /// User units per unit of `kind` for this element (0 when a percentage has no viewport).
+
     fn factor(&self, kind: u16) -> f64 {
+        match self {
+            Self::Attribute { el, a, .. } => Self::attribute_factor(el, a.dir, kind),
+            Self::Item { page, item } => item.unit_factor(kind).unwrap_or_else(|| Self::unit_factor(page, None, kind)),
+        }
+    }
+
+    fn attribute_factor(el: &NodeHold, dir: SvgLengthDir, kind: u16) -> f64 {
+        // An element may be adopted after its length wrapper was created.
+        // The current document supplies the viewport and computed font.
+        let home = &el.page;
+        let doc = home.dom.borrow().node_document(el.id).ok();
+        let other = doc.filter(|id| *id != home.document()).and_then(|id| {
+            home.hooks()?.frame_tree().into_iter().find(|p| p.document() == id && Rc::ptr_eq(&p.dom, &home.dom))
+        });
+        Self::unit_factor(other.as_ref().unwrap_or(home), Some((el.id, dir)), kind)
+    }
+
+    /// User units per unit of `kind`, in the current attribute's coordinate system.
+    fn unit_factor(page: &PageDom, context: Option<(NodeId, SvgLengthDir)>, kind: u16) -> f64 {
         match kind {
             1 | 5 => 1.0,
-            2 if self.detached.is_some() => 1.0,
-            3 if self.detached.is_some() => 16.0,
-            4 if self.detached.is_some() => 8.0,
-            2 => self.viewport_percent(),
-            3 | 4 => {
-                let page = &self.el.page;
-                let dom = page.dom.borrow();
-                let em = page.layout().style().computed_font_size(&dom, Some(self.el.id));
-                if kind == 3 { em } else { em / 2.0 }
-            }
+            2 => context.map_or(1.0, |(id, dir)| Self::viewport_percent(page, id, dir)),
+            3 => context.map_or(16.0, |(id, _)| {
+                page.layout().style().computed_font_size(&page.dom.borrow(), Some(id))
+            }),
+            4 | 17..=20 => page.layout().style().svg_relative_unit(
+                &page.dom.borrow(), context.map(|(id, _)| id), LENGTH_UNITS[usize::from(kind)],
+            ),
             6 => 96.0 / 2.54,
             7 => 96.0 / 25.4,
             8 => 96.0,
             9 => 4.0 / 3.0,
             10 => 16.0,
-            11 if self.detached.is_some() => 16.0,
+            11 if context.is_none() => 16.0,
             11 => {
-                let page = &self.el.page;
                 let dom = page.dom.borrow();
                 let root = dom.document_element(page.document()).ok().flatten();
                 page.layout().style().computed_font_size(&dom, root)
             }
             12..=15 => {
-                let layout = self.el.page.layout();
+                let layout = page.layout();
                 let viewport = layout.viewport();
                 let (w, h) = (viewport.width as f64, viewport.height as f64);
                 match kind {
@@ -1758,14 +2363,24 @@ impl SvgLengthData {
                 }
             }
             16 => 96.0 / 2.54 / 40.0,
-            _ => 1.0,
+            21..=25 => {
+                let dom = page.dom.borrow();
+                let root = context.and_then(|(id, _)| dom.node_document(id).ok())
+                    .and_then(|doc| dom.document_element(doc).ok().flatten());
+                // Root font-relative units use the corresponding metric of
+                // the root element, or the initial font for a detached item.
+                page.layout().style().svg_relative_unit(&dom, root, &LENGTH_UNITS[usize::from(kind)][1..])
+            }
+            _ => page.layout().style().svg_relative_unit(
+                &page.dom.borrow(), context.map(|(id, _)| id), LENGTH_UNITS[usize::from(kind)],
+            ),
         }
     }
     /// One percent of the nearest `svg` ancestor's viewport: its `viewBox`, else its absolute
     /// `width` and `height`; 0 without one.
-    fn viewport_percent(&self) -> f64 {
-        let dom = self.el.page.dom.borrow();
-        let mut p = dom.parent_element(self.el.id).ok().flatten();
+    fn viewport_percent(page: &PageDom, id: NodeId, dir: SvgLengthDir) -> f64 {
+        let dom = page.dom.borrow();
+        let mut p = dom.parent_element(id).ok().flatten();
         while let Some(x) = p {
             if dom.element(x).is_ok_and(|e| &*e.name.local == "svg") {
                 let attr = |n: &str| dom.get_attribute(x, n).ok().flatten().map(|v| v.to_string());
@@ -1782,12 +2397,12 @@ impl SvgLengthData {
                             attr(n).and_then(|v| parse_svg_length(&v)).filter(|(_, k)| *k != 2 && *k != 3 && *k != 4)
                         };
                         match (abs("width"), abs("height")) {
-                            (Some((w, kw)), Some((h, kh))) => (w * self.factor(kw), h * self.factor(kh)),
+                            (Some((w, kw)), Some((h, kh))) => (w * Self::unit_factor(page, Some((id, dir)), kw), h * Self::unit_factor(page, Some((id, dir)), kh)),
                             _ => return 0.0,
                         }
                     }
                 };
-                let base = match self.a.dir {
+                let base = match dir {
                     SvgLengthDir::Width => w,
                     SvgLengthDir::Height => h,
                     SvgLengthDir::Other => ((w * w + h * h) / 2.0).sqrt(),
@@ -1915,21 +2530,17 @@ fn svg_length<'s>(s: &Scope<'s>, el: &NodeHold, a: &'static SvgLengthAttr, anim:
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o);
     }
-    s.wrap::<SvgLength>(SvgLengthData { el: NodeHold::new(&el.page, el.id)?, a, anim, detached: None }, Some(key))
+    s.wrap::<SvgLength>(SvgLengthData::Attribute { el: NodeHold::new(&el.page, el.id)?, a, anim }, Some(key))
 }
 
-static DETACHED_LENGTH: SvgLengthAttr = SvgLengthAttr { attr: "", initial: "0", dir: SvgLengthDir::Other, slot: 0 };
+fn length_item<'s>(s: &Scope<'s>, item: Rc<LengthItem>) -> JsResult<Object<'s>> {
+    let key = IdentityKey((1 << 59) | (4 << 56), Rc::as_ptr(&item) as u64);
+    s.wrap::<SvgLength>(SvgLengthData::Item { page: page_rc(s)?, item }, Some(key))
+}
 
-/// `SVGSVGElement.createSVGLength()`: a new length of 0 user units that reflects no attribute.
-pub fn create_svg_length<'s>(s: &Scope<'s>, svg: NodeId) -> JsResult<Object<'s>> {
-    let page = page_rc(s)?;
-    let data = SvgLengthData {
-        el: NodeHold::new(&page, svg)?,
-        a: &DETACHED_LENGTH,
-        anim: false,
-        detached: Some(Cell::new((0.0, 1))),
-    };
-    s.wrap::<SvgLength>(data, None)
+/// SVGSVGElement.createSVGLength returns a detached length of zero user units.
+pub fn create_svg_length<'s>(s: &Scope<'s>, _svg: NodeId) -> JsResult<Object<'s>> {
+    length_item(s, LengthItem::detached((0.0, 1)))
 }
 
 /// `SVGAnimatedLength`: `baseVal` reflects the attribute, `animVal` reads it.
@@ -2113,22 +2724,33 @@ pub fn animated_transform_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, at
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<SvgStringList>();
     engine.register::<SvgAnimatedTransformList>();
     engine.register::<SvgTransformList>();
     engine.register::<SvgTransform>();
     engine.register::<SvgMatrix>();
     engine.register::<SvgAnimatedEnumeration>();
     engine.register::<SvgAnimatedString>();
+    engine.register::<SvgNumber>();
+    engine.register::<SvgAnimatedNumberList>();
+    engine.register::<SvgNumberList>();
     engine.register::<SvgAnimatedNumber>();
     engine.register::<SvgAnimatedInteger>();
     engine.register::<SvgAnimatedBoolean>();
+    engine.register::<SvgAngle>();
+    engine.register::<SvgAnimatedAngle>();
+    svg_aspect::register(engine);
+    engine.register::<SvgLengthList>();
+    engine.register::<SvgAnimatedLengthList>();
     engine.register::<SvgAnimatedLength>();
     engine.register::<SvgLength>();
-    engine.register::<SvgCurrentTranslate>();
+    engine.register::<SvgPoint>();
+    engine.register::<SvgPointList>();
     engine.register::<NodeList>();
     engine.register::<RadioNodeList>();
     engine.register::<HtmlCollection>();
     engine.register::<HtmlOptionsCollection>();
+    engine.register::<HtmlFormControlsCollection>();
     engine.register::<DomTokenList>();
     engine.register::<NamedNodeMap>();
     engine.register::<Attr>();
@@ -2154,28 +2776,312 @@ mod tests {
     }
 }
 
-/// pyro: `SVGSVGElement.currentTranslate`: a point whose `x` and `y` are the `<svg>`'s pan (pyro-dom
-/// `Dom::svg_pan`), live.
-pub struct SvgCurrentTranslate;
-impl JsClass for SvgCurrentTranslate {
+/// A detached SVG point or the live pan of an SVG viewport.
+pub enum SvgPointData {
+    Item(Rc<pyro_dom::svg_point_list::PointItem>),
+    Translate(NodeHold),
+}
+
+impl SvgPointData {
+    fn coordinates(&self) -> (f64, f64) {
+        match self {
+            Self::Item(value) => {
+                let (x, y) = value.coordinates();
+                (f64::from(x), f64::from(y))
+            }
+            Self::Translate(node) => {
+                let (x, y, _) = node.page.dom.borrow().svg_pan(node.id);
+                (x, y)
+            }
+        }
+    }
+
+    fn set(&self, value: Value<'_>, horizontal: bool) -> JsResult<()> {
+        let value = value.to_number()? as f32;
+        if !value.is_finite() {
+            return Err(JsError::Type("The provided float value is non-finite.".into()));
+        }
+        match self {
+            Self::Item(point) => {
+                let (x, y) = point.coordinates();
+                point.set_coordinates(if horizontal { (value, y) } else { (x, value) }).js()?;
+            }
+            Self::Translate(node) => {
+                let mut dom = node.page.dom.borrow_mut();
+                let (x, y, scale) = dom.svg_pan(node.id);
+                let position = if horizontal { (f64::from(value), y, scale) } else { (x, f64::from(value), scale) };
+                dom.set_svg_pan(node.id, position);
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn detached_point<'s>(s: &Scope<'s>, x: f64, y: f64) -> JsResult<Value<'s>> {
+    point_value(s, PointItem::detached((x as f32, y as f32)))
+}
+
+pub struct SvgPoint;
+impl JsClass for SvgPoint {
     const NAME: &'static str = "SVGPoint";
-    type Data = NodeHold;
+    type Data = SvgPointData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        fn set(t: &NodeHold, v: Value<'_>, axis: usize) -> JsResult<()> {
-            let value = v.to_number()?;
-            if !value.is_finite() {
-                return Err(JsError::Type("The provided float value is non-finite.".into()));
-            }
-            let mut dom = t.page.dom.borrow_mut();
-            let (mut tx, mut ty, scale) = dom.svg_pan(t.id);
-            if axis == 0 { tx = value as f32 as f64 } else { ty = value as f32 as f64 }
-            dom.set_svg_pan(t.id, (tx, ty, scale));
-            Ok(())
-        }
-        def.accessor("x", |s, t| Ok(s.number(t.page.dom.borrow().svg_pan(t.id).0)), |_s, t, v| set(t, v, 0));
-        def.accessor("y", |s, t| Ok(s.number(t.page.dom.borrow().svg_pan(t.id).1)), |_s, t, v| set(t, v, 1));
-        def.getter("w", |s, _t| Ok(s.number(1.0)));
-        def.getter("z", |s, _t| Ok(s.number(0.0)));
+        def.accessor("x", |s, p| Ok(s.number(p.coordinates().0)), |_s, p, v| p.set(v, true));
+        def.accessor("y", |s, p| Ok(s.number(p.coordinates().1)), |_s, p, v| p.set(v, false));
+        def.getter("w", |s, _| Ok(s.number(1.0)));
+        def.getter("z", |s, _| Ok(s.number(0.0)));
+        def.method("matrixTransform", 1, |s, p, args| {
+            args.require(1, "SVGPoint.matrixTransform")?;
+            let matrix = s.unwrap::<SvgMatrix>(args.get(0))
+                .ok_or_else(|| JsError::Type("Expected an SVGMatrix.".into()))?;
+            let (x, y) = p.coordinates();
+            detached_point(s, matrix[0] * x + matrix[2] * y + matrix[4], matrix[1] * x + matrix[3] * y + matrix[5])
+        });
     }
+}
+
+use pyro_dom::svg_point_list::PointItem;
+
+fn point_value<'s>(s: &Scope<'s>, item: Rc<PointItem>) -> JsResult<Value<'s>> {
+    // The wrapper owns this Rc and its weak identity entry ends at GC. Each
+    // realm therefore gets one wrapper per point for as long as it is held.
+    let key = IdentityKey((1 << 59) | (1 << 56), Rc::as_ptr(&item) as u64);
+    Ok(s.wrap::<SvgPoint>(SvgPointData::Item(item), Some(key))?.value())
+}
+
+fn point_argument(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<PointItem>> {
+    let point = s.unwrap::<SvgPoint>(value).ok_or_else(|| JsError::Type("Expected an SVGPoint.".into()))?;
+    Ok(match &*point {
+        SvgPointData::Item(item) => item.clone(),
+        SvgPointData::Translate(_) => {
+            let (x, y) = point.coordinates();
+            PointItem::detached((x as f32, y as f32))
+        }
+    })
+}
+
+use pyro_dom::svg_point_list::{ListItem, ListStorage};
+
+pub struct SvgListData<T: Copy> {
+    lists: Rc<ListStorage<T>>,
+    animated: bool,
+}
+
+impl<T: Copy> SvgListData<T> {
+    fn writable(&self) -> JsResult<&Rc<ListStorage<T>>> {
+        if self.animated {
+            return Err(dom_err(pyro_dom::svg_point_list::read_only()));
+        }
+        Ok(&self.lists)
+    }
+}
+
+trait SvgItemList<T: Copy>: JsClass<Data = SvgListData<T>> {
+    fn wrap_item<'s>(s: &Scope<'s>, item: Rc<ListItem<T>>) -> JsResult<Value<'s>>;
+    fn unwrap_item(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<ListItem<T>>>;
+}
+
+pub struct SvgPointList;
+impl JsClass for SvgPointList {
+    const NAME: &'static str = "SVGPointList";
+    type Data = SvgListData<(f32, f32)>;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        define_svg_list(def);
+    }
+}
+
+impl SvgItemList<(f32, f32)> for SvgPointList {
+    fn wrap_item<'s>(s: &Scope<'s>, item: Rc<PointItem>) -> JsResult<Value<'s>> {
+        point_value(s, item)
+    }
+    fn unwrap_item(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<PointItem>> {
+        point_argument(s, value)
+    }
+}
+
+pub struct SvgNumberList;
+impl JsClass for SvgNumberList {
+    const NAME: &'static str = "SVGNumberList";
+    type Data = SvgListData<f32>;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        define_svg_list(def);
+    }
+}
+
+impl SvgItemList<f32> for SvgNumberList {
+    fn wrap_item<'s>(s: &Scope<'s>, item: Rc<NumberItem>) -> JsResult<Value<'s>> {
+        number_value(s, item)
+    }
+    fn unwrap_item(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<NumberItem>> {
+        number_argument(s, value)
+    }
+}
+
+fn define_svg_list<T: Copy + 'static, C: SvgItemList<T>>(def: &mut ClassDef<C>) {
+    for name in ["numberOfItems", "length"] {
+        def.getter(name, |s, l| Ok(s.number(l.lists.len(l.animated) as f64)));
+    }
+    def.legacy_platform_object();
+    def.indexed_iterator();
+    def.indexed(|s, l, i| l.lists.item(i as usize, l.animated).map(|v| C::wrap_item(s, v)).transpose());
+    def.named_setter(|s, l, name, value| {
+        let Some(i) = name.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == name) else {
+            return Ok(false);
+        };
+        let item = C::unwrap_item(s, value)?;
+        l.writable()?.insert(i as usize, &item, true).js()?;
+        Ok(true)
+    });
+    def.method("getItem", 1, |s, l, a| {
+        a.require(1, C::NAME)?;
+        let i = svg_list_index(a.get(0))?;
+        let item = l.lists.item(i, l.animated).ok_or_else(|| JsError::dom("IndexSizeError", "The index is outside the SVG list."))?;
+        C::wrap_item(s, item)
+    });
+    def.method("clear", 0, |s, l, _| {
+        l.writable()?.clear().js()?;
+        Ok(s.undefined())
+    });
+    def.method("initialize", 1, |s, l, a| {
+        a.require(1, C::NAME)?;
+        let item = C::unwrap_item(s, a.get(0))?;
+        C::wrap_item(s, l.writable()?.initialize(&item).js()?)
+    });
+    def.method("appendItem", 1, |s, l, a| {
+        a.require(1, C::NAME)?;
+        let item = C::unwrap_item(s, a.get(0))?;
+        C::wrap_item(s, l.writable()?.insert(usize::MAX, &item, false).js()?)
+    });
+    def.method("insertItemBefore", 2, |s, l, a| {
+        a.require(2, C::NAME)?;
+        let item = C::unwrap_item(s, a.get(0))?;
+        let i = svg_list_index(a.get(1))?;
+        C::wrap_item(s, l.writable()?.insert(i, &item, false).js()?)
+    });
+    def.method("replaceItem", 2, |s, l, a| {
+        a.require(2, C::NAME)?;
+        let item = C::unwrap_item(s, a.get(0))?;
+        let i = svg_list_index(a.get(1))?;
+        C::wrap_item(s, l.writable()?.insert(i, &item, true).js()?)
+    });
+    def.method("removeItem", 1, |s, l, a| {
+        a.require(1, C::NAME)?;
+        let i = svg_list_index(a.get(0))?;
+        C::wrap_item(s, l.writable()?.remove(i).js()?)
+    });
+}
+
+pub fn point_list<'s>(s: &Scope<'s>, n: &NodeData, animated: bool) -> JsResult<Value<'s>> {
+    let key = coll_identity(n.page(), if animated { 443 } else { 442 }, n.id);
+    if let Some(obj) = s.lookup_identity(key) { return Ok(obj.value()); }
+    let hold = NodeHold::new(n.page(), n.id)?;
+    let write = Box::new(move |text: Option<&str>| {
+        let mut dom = hold.page.dom.borrow_mut();
+        match text {
+            Some(text) => dom.set_attribute_local(hold.id, &pyro_dom::LocalName::from("points"), text),
+            None => dom.remove_attribute_ns(hold.id, None, "points").map(|_| ()),
+        }
+    });
+    let lists = n.page().dom.borrow_mut().svg_point_lists(n.id, write).js()?;
+    Ok(s.wrap::<SvgPointList>(SvgListData { lists, animated }, Some(key))?.value())
+}
+
+pub struct SvgAnimatedNumberList;
+
+impl JsClass for SvgAnimatedNumberList {
+    const NAME: &'static str = "SVGAnimatedNumberList";
+    type Data = Rc<NumberLists>;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("baseVal", |s, lists| number_list_view(s, lists, false));
+        def.getter("animVal", |s, lists| number_list_view(s, lists, true));
+    }
+}
+
+fn number_list_view<'s>(s: &Scope<'s>, lists: &Rc<NumberLists>, animated: bool) -> JsResult<Value<'s>> {
+    let key = IdentityKey((1 << 59) | (3 << 56) | u64::from(animated), Rc::as_ptr(lists) as u64);
+    Ok(s.wrap::<SvgNumberList>(SvgListData { lists: lists.clone(), animated }, Some(key))?.value())
+}
+
+pub fn animated_number_list<'s>(s: &Scope<'s>, n: &NodeData, attr: &'static str) -> JsResult<Value<'s>> {
+    // All four exposing element interfaces have exactly one number list attribute.
+    let key = coll_identity(n.page(), 447, n.id);
+    if let Some(obj) = s.lookup_identity(key) {
+        return Ok(obj.value());
+    }
+    let hold = NodeHold::new(n.page(), n.id)?;
+    let write = Box::new(move |text: &str| {
+        hold.page.dom.borrow_mut().set_attribute_local(hold.id, &pyro_dom::LocalName::from(attr), text)
+    });
+    let lists = n.page().dom.borrow_mut().svg_number_lists(n.id, attr, write).js()?;
+    Ok(s.wrap::<SvgAnimatedNumberList>(lists, Some(key))?.value())
+}
+
+pub struct SvgLengthList;
+impl JsClass for SvgLengthList {
+    const NAME: &'static str = "SVGLengthList";
+    type Data = SvgListData<(f64, u16)>;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        define_svg_list(def);
+    }
+}
+
+impl SvgItemList<(f64, u16)> for SvgLengthList {
+    fn wrap_item<'s>(s: &Scope<'s>, item: Rc<LengthItem>) -> JsResult<Value<'s>> {
+        Ok(length_item(s, item)?.value())
+    }
+
+    fn unwrap_item(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<LengthItem>> {
+        let length = s.unwrap::<SvgLength>(value).ok_or_else(|| JsError::Type("Expected an SVGLength.".into()))?;
+        Ok(match &*length {
+            SvgLengthData::Item { item, .. } => item.clone(),
+            SvgLengthData::Attribute { .. } => LengthItem::detached(length.get()),
+        })
+    }
+}
+
+pub struct SvgAnimatedLengthList;
+impl JsClass for SvgAnimatedLengthList {
+    const NAME: &'static str = "SVGAnimatedLengthList";
+    type Data = Rc<LengthLists>;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("baseVal", |s, lists| length_list_view(s, lists, false));
+        def.getter("animVal", |s, lists| length_list_view(s, lists, true));
+    }
+}
+
+fn length_list_view<'s>(s: &Scope<'s>, lists: &Rc<LengthLists>, animated: bool) -> JsResult<Value<'s>> {
+    let key = IdentityKey((1 << 59) | (5 << 56) | u64::from(animated), Rc::as_ptr(lists) as u64);
+    Ok(s.wrap::<SvgLengthList>(SvgListData { lists: lists.clone(), animated }, Some(key))?.value())
+}
+
+pub fn animated_length_list<'s>(s: &Scope<'s>, n: &NodeData, attr: &'static str) -> JsResult<Value<'s>> {
+    let slot = match attr {
+        "x" => 450,
+        "y" => 451,
+        "dx" => 452,
+        "dy" => 453,
+        _ => unreachable!("unexpected SVG text positioning length list"),
+    };
+    let key = coll_identity(n.page(), slot, n.id);
+    if let Some(obj) = s.lookup_identity(key) {
+        return Ok(obj.value());
+    }
+    let el = Rc::new(NodeHold::new(n.page(), n.id)?);
+    let writer = el.clone();
+    let write = Box::new(move |text: &str| {
+        writer.page.dom.borrow_mut().set_attribute_local(writer.id, &pyro_dom::LocalName::from(attr), text)
+    });
+    let dir = if matches!(attr, "y" | "dy") { SvgLengthDir::Height } else { SvgLengthDir::Width };
+    let factor = Box::new(move |kind| SvgLengthData::attribute_factor(&el, dir, kind));
+    let lists = n.page().dom.borrow_mut().svg_length_lists(n.id, attr, write, factor).js()?;
+    Ok(s.wrap::<SvgAnimatedLengthList>(lists, Some(key))?.value())
 }

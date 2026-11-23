@@ -1,0 +1,301 @@
+{
+ "start": "2026-11-21T23:06:03.337Z",
+ "end": "2026-11-21T23:06:05.294Z",
+ "preciseHost": {
+  "durationSeconds": 1.957,
+  "hostBusyPct": 20.87
+ },
+ "perArm": {
+  "pseudo-base-56066285e": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 0.719,
+   "weightedHostBusyPct": 20.2
+  },
+  "pseudo-head-277154f9b": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 1.238,
+   "weightedHostBusyPct": 21.26
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "pseudo-base-56066285e",
+   "start": "2026-11-21T23:06:03.337Z",
+   "end": "2026-11-21T23:06:03.555Z",
+   "durationSeconds": 0.218,
+   "hostBusyPct": 25.829
+  },
+  {
+   "order": 2,
+   "binary": "pseudo-head-277154f9b",
+   "start": "2026-11-21T23:06:03.555Z",
+   "end": "2026-11-21T23:06:03.880Z",
+   "durationSeconds": 0.325,
+   "hostBusyPct": 25.9
+  },
+  {
+   "order": 3,
+   "binary": "pseudo-head-277154f9b",
+   "start": "2026-11-21T23:06:03.880Z",
+   "end": "2026-11-21T23:06:04.203Z",
+   "durationSeconds": 0.323,
+   "hostBusyPct": 25.9
+  },
+  {
+   "order": 4,
+   "binary": "pseudo-base-56066285e",
+   "start": "2026-11-21T23:06:04.203Z",
+   "end": "2026-11-21T23:06:04.372Z",
+   "durationSeconds": 0.169,
+   "hostBusyPct": 25.9
+  },
+  {
+   "order": 5,
+   "binary": "pseudo-head-277154f9b",
+   "start": "2026-11-21T23:06:04.372Z",
+   "end": "2026-11-21T23:06:04.673Z",
+   "durationSeconds": 0.301,
+   "hostBusyPct": 18.626
+  },
+  {
+   "order": 6,
+   "binary": "pseudo-base-56066285e",
+   "start": "2026-11-21T23:06:04.673Z",
+   "end": "2026-11-21T23:06:04.840Z",
+   "durationSeconds": 0.167,
+   "hostBusyPct": 13.6
+  },
+  {
+   "order": 7,
+   "binary": "pseudo-base-56066285e",
+   "start": "2026-11-21T23:06:04.840Z",
+   "end": "2026-11-21T23:06:05.005Z",
+   "durationSeconds": 0.165,
+   "hostBusyPct": 13.6
+  },
+  {
+   "order": 8,
+   "binary": "pseudo-head-277154f9b",
+   "start": "2026-11-21T23:06:05.005Z",
+   "end": "2026-11-21T23:06:05.294Z",
+   "durationSeconds": 0.289,
+   "hostBusyPct": 13.6
+  }
+ ],
+ "benchmarkSHA256": "1e3300ad502fda3498d375ec5ff55fdcc0ec73a15397f5b3cb3a8281f6348eec",
+ "minOneSecondBusyPct": 13.6,
+ "maxOneSecondBusyPct": 25.9,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-21T23:06:02.490Z",
+   "end": "2026-11-21T23:06:03.492Z",
+   "cpuBusyPct": 25.8
+  },
+  {
+   "start": "2026-11-21T23:06:03.492Z",
+   "end": "2026-11-21T23:06:04.495Z",
+   "cpuBusyPct": 25.9
+  },
+  {
+   "start": "2026-11-21T23:06:04.495Z",
+   "end": "2026-11-21T23:06:05.497Z",
+   "cpuBusyPct": 13.6
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-21T23:06:15.712Z",
+   "elapsedMs": 30003,
+   "cpuBusyPct": 15.5,
+   "load": [
+    10.1005859375,
+    20.27490234375,
+    17.73388671875
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1120,
+     "pctCpu": 148,
+     "rssMiB": 34844
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 103
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-21T23:06:01.668Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T23:05:22.306193+00:00",
+    "hostSlots": 3,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 2,
+    "diagnostics": 0,
+    "ordinary": 1,
+    "policy": "Both actual compiler slots released. Direct START general QA a84c9e083 and dedicated QA 277154f9b each one serial independent runtime on exact hashed binaries. SVG sole bdd2f1609 owner retains existing slot for verified candidate 297e377a after base WPT/probes, then head WPT/direct/native sequentially. CSS 277154 timing queued at dedicated QA release."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T23:06:31.677Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T23:05:22.306193+00:00",
+    "hostSlots": 3,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 2,
+    "diagnostics": 0,
+    "ordinary": 1,
+    "policy": "Both actual compiler slots released. Direct START general QA a84c9e083 and dedicated QA 277154f9b each one serial independent runtime on exact hashed binaries. SVG sole bdd2f1609 owner retains existing slot for verified candidate 297e377a after base WPT/probes, then head WPT/direct/native sequentially. CSS 277154 timing queued at dedicated QA release."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-21T23:05:09.910302+00:00",
+ "qaEnd": "2026-11-21T23:05:10.362302+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "knownQAFiles": [
+  {
+   "name": "pseudo-object-277154f9b-head.json",
+   "receiptMtime": "2026-11-21T23:05:08.715676+00:00",
+   "wallMs": 781
+  },
+  {
+   "name": "pseudo-event-277154f9b-head.json",
+   "receiptMtime": "2026-11-21T23:05:10.362302+00:00",
+   "wallMs": 452
+  },
+  {
+   "name": "pseudo-lifetime-head.json",
+   "receiptMtime": "2026-11-21T23:05:11.296823+00:00",
+   "wallMs": null
+  },
+  {
+   "name": "break-primary-head.json",
+   "receiptMtime": "2026-11-21T23:05:15.041115+00:00",
+   "wallMs": 7381
+  },
+  {
+   "name": "break-commands-head.json",
+   "receiptMtime": "2026-11-21T23:05:17.482148+00:00",
+   "wallMs": 1142
+  }
+ ],
+ "workloadNotes": "Ordinary DOM reads are the matched base/candidate scenario. Only the candidate exposes first-handle creation and cached identity reads; keep these as candidate-only costs."
+}

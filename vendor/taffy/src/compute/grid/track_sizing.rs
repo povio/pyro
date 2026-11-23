@@ -1373,7 +1373,10 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
                 })
                 .sum();
             let axis_min_size = axis_min_size.unwrap_or(0.0);
-            let axis_max_size = axis_max_size.unwrap_or(f32::INFINITY);
+            // pyro: a min-width/height larger than the max-width/height wins (CSS 2 §10.4, as Chromium's
+            // `ConstrainedSize` does), so the max is never below the min here: otherwise a grid too tall for
+            // its max would shrink the flexible tracks to the max instead of filling the min.
+            let axis_max_size = f32_max(axis_max_size.unwrap_or(f32::INFINITY), axis_min_size);
             if hypothetical_grid_size < axis_min_size {
                 find_size_of_fr(axis_tracks, axis_min_size)
             } else if hypothetical_grid_size > axis_max_size {

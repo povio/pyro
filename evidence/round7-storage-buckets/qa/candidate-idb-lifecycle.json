@@ -1,0 +1,12 @@
+{
+  "surface": true,
+  "transaction": "complete",
+  "deleted": true,
+  "heldDB": "InvalidStateError",
+  "staleFactory": [
+    "returned",
+    "AbortError"
+  ],
+  "closeEvent": 0,
+  "newNames": []
+}

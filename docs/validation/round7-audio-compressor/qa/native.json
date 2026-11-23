@@ -1,0 +1,85 @@
+{
+  "date": "2026-11-22T13:28:30.901Z",
+  "chrome": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "version": "158.0.8127.37",
+  "scriptHash": "5e594a582652d5b38d3d14dff2a4e87f46beb30249a3670d247ca227e2b38aa0",
+  "candidateHash": null,
+  "results": [
+    {
+      "rate": 44100,
+      "latency": [
+        264,
+        264
+      ],
+      "quietGain": 1.524121966212988,
+      "stereo": [
+        {
+          "mode": "left",
+          "loudGain": 0.8679719269275665,
+          "probeGain": 0.867971871048212,
+          "recovery": [
+            0.9307542401074897,
+            1.4890942999045365,
+            1.524121966212988
+          ]
+        },
+        {
+          "mode": "right",
+          "loudGain": 0.8679719269275665,
+          "probeGain": 0.867971871048212,
+          "recovery": [
+            0.9307542401074897,
+            1.4890942999045365,
+            1.524121966212988
+          ]
+        }
+      ],
+      "checks": {
+        "dry": true,
+        "delay": true,
+        "gain": true,
+        "attenuation": true,
+        "linked": true,
+        "release": true
+      }
+    },
+    {
+      "rate": 48000,
+      "latency": [
+        288,
+        288
+      ],
+      "quietGain": 1.5241201035678387,
+      "stereo": [
+        {
+          "mode": "left",
+          "loudGain": 0.8679715543985367,
+          "probeGain": 0.8679714985191822,
+          "recovery": [
+            0.9302921309426893,
+            1.4889113292156253,
+            1.5241201035678387
+          ]
+        },
+        {
+          "mode": "right",
+          "loudGain": 0.8679715543985367,
+          "probeGain": 0.8679714985191822,
+          "recovery": [
+            0.9302921309426893,
+            1.4889113292156253,
+            1.5241201035678387
+          ]
+        }
+      ],
+      "checks": {
+        "dry": true,
+        "delay": true,
+        "gain": true,
+        "attenuation": true,
+        "linked": true,
+        "release": true
+      }
+    }
+  ]
+}

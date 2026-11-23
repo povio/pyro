@@ -1,0 +1,202 @@
+[
+  {
+    "case": {
+      "cmd": "insertOrderedList",
+      "sep": "p",
+      "block": "div",
+      "prefix": "p",
+      "reverse": false
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertOrderedList",
+      "sep": "p",
+      "block": "div",
+      "prefix": "p",
+      "reverse": true
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertOrderedList",
+      "sep": "p",
+      "block": "div",
+      "prefix": "bare",
+      "reverse": false
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertOrderedList",
+      "sep": "p",
+      "block": "div",
+      "prefix": "bare",
+      "reverse": true
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertOrderedList",
+      "sep": "div",
+      "block": "div",
+      "prefix": "p",
+      "reverse": false
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertOrderedList",
+      "sep": "div",
+      "block": "div",
+      "prefix": "p",
+      "reverse": true
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertOrderedList",
+      "sep": "div",
+      "block": "div",
+      "prefix": "bare",
+      "reverse": false
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertOrderedList",
+      "sep": "div",
+      "block": "div",
+      "prefix": "bare",
+      "reverse": true
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "p",
+      "block": "div",
+      "prefix": "p",
+      "reverse": false
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "p",
+      "block": "div",
+      "prefix": "p",
+      "reverse": true
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "p",
+      "block": "div",
+      "prefix": "ol",
+      "reverse": false
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "p",
+      "block": "div",
+      "prefix": "ol",
+      "reverse": true
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "p",
+      "block": "div",
+      "prefix": "bare",
+      "reverse": false
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "p",
+      "block": "div",
+      "prefix": "bare",
+      "reverse": true
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "div",
+      "block": "div",
+      "prefix": "p",
+      "reverse": false
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "div",
+      "block": "div",
+      "prefix": "p",
+      "reverse": true
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "div",
+      "block": "div",
+      "prefix": "ol",
+      "reverse": false
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "div",
+      "block": "div",
+      "prefix": "ol",
+      "reverse": true
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "div",
+      "block": "div",
+      "prefix": "bare",
+      "reverse": false
+    },
+    "recovered": true
+  },
+  {
+    "case": {
+      "cmd": "insertUnorderedList",
+      "sep": "div",
+      "block": "div",
+      "prefix": "bare",
+      "reverse": true
+    },
+    "recovered": true
+  }
+]

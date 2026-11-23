@@ -1,0 +1,1166 @@
+//! Value-based inline editing commands and their collapsed-selection overrides.
+
+use crate::{
+    editing::{self, Point},
+    page::PageDom,
+};
+use pyro_dom::{stylo::declarations::DeclarationBlock, Dom, NodeId, NodeType};
+use std::rc::Rc;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Kind {
+    Family,
+    Size,
+    Foreground,
+    Background,
+}
+
+impl Kind {
+    pub(super) fn command(s: &str) -> Option<Self> {
+        Some(match s {
+            "fontname" => Self::Family,
+            "fontsize" => Self::Size,
+            "forecolor" => Self::Foreground,
+            "backcolor" | "hilitecolor" => Self::Background,
+            _ => return None,
+        })
+    }
+    fn property(self) -> &'static str {
+        match self {
+            Self::Family => "font-family",
+            Self::Size => "font-size",
+            Self::Foreground => "color",
+            Self::Background => "background-color",
+        }
+    }
+    fn input_type(self) -> &'static str {
+        match self {
+            Self::Family => "formatFontName",
+            Self::Size => "",
+            Self::Foreground => "formatFontColor",
+            Self::Background => "formatBackColor",
+        }
+    }
+    fn html_attr(self) -> Option<&'static str> {
+        match self {
+            Self::Family => Some("face"),
+            Self::Size => Some("size"),
+            Self::Foreground => Some("color"),
+            Self::Background => None,
+        }
+    }
+}
+
+/// The size numbers used by the HTML font element and the editing commands.
+const SIZES: [&str; 7] = ["x-small", "small", "medium", "large", "x-large", "xx-large", "xxx-large"];
+
+fn font_size(input: &str) -> Option<i32> {
+    let s = input.trim_matches(|c: char| c.is_ascii_whitespace());
+    pyro_dom::forms::parse_float(s.strip_prefix('+').unwrap_or(s))?;
+    let digits = s
+        .trim_start_matches(['+', '-'])
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0i32, |v, c| (v * 10 + i32::from(c - b'0')).min(10));
+    let number = match s.as_bytes().first() {
+        Some(b'+') => 3 + digits,
+        Some(b'-') => 3 - digits,
+        _ => digits,
+    };
+    Some(number.clamp(1, 7))
+}
+
+#[derive(Clone)]
+struct Format {
+    kind: Kind,
+    css: String,
+    legacy: Option<String>,
+    hashless: bool,
+}
+
+impl Format {
+    fn parse(kind: Kind, value: &str) -> Option<Self> {
+        let mut hashless = false;
+        let (css, legacy) = match kind {
+            Kind::Size => {
+                let n = font_size(value)?;
+                (SIZES[(n - 1) as usize].into(), Some(n.to_string()))
+            }
+            Kind::Family => {
+                let mut decls = DeclarationBlock::parse("");
+                decls.set("font-family", value, false)?;
+                (decls.value("font-family"), Some(value.to_owned()))
+            }
+            Kind::Foreground | Kind::Background => {
+                let (color, html) = pyro_dom::color_well::editing_color(value)
+                    .or_else(|| if kind == Kind::Foreground {
+                        hashless = true;
+                        pyro_dom::color_well::hashless_foreground(value)
+                    } else {
+                        pyro_dom::color_well::editing_color(&format!("#{value}"))
+                    })?;
+                (color, if kind == Kind::Foreground { html } else { None })
+            }
+        };
+        Some(Self { kind, css, legacy, hashless })
+    }
+    fn input_type(&self) -> &'static str {
+        if self.hashless { "" } else { self.kind.input_type() }
+    }
+    fn query(&self) -> String {
+        if self.kind == Kind::Size {
+            self.legacy.clone().unwrap_or_default()
+        } else {
+            self.css.clone()
+        }
+    }
+    fn legacy(&self, use_css: bool) -> Option<(&'static str, &str)> {
+        if use_css && !(self.kind == Kind::Size && self.legacy.as_deref() == Some("7")) {
+            return None;
+        }
+        Some((self.kind.html_attr()?, self.legacy.as_deref()?))
+    }
+}
+
+pub(crate) struct TypingValues {
+    range: (Point, Point),
+    values: Vec<Format>,
+    decoration: Option<super::decoration::Lines>,
+    toggles: Vec<(&'static str, bool)>,
+}
+
+fn pending_at(slot: &mut Option<TypingValues>, range: (Point, Point)) -> &mut TypingValues {
+    if slot.as_ref().is_none_or(|v| v.range != range) {
+        *slot = Some(TypingValues { range, values: Vec::new(), decoration: None, toggles: Vec::new() });
+    }
+    slot.as_mut().unwrap()
+}
+
+pub(crate) fn has_pending_toggle(page: &PageDom, range: (Point, Point)) -> bool {
+    page.typing_values.borrow().as_ref().is_some_and(|p| p.range == range
+        && (p.decoration.is_some() || !p.toggles.is_empty()))
+}
+
+pub(super) fn toggle_state(page: &PageDom, range: (Point, Point), tag: &str) -> Option<bool> {
+    let slot = page.typing_values.borrow();
+    slot.as_ref().filter(|v| v.range == range)?.toggles.iter().find(|(t, _)| *t == tag).map(|(_, on)| *on)
+}
+
+pub(super) fn decoration_state(page: &PageDom, range: (Point, Point), tag: &str) -> Option<bool> {
+    let slot = page.typing_values.borrow();
+    let pending = slot.as_ref().filter(|p| p.range == range)?.decoration?;
+    let authored = super::decoration::Lines::at(page, &page.dom.borrow(), range.0.0);
+    Some(pending.reported(authored).has(tag))
+}
+
+pub(super) fn toggle_decoration(page: &PageDom, range: (Point, Point), tag: &str) {
+    let authored = super::decoration::Lines::at(page, &page.dom.borrow(), range.0.0);
+    let mut slot = page.typing_values.borrow_mut();
+    let pending = pending_at(&mut slot, range);
+    let mut lines = pending.decoration.map_or(authored, |d| d.reported(authored));
+    lines.toggle(tag);
+    pending.decoration = Some(lines);
+}
+
+pub(super) fn set_toggle(page: &PageDom, range: (Point, Point), tag: &'static str, enabled: bool) {
+    let mut slot = page.typing_values.borrow_mut();
+    let pending = pending_at(&mut slot, range);
+    if matches!(tag, "sub" | "sup") {
+        pending.toggles.retain(|(t, _)| !matches!(*t, "sub" | "sup"));
+        pending.toggles.push((if tag == "sub" { "sup" } else { "sub" }, false));
+    } else {
+        pending.toggles.retain(|(t, _)| *t != tag);
+    }
+    pending.toggles.push((tag, enabled));
+}
+
+/// Structural commands keep the formatting values attached to the selection
+/// while its live endpoints move with the edited paragraphs.
+pub(super) fn reselect(page: &Rc<PageDom>, original: (Point, Point), points: [Point; 2]) {
+    let pending = page.typing_values.take().filter(|v| v.range == original);
+    editing::retarget_selection(page, points[0], points[1]);
+    if let (Some(mut pending), Some(range)) = (pending, editing::selection_range(page)) {
+        pending.range = range;
+        page.typing_values.replace(Some(pending));
+    }
+}
+
+/// Fully selected text may lose its formatting element on Enter. Preserve
+/// its color and font emphasis for the next insertion at the break caret.
+pub(crate) fn retain_replacement_style(
+    page: &PageDom, dom: &Dom, range: (Point, Point), text: NodeId, wrapper: NodeId,
+) {
+    let Some(parent) = dom.parent_element(wrapper).ok().flatten() else { return };
+    let Some(element) = dom.parent_element(text).ok().flatten() else { return };
+    for kind in [Kind::Foreground, Kind::Background] {
+        let color = effective(page, dom, kind, text);
+        if color == effective(page, dom, kind, parent) { continue; }
+        if let Some(format) = Format::parse(kind, &color) {
+            let mut slot = page.typing_values.borrow_mut();
+            let pending = pending_at(&mut slot, range);
+            if !pending.values.iter().any(|f| f.kind == kind) { pending.values.push(format); }
+        }
+    }
+    let layout = page.layout();
+    for (tag, property) in [("b", "font-weight"), ("i", "font-style")] {
+        let enabled = |node| {
+            let value = layout.computed_style_value(dom, node, property);
+            if tag == "b" { super::numeric_bold_weight(&value) }
+            else { value.starts_with("italic") || value.starts_with("oblique") }
+        };
+        let active = enabled(element);
+        if active != enabled(parent) && toggle_state(page, range, tag).is_none() {
+            set_toggle(page, range, tag, active);
+        }
+    }
+}
+
+/// A paragraph or soft break continues typing at the new caret.
+pub(crate) fn set_break_caret(page: &Rc<PageDom>, original: (Point, Point), caret: Point) {
+    let pending = page.typing_values.take().filter(|v| v.range == original);
+    editing::set_selection(page, caret, caret);
+    if let Some(mut pending) = pending {
+        pending.range = (caret, caret);
+        page.typing_values.replace(Some(pending));
+    }
+}
+
+fn effective(page: &PageDom, dom: &Dom, kind: Kind, node: NodeId) -> String {
+    let mut el = if dom.node_type(node).ok() == Some(NodeType::Element) {
+        Some(node)
+    } else {
+        dom.parent_element(node).ok().flatten()
+    };
+    let layout = page.layout();
+    while let Some(n) = el {
+        let value = layout.computed_style_value(dom, n, kind.property());
+        let parent = dom.parent_element(n).ok().flatten();
+        if kind == Kind::Background
+            && parent.is_some()
+            && (value.is_empty() || pyro_dom::color_well::is_fully_transparent(&value))
+        {
+            el = parent;
+        } else {
+            return value;
+        }
+    }
+    String::new()
+}
+
+fn formattable_nodes(page: &PageDom, dom: &Dom, scope: NodeId, start: Point, end: Point) -> Vec<NodeId> {
+    if start == end {
+        return Vec::new();
+    }
+    let mut nodes = Vec::new();
+    for node in dom.descendants(scope).into_iter().flatten() {
+        let (begin, finish) = if editing::is_text(dom, node) {
+            let len = editing::len(dom, node);
+            if len == 0 {
+                continue;
+            }
+            ((node, 0), (node, len))
+        } else if matches!(editing::local(dom, node).as_str(), "br" | "img") {
+            let (Ok(Some(p)), Ok(index)) = (dom.parent(node), dom.index_in_parent(node)) else {
+                continue;
+            };
+            ((p, index), (p, index + 1))
+        } else {
+            continue;
+        };
+        if crate::range::compare_boundary_points_dom(dom, finish, start) > 0
+            && crate::range::compare_boundary_points_dom(dom, begin, end) < 0
+            && super::rich_node(dom, node)
+            && !editing::invisible_formatting_space(page, dom, scope, node)
+            && super::alignment::visible(page, dom, node)
+        {
+            nodes.push(node);
+        }
+    }
+    nodes
+}
+fn selected_values(page: &PageDom, kind: Kind) -> Vec<String> {
+    let Some((start, end)) = editing::selection_range(page) else { return Vec::new() };
+    let dom = page.dom.borrow();
+    let mut nodes =
+        editing::editing_host(&dom, start.0).map(|h| formattable_nodes(page, &dom, h, start, end)).unwrap_or_default();
+    if nodes.is_empty() {
+        nodes.push(start.0);
+    }
+    nodes.into_iter().map(|n| effective(page, &dom, kind, n)).collect()
+}
+
+// Stylo's absolute size keywords at this browser's default medium size.
+const FONT_PX: [f32; 7] = [10., 13., 16., 18., 24., 32., 48.];
+
+fn equivalent(fmt: &Format, computed: &str) -> bool {
+    if fmt.css == computed {
+        return true;
+    }
+    if fmt.kind == Kind::Size {
+        return SIZES
+            .iter()
+            .position(|s| *s == fmt.css)
+            .zip(computed.strip_suffix("px").and_then(|s| s.parse::<f32>().ok()))
+            .is_some_and(|(n, px)| px == FONT_PX[n]);
+    }
+    false
+}
+
+pub(super) fn query(page: &PageDom, kind: Kind) -> String {
+    if let Some(range) = editing::selection_range(page) {
+        if let Some(v) = page
+            .typing_values
+            .borrow()
+            .as_ref()
+            .filter(|v| v.range == range)
+            .and_then(|v| v.values.iter().find(|v| v.kind == kind))
+        {
+            return v.query();
+        }
+    }
+    let Some(value) = selected_values(page, kind).into_iter().next() else { return String::new() };
+    if kind != Kind::Size {
+        return value;
+    }
+    let Some(px) = value.strip_suffix("px").and_then(|v| v.parse::<f32>().ok()) else { return String::new() };
+    (1 + FONT_PX.windows(2).take_while(|pair| px >= (pair[0] + pair[1]) / 2.).count()).to_string()
+}
+
+pub(super) fn mixed(page: &PageDom, kind: Kind) -> bool {
+    if kind == Kind::Background {
+        if let Some((a, b)) = editing::selection_range(page).filter(|(a,b)| a != b) {
+            let dom = page.dom.borrow();
+            if let Some(host) = editing::editing_host(&dom, a.0) {
+                let nodes = formattable_nodes(page, &dom, host, a, b);
+                let paint_owner = |n| {
+                    let mut el = dom.parent_element(n).ok()?;
+                    while let Some(node) = el.filter(|&node| node != host) {
+                        if !DeclarationBlock::parse(dom.get_attribute(node, "style").ok()?.unwrap_or(""))
+                            .value("background-color").is_empty() { return Some(node); }
+                        el = dom.parent_element(node).ok()?;
+                    }
+                    None
+                };
+                if let Some(owner) = nodes.first().and_then(|&n| paint_owner(n)) {
+                    if nodes.iter().all(|&n| paint_owner(n) == Some(owner)) { return false; }
+                }
+            }
+        }
+    }
+    let values = selected_values(page, kind);
+    values.first().is_some_and(|a| values.iter().any(|b| b != a))
+}
+
+fn apply_to(dom: &mut Dom, node: NodeId, fmt: &Format, legacy: Option<(&str, &str)>) {
+    if let Some((attr, value)) = legacy {
+        // A font's presentation attribute has lower cascade priority than
+        // its inline declarations. Clear only the property being edited.
+        if let Ok(Some(style)) = dom.get_attribute(node, "style") {
+            let mut declarations = DeclarationBlock::parse(style);
+            if declarations.remove(fmt.kind.property()) {
+                if declarations.is_empty() {
+                    let _ = dom.remove_attribute(node, "style");
+                } else {
+                    let _ = dom.set_attribute(node, "style", &declarations.css_text());
+                }
+            }
+        }
+        let _ = dom.set_attribute(node, attr, value);
+    } else {
+        let mut decl = DeclarationBlock::parse(dom.get_attribute(node, "style").ok().flatten().unwrap_or(""));
+        decl.set(fmt.kind.property(), &fmt.css, false);
+        let _ = dom.set_attribute(node, "style", &decl.css_text());
+    }
+}
+
+/// A transparent child cannot cover an ancestor's painted background.
+/// Split the inline paint-bearing containers at the selected leaf and
+/// remove the color only from the selected portion.
+fn clear_highlight(page: &PageDom, dom: &mut Dom, node: NodeId) -> bool {
+    let Some(host) = editing::editing_host(dom, node) else { return false };
+    let mut changed = false;
+    let mut cur = dom.parent_element(node).ok().flatten();
+    while let Some(el) = cur {
+        if el == host {
+            break;
+        }
+        let layout = page.layout();
+        let display = layout.computed_style_value(dom, el, "display");
+        if display != "inline" && display != "contents" {
+            break;
+        }
+        let parent = dom.parent_element(el).ok().flatten();
+        let own = layout.computed_style_value(dom, el, "background-color");
+        if !own.is_empty() && !pyro_dom::color_well::is_fully_transparent(&own) {
+            let Some(outer) = parent else {
+                break;
+            };
+            let mut edges = [(node, 0), (node, editing::len(dom, node))];
+            let Some(mid) = super::alignment::split_edge(dom, outer, node, false, &mut edges) else {
+                break;
+            };
+            if super::alignment::split_edge(dom, outer, node, true, &mut edges).is_none() {
+                break;
+            }
+            let mut style = DeclarationBlock::parse(dom.get_attribute(mid, "style").ok().flatten().unwrap_or(""));
+            style.remove("background-color");
+            if style.is_empty() {
+                let _ = dom.remove_attribute(mid, "style");
+            } else {
+                let _ = dom.set_attribute(mid, "style", &style.css_text());
+            }
+            let inherited_rule = layout.computed_style_value(dom, mid, "background-color");
+            if !pyro_dom::color_well::is_fully_transparent(&inherited_rule) {
+                style.set("background-color", "transparent", false);
+                let _ = dom.set_attribute(mid, "style", &style.css_text());
+            }
+            changed = true;
+        }
+        cur = parent;
+    }
+    changed
+}
+
+/// Carries formatting on a native element without parsing user input as HTML.
+fn wrap(dom: &mut Dom, node: NodeId, fmt: &Format) -> Option<NodeId> {
+    let host = editing::editing_host(dom, node)?;
+    let doc = dom.node_document(node).ok()?;
+    let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
+    let tag = if legacy.is_some() { "font" } else { "span" };
+    let parent = dom.parent_element(node).ok()??;
+    if parent != host && editing::local(dom, parent) == tag && dom.child_count(parent).ok()? == 1 {
+        apply_to(dom, parent, fmt, legacy);
+        return Some(parent);
+    }
+    let el = dom.create_element(doc, tag).ok()?;
+    apply_to(dom, el, fmt, legacy);
+    dom.insert_before(parent, el, Some(node)).ok()?;
+    dom.append_child(el, node).ok()?;
+    Some(el)
+}
+
+/// Replace a selected portion of a single-purpose FONT or SPAN. Keep
+/// the original value on either side of the range, and leave carriers
+/// with unrelated attributes or declarations intact.
+fn format_selected(page: &PageDom, dom: &mut Dom, host: NodeId, node: NodeId, range: (Point, Point), fmt: &Format) -> Option<()> {
+    let parent = dom.parent_element(node).ok()??;
+    if parent != host && dom.element(parent).ok()?.is_html() {
+        let tag = editing::local(dom, parent);
+        let attrs = dom.attributes(parent).ok()?;
+        let carrier = match attrs {
+            [attr] if attr.name.ns.is_empty() && tag == "font" => {
+                fmt.kind.html_attr() == Some(&*attr.name.local)
+            }
+            [attr] if tag == "span" && attr.name.local == markup5ever::local_name!("style") => {
+                matches!(crate::css::parse_declarations(&attr.value).as_slice(), [decl] if decl.name == fmt.kind.property())
+            }
+            _ => false,
+        };
+        if carrier {
+            let outer = dom.parent_element(parent).ok()??;
+            let inherited = inherited_format(page, dom, fmt, outer);
+            if fmt.kind == Kind::Background && !inherited {
+                // Across paint boundaries each existing background remains
+                // in place. Within one run the selected paint can be replaced.
+                let in_run = |point: Point| point.0 == parent || dom.parent(point.0).ok().flatten() == Some(parent);
+                if !in_run(range.0) || !in_run(range.1) {
+                    return wrap(dom, node, fmt).map(|_| ());
+                }
+            }
+            let mut edges = [(node, 0), (node, editing::len(dom, node))];
+            let middle = super::alignment::split_edge(dom, outer, node, false, &mut edges)?;
+            super::alignment::split_edge(dom, outer, node, true, &mut edges)?;
+            let doc = dom.node_document(node).ok()?;
+            let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
+            if !inherited && tag == if legacy.is_some() { "font" } else { "span" } {
+                apply_to(dom, middle, fmt, legacy);
+                return Some(());
+            }
+            super::indentation::unwrap(dom, middle, &mut edges)?;
+            if inherited { return Some(()); }
+        }
+    }
+    wrap(dom, node, fmt).map(|_| ())
+}
+
+fn inherited_format(page: &PageDom, dom: &Dom, fmt: &Format, node: NodeId) -> bool {
+    if fmt.kind == Kind::Size {
+        // A coincident pixel size is not an inherited HTML size.
+        // Stylo retains keyword provenance through the cascade.
+        page.layout().style().stylo_style(dom, node).is_some_and(|style| {
+            let info = style.get_font().font_size.keyword_info;
+            let size = info.kw.html_size().checked_sub(1).and_then(|i| SIZES.get(i as usize));
+            info.factor == 1.0 && info.offset.px() == 0.0 && size == Some(&fmt.css.as_str())
+        })
+    } else {
+        equivalent(fmt, &effective(page, dom, fmt.kind, node))
+    }
+}
+
+fn value_carrier(dom: &Dom, node: NodeId, host: NodeId, fmt: &Format) -> Option<NodeId> {
+    let parent = dom.parent_element(node).ok()??;
+    if parent == host || !dom.element(parent).ok()?.is_html() { return None; }
+    let name = editing::local(dom, parent);
+    if !matches!(name.as_str(), "font" | "span") { return None; }
+    let style = DeclarationBlock::parse(dom.get_attribute(parent, "style").ok()?.unwrap_or(""));
+    let legacy_attr = fmt.kind.html_attr().is_some_and(|attr| name == "font" && dom.has_attribute(parent, attr).unwrap_or(false));
+    let sized = fmt.kind == Kind::Background && (!style.value("font-size").is_empty()
+        || name == "font" && dom.has_attribute(parent, "size").unwrap_or(false));
+    (legacy_attr || sized || !style.value(fmt.kind.property()).is_empty())
+        .then_some(parent)
+}
+
+/// Keep the original painted carrier on the unselected suffix. The ID
+/// stays on the first fragment; other authored attributes survive cloning.
+fn isolate_painted_text(dom: &mut Dom, carrier: NodeId, text: NodeId) -> Option<NodeId> {
+    let parent = dom.parent_element(carrier).ok()??;
+    if dom.prev_sibling(text).ok()?.is_some() {
+        let prefix = dom.clone_node(carrier, false, None).ok()?;
+        dom.insert_before(parent, prefix, Some(carrier)).ok()?;
+        dom.remove_attribute(carrier, "id").ok()?;
+        while let Some(child) = dom.first_child(carrier).ok()?.filter(|&n| n != text) {
+            dom.append_child(prefix, child).ok()?;
+        }
+    }
+    if dom.next_sibling(text).ok()?.is_none() { return Some(carrier); }
+    let selected = dom.clone_node(carrier, false, None).ok()?;
+    dom.remove_attribute(carrier, "id").ok()?;
+    dom.insert_before(parent, selected, Some(carrier)).ok()?;
+    dom.append_child(selected, text).ok()?;
+    Some(selected)
+}
+
+fn inline_paint_scope(page: &PageDom, dom: &Dom, host: NodeId, text: NodeId) -> bool {
+    let mut cur = dom.parent_element(text).ok().flatten();
+    let mut painted = false;
+    while let Some(el) = cur.filter(|&el| el != host) {
+        let display = page.layout().computed_style_value(dom, el, "display");
+        let style = DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten().unwrap_or(""));
+        if !style.value("background-color").is_empty() {
+            // Nested authored backgrounds have independent paint boundaries.
+            if painted || !matches!(display.as_str(), "inline" | "contents") { return false; }
+            painted = true;
+        }
+        if !matches!(display.as_str(), "inline" | "contents") { break; }
+        cur = dom.parent_element(el).ok().flatten();
+    }
+    true
+}
+
+fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &Format, previous: Option<NodeId>, single: bool) -> Option<NodeId> {
+    let doc = dom.node_document(text).ok()?;
+    let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
+    let mut run = text;
+    if let Some(carrier) = value_carrier(dom, text, host, fmt) {
+        if matches!(fmt.kind, Kind::Size | Kind::Family) && editing::local(dom, carrier) == "font"
+            && equivalent(fmt, &effective(page, dom, fmt.kind, text))
+        {
+            let authored = dom.get_attribute(carrier, fmt.kind.html_attr()?).ok()?;
+            let exact = authored == fmt.legacy.as_deref();
+            if exact || fmt.kind == Kind::Family && authored.zip(fmt.legacy.as_deref())
+                .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b))
+            {
+                // Equivalent family spelling preserves the existing carrier.
+                // Extending it to new text also requires the same literal face.
+                return (exact && legacy.is_some() && dom.attributes(carrier).ok()?.len() == 1
+                    && dom.next_sibling(text).ok()?.is_none()).then_some(carrier);
+            }
+        }
+        if fmt.kind == Kind::Background {
+            let style = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok()?.unwrap_or(""));
+            if style.value("background-color").is_empty() && dom.child_count(carrier).ok()? != 1 {
+                // A partial size carrier keeps
+                // its own extent; paint the selected text inside it.
+                return wrap(dom, text, fmt);
+            }
+        }
+        let outer = dom.parent_element(carrier).ok()??;
+        let mut points = [(text, 0), (text, editing::len(dom, text))];
+        let middle = if fmt.kind == Kind::Background {
+            isolate_painted_text(dom, carrier, text)?
+        } else {
+            let middle = super::alignment::split_edge(dom, outer, text, false, &mut points)?;
+            super::alignment::split_edge(dom, outer, text, true, &mut points)?;
+            middle
+        };
+        let name = editing::local(dom, middle);
+        if name == "font" {
+            if let Some(attr) = fmt.kind.html_attr() { dom.remove_attribute(middle, attr).ok()?; }
+        }
+        let mut style = DeclarationBlock::parse(dom.get_attribute(middle, "style").ok()?.unwrap_or(""));
+        if style.remove(fmt.kind.property()) {
+            if style.is_empty() { dom.remove_attribute(middle, "style").ok()?; }
+            else { dom.set_attribute(middle, "style", &style.css_text()).ok()?; }
+        }
+        if dom.attributes(middle).ok()?.is_empty() {
+            super::indentation::unwrap(dom, middle, &mut points)?;
+        } else {
+            run = middle;
+        }
+    }
+    if fmt.kind == Kind::Family {
+        let outer = dom.parent_element(run).ok()??;
+        if outer != host && editing::local(dom, outer) == "font" && dom.child_count(outer).ok()? == 1
+            && dom.has_attribute(outer, "face").ok()?
+        {
+            let plain = dom.attributes(outer).ok()?.len() == 1;
+            if run == text && (legacy.is_some() || !plain) {
+                dom.remove_attribute(outer, "face").ok()?;
+                apply_to(dom, outer, fmt, legacy);
+                return (plain && legacy.is_some()).then_some(outer);
+            }
+            if plain {
+                super::indentation::unwrap(dom, outer, &mut [(text, 0), (text, editing::len(dom, text))])?;
+            }
+        }
+    }
+    // Keep the SPAN around an isolated legacy FONT when it carries other styling.
+    if (fmt.kind == Kind::Size || fmt.kind == Kind::Family && single) && legacy.is_some()
+        && run != text && editing::local(dom, run) == "span" {
+        run = text;
+    }
+    let parent = dom.parent_element(run).ok()??;
+    if let Some(prev) = previous {
+        if dom.next_sibling(prev).ok()? == Some(run) {
+            dom.append_child(prev, run).ok()?;
+            return Some(prev);
+        }
+    }
+    if inherited_format(page, dom, fmt, parent) { return None; }
+    if fmt.kind == Kind::Size && legacy.is_some() && run == text && parent != host
+        && editing::local(dom, parent) == "font" && dom.child_count(parent).ok()? == 1
+        && dom.attributes(parent).ok()?.len() == 1 && dom.get_attribute(parent, "size").ok()?.is_some()
+    {
+        apply_to(dom, parent, fmt, legacy);
+        return Some(parent);
+    }
+    if single && run != text && (legacy.is_none() || editing::local(dom, run) == "font") {
+        apply_to(dom, run, fmt, legacy);
+        // A carrier with other attributes belongs only to its original text.
+        return None;
+    }
+    let el = dom.create_element(doc, if legacy.is_some() { "font" } else { "span" }).ok()?;
+    apply_to(dom, el, fmt, legacy);
+    dom.insert_before(parent, el, Some(run)).ok()?;
+    dom.append_child(el, run).ok()?;
+    Some(el)
+}
+
+/// Reapplying a highlight to a complete inline run replaces its paint
+/// wrapper. Keep the styled children together so a class on one child
+/// cannot leak onto its neighbors when the new wrapper is assembled.
+fn reapply_highlight(page: &Rc<PageDom>, host: NodeId, start: Point, end: Point, fmt: &Format) -> bool {
+    if fmt.kind != Kind::Background || start == end { return false; }
+    let dom = page.dom.borrow();
+    let Ok(wrapper) = crate::range::common_ancestor(&dom, start.0, end.0) else { return false };
+    if wrapper == host || !super::local_html(&dom, wrapper, "span") || dom.child_count(wrapper).ok().unwrap_or(0) < 2
+        || page.layout().computed_style_value(&dom, wrapper, "display") != "inline"
+        || !dom.attributes(wrapper).is_ok_and(|attrs| attrs.len() == 1)
+        || dom.get_attribute(wrapper, "style").ok().flatten().is_none_or(|v| {
+            let decl = DeclarationBlock::parse(v);
+            decl.names() != ["background-color"] || !equivalent(fmt, &effective(page, &dom, Kind::Background, wrapper))
+        })
+        || editing::deep_forward(&dom, (wrapper, 0)) != editing::deep_forward(&dom, start)
+        || editing::deep_backward(&dom, (wrapper, editing::len(&dom, wrapper))) != editing::deep_backward(&dom, end)
+    { return false; }
+    let children: Vec<_> = dom.children(wrapper).into_iter().flatten().collect();
+    if !children.iter().all(|&n| editing::is_text(&dom, n) || (super::local_html(&dom, n, "span") || super::local_html(&dom, n, "font"))
+        && dom.child_count(n).ok() == Some(1) && dom.first_child(n).ok().flatten().is_some_and(|t| editing::is_text(&dom, t))
+        && super::rich_node(&dom, n) && page.layout().computed_style_value(&dom, n, "display") == "inline")
+    { return false; }
+    let Some((anchor, focus)) = editing::selection(page) else { return false };
+    drop(dom);
+    editing::apply_edit(page, host, "", None, None, |page| {
+        let mut dom = page.dom.borrow_mut();
+        let Ok(Some(parent)) = dom.parent_element(wrapper) else { return };
+        let Ok(span) = dom.create_element(page.document(), "span") else { return };
+        apply_to(&mut dom, span, fmt, None);
+        let _ = dom.insert_before(parent, span, Some(wrapper));
+        for child in children {
+            if !editing::is_text(&dom, child) {
+                let style = DeclarationBlock::parse(dom.get_attribute(child, "style").ok().flatten().unwrap_or(""));
+                let _ = dom.set_attribute(child, "style", &style.css_text());
+            }
+            let _ = dom.append_child(span, child);
+        }
+        let _ = dom.remove_child(parent, wrapper);
+        let retarget = |p: Point| if p.0 == wrapper { (span, p.1) } else { p };
+        drop(dom);
+        editing::set_selection(page, retarget(anchor), retarget(focus));
+    });
+    true
+}
+
+pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -> bool {
+    let Some((start, end)) = editing::selection_range(page) else { return false };
+    let Some(fmt) = Format::parse(kind, value) else {
+        if kind != Kind::Foreground { return false; }
+        if start == end {
+            // The next insertion takes its style from the live caret again.
+            page.typing_values.take();
+        } else {
+            super::record_unchanged_foreground(page, host);
+            editing::input_event(page, host, "input", "", None, false);
+        }
+        return true;
+    };
+    if reapply_highlight(page, host, start, end, &fmt) { return true; }
+    let mut nodes = formattable_nodes(page, &page.dom.borrow(), host, start, end);
+    if nodes.is_empty() {
+        let mut slot = page.typing_values.borrow_mut();
+        let pending = pending_at(&mut slot, (start, end));
+        pending.values.retain(|v| v.kind != kind);
+        pending.values.push(fmt);
+        return true;
+    }
+    let reversed = editing::selection(page).is_some_and(|(a, _)| a == end);
+    let needs: Vec<_> = {
+        let dom = page.dom.borrow();
+        nodes.iter().map(|&n| !equivalent(&fmt, &effective(page, &dom, kind, n))).collect()
+    };
+    let italic_family = if kind == Kind::Family && nodes.len() == 1 {
+        let dom = page.dom.borrow();
+        let text = nodes[0];
+        dom.parent_element(text).ok().flatten().filter(|&el| el != host && editing::local(&dom, el) == "i"
+            && dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
+            && dom.child_count(el).ok() == Some(1)
+            && (start == (el, 0) || start == (text, 0))
+            && (end == (el, 1) || end == (text, editing::len(&dom, text)))
+            && (needs[0] || !DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten()
+                .unwrap_or("")).value("font-family").is_empty()))
+    } else { None };
+    let rewrite_runs = (kind != Kind::Background || !pyro_dom::color_well::is_fully_transparent(&fmt.css)) && {
+        let dom = page.dom.borrow();
+        nodes.iter().all(|&n| editing::is_text(&dom, n) && (kind != Kind::Background || inline_paint_scope(page, &dom, host, n))) && nodes.iter().any(|&n| {
+            value_carrier(&dom, n, host, &fmt).is_some_and(|carrier| {
+                matches!(kind, Kind::Foreground | Kind::Background) || needs.contains(&true) || editing::local(&dom, carrier) == "span"
+                    || kind == Kind::Family && dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
+                        && !DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok().flatten().unwrap_or(""))
+                            .value("font-family").is_empty()
+            })
+        })
+    };
+    if italic_family.is_none() && !rewrite_runs && !needs.contains(&true) {
+        return true;
+    }
+    super::record_host_edit(page, host, fmt.input_type());
+    let mut dom = page.dom.borrow_mut();
+    if let Some(&last) = nodes.last() {
+        if last == end.0 && editing::is_text(&dom, last) && end.1 < editing::len(&dom, last) {
+            let _ = dom.split_text(last, end.1);
+        }
+    }
+    if let Some(first) = nodes.first_mut() {
+        if *first == start.0 && editing::is_text(&dom, *first) && start.1 > 0 {
+            if let Ok(right) = dom.split_text(*first, start.1) {
+                *first = right;
+            }
+        }
+    }
+    let mut changed = false;
+    let mut previous = None;
+    for (&n, needs_format) in nodes.iter().zip(needs) {
+        if let Some(el) = italic_family {
+            // Reapply to the fully selected inline element in CSS mode.
+            let mut style = DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten().unwrap_or(""));
+            if style.remove("font-family") {
+                let _ = dom.set_attribute(el, "style", &style.css_text());
+            }
+            apply_to(&mut dom, el, &fmt, None);
+            changed = true;
+        } else if rewrite_runs {
+            previous = format_run(page, &mut dom, host, n, &fmt, previous, nodes.len() == 1);
+            changed = true;
+        } else if needs_format {
+            if kind == Kind::Background && pyro_dom::color_well::is_fully_transparent(&fmt.css) {
+                changed |= clear_highlight(page, &mut dom, n);
+            } else {
+                changed |= format_selected(page, &mut dom, host, n, (start, end), &fmt).is_some();
+            }
+        }
+    }
+    // Preserve element-offset endpoints when their container survives.
+    // Moving a selected child into a wrapper must not anchor the selection
+    // in a text node which a later innerHTML assignment will remove.
+    let point = |original: Point, node: NodeId, after: bool| -> Option<Point> {
+        if !editing::is_text(&dom, original.0) && dom.contains(original.0, node).ok()? {
+            let mut child = node;
+            while let Some(p) = dom.parent(child).ok()? {
+                if p == original.0 {
+                    return Some((p, dom.index_in_parent(child).ok()? + u32::from(after)));
+                }
+                child = p;
+            }
+        }
+        if editing::is_text(&dom, node) {
+            Some((node, if after { editing::len(&dom, node) } else { 0 }))
+        } else {
+            Some((dom.parent(node).ok()??, dom.index_in_parent(node).ok()? + u32::from(after)))
+        }
+    };
+    let selection =
+        nodes.first().zip(nodes.last()).and_then(|(&f, &l)| Some((point(start, f, false)?, point(end, l, true)?)));
+    drop(dom);
+    if let Some((a, b)) = selection {
+        if reversed {
+            editing::set_selection(page, b, a);
+        } else {
+            editing::set_selection(page, a, b);
+        }
+    }
+    super::note_host_edited(page, host);
+    if changed {
+        let data = if kind == Kind::Family { value } else { &fmt.css };
+        if rewrite_runs && kind == Kind::Background {
+            editing::input_event(page, host, "input", "", None, false);
+        } else {
+            editing::input_event(page, host, "input", fmt.input_type(), (!fmt.hashless).then_some(data), false);
+        }
+    }
+    true
+}
+
+/// Locate the element providing the caret's superscript or subscript.
+fn script_carrier(page: &PageDom, dom: &Dom, node: NodeId, host: NodeId) -> Option<(NodeId, &'static str)> {
+    let layout = page.layout();
+    let mut cur = dom.parent_element(node).ok().flatten();
+    while let Some(el) = cur {
+        let value = layout.computed_style_value(dom, el, "vertical-align");
+        match value.as_str() {
+            "sub" => return Some((el, "sub")),
+            "super" => return Some((el, "sup")),
+            _ => {}
+        }
+        if el == host { break; }
+        cur = dom.parent_element(el).ok().flatten();
+    }
+    None
+}
+
+/// The innermost effective alignment supplies the selected run's command
+/// state, including when a superscript is nested inside a subscript.
+pub(super) fn selected_script(page: &PageDom, dom: &Dom, node: NodeId, host: NodeId) -> Option<&'static str> {
+    script_carrier(page, dom, node, host).map(|(_, active)| active)
+}
+
+/// A noncollapsed range within a script run can change its alignment
+/// without nesting the new script inside the old one. Isolate only the
+/// selected text; keep unrelated declarations and both unselected sides.
+pub(super) fn change_selected_script(
+    page: &Rc<PageDom>, host: NodeId, start: Point, end: Point, tag: &str, input_type: &str,
+) -> bool {
+    let (selection, remove) = {
+        let dom = page.dom.borrow();
+        let selection = super::inline_texts(page, &dom, host, start, end);
+        let Some(&first) = selection.first() else { return false };
+        let Some((carrier, active)) = script_carrier(page, &dom, first, host) else { return false };
+        if selection.len() > 1 && (active != tag || !selection.iter().all(|&text| {
+            script_carrier(page, &dom, text, host).is_some_and(|(el, script)| {
+                el != host && script == tag && dom.element(el).is_ok_and(|e| e.is_html()
+                    && matches!(&**e.local_name(), "span" | "sub" | "sup"))
+            })
+        })) { return false; }
+        if carrier == host || !dom.element(carrier).is_ok_and(|e| e.is_html()
+            && matches!(&**e.local_name(), "span" | "sub" | "sup")) { return false; }
+        (selection, active == tag)
+    };
+    let backward = editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
+    editing::apply_edit(page, host, input_type, None, None, |page| {
+        let mut dom = page.dom.borrow_mut();
+        let texts = super::split_texts(&mut dom, selection, start, end);
+        for &text in &texts {
+            while let Some((carrier, active)) = script_carrier(page, &dom, text, host) {
+                if !remove && active == tag { break; }
+                // Lift a selected prefix from a plain script carrier in place.
+                // The original wrapper still owns the unselected suffix.
+                if texts.len() > 1 && dom.parent_element(text).ok().flatten() == Some(carrier)
+                    && dom.first_child(carrier).ok().flatten() == Some(text) && dom.next_sibling(text).ok().flatten().is_some() {
+                    let name = editing::local(&dom, carrier);
+                    let bare = dom.attributes(carrier).is_ok_and(|attrs| match name.as_str() {
+                        "sub" | "sup" => attrs.is_empty(),
+                        "span" if attrs.len() == 1 && attrs[0].name.local == markup5ever::local_name!("style") => {
+                            let declarations = crate::css::parse_declarations(&attrs[0].value);
+                            matches!(declarations.as_slice(), [d] if d.name == "vertical-align")
+                        }
+                        _ => false,
+                    });
+                    if bare && dom.parent_element(carrier).ok().flatten()
+                        .is_some_and(|parent| dom.insert_before(parent, text, Some(carrier)).is_ok()) { continue; }
+                }
+                if clear_script(page, &mut dom, text, host) != Some(true)
+                    || script_carrier(page, &dom, text, host).is_some_and(|(next, _)| next == carrier) { break; }
+            }
+            if !remove && selected_script(page, &dom, text, host) != Some(tag) {
+                let Ok(doc) = dom.node_document(text) else { return };
+                let Ok(Some(parent)) = dom.parent_element(text) else { return };
+                let css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
+                let reuse = css && parent != host && editing::local(&dom, parent) == "span" && dom.child_count(parent).ok() == Some(1);
+                let el = if reuse { parent } else {
+                    let Ok(el) = dom.create_element(doc, if css { "span" } else { tag }) else { return };
+                    let _ = dom.insert_before(parent, el, Some(text));
+                    let _ = dom.append_child(el, text);
+                    el
+                };
+                if css {
+                    let mut style = DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten().unwrap_or(""));
+                    style.set("vertical-align", if tag == "sup" { "super" } else { "sub" }, false);
+                    let _ = dom.set_attribute(el, "style", &style.css_text());
+                }
+            }
+        }
+        drop(dom);
+        super::select_texts(page, &texts, backward);
+    });
+    true
+}
+
+/// A typing override affects the insertion style on the immediate text
+/// container. A script higher in the inline tree remains observable there
+/// until typing actually splits the carrier.
+pub(super) fn caret_script_state(page: &PageDom, point: Point, tag: &str) -> Option<bool> {
+    let dom = page.dom.borrow();
+    if !editing::is_text(&dom, point.0) { return None; }
+    let host = editing::editing_host(&dom, point.0)?;
+    let container = dom.parent_element(point.0).ok()??;
+    let carrier = script_carrier(page, &dom, point.0, host);
+    let own = carrier.is_some_and(|(_, script)| script == tag);
+    Some(match toggle_state(page, (point, point), tag) {
+        Some(enabled) => enabled || carrier.is_some_and(|(node, script)| node != container && script == tag),
+        None => own,
+    })
+}
+
+/// Split just the script-bearing inline at the inserted text. Preserve
+/// unrelated CSS and attributes on that portion when removing the script.
+fn clear_script(page: &PageDom, dom: &mut Dom, typed: NodeId, host: NodeId) -> Option<bool> {
+    let Some((carrier, _)) = script_carrier(page, dom, typed, host) else { return Some(true) };
+    let tag = editing::local(dom, carrier);
+    let authored = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok()?.unwrap_or(""));
+    // Typing can remove a semantic tag or an inline declaration. A class
+    // rule continues to style the inserted text (including the other side
+    // of a split), unless another script is explicitly applied inside it.
+    if !matches!(tag.as_str(), "sub" | "sup") && authored.value("vertical-align").is_empty() {
+        return Some(true);
+    }
+    if carrier == host || !matches!(tag.as_str(), "sub" | "sup" | "span") {
+        return Some(false);
+    }
+    let parent = dom.parent_element(carrier).ok()??;
+    let mut edges = [(typed, 0), (typed, editing::len(dom, typed))];
+    let middle = super::alignment::split_edge(dom, parent, typed, false, &mut edges)?;
+    super::alignment::split_edge(dom, parent, typed, true, &mut edges)?;
+    let mut declarations = DeclarationBlock::parse(dom.get_attribute(middle, "style").ok()?.unwrap_or(""));
+    if declarations.remove("vertical-align") {
+        if declarations.is_empty() {
+            dom.remove_attribute(middle, "style").ok()?;
+        } else {
+            dom.set_attribute(middle, "style", &declarations.css_text()).ok()?;
+        }
+    }
+    if dom.attributes(middle).ok()?.is_empty() {
+        super::indentation::unwrap(dom, middle, &mut edges)?;
+    } else {
+        if editing::local(dom, middle) != "span" {
+            super::indentation::rename(dom, middle, "span", &mut edges)?;
+        }
+    }
+    Some(true)
+}
+
+/// Isolate only the newly inserted UTF-16 text and carry the pending values
+/// to it. Later typing inherits its inline style from that wrapper.
+pub(crate) fn format_typed(
+    page: &PageDom,
+    dom: &mut Dom,
+    range: (Point, Point),
+    end: Point,
+    text: &str,
+) -> Option<Point> {
+    let mut slot = page.typing_values.borrow_mut();
+    let pending = slot.as_mut().filter(|v| v.range == range)?;
+    pending.values.retain(|fmt| !equivalent(fmt, &effective(page, dom, fmt.kind, end.0)));
+    let host = editing::editing_host(dom, end.0)?;
+    let parent = dom.parent_element(end.0).ok()??;
+    let layout = page.layout();
+    pending.toggles.retain(|&(tag, enabled)| {
+        let active = if matches!(tag, "sub" | "sup") {
+            script_carrier(page, dom, end.0, host).is_some_and(|(_, active)| active == tag)
+        } else if tag == "b" {
+            super::numeric_bold_weight(&layout.computed_style_value(dom, parent, "font-weight"))
+        } else {
+            let style = layout.computed_style_value(dom, parent, "font-style");
+            style.starts_with("italic") || style.starts_with("oblique")
+        };
+        enabled != active
+    });
+    let decoration = pending.decoration.filter(|&lines| lines != super::decoration::Lines::at(page, dom, end.0));
+    if pending.values.is_empty() && pending.toggles.is_empty() && decoration.is_none() {
+        *slot = None;
+        return Some(end);
+    }
+    let units = pyro_dom::dom::utf16_len(text);
+    if units == 0 || units > end.1 || !editing::is_text(dom, end.0) {
+        return None;
+    }
+    if end.1 < editing::len(dom, end.0) {
+        dom.split_text(end.0, end.1).ok()?;
+    }
+    let typed = if end.1 > units { dom.split_text(end.0, end.1 - units).ok()? } else { end.0 };
+    let mut value_wrapper = None;
+    for fmt in &pending.values {
+        if fmt.kind == Kind::Background && pyro_dom::color_well::is_fully_transparent(&fmt.css) {
+            clear_highlight(page, dom, typed);
+        } else {
+            value_wrapper = Some(wrap(dom, typed, fmt)?);
+        }
+    }
+    if let Some(lines) = decoration { super::decoration::apply(page, dom, host, typed, lines)?; }
+    for &(tag, enabled) in &pending.toggles {
+        let (property, value) = match tag {
+            "sub" => ("vertical-align", "sub"),
+            "sup" => ("vertical-align", "super"),
+            _ => super::inline_css(tag)?,
+        };
+        let carriers: &[&str] = if tag == "b" { &["b", "strong"] } else { &["i", "em"] };
+        if !enabled && matches!(tag, "sub" | "sup") {
+            if clear_script(page, dom, typed, host)? { continue; }
+        } else if !enabled {
+            while let Some(ancestor) = super::ancestor_format(dom, typed, host, carriers, true) {
+                super::hoist(dom, typed, ancestor);
+                if dom.contains(ancestor, typed).unwrap_or(false) {
+                    break;
+                }
+            }
+            let font = if tag == "b" { super::FontToggle::Bold } else { super::FontToggle::Italic };
+            super::clear_remaining_font(page, dom, font, host, typed, (typed, 0), (typed, units))?;
+            continue;
+        }
+        let doc = dom.node_document(typed).ok()?;
+        let css = !enabled || dom.document_data(doc).ok()?.style_with_css;
+        if css && enabled {
+            if let Some(span) = value_wrapper.filter(|&el| editing::local(dom, el) == "span"
+                && dom.parent_element(typed).ok().flatten() == Some(el)) {
+                let mut style = DeclarationBlock::parse(dom.get_attribute(span, "style").ok()?.unwrap_or(""));
+                style.set(property, value, false)?;
+                dom.set_attribute(span, "style", &style.css_text()).ok()?;
+                continue;
+            }
+        }
+        let wrapper = dom.create_element(doc, if css { "span" } else { tag }).ok()?;
+        if css {
+            let value = if enabled { value } else if property == "vertical-align" { "baseline" } else { "normal" };
+            dom.set_attribute(wrapper, "style", &format!("{property}: {value};")).ok()?;
+        }
+        let parent = dom.parent_element(typed).ok()??;
+        dom.insert_before(parent, wrapper, Some(typed)).ok()?;
+        dom.append_child(wrapper, typed).ok()?;
+    }
+    *slot = None;
+    Some((typed, units))
+}
+
+/// Fully selected inline spans and the intervening rendered whitespace form
+/// one sibling run. Keep the existing elements and the separator in the DOM
+/// when adding the enclosing format.
+pub(super) fn format_spaced_run(page: &Rc<PageDom>, host: NodeId, command: &str, value: &str) -> bool {
+    let kind = Kind::command(command);
+    let toggle = super::format_of(command);
+    if kind.is_none() && toggle.is_none() && command != "createlink" { return false; }
+    let Some((start, end)) = editing::selection_range(page) else { return false };
+    let dom = page.dom.borrow();
+    if start.0 == end.0 || start.1 != 0 || end.1 != editing::len(&dom, end.0) { return false; }
+    let Some(parent) = dom.parent_element(start.0).ok().flatten().and_then(|s| dom.parent_element(s).ok().flatten()) else { return false };
+    let css = dom.document_data(page.document()).is_ok_and(|d| d.style_with_css);
+    let (tag, attr, attribute_value, property, input_type) = if let Some(kind) = kind {
+        let Some(fmt) = Format::parse(kind, value) else { return false };
+        if let Some((attr, v)) = fmt.legacy(css) {
+            ("font", attr, v.to_owned(), kind.property(), fmt.input_type())
+        } else {
+            let mut declarations = DeclarationBlock::parse("");
+            if declarations.set(kind.property(), value, false).is_none() || kind == Kind::Size {
+                declarations.set(kind.property(), &fmt.css, false);
+            }
+            ("span", "style", declarations.css_text(), kind.property(), fmt.input_type())
+        }
+    } else if let Some((tag, _, input)) = toggle {
+        let (property, v) = match tag {
+            "strike" => ("text-decoration-line", "line-through"),
+            "u" => ("text-decoration-line", "underline"),
+            "sub" | "sup" => ("vertical-align", if tag == "sub" { "sub" } else { "super" }),
+            _ => super::inline_css(tag).unwrap(),
+        };
+        if css { ("span", "style", format!("{property}: {v};"), property, input) }
+        else { (tag, "", String::new(), property, input) }
+    } else {
+        if value.is_empty() { return false; }
+        ("a", "href", value.to_owned(), "", "insertLink")
+    };
+    let repeated = parent != host;
+    if repeated && !(dom.parent_element(parent).ok().flatten() == Some(host)
+        && editing::local(&dom, parent) == tag
+        && dom.attributes(parent).is_ok_and(|attrs| attrs.len() == usize::from(!attr.is_empty()))
+        && (attr.is_empty() || dom.get_attribute(parent, attr).ok().flatten().is_some_and(|v| v == attribute_value || command == "createlink"))) {
+        return false;
+    }
+    let texts = super::inline_texts(page, &dom, host, start, end);
+    let mut units = Vec::new();
+    let mut separator = false;
+    for &text in &texts {
+        let Some(container) = dom.parent_element(text).ok().flatten() else { return false };
+        let unit = if container == parent {
+            if !dom.char_data(text).is_ok_and(|s| !s.is_empty() && s.chars().all(char::is_whitespace)) { return false; }
+            separator = true;
+            text
+        } else {
+            if editing::local(&dom, container) != "span" || dom.child_count(container).ok() != Some(1)
+                || dom.parent_element(container).ok().flatten() != Some(parent)
+                || !dom.element(container).is_ok_and(|e| e.is_html())
+                || !dom.attributes(container).is_ok_and(|attrs| attrs.iter().all(|a| a.name.local == markup5ever::local_name!("style")))
+            { return false; }
+            // A declaration on the child takes precedence over inherited
+            // formatting. Let the normal carrier-editing path handle it.
+            if !property.is_empty() && !DeclarationBlock::parse(dom.get_attribute(container, "style").ok().flatten()
+                .unwrap_or("")).value(property).is_empty() { return false; }
+            container
+        };
+        if units.last().is_some_and(|&prev| dom.next_sibling(prev).ok().flatten() != Some(unit)) { return false; }
+        units.push(unit);
+    }
+    if !separator || units.len() < 3 || texts.first() != Some(&start.0) || texts.last() != Some(&end.0) { return false; }
+    if repeated && dom.child_count(parent).ok() != Some(units.len() as u32) { return false; }
+    if !repeated && toggle.is_some() && super::format_state(page, command).1 { return false; }
+    if repeated && tag == "font" && matches!(kind, Some(Kind::Size | Kind::Family)) { return true; }
+    let reversed = editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
+    drop(dom);
+    editing::apply_edit(page, host, input_type, (command == "createlink").then_some(value), None, |page| {
+        let mut dom = page.dom.borrow_mut();
+        if repeated && command == "createlink" {
+            // Reapplying even the same href replaces the selected anchor.
+            // Moving the original children retains both selection endpoints.
+            let Ok(link) = dom.create_element(page.document(), "a") else { return };
+            let _ = dom.set_attribute(link, "href", value);
+            let _ = dom.insert_before(host, link, Some(parent));
+            for unit in units { let _ = dom.append_child(link, unit); }
+            let _ = dom.remove_child(host, parent);
+        } else if repeated {
+            let mut points = [start, end];
+            for unit in units {
+                if editing::local(&dom, unit) == "span" && dom.attributes(unit).is_ok_and(|attrs| attrs.is_empty()) {
+                    super::indentation::unwrap(&mut dom, unit, &mut points);
+                } else if let Ok(Some(style)) = dom.get_attribute(unit, "style") {
+                    let declarations = DeclarationBlock::parse(style);
+                    let _ = dom.set_attribute(unit, "style", &declarations.css_text());
+                }
+            }
+            if toggle.is_some() { super::indentation::unwrap(&mut dom, parent, &mut points); }
+        } else {
+            let Ok(wrapper) = dom.create_element(page.document(), tag) else { return };
+            if !attr.is_empty() { let _ = dom.set_attribute(wrapper, attr, &attribute_value); }
+            let _ = dom.insert_before(parent, wrapper, Some(units[0]));
+            for unit in units { let _ = dom.append_child(wrapper, unit); }
+        }
+        drop(dom);
+        super::select_texts(page, &texts, reversed);
+    });
+    true
+}

@@ -36,6 +36,7 @@ use crate::request::*;
 use crate::subscription::{
     flush_deferred_wakes, DeferredWakes, NetSubscription, NetWake, SubscriptionLimits, Subscriptions,
 };
+use crate::zstd::Zstd;
 
 #[path = "websocket.rs"]
 pub mod websocket;
@@ -405,6 +406,8 @@ struct Shared {
     observers: Subscriptions,
     interceptor: Mutex<Option<Arc<dyn Interceptor>>>,
     cache: Mutex<crate::cache::HttpCache>,
+    /// Compression dictionaries (RFC 9842) responses registered.
+    dictionaries: Mutex<crate::dictionary::Dictionaries>,
     epoch: Instant,
     /// `Security.setIgnoreCertificateErrors`: HTTPS requests skip certificate
     /// verification (handshake signatures are still checked).
@@ -516,7 +519,39 @@ impl Shared {
                 }
             }
         }
-        h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip, deflate, br"));
+        // Fetch: a ranged request asks for the bytes as stored.
+        let ranged = req.headers.contains_key(header::RANGE);
+        // RFC 9842: a same-origin or CORS request to a potentially
+        // trustworthy URL offers its best dictionary.
+        h.remove(crate::dictionary::AVAILABLE_DICTIONARY);
+        h.remove(crate::dictionary::DICTIONARY_ID);
+        let mut offered = false;
+        if !ranged && (same_origin || cors_cross) && crate::cookies::is_trustworthy(&req.url) {
+            // `match-dest` names Fetch destinations: "" for none, and a dictionary's own.
+            let dest = match (req.destination, crate::referrer::fetch_dest(req.destination)) {
+                (Destination::CompressionDictionary, _) => "compression-dictionary",
+                (_, "empty") => "",
+                (_, dest) => dest,
+            };
+            let dictionaries = self.dictionaries.lock().unwrap();
+            if let Some((dict, id)) = dictionaries.best(req.top_level_site.as_deref(), &req.url, dest, wall_time()) {
+                if let Ok(v) = HeaderValue::from_str(&crate::dictionary::hash_header(&dict.hash)) {
+                    h.insert(crate::dictionary::AVAILABLE_DICTIONARY, v);
+                    offered = true;
+                    if let Some(v) = id.and_then(crate::dictionary::id_header) {
+                        h.insert(crate::dictionary::DICTIONARY_ID, v);
+                    }
+                }
+            }
+        }
+        let encodings = if ranged {
+            "identity"
+        } else if offered {
+            "gzip, deflate, br, zstd, dcb, dcz"
+        } else {
+            "gzip, deflate, br, zstd"
+        };
+        h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static(encodings));
         if let Some(origin) = &req.origin {
             if cors_cross || !matches!(req.method, Method::GET | Method::HEAD) {
                 if let Ok(v) = HeaderValue::from_str(origin) {
@@ -547,7 +582,10 @@ impl Shared {
         if send_cookies && !h.contains_key(header::COOKIE) {
             let top = matches!(req.destination, Destination::Document);
             let safe = matches!(req.method, Method::GET | Method::HEAD);
-            let ctx = if req.mode == RequestMode::Navigate && req.origin.is_none() {
+            let ancestor = cookie_partition_cross_site(req, &req.url);
+            let ctx = if !top && (req.cross_site_ancestor || req.destination == Destination::Iframe && ancestor) {
+                SiteContext::CrossSite
+            } else if req.mode == RequestMode::Navigate && req.origin.is_none() {
                 SiteContext::SameSite
             } else if req.origin.is_some() && origin_url.is_none() {
                 if top && safe {
@@ -558,7 +596,15 @@ impl Shared {
             } else {
                 site_context(origin_url, &req.url, top, safe)
             };
-            let cookie = cookies.lock().unwrap().header_for(&req.url, ctx, crate::cookies::now_secs());
+            let cookie = {
+                let mut jar = cookies.lock().unwrap();
+                if jar.is_empty() {
+                    None
+                } else {
+                    let partition = request_cookie_partition(req, &req.url);
+                    jar.header_for_context(&req.url, ctx, crate::cookies::now_secs(), partition.as_deref(), ancestor)
+                }
+            };
             if let Some(c) = cookie.and_then(|c| HeaderValue::from_str(&c).ok()) {
                 h.insert(header::COOKIE, c);
             }
@@ -598,6 +644,39 @@ impl Shared {
     }
 }
 
+// Each top-level navigation hop selects the destination's partition. An
+// iframe or subresource retains the outermost document's site on redirects.
+fn request_cookie_partition<'a>(request: &'a Request, url: &Url) -> Option<Cow<'a, str>> {
+    if request.destination == Destination::Document {
+        crate::cookies::partition_key(url).map(Cow::Owned)
+    } else {
+        request.top_level_site.as_deref().map(Cow::Borrowed)
+    }
+}
+
+fn cookie_partition_cross_site(request: &Request, url: &Url) -> bool {
+    request.destination != Destination::Document
+        && (request.cross_site_ancestor || request.top_level_site.as_deref().is_some_and(|top| {
+            crate::cookies::partition_key(url).as_deref() != Some(top)
+        }))
+}
+
+/// RFC 6265bis allows a top-level navigation to set any SameSite cookie,
+/// even when initiated cross-site and using an unsafe method. Subresource
+/// responses remain subject to the request's site-for-cookies.
+fn response_cookie_site(request: &Request, url: &Url) -> SiteContext {
+    if request.destination == Destination::Document {
+        return SiteContext::SameSite;
+    }
+    if cookie_partition_cross_site(request, url) {
+        return SiteContext::CrossSite;
+    }
+    match request.origin.as_deref() {
+        Some(origin) => Url::parse(origin).map_or(SiteContext::CrossSite, |origin| site_context(Some(&origin), url, false, false)),
+        None => SiteContext::SameSite,
+    }
+}
+
 /// A response's headers with the values in one allocation of their own.
 /// hyper's HTTP/1 parser hands out values that are slices of the connection's
 /// read buffer, which grows to 400 KB on a busy connection: a head that is
@@ -634,8 +713,8 @@ fn response_head(
     kind: ResponseKind,
     redirected: bool,
 ) -> ResponseHead {
-    let (mime, charset) =
-        headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).map(parse_content_type).unwrap_or_default();
+    // Fetch "extract a MIME type" over every Content-Type value, not just the first line.
+    let (mime, charset) = extract_mime_type(&headers);
     ResponseHead {
         url: url.clone(),
         status,
@@ -710,6 +789,7 @@ impl NetClient {
             observers: Subscriptions::default(),
             interceptor: Mutex::new(None),
             cache: Mutex::new(cache),
+            dictionaries: Mutex::default(),
             epoch: Instant::now(),
             ignore_certificate_errors: std::sync::atomic::AtomicBool::new(false),
             proxy,
@@ -806,6 +886,18 @@ impl NetClient {
     pub fn fetch_with_id(&self, id: RequestId, req: Request, sink: ResponseSink) {
         let sink = match req.loader_id.clone() {
             Some(loader) => self.track(id, loader, sink),
+            None => sink,
+        };
+        // A request its initiator's CSP check blocked (`RequestCsp::blocked`): a network
+        // error, never sent.
+        if req.csp.as_ref().is_some_and(|csp| csp.blocks_request()) {
+            let mut sink = sink;
+            sink(ResponseEvent::Failed(NetError::Blocked(crate::csp::BLOCKED_BY_CSP.into())));
+            return;
+        }
+        // CSP: the response's URL (a cache's, an interceptor's) is checked as well as each hop.
+        let sink = match &req.csp {
+            Some(csp) => crate::csp::guard_sink(csp.clone(), sink),
             None => sink,
         };
         let start = Instant::now();
@@ -1365,6 +1457,11 @@ struct Io {
     per_origin: Mutex<HashMap<url::Origin, Arc<Semaphore>>>,
     /// Origins whose semaphore grew to `max_per_h2_origin`.
     h2_origins: Mutex<HashSet<url::Origin>>,
+    /// This state itself, for work that outlives the request that started
+    /// it (a `stale-while-revalidate` background revalidation).
+    me: std::rc::Weak<Io>,
+    /// Cache keys being revalidated in the background: one at a time each.
+    background_revalidations: Mutex<HashSet<String>>,
 }
 
 fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: Arc<Mutex<CookieJar>>) {
@@ -1391,7 +1488,9 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
     local.block_on(&rt, async move {
         let sessions = Arc::new(H2Sessions::default());
         let client = http_client(&shared.config, &tls_config(), shared.proxy.clone(), sessions.clone());
-        let io = std::rc::Rc::new(Io {
+        let io = std::rc::Rc::new_cyclic(|me| Io {
+            me: me.clone(),
+            background_revalidations: Mutex::new(HashSet::new()),
             shared,
             cookies,
             client,
@@ -1586,6 +1685,7 @@ fn default_accept(d: Destination) -> &'static str {
         }
         Destination::Style => "text/css,*/*;q=0.1",
         Destination::Json => "application/json,*/*;q=0.5",
+        Destination::Text => "text/plain,*/*;q=0.5",
         Destination::Image => "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         Destination::EventSource => "text/event-stream",
         _ => "*/*",
@@ -1601,6 +1701,67 @@ enum Stage {
     /// bytes so far, and an output that stays empty.
     Sniff(Vec<u8>, Vec<u8>),
     Brotli(Box<brotli_decompressor::DecompressorWriter<Vec<u8>>>),
+    Zstd(Box<Zstd>),
+    /// `dcb` / `dcz` (RFC 9842).
+    Dict(Box<DictStage>),
+}
+
+/// A dictionary-compressed body: a header naming the dictionary by its
+/// SHA-256 (`\xffDCB` and the hash for `dcb`, a zstd skippable frame of it
+/// for `dcz`), then a brotli or zstd stream that uses the dictionary.
+struct DictStage {
+    zstd: bool,
+    /// The dictionary the request advertised; none fails the response.
+    dict: Option<Arc<crate::dictionary::Dictionary>>,
+    head: Vec<u8>,
+    inner: Option<Stage>,
+    empty: Vec<u8>,
+}
+
+impl DictStage {
+    const DCB_MAGIC: &'static [u8] = b"\xffDCB";
+    const DCZ_MAGIC: &'static [u8] = &[0x5e, 0x2a, 0x4d, 0x18, 0x20, 0x00, 0x00, 0x00];
+
+    fn magic(&self) -> &'static [u8] {
+        if self.zstd {
+            Self::DCZ_MAGIC
+        } else {
+            Self::DCB_MAGIC
+        }
+    }
+
+    fn write_all(&mut self, chunk: &[u8]) -> std::io::Result<()> {
+        if let Some(inner) = self.inner.as_mut() {
+            return inner.write_all(chunk);
+        }
+        self.head.extend_from_slice(chunk);
+        let need = self.magic().len() + 32;
+        if self.head.len() < need {
+            return Ok(());
+        }
+        let bad = |what: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, what.to_owned());
+        let dict = self.dict.as_ref().ok_or_else(|| bad("no dictionary was advertised"))?;
+        let (magic, rest) = self.head.split_at(self.magic().len());
+        if magic != self.magic() {
+            return Err(bad("not a dictionary-compressed stream"));
+        }
+        if rest[..32] != dict.hash {
+            return Err(bad("dictionary hash mismatch"));
+        }
+        let mut inner = if self.zstd {
+            Stage::Zstd(Box::new(Zstd::with_dict(&dict.bytes)?))
+        } else {
+            Stage::Brotli(Box::new(brotli_decompressor::DecompressorWriter::new_with_custom_dictionary(
+                Vec::new(),
+                4096,
+                dict.bytes.clone().into(),
+            )))
+        };
+        let head = std::mem::take(&mut self.head);
+        inner.write_all(&head[need..])?;
+        self.inner = Some(inner);
+        Ok(())
+    }
 }
 
 /// A zlib stream header (RFC 1950): method 8 with a window of at most
@@ -1614,6 +1775,8 @@ impl Stage {
         match self {
             Stage::Inflate(d) => d.write_all(chunk),
             Stage::Brotli(d) => d.write_all(chunk),
+            Stage::Zstd(d) => d.write_all(chunk),
+            Stage::Dict(d) => d.write_all(chunk),
             Stage::Sniff(head, _) => {
                 head.extend_from_slice(chunk);
                 if head.len() < 2 {
@@ -1635,6 +1798,11 @@ impl Stage {
         match self {
             Stage::Inflate(d) => d.out(),
             Stage::Brotli(d) => d.get_mut(),
+            Stage::Zstd(d) => d.out(),
+            Stage::Dict(d) => match d.inner.as_mut() {
+                Some(inner) => inner.out(),
+                None => &mut d.empty,
+            },
             Stage::Sniff(_, out) => out,
         }
     }
@@ -1644,6 +1812,11 @@ impl Stage {
         match self {
             Stage::Inflate(d) => d.finish().map_err(err),
             Stage::Brotli(d) => d.into_inner().map_err(|_| NetError::Decode("truncated brotli stream".into())),
+            Stage::Zstd(d) => d.finish().map_err(err),
+            Stage::Dict(d) => match d.inner {
+                Some(inner) => inner.finish(),
+                None => Err(NetError::Decode("truncated dictionary-compressed stream".into())),
+            },
             Stage::Sniff(head, _) if head.is_empty() => Ok(Vec::new()),
             // A one-byte body: no zlib stream, so raw deflate decides.
             Stage::Sniff(head, _) => {
@@ -1667,8 +1840,9 @@ impl Decoder {
     /// The decoder for a `Content-Encoding` value (its header lines joined
     /// by commas). Like Chromium, a list decodes in reverse order, and a
     /// list naming `identity` or a coding not supported passes the body
-    /// through undecoded instead of failing the request.
-    fn for_encoding(enc: Option<&str>) -> Self {
+    /// through undecoded instead of failing the request. `dict` is the
+    /// dictionary the request advertised, for `dcb` and `dcz`.
+    fn for_encoding(enc: Option<&str>, dict: Option<&Arc<crate::dictionary::Dictionary>>) -> Self {
         let Some(enc) = enc else { return Decoder::IDENTITY };
         let mut stages = Vec::new();
         for token in enc.split(',').map(str::trim).filter(|t| !t.is_empty()) {
@@ -1678,6 +1852,16 @@ impl Decoder {
                 Stage::Sniff(Vec::new(), Vec::new())
             } else if token.eq_ignore_ascii_case("br") {
                 Stage::Brotli(Box::new(brotli_decompressor::DecompressorWriter::new(Vec::new(), 4096)))
+            } else if token.eq_ignore_ascii_case("zstd") {
+                Stage::Zstd(Box::new(Zstd::new()))
+            } else if token.eq_ignore_ascii_case("dcb") || token.eq_ignore_ascii_case("dcz") {
+                Stage::Dict(Box::new(DictStage {
+                    zstd: token.eq_ignore_ascii_case("dcz"),
+                    dict: dict.cloned(),
+                    head: Vec::new(),
+                    inner: None,
+                    empty: Vec::new(),
+                }))
             } else {
                 return Decoder::IDENTITY;
             };
@@ -1854,15 +2038,19 @@ impl Io {
         }
     }
 
-    fn store_cookies(&self, url: &Url, headers: &HeaderMap, allowed: bool) {
-        if !allowed {
+    fn store_cookies(&self, request: &Request, url: &Url, headers: &HeaderMap, allowed: bool) {
+        if !allowed || !headers.contains_key(header::SET_COOKIE) {
             return;
         }
         let now = crate::cookies::now_secs();
         let mut jar = self.cookies.lock().unwrap();
+        let partition = request_cookie_partition(request, url);
+        let site = response_cookie_site(request, url);
         for v in headers.get_all(header::SET_COOKIE) {
-            if let Ok(s) = v.to_str() {
-                jar.set_from_header(url, s, crate::cookies::Access::Http, now);
+            // HeaderValue::to_str only accepts visible ASCII. Cookie Store
+            // names/values can contain UTF-8, including a leading BOM.
+            if let Ok(s) = std::str::from_utf8(v.as_bytes()) {
+                jar.set_from_header_in(url, s, crate::cookies::Access::Http, now, partition.as_deref(), site);
             }
         }
     }
@@ -1939,7 +2127,7 @@ impl Io {
         // the loader names it (else the referrer), never `req.origin`: that
         // is the Origin header's, for a form POST the frame's own document.
         // An iframe whose parent is unknown fails closed (an opaque origin).
-        let timing_origin = if req.destination == Destination::Iframe {
+        let mut timing_origin = if req.destination == Destination::Iframe {
             Some(req.timing_origin.clone().unwrap_or_else(|| {
                 req.referrer.as_ref().map_or_else(|| "null".into(), |r| r.origin().ascii_serialization())
             }))
@@ -1948,6 +2136,9 @@ impl Io {
         };
         loop {
             crate::timing::note(|t| {
+                // Authorization belongs to this response. Local or intercepted
+                // responses must not inherit a grant from a preceding hop.
+                t.timing_allow_checked = false;
                 t.fetch_start = if redirects == 0 { t.start } else { Some(Instant::now()) };
                 t.connection = None;
                 t.request_start = None;
@@ -2030,6 +2221,11 @@ impl Io {
             if req.mode == RequestMode::SameOrigin && !same_origin {
                 return Err(NetError::Cors("Cross-origin request in same-origin mode".into()));
             }
+            // Fetch "main fetch": a no-cors request that is not same-origin with basic tainting
+            // may only follow redirects (`redirect: "manual"` would expose an opaque redirect).
+            if req.mode == RequestMode::NoCors && !basic_tainting && req.redirect != RedirectMode::Follow {
+                return Err(NetError::Cors("Cross-origin no-cors request whose redirect mode is not follow".into()));
+            }
 
             // CDP Fetch interception (request stage).
             let interceptor =
@@ -2098,7 +2294,9 @@ impl Io {
                     let resp = self.send(Method::OPTIONS, &url, ph, None).await?;
                     let status = resp.status().as_u16();
                     let rh = resp.headers().clone();
-                    drop(resp.into_body().collect().await);
+                    // Only the head counts: a preflight body is not waited for (one that never
+                    // ends must not stall the request). An unread HTTP/1 body costs its connection.
+                    drop(resp);
                     self.preflight.lock().unwrap().record(status, &rh, &req, &origin).map_err(NetError::Cors)?;
                 }
             }
@@ -2112,17 +2310,34 @@ impl Io {
                 && pause_response.is_none();
             let request_time = wall_time();
             let sent = if cacheable { Some(headers.clone()) } else { None };
+            // The dictionary this hop offered, which `dcb` and `dcz` decode with.
+            let offered = headers
+                .get(crate::dictionary::AVAILABLE_DICTIONARY)
+                .and_then(|v| self.shared.dictionaries.lock().unwrap().by_header(v));
             // pyro: whether this hop carries credentials (as the cookie decision above): the cache
             // serves a response only to a request of the same kind (`HttpCache::lookup`).
             let credentialed =
                 includes_credentials(req.credentials, basic_tainting) || headers.contains_key(header::AUTHORIZATION);
             let mut revalidating = None;
+            // A stored redirect: followed below as a network one would be.
+            let mut cached_redirect = None;
             if cacheable {
                 let lookup =
                     self.shared.cache.lock().unwrap().lookup(&url, &headers, credentialed, cache_mode, request_time);
                 match lookup {
+                    crate::cache::Lookup::Hit(cached) if cached.status.is_redirection() => {
+                        cached_redirect = Some(cached);
+                    }
                     crate::cache::Lookup::Hit(cached) => {
                         // A stored response passes the TAO check a network one would.
+                        crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
+                        let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
+                        return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
+                    }
+                    crate::cache::Lookup::StaleWhileRevalidate(cached) => {
+                        // RFC 5861: served stale, revalidated in the background.
+                        let cookies = includes_credentials(req.credentials, basic_tainting);
+                        self.revalidate_in_background(&req, &url, &headers, &cached, credentialed, cookies);
                         crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
                         let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
                         return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
@@ -2135,6 +2350,79 @@ impl Io {
                     }
                     _ => {}
                 }
+            }
+            if let Some(cached) = cached_redirect {
+                let (status, resp_headers) = (cached.status, cached.headers);
+                if cors::corp_blocks(&req, &url, &resp_headers) {
+                    return Err(corp_blocked());
+                }
+                if cors_cross {
+                    cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
+                        .map_err(NetError::Cors)?;
+                }
+                match req.redirect {
+                    RedirectMode::Error => return Err(NetError::RedirectNotAllowed),
+                    RedirectMode::Manual => {
+                        crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
+                        let head = self
+                            .head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 0)
+                            .over(cached.protocol);
+                        return self.finish_empty(id, &req, sink, head);
+                    }
+                    RedirectMode::Follow => {}
+                }
+                // Only redirects with a `Location` are stored (`HttpCache::storable`).
+                let loc = resp_headers
+                    .get(header::LOCATION)
+                    .map(|v| location_text(v.as_bytes()))
+                    .ok_or_else(|| NetError::Other("cached redirect without a Location".into()))?;
+                let mut target = url.join(&loc).map_err(|_| NetError::InvalidUrl)?;
+                if target.fragment().is_none() {
+                    target.set_fragment(url.fragment());
+                }
+                if !matches!(target.scheme(), "http" | "https") {
+                    return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                }
+                let has_credentials = !target.username().is_empty() || target.password().is_some();
+                if has_credentials
+                    && self.shared.config.enforce_cors
+                    && req.mode == RequestMode::Cors
+                    && (cors_cross || tainted || origin_url.as_ref().is_some_and(|o| !cors::same_origin(o, &target)))
+                {
+                    return Err(NetError::Cors("Redirect to a URL with credentials".into()));
+                }
+                crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
+                redirects += 1;
+                if redirects > self.shared.config.max_redirects {
+                    return Err(NetError::TooManyRedirects);
+                }
+                let cross_origin = !cors::same_origin(&url, &target);
+                crate::timing::note(|t| {
+                    t.redirect_end = Some(Instant::now());
+                    t.redirect_count = t.redirect_count.saturating_add(1);
+                    t.cross_origin_redirect |= cross_origin;
+                });
+                let mut head = self
+                    .head(&url, status, resp_headers.clone(), ResponseKind::Basic, redirects > 1)
+                    .over(cached.protocol);
+                head.from_cache = true;
+                deliver(sink, ResponseEvent::Redirect { from: url.clone(), to: target.clone(), status, headers: resp_headers });
+                // Only GET requests are cached: no method or body change applies.
+                if cross_origin {
+                    if timing_origin.as_ref().is_some_and(|origin| *origin != url.origin().ascii_serialization()) {
+                        timing_origin = Some("null".into());
+                    }
+                    req.headers.remove(header::AUTHORIZATION);
+                    req.headers.remove(header::COOKIE);
+                    if cors_cross {
+                        tainted = true;
+                    }
+                }
+                referrer.redirect(&url, &head.headers);
+                req.referrer_policy = referrer.policy;
+                req.url = target;
+                redirect_response = Some(head);
+                continue;
             }
             // Opt-in shared public assets: only after a private miss, only for
             // credential-free requests, fresh entries only (never revalidated).
@@ -2251,6 +2539,17 @@ impl Io {
                 (sent, credentialed)
             };
             let status = resp.status();
+            // Fetch "HTTP-network-or-cache fetch": a credentialed 401 to a request whose body
+            // came from a stream is a network error (that body cannot be sent with credentials).
+            if status == StatusCode::UNAUTHORIZED
+                && req.body_from_stream
+                && req.body.is_some()
+                && !cors_cross
+                && !tainted
+                && includes_credentials(req.credentials, basic_tainting)
+            {
+                return Err(NetError::Other("A request with a streamed body got a 401".into()));
+            }
             // The server's reason phrase when it is not the standard one (hyper keeps only those): XHR and fetch
             // report it as statusText, as Chromium does (`HTTP/1.1 204 UNICORNSWIN`).
             let reason = resp
@@ -2271,13 +2570,12 @@ impl Io {
                 t.connection = connection;
                 t.request_start = Some(connection.map_or(request_start, |c| c.end.max(request_start)));
             });
-            crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
             if protocol == Version::HTTP_2 {
                 self.multiplexing(&url);
             }
             // pyro: the same decision as the cookies sent (`includes_credentials`): a tainted hop
             // (a no-cors chain that went through another origin) neither sends nor stores.
-            self.store_cookies(&url, &resp_headers, includes_credentials(req.credentials, basic_tainting));
+            self.store_cookies(&req, &url, &resp_headers, includes_credentials(req.credentials, basic_tainting));
             let response_time = wall_time();
             if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE)
                 && (status.is_success() || status.is_redirection())
@@ -2299,6 +2597,7 @@ impl Io {
                     );
                     match updated {
                         Some(updated) => {
+                            crate::timing::note_timing_allow(&url, &updated.headers, timing_origin.as_deref());
                             let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
                             return self.serve_cached(id, &req, sink, &url, updated, hop, false, 0);
                         }
@@ -2310,29 +2609,78 @@ impl Io {
                 }
             }
 
+            // Fetch's cross-origin resource policy check, on every response a
+            // `no-cors` request gets (a redirect's included) before it is used.
+            if cors::corp_blocks(&req, &url, &resp_headers) {
+                return Err(corp_blocked());
+            }
             // Redirects.
-            if status.is_redirection() && status != StatusCode::NOT_MODIFIED {
-                if let Some(loc) = resp_headers.get(header::LOCATION).and_then(|v| v.to_str().ok()) {
-                    let target = url.join(loc).map_err(|_| NetError::InvalidUrl)?;
+            // Fetch's redirect statuses: 300, 304, 305 and 306 are ordinary responses.
+            if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
+                // Fetch "HTTP fetch": the CORS check covers a redirect response too, and runs
+                // before the redirect mode is looked at (a manual redirect is checked as well).
+                if cors_cross {
+                    cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
+                        .map_err(NetError::Cors)?;
+                }
+                // A redirect with an explicit lifetime is stored (its body is not).
+                if let Some(sent) = sent.as_ref() {
+                    let mut cache = self.shared.cache.lock().unwrap();
+                    if cache.storable(status, &resp_headers, sent, cache_mode) {
+                        cache.insert(&url, sent, credentialed, status, &resp_headers, Bytes::new(), request_time, response_time, protocol);
+                    }
+                }
+                // The redirect mode decides with or without a `Location`: only "follow" needs one.
+                match req.redirect {
+                    RedirectMode::Error => return Err(NetError::RedirectNotAllowed),
+                    RedirectMode::Manual => {
+                        crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
+                        drop(resp.into_body().collect().await);
+                        drop(permit);
+                        let head = self
+                            .head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 0)
+                            .over(protocol);
+                        return self.finish_empty(id, &req, sink, head);
+                    }
+                    RedirectMode::Follow => {}
+                }
+                if let Some(loc) = resp_headers.get(header::LOCATION).map(|v| location_text(v.as_bytes())) {
+                    let mut target = url.join(&loc).map_err(|_| NetError::InvalidUrl)?;
+                    // Fetch "HTTP-redirect fetch": a Location without a fragment keeps the
+                    // current URL's.
+                    if target.fragment().is_none() {
+                        target.set_fragment(url.fragment());
+                    }
+                    // Fetch "HTTP-redirect fetch": only HTTP(S) survives a redirect, and a CORS
+                    // request may not be sent to credentials in the URL of another origin.
+                    if !matches!(target.scheme(), "http" | "https") {
+                        return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                    }
+                    let has_credentials = !target.username().is_empty() || target.password().is_some();
+                    if has_credentials
+                        && self.shared.config.enforce_cors
+                        && req.mode == RequestMode::Cors
+                        && (cors_cross
+                            || tainted
+                            || origin_url.as_ref().is_some_and(|o| !cors::same_origin(o, &target)))
+                    {
+                        return Err(NetError::Cors("Redirect to a URL with credentials".into()));
+                    }
+                    // A streamed body cannot be sent again; only a 303 drops it.
+                    if req.body_from_stream && req.body.is_some() && status != StatusCode::SEE_OTHER {
+                        return Err(NetError::Other("A request with a streamed body cannot be redirected".into()));
+                    }
+                    crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
                     drop(resp.into_body().collect().await);
                     drop(permit);
-                    match req.redirect {
-                        RedirectMode::Error => return Err(NetError::RedirectNotAllowed),
-                        RedirectMode::Manual => {
-                            let head = self
-                                .head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 0)
-                                .over(protocol);
-                            return self.finish_empty(id, &req, sink, head);
-                        }
-                        RedirectMode::Follow => {}
-                    }
-                    if cors_cross {
-                        cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
-                            .map_err(NetError::Cors)?;
-                    }
                     redirects += 1;
                     if redirects > self.shared.config.max_redirects {
                         return Err(NetError::TooManyRedirects);
+                    }
+                    // CSP3 "main fetch" on a redirect: the next hop is checked before it is
+                    // requested (path parts no longer match once redirected).
+                    if req.csp.as_ref().is_some_and(|csp| !csp.allows_redirect(&target)) {
+                        return Err(NetError::Blocked(crate::csp::BLOCKED_BY_CSP.into()));
                     }
                     let cross_origin = !cors::same_origin(&url, &target);
                     crate::timing::note(|t| {
@@ -2367,6 +2715,11 @@ impl Io {
                         }
                     }
                     if !cors::same_origin(&url, &target) {
+                        // Fetch serializes a redirect-tainted request origin
+                        // as "null" for subsequent Timing-Allow-Origin checks.
+                        if timing_origin.as_ref().is_some_and(|origin| *origin != url.origin().ascii_serialization()) {
+                            timing_origin = Some("null".into());
+                        }
                         req.headers.remove(header::AUTHORIZATION);
                         req.headers.remove(header::COOKIE);
                         if cors_cross {
@@ -2393,9 +2746,35 @@ impl Io {
                 ResponseKind::Basic
             };
             let encoding = content_encoding(&resp_headers);
+            // RFC 9842: Clear-Site-Data drops dictionaries; a same-origin or CORS
+            // 200 to a GET without a range, from a potentially trustworthy URL,
+            // with Use-As-Dictionary registers its whole decoded body as one.
+            let clear = crate::dictionary::clear_site_data(&resp_headers);
+            if clear.cache || clear.cookies {
+                self.shared.dictionaries.lock().unwrap().clear_origin(&url);
+            }
+            // Clear-Site-Data "cache": the origin's responses in the HTTP cache go too.
+            if clear.cache {
+                self.shared.cache.lock().unwrap().clear_origin(&url);
+            }
+            let registration = (!matches!(kind, ResponseKind::Opaque)
+                && status == StatusCode::OK
+                && method == Method::GET
+                && !req.headers.contains_key(header::RANGE)
+                && crate::cookies::is_trustworthy(&url))
+            .then(|| crate::dictionary::parse_use_as_dictionary(&resp_headers, &url))
+            .flatten()
+            .and_then(|reg| {
+                crate::dictionary::usable_until(&resp_headers, request_time, response_time).map(|until| (reg, until))
+            });
             if let (Some(request), Some(interceptor)) = (pause_response.take(), interceptor.as_ref()) {
-                let body = read_whole_body(resp, encoding.as_deref(), max_body).await?;
+                let body = read_whole_body(resp, encoding.as_deref(), offered.as_ref(), max_body).await?;
                 drop(permit);
+                // The network's response registers, whatever the interceptor answers.
+                if let Some((reg, until)) = registration.filter(|_| body.len() <= crate::dictionary::MAX_BYTES) {
+                    let top = req.top_level_site.clone();
+                    self.shared.dictionaries.lock().unwrap().register(top, &url, reg, body.to_vec(), until);
+                }
                 let (tx, rx) = oneshot::channel();
                 let paused = PausedResponse {
                     id,
@@ -2416,6 +2795,7 @@ impl Io {
                     Ok(ResponseDecision::Fail(reason)) => return Err(NetError::Blocked(cdp_reason(&reason))),
                     Err(_) => return Err(NetError::Other("response interception dropped".into())),
                 };
+                crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
                 let mut head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
                 if let Some(reason) = reason.filter(|_| head.status == net_status) {
                     head.status_text = reason;
@@ -2423,7 +2803,8 @@ impl Io {
                 return self.deliver_body(id, &req, sink, head, body);
             }
             // Before the head takes the headers: the coding borrows them.
-            let mut decoder = Decoder::for_encoding(encoding.as_deref());
+            let mut decoder = Decoder::for_encoding(encoding.as_deref(), offered.as_ref());
+            let mut dictionary_body: Option<Vec<u8>> = registration.as_ref().map(|_| Vec::new());
             let (store, mut max_entry) = {
                 let cache = self.shared.cache.lock().unwrap();
                 let store = sent.as_ref().is_some_and(|s| cache.storable(status, &resp_headers, s, cache_mode));
@@ -2437,6 +2818,7 @@ impl Io {
             }
             let shared_response = shared_store.map(|_| resp_headers.clone());
             let mut stored: Option<Vec<Bytes>> = (store.is_some() || shared_store.is_some()).then(Vec::new);
+            crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
             let mut head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
             if let Some(reason) = reason {
                 head.status_text = reason;
@@ -2479,6 +2861,12 @@ impl Io {
                     if let Some(s) = stored.as_mut() {
                         s.push(out.clone());
                     }
+                    if let Some(d) = dictionary_body.as_mut() {
+                        d.extend_from_slice(&out);
+                        if d.len() > crate::dictionary::MAX_BYTES {
+                            dictionary_body = None;
+                        }
+                    }
                     deliver(sink, ResponseEvent::Data(out));
                 }
             }
@@ -2497,9 +2885,19 @@ impl Io {
                 if let Some(s) = stored.as_mut() {
                     s.push(tail.clone());
                 }
+                if let Some(d) = dictionary_body.as_mut() {
+                    d.extend_from_slice(&tail);
+                    if d.len() > crate::dictionary::MAX_BYTES {
+                        dictionary_body = None;
+                    }
+                }
                 deliver(sink, ResponseEvent::Data(tail));
             }
             drop(permit);
+            if let (Some((reg, until)), Some(body)) = (registration, dictionary_body) {
+                let top = req.top_level_site.clone();
+                self.shared.dictionaries.lock().unwrap().register(top, &url, reg, body, until);
+            }
             if let (Some(chunks), Some(sent)) = (stored, sent.as_ref()) {
                 let body =
                     if chunks.len() == 1 { chunks.into_iter().next().unwrap() } else { Bytes::from(chunks.concat()) };
@@ -2538,6 +2936,75 @@ impl Io {
         }
     }
 
+    /// Starts a background revalidation of the stored response `cached` to a
+    /// request of `url` sent with `sent` (`stale-while-revalidate`): a
+    /// conditional request when it has validators, whose answer updates or
+    /// replaces the entry. Nobody waits for it and observers do not see it.
+    fn revalidate_in_background(
+        &self,
+        req: &Request,
+        url: &Url,
+        sent: &HeaderMap,
+        cached: &crate::cache::Cached,
+        credentialed: bool,
+        cookies: bool,
+    ) {
+        let Some(io) = self.me.upgrade() else { return };
+        let key = url.as_str().split('#').next().unwrap_or_default().to_owned();
+        if !self.background_revalidations.lock().unwrap().insert(key.clone()) {
+            return;
+        }
+        let mut conditional = sent.clone();
+        for (name, value) in cached.validators() {
+            conditional.insert(name, value);
+        }
+        let (req, url, sent, cached_id) = (req.clone(), url.clone(), sent.clone(), cached.id);
+        tokio::task::spawn_local(async move {
+            let revalidation = async {
+                let request_time = wall_time();
+                let Ok(_permit) = io.origin_semaphore(&url).acquire_owned().await else { return };
+                let Ok(resp) = io.send(Method::GET, &url, conditional, None).await else { return };
+                let status = resp.status();
+                let protocol = resp.version();
+                let resp_headers = own_headers(resp.headers());
+                io.store_cookies(&req, &url, &resp_headers, cookies);
+                let response_time = wall_time();
+                if status == StatusCode::NOT_MODIFIED {
+                    drop(resp);
+                    let mut cache = io.shared.cache.lock().unwrap();
+                    cache.update_from_304(&url, cached_id, &resp_headers, request_time, response_time, credentialed);
+                    return;
+                }
+                let max_entry = {
+                    let cache = io.shared.cache.lock().unwrap();
+                    cache.storable(status, &resp_headers, &sent, CacheMode::Default).then(|| cache.max_entry_bytes())
+                };
+                let Some(max_entry) = max_entry else { return };
+                let encoding = content_encoding(&resp_headers).map(Cow::into_owned);
+                // It went with the original request's headers: a `dcb`/`dcz` answer
+                // decodes with the dictionary they offered.
+                let offered = sent
+                    .get(crate::dictionary::AVAILABLE_DICTIONARY)
+                    .and_then(|v| io.shared.dictionaries.lock().unwrap().by_header(v));
+                let Ok(body) = read_whole_body(resp, encoding.as_deref(), offered.as_ref(), max_entry).await else { return };
+                let mut cache = io.shared.cache.lock().unwrap();
+                cache.insert(
+                    &url,
+                    &sent,
+                    credentialed,
+                    status,
+                    &resp_headers,
+                    body,
+                    request_time,
+                    response_time,
+                    protocol,
+                );
+            };
+            revalidation.await;
+            io.background_revalidations.lock().unwrap().remove(&key);
+        });
+    }
+
     /// Delivers a stored response: a fresh hit (`from_cache`, no network) or one
     /// just revalidated with a 304. CORS and response tainting are re-applied to
     /// the stored headers exactly as for a network response.
@@ -2553,6 +3020,9 @@ impl Io {
         from_cache: bool,
         encoded_len: u64,
     ) -> Result<(), NetError> {
+        if cors::corp_blocks(req, url, &cached.headers) {
+            return Err(corp_blocked());
+        }
         let kind = if hop.cors_cross {
             cors::cors_check(&cached.headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                 .map_err(NetError::Cors)?;
@@ -2733,7 +3203,7 @@ impl Io {
             return Err(NetError::UnsupportedScheme("file".into()));
         }
         if req.mode == RequestMode::Cors
-            && matches!(req.destination, Destination::Script | Destination::Style | Destination::Json)
+            && matches!(req.destination, Destination::Script | Destination::Style | Destination::Json | Destination::Text)
         {
             return Err(NetError::Cors("Cross origin requests are not supported for the file: scheme".into()));
         }
@@ -2792,6 +3262,20 @@ impl Io {
     }
 }
 
+/// A `Location` value as URL text: its bytes past ASCII percent-encoded one by one, as the
+/// URL parser would encode them were they UTF-8, and as browsers keep invalid UTF-8 (`%FF`).
+fn location_text(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    for &b in bytes {
+        if b.is_ascii() {
+            text.push(char::from(b));
+        } else {
+            text.push_str(&format!("%{b:02X}"));
+        }
+    }
+    text
+}
+
 /// The response's `Content-Encoding`, its header lines joined by commas
 /// (borrowed when there is one line, as there nearly always is).
 fn content_encoding(headers: &HeaderMap) -> Option<Cow<'_, str>> {
@@ -2814,13 +3298,20 @@ struct Hop {
     redirected: bool,
 }
 
+/// The network error of a response `Cross-Origin-Resource-Policy` blocks
+/// (Chromium's errorText; its blockedReason is not modelled).
+fn corp_blocked() -> NetError {
+    NetError::Blocked("net::ERR_BLOCKED_BY_RESPONSE".into())
+}
+
 /// Reads and decodes a whole response body (at most `max_body` bytes).
 async fn read_whole_body(
     resp: http::Response<hyper::body::Incoming>,
     encoding: Option<&str>,
+    dict: Option<&Arc<crate::dictionary::Dictionary>>,
     max_body: usize,
 ) -> Result<Bytes, NetError> {
-    let mut decoder = Decoder::for_encoding(encoding);
+    let mut decoder = Decoder::for_encoding(encoding, dict);
     let mut body = resp.into_body();
     let mut out = Vec::new();
     while let Some(frame) = body.frame().await {
@@ -3028,14 +3519,14 @@ mod decoder_tests {
     fn decoded_output_does_not_share_the_chunk() {
         let read_buffer = Bytes::from(vec![7u8; 4096]);
         let chunk = read_buffer.slice(100..200);
-        let out = Decoder::for_encoding(None).push(&chunk).unwrap();
+        let out = Decoder::for_encoding(None, None).push(&chunk).unwrap();
         assert_eq!(out, chunk);
         assert!(!read_buffer.as_ptr_range().contains(&out.as_ptr()));
 
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         gz.write_all(&[b'a'; 100_000]).unwrap();
         let encoded = gz.finish().unwrap();
-        let mut decoder = Decoder::for_encoding(Some("gzip"));
+        let mut decoder = Decoder::for_encoding(Some("gzip"), None);
         let mut decoded = Vec::new();
         for part in encoded.chunks(1000) {
             decoded.extend_from_slice(&decoder.push(part).unwrap());
@@ -3064,7 +3555,7 @@ mod decoder_tests {
     }
 
     fn decode(enc: &str, body: &[u8], chunk: usize) -> Result<Vec<u8>, NetError> {
-        let mut decoder = Decoder::for_encoding(Some(enc));
+        let mut decoder = Decoder::for_encoding(Some(enc), None);
         let mut out = Vec::new();
         for part in body.chunks(chunk.max(1)) {
             decoder.push_into(part, &mut out)?;
@@ -3126,11 +3617,64 @@ mod decoder_tests {
     #[test]
     fn unknown_codings_pass_through() {
         let gz = gzip(b"abc");
-        for enc in ["UTF-8", "none", "text", "zstd", "gzip, bogus", "identity", "identity, gzip", "", " , "] {
+        for enc in ["UTF-8", "none", "text", "zstd2", "gzip, bogus", "identity", "identity, gzip", "", " , "] {
             assert_eq!(decode(enc, &gz, 5).unwrap(), gz, "{enc}");
         }
         assert_eq!(decode(" GZIP ", &gz, 5).unwrap(), b"abc");
         assert_eq!(decode("x-gzip", &gz, 5).unwrap(), b"abc");
+    }
+
+    /// `zstd` decodes (WPT's `foo.text.zst`, also under gzip), and a body
+    /// `dcb` and `dcz` bodies (WPT fetch/compression-dictionary's
+    /// compressed-data.py) decode in any chunking with the dictionary whose
+    /// hash they name, and fail without it or with another one.
+    #[test]
+    fn dictionary_codings_decode_with_the_offered_dictionary() {
+        use sha2::Digest;
+        let dict = |bytes: &[u8]| {
+            Arc::new(crate::dictionary::Dictionary { hash: sha2::Sha256::digest(bytes).into(), bytes: bytes.to_vec() })
+        };
+        let good = dict(b"This is a test dictionary.\n");
+        let other = dict(b"other");
+        let dcb: &[u8] = b"\xff\x44\x43\x42\x53\x96\x9b\xcf\x5e\x96\x0e\x0e\xdb\xf0\xa4\xbd\xde\x6b\x0b\x3e\x93\x81\xe1\x56\xde\x7f\x5b\x91\xce\x83\x91\x62\x42\x70\xf4\x16\xa1\x98\x01\x80\x62\xa4\x4c\x1d\xdf\x12\x84\x8c\xae\xc2\xca\x60\x22\x07\x6e\x81\x05\x14\xc9\xb7\xc3\x44\x8e\xbc\x16\xe0\x15\x0e\xec\xc1\xee\x34\x33\x3e\x0d";
+        let dcz: &[u8] = b"\x5e\x2a\x4d\x18\x20\x00\x00\x00\x53\x96\x9b\xcf\x5e\x96\x0e\x0e\xdb\xf0\xa4\xbd\xde\x6b\x0b\x3e\x93\x81\xe1\x56\xde\x7f\x5b\x91\xce\x83\x91\x62\x42\x70\xf4\x16\x28\xb5\x2f\xfd\x24\x34\xf5\x00\x00\x98\x63\x6f\x6d\x70\x72\x65\x73\x73\x65\x64\x61\x74\x61\x20\x75\x73\x69\x6e\x67\x03\x00\x59\xf9\x73\x54\x46\x27\x26\x10\x9e\x99\xf2\xbc";
+        let decode = |enc: &str, body: &[u8], chunk: usize, d: Option<&Arc<crate::dictionary::Dictionary>>| {
+            let mut decoder = Decoder::for_encoding(Some(enc), d);
+            let mut out = Vec::new();
+            for part in body.chunks(chunk) {
+                decoder.push_into(part, &mut out)?;
+            }
+            out.extend(decoder.finish()?);
+            Ok::<_, NetError>(out)
+        };
+        for (enc, body) in [("dcb", dcb), ("dcz", dcz)] {
+            for chunk in [1, 7, 40, body.len()] {
+                assert_eq!(
+                    decode(enc, body, chunk, Some(&good)).unwrap(),
+                    b"This is compressed test data using a test dictionary",
+                    "{enc} in chunks of {chunk}"
+                );
+            }
+            assert!(decode(enc, body, 64, None).is_err());
+            assert!(decode(enc, body, 64, Some(&other)).is_err());
+            assert!(decode(enc, &body[..20], 64, Some(&good)).is_err());
+        }
+    }
+
+    /// that is not zstd fails as Chromium's does (a network error on read).
+    #[test]
+    fn zstd_decodes_and_bad_zstd_fails() {
+        let foo: &[u8] = &[
+            0x28, 0xb5, 0x2f, 0xfd, 0x64, 0x04, 0x28, 0x5d, 0x00, 0x00, 0x18, 0x66, 0x6f, 0x6f, 0x01, 0x00, 0xfe, 0x48,
+            0xde, 0x0d, 0x01, 0xc3, 0xbe, 0x9f, 0x9f,
+        ];
+        for chunk in [1, 4, 100] {
+            assert_eq!(decode("zstd", foo, chunk).unwrap(), b"foo".repeat(3500));
+            assert_eq!(decode("ZSTD", foo, chunk).unwrap(), b"foo".repeat(3500));
+            assert_eq!(decode("zstd, gzip", &gzip(foo), chunk).unwrap(), b"foo".repeat(3500));
+        }
+        assert!(matches!(decode("zstd", b"not actually zstd", 5), Err(NetError::Decode(_))));
+        assert!(matches!(decode("zstd", &foo[..20], 5), Err(NetError::Decode(_))));
     }
 }
 
@@ -3143,5 +3687,51 @@ pub(crate) fn includes_credentials(credentials: Credentials, basic_tainting: boo
         Credentials::Include => true,
         Credentials::SameOrigin => basic_tainting,
         Credentials::Omit => false,
+    }
+}
+
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::*;
+
+    #[test]
+    fn response_cookie_site_distinguishes_subresources_and_top_level_navigation() {
+        use crate::cookies::{now_secs, Access};
+        let url = Url::parse("https://widget.test/").unwrap();
+        let mut request = Request::get(url.clone(), Destination::Iframe);
+        request.top_level_site = Some("https://site.test".into());
+        request.origin = Some("https://site.test".into());
+        request.method = Method::POST;
+        let mut jar = CookieJar::new();
+        for destination in [Destination::Iframe, Destination::Fetch, Destination::Document] {
+            request.destination = destination;
+            let top = destination == Destination::Document;
+            let site = response_cookie_site(&request, &url);
+            let partition = request_cookie_partition(&request, &url);
+            assert_eq!(site == SiteContext::SameSite, top);
+            assert_eq!(partition.as_deref(), Some(if top { "https://widget.test" } else { "https://site.test" }));
+            assert_eq!(
+                jar.set_from_header_in(&url, "a=lax; Secure; SameSite=Lax", Access::Http, now_secs(), partition.as_deref(), site), top
+            );
+            assert!(jar.set_from_header_in(
+                &url, "b=none; Secure; SameSite=None; Partitioned", Access::Http, now_secs(), partition.as_deref(), site
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::*;
+
+    #[test]
+    fn location_bytes_past_ascii_are_percent_encoded_one_by_one() {
+        let base = Url::parse("http://a.test/dir/redirect.py").unwrap();
+        let join = |bytes: &[u8]| base.join(&location_text(bytes)).unwrap().to_string();
+        assert_eq!(join("top.txt?\u{2603}".as_bytes()), "http://a.test/dir/top.txt?%E2%98%83");
+        assert_eq!(join("top.txt?%\u{2603}".as_bytes()), "http://a.test/dir/top.txt?%%E2%98%83");
+        assert_eq!(join(b"top.txt?\xFF"), "http://a.test/dir/top.txt?%FF");
+        assert_eq!(join(b"/plain"), "http://a.test/plain");
     }
 }

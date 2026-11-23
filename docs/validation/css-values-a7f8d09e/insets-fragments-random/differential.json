@@ -1,0 +1,277 @@
+{
+  "pages": 201,
+  "basePass": 2964,
+  "candidatePass": 2994,
+  "observedBase": 3278,
+  "observedCandidate": 3278,
+  "basePages": 139,
+  "candidatePages": 142,
+  "matchedInventoryGains": [
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (-0.25) should be [-33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.25) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.5) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.75) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (1) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (1.25) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions with transition: all: property <left> from [0px] to [calc(infinity * 1px)] at (-0.25) should be [-8388600px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions with transition: all: property <left> from [0px] to [calc(infinity * 1px)] at (0.25) should be [8388600px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions with transition: all: property <left> from [0px] to [calc(infinity * 1px)] at (0.5) should be [16777200px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions with transition: all: property <left> from [0px] to [calc(infinity * 1px)] at (0.75) should be [25165800px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions with transition: all: property <left> from [0px] to [calc(infinity * 1px)] at (1) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions: property <left> from [0px] to [calc(infinity * 1px)] at (-0.25) should be [-8388600px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions: property <left> from [0px] to [calc(infinity * 1px)] at (0.25) should be [8388600px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions: property <left> from [0px] to [calc(infinity * 1px)] at (0.5) should be [16777200px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions: property <left> from [0px] to [calc(infinity * 1px)] at (0.75) should be [25165800px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions: property <left> from [0px] to [calc(infinity * 1px)] at (1) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (-0.25) should be [-33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.25) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.5) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.75) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (1) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (1.25) should be [33554400px]"
+    ],
+    [
+      "css/css-values/random-computed.tentative.html",
+      "Property width value 'random(fixed random(1, 2), 10px, 100px)'"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "Sharing property-index-scoped random() with multiple random() inside calc()"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "Sharing random() in if() style() condition within same property"
+    ],
+    [
+      "css/css-values/urls/fragment-only.html",
+      "empty URL: external-quoted"
+    ],
+    [
+      "css/css-values/urls/fragment-only.html",
+      "empty URL: external-unquoted"
+    ],
+    [
+      "css/css-values/urls/fragment-only.html",
+      "empty URL: external-variable"
+    ],
+    [
+      "css/css-values/urls/fragment-only.html",
+      "empty URL: inline-quoted"
+    ],
+    [
+      "css/css-values/urls/fragment-only.html",
+      "empty URL: inline-unquoted"
+    ]
+  ],
+  "gained": [
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (-0.25) should be [-33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.25) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.5) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.75) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (1) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Animations: property <left> from [0px] to [calc(infinity * 1px)] at (1.25) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions with transition: all: property <left> from [0px] to [calc(infinity * 1px)] at (-0.25) should be [-8388600px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions with transition: all: property <left> from [0px] to [calc(infinity * 1px)] at (0.25) should be [8388600px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions with transition: all: property <left> from [0px] to [calc(infinity * 1px)] at (0.5) should be [16777200px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions with transition: all: property <left> from [0px] to [calc(infinity * 1px)] at (0.75) should be [25165800px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions with transition: all: property <left> from [0px] to [calc(infinity * 1px)] at (1) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions: property <left> from [0px] to [calc(infinity * 1px)] at (-0.25) should be [-8388600px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions: property <left> from [0px] to [calc(infinity * 1px)] at (0.25) should be [8388600px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions: property <left> from [0px] to [calc(infinity * 1px)] at (0.5) should be [16777200px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions: property <left> from [0px] to [calc(infinity * 1px)] at (0.75) should be [25165800px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "CSS Transitions: property <left> from [0px] to [calc(infinity * 1px)] at (1) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (-0.25) should be [-33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.25) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.5) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (0.75) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (1) should be [33554400px]"
+    ],
+    [
+      "css/css-values/animations/calc-interpolation.html",
+      "Web Animations: property <left> from [0px] to [calc(infinity * 1px)] at (1.25) should be [33554400px]"
+    ],
+    [
+      "css/css-values/random-computed.tentative.html",
+      "Property width value 'random(fixed random(1, 2), 10px, 100px)'"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "Sharing property-index-scoped random() with multiple random() inside calc()"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "Sharing random() in if() style() condition within same property"
+    ],
+    [
+      "css/css-values/urls/fragment-only.html",
+      "empty URL: external-quoted"
+    ],
+    [
+      "css/css-values/urls/fragment-only.html",
+      "empty URL: external-unquoted"
+    ],
+    [
+      "css/css-values/urls/fragment-only.html",
+      "empty URL: external-variable"
+    ],
+    [
+      "css/css-values/urls/fragment-only.html",
+      "empty URL: inline-quoted"
+    ],
+    [
+      "css/css-values/urls/fragment-only.html",
+      "empty URL: inline-unquoted"
+    ]
+  ],
+  "lost": [],
+  "newNames": [],
+  "missingNames": [],
+  "gainedPages": [
+    "css/css-values/animations/calc-interpolation.html",
+    "css/css-values/random-in-if.tentative.html",
+    "css/css-values/urls/fragment-only.html"
+  ],
+  "lostPages": [],
+  "statusChanges": {},
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "jsc": "0e0dd7038a7a-6f4649e395e0",
+  "browserSHA256": {
+    "topic2": "ea45a61412987f598c3a1c3ff12f3c0306600c656818a2c33849e9e877100907",
+    "topic3": "943538da27eaeff7737366e99b4772e810605a74be5379bd172263e6b4132e42",
+    "base": "ef3c0ae10633920a957d3a76ae0103bbaafb0270848987c42e12286223695ec6"
+  },
+  "wallMs": [
+    9131,
+    5101
+  ],
+  "parentCommit": "9a84bcad8c61b8731612d8bbbe5315f4ceb1fbfd",
+  "candidateCommit": "3e799f75458ec113284dfc5903b5ca682bb36ff5",
+  "originalCommit": "a7f8d09e2c6e6a86e2ff6f60d9c48481ba50a41f"
+}

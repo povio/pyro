@@ -303,4 +303,113 @@ body {margin:0}
     assert_eq!(size(&doc, "#m"), (50.0, 20.0));
     // Without a container, the small viewport.
     assert_eq!(size(&doc, "#no"), (400.0, 5.0));
+    let container = doc.query_selector("#c").unwrap().unwrap();
+    doc.set_style_property(container, "width", "300px");
+    doc.resolve_style(0.0);
+    assert_eq!(size(&doc, "#w"), (150.0, 10.0));
+    assert_eq!(size(&doc, "#no"), (400.0, 5.0));
+}
+
+/// pyro: a container query with an unknown feature selects no container, so it never matches,
+/// even where its known part is true (WPT css-conditional container-queries/query-evaluation,
+/// container-selection-unknown-features).
+#[test]
+fn container_query_with_an_unknown_feature_never_matches() {
+    const UNKNOWN: &str = r#"<!doctype html><style>
+#c {container-type:size;width:200px;height:100px}
+i {display:block;width:1px;height:1px}
+@container (width > 0px) {#known {width:10px}}
+@container (width > 0px) or (foo: bar) {#or {width:20px}}
+@container (width > 0px) or foo(bar) {#fn {width:30px}}
+</style><div id=c><i id=known></i><i id=or></i><i id=fn></i></div>"#;
+    let mut doc = HtmlDocument::from_html(UNKNOWN, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#known"), (10.0, 1.0));
+    assert_eq!(size(&doc, "#or"), (1.0, 1.0));
+    assert_eq!(size(&doc, "#fn"), (1.0, 1.0));
+}
+
+/// pyro: a table or a table cell with `container-type` is still selected as the query container
+/// but has no size (size containment does not apply to it): size queries fail and container
+/// units resolve against the next size container out, also after a change to `display: table`
+/// (WPT css-conditional container-queries ineligible-containment,
+/// container-units-ineligible-container).
+#[test]
+fn a_table_is_not_a_size_query_container() {
+    const TABLES: &str = r#"<!doctype html><style>
+#outer {container-type:size;width:300px;height:200px}
+.c {container-type:inline-size;width:200px}
+i {display:block;width:1px;height:1px}
+@container (min-width: 1px) {i {width:20px}}
+#u {width:10cqw;height:10cqh}
+</style><div id=outer><div class=c id=t style="display:table"><i id=a></i><div id=u></div></div><div class=c id=b><i id=bi></i></div></div>"#;
+    let mut doc = HtmlDocument::from_html(TABLES, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (1.0, 1.0));
+    assert_eq!(size(&doc, "#u"), (30.0, 20.0));
+    assert_eq!(size(&doc, "#bi"), (20.0, 1.0));
+    let b = doc.query_selector("#b").unwrap().unwrap();
+    doc.set_style_property(b, "display", "table-cell");
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#bi"), (1.0, 1.0));
+}
+
+/// pyro: an element that becomes a size container, or whose container-name changes, restyles its
+/// descendants: their queries select it (WPT css-conditional container-queries
+/// container-type-invalidation, container-name-invalidation, query-container-name-dynamic).
+#[test]
+fn becoming_a_container_or_renaming_one_restyles_descendants() {
+    const BECOME: &str = r#"<!doctype html><style>
+#outer {width:300px}
+#mid {width:250px}
+i {display:block;width:1px;height:1px}
+@container (min-width: 300px) {#a {width:20px}}
+@container named (min-width: 1px) {#a {height:20px}}
+</style><div id=outer><div id=mid><i id=a></i></div></div>"#;
+    let mut doc = HtmlDocument::from_html(BECOME, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (1.0, 1.0));
+    let outer = doc.query_selector("#outer").unwrap().unwrap();
+    doc.set_style_property(outer, "container-type", "inline-size");
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (20.0, 1.0));
+    doc.set_style_property(outer, "container-name", "named");
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (20.0, 20.0));
+    let mid = doc.query_selector("#mid").unwrap().unwrap();
+    doc.set_style_property(mid, "container-type", "inline-size");
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (1.0, 20.0));
+}
+
+/// pyro: `@container scroll-state(scrollable: ...)` matches the edges a `container-type:
+/// scroll-state` scroll container can scroll towards at the last layout: an `overflow: auto` box
+/// with taller content scrolls towards its bottom only, an `overflow: visible` box towards none,
+/// and a horizontally overflowing RTL box towards its left (its inline end). The first style pass
+/// sees no edges; the pass after layout styles the subtrees again (WPT css-conditional
+/// container-queries/scroll-state `scroll-state-initially-scrollable`, `-scrollable-wm`).
+#[test]
+fn scroll_state_scrollable_queries_follow_the_layout_scroll_range() {
+    const SCROLLABLE: &str = r#"<!doctype html><style>
+body {margin:0}
+.s {container-type:scroll-state;width:100px;height:100px}
+.auto {overflow:auto}
+.tall {width:10px;height:300px}
+.wide {width:300px;height:1px}
+i {display:block;width:1px;height:1px}
+@container scroll-state(scrollable: bottom) {i {width:20px}}
+@container scroll-state(scrollable: top) {i {height:20px}}
+@container scroll-state(scrollable: none) {i {width:5px}}
+@container scroll-state(scrollable: inline-end) {i {height:7px}}
+@container scroll-state((scrollable: left) and (not (scrollable: right))) {i {width:9px}}
+</style><div class="s auto"><i id=a></i><div class=tall></div></div><div class=s><i id=b></i><div class=tall></div></div><div class="s auto" style="direction:rtl"><i id=c></i><div class=wide></div></div>"#;
+    let mut doc = HtmlDocument::from_html(SCROLLABLE, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (20.0, 1.0));
+    assert_eq!(size(&doc, "#b"), (5.0, 1.0));
+    assert_eq!(size(&doc, "#c"), (9.0, 7.0));
 }

@@ -5,7 +5,8 @@
 //! mode. Native drag-and-drop (`crate::input` drag sessions) creates stores
 //! through `NativeTransfer` and moves them between the spec's read/write,
 //! read-only, protected and disabled modes around each event. Entries are plain
-//! native data (strings and file bytes), so a store holds no JS roots; each
+//! native data (strings and file bytes); the one JS root a store holds is a
+//! File script added with `items.add(file)`, returned as it is. Any other
 //! `files`/`getAsFile()` read wraps a fresh `File`. `items` is the same object
 //! for the lifetime of its DataTransfer; item objects are created per access.
 
@@ -21,7 +22,9 @@ use crate::util::*;
 
 enum Kind {
     Text { data: String },
-    File { bytes: Bytes, name: String, last_modified: f64 },
+    /// `object`: the File script added (`items.add(file)`), which `files`
+    /// and `getAsFile()` return as it is, as Chrome.
+    File { bytes: Bytes, name: String, last_modified: f64, object: Option<Persistent> },
 }
 
 struct Entry {
@@ -47,6 +50,9 @@ struct Store {
     entries: RefCell<Vec<Entry>>,
     next_id: Cell<u64>,
     drop_effect: RefCell<String>,
+    /// Script assigned a valid dropEffect (Blink tracks an "uninitialized"
+    /// drop effect that still reads as "none").
+    drop_effect_assigned: Cell<bool>,
     effect_allowed: RefCell<String>,
     mode: Cell<Mode>,
 }
@@ -74,11 +80,18 @@ impl Store {
     }
 
     fn file<'s>(&self, s: &Scope<'s>, e: &Entry) -> JsResult<Option<Object<'s>>> {
-        let Kind::File { bytes, name, last_modified } = &e.kind else { return Ok(None) };
+        let Kind::File { bytes, name, last_modified, object } = &e.kind else { return Ok(None) };
+        if let Some(file) = object.as_ref().and_then(|o| o.get(s).as_object()) {
+            return Ok(Some(file));
+        }
         let data = BlobData { bytes: bytes.clone(), mime: e.ty.clone(), file: Some((name.clone(), *last_modified)) };
         Ok(Some(s.wrap::<File>(data, None)?))
     }
 }
+
+/// The FileList `files` returned last and the file entry ids it was made from.
+const FILES_LIST: &str = "__lpDataTransferFiles";
+const FILES_KEY: &str = "__lpDataTransferFilesKey";
 
 /// `setData`/`getData`/`clearData` format normalization.
 fn normalize_format(format: &str) -> String {
@@ -133,6 +146,7 @@ impl JsClass for DataTransfer {
                 let v = dom_string(v)?;
                 if matches!(v.as_str(), "none" | "copy" | "link" | "move") {
                     *d.store.drop_effect.borrow_mut() = v;
+                    d.store.drop_effect_assigned.set(true);
                 }
                 Ok(())
             },
@@ -192,15 +206,30 @@ impl JsClass for DataTransfer {
             }
             Ok(array.value())
         });
-        def.getter("files", |s, d| {
+        // The same FileList while the store's files stay the same.
+        def.getter_this("files", |s, d, this| {
             let entries = d.store.entries.borrow();
+            let readable = d.store.readable();
+            let key: String = entries
+                .iter()
+                .filter(|e| readable && matches!(e.kind, Kind::File { .. }))
+                .map(|e| format!("{},", e.id))
+                .collect();
+            if let (Some(list), Some(k)) = (s.get_hidden(this, FILES_LIST)?, s.get_hidden(this, FILES_KEY)?) {
+                if k.as_string().is_some_and(|k| k == key) {
+                    return Ok(list);
+                }
+            }
             let mut files = FileListBuilder::new(s)?;
-            for e in entries.iter().filter(|_| d.store.readable()) {
+            for e in entries.iter().filter(|_| readable) {
                 if let Some(f) = d.store.file(s, e)? {
                     files.push(f.value())?;
                 }
             }
-            files.finish(s)
+            let list = files.finish(s)?;
+            s.set_hidden(this, FILES_LIST, list)?;
+            s.set_hidden(this, FILES_KEY, s.string(&key))?;
+            Ok(list)
         });
         def.pure_method("getData", 1, |s, d, a| {
             let format = normalize_format(&arg_string(&a, 0, "DataTransfer.getData")?);
@@ -277,7 +306,9 @@ impl JsClass for DataTransferItemList {
             }
             if let Some(f) = s.unwrap::<File>(a.get(0)) {
                 let (name, last_modified) = f.file.clone().unwrap_or_default();
-                let id = l.store.push(f.mime.clone(), Kind::File { bytes: f.bytes.clone(), name, last_modified });
+                let object = Some(Persistent::new(s, a.get(0)));
+                let id =
+                    l.store.push(f.mime.clone(), Kind::File { bytes: f.bytes.clone(), name, last_modified, object });
                 return item_value(s, &l.store, id);
             }
             if a.get(1).is_undefined() {
@@ -428,7 +459,12 @@ impl NativeTransfer {
         for file in files {
             transfer.store.push(
                 file.mime.to_ascii_lowercase(),
-                Kind::File { bytes: file.bytes.clone(), name: file.name.clone(), last_modified: file.last_modified },
+                Kind::File {
+                    bytes: file.bytes.clone(),
+                    name: file.name.clone(),
+                    last_modified: file.last_modified,
+                    object: None,
+                },
             );
         }
         Some(transfer)
@@ -457,6 +493,11 @@ impl NativeTransfer {
 
     pub(crate) fn drop_effect(&self) -> String {
         self.store.drop_effect.borrow().clone()
+    }
+
+    /// Whether a listener assigned a valid dropEffect to this transfer.
+    pub(crate) fn drop_effect_assigned(&self) -> bool {
+        self.store.drop_effect_assigned.get()
     }
 
     pub(crate) fn set_drop_effect(&self, effect: &str) {

@@ -1,0 +1,4 @@
+test editing_js::insert_html_uses_the_editing_hosts_content_mode ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 701 filtered out; finished in 0.10s
+test editing_js::undo_and_redo_restore_text_controls_and_hosts ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 701 filtered out; finished in 0.07s

@@ -1,0 +1,13 @@
+{
+  "surface": true,
+  "tx": "QuotaExceededError",
+  "afterTx": 0,
+  "retry": "QuotaExceededError",
+  "afterRetry": 0,
+  "cross": "QuotaExceededError",
+  "crossData": [
+    0,
+    700000
+  ],
+  "refund": "complete"
+}

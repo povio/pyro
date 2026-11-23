@@ -1,0 +1,237 @@
+{
+ "target": {
+  "scores": {
+   "undo": 48,
+   "after.html": 44,
+   "after.anchor": 48,
+   "after.focus": 44,
+   "after.text": 48,
+   "after.direction": 48,
+   "after.enabled": 48,
+   "after.eligible": 48,
+   "after.connected": 44,
+   "after.events": 48,
+   "afterTyping.html": 32,
+   "afterTyping.anchor": 32,
+   "afterTyping.focus": 32,
+   "afterTyping.text": 48,
+   "afterTyping.direction": 48,
+   "afterTyping.enabled": 48,
+   "afterTyping.eligible": 48,
+   "afterTyping.connected": 48,
+   "afterTyping.events": 0,
+   "typed": 48,
+   "before.html": 48,
+   "before.anchor": 48,
+   "before.focus": 48,
+   "before.text": 48,
+   "before.direction": 48,
+   "before.enabled": 48,
+   "before.eligible": 48,
+   "before.connected": 48,
+   "before.events": 48,
+   "returned": 48,
+   "restored.html": 44,
+   "restored.anchor": 44,
+   "restored.focus": 36,
+   "restored.text": 48,
+   "restored.direction": 48,
+   "restored.enabled": 48,
+   "restored.eligible": 48,
+   "restored.connected": 4,
+   "restored.events": 0
+  },
+  "losses": [],
+  "targets": [
+   [
+    [
+     "empty",
+     "select",
+     false
+    ],
+    false,
+    false,
+    [],
+    true
+   ],
+   [
+    [
+     "empty",
+     "select",
+     true
+    ],
+    false,
+    false,
+    [],
+    true
+   ],
+   [
+    [
+     "empty-name",
+     "select",
+     false
+    ],
+    false,
+    false,
+    [],
+    true
+   ],
+   [
+    [
+     "empty-name",
+     "select",
+     true
+    ],
+    false,
+    false,
+    [],
+    true
+   ],
+   [
+    [
+     "collapsed-span",
+     "select",
+     false
+    ],
+    false,
+    false,
+    [],
+    true
+   ],
+   [
+    [
+     "collapsed-span",
+     "select",
+     true
+    ],
+    false,
+    false,
+    [],
+    true
+   ]
+  ]
+ },
+ ".": {
+  "scores": {
+   "undo": 62,
+   "after.html": 70,
+   "after.anchor": 58,
+   "after.focus": 58,
+   "after.text": 54,
+   "after.direction": 72,
+   "after.enabled": 70,
+   "after.eligible": 62,
+   "after.connected": 72,
+   "after.events": 50,
+   "before.html": 70,
+   "before.anchor": 72,
+   "before.focus": 72,
+   "before.text": 54,
+   "before.direction": 72,
+   "before.enabled": 70,
+   "before.eligible": 72,
+   "before.connected": 72,
+   "before.events": 72,
+   "returned": 70,
+   "redone.html": 70,
+   "redone.anchor": 34,
+   "redone.focus": 34,
+   "redone.text": 54,
+   "redone.direction": 62,
+   "redone.enabled": 62,
+   "redone.eligible": 62,
+   "redone.connected": 30,
+   "redone.events": 20,
+   "redo": 62,
+   "restored.html": 60,
+   "restored.anchor": 54,
+   "restored.focus": 54,
+   "restored.text": 56,
+   "restored.direction": 60,
+   "restored.enabled": 60,
+   "restored.eligible": 60,
+   "restored.connected": 30,
+   "restored.events": 20
+  },
+  "losses": [],
+  "targets": []
+ },
+ "boxes": {
+  "scores": {
+   "undo": 42,
+   "after.html": 44,
+   "after.anchor": 24,
+   "after.focus": 24,
+   "after.text": 34,
+   "after.direction": 52,
+   "after.enabled": 48,
+   "after.eligible": 42,
+   "after.connected": 46,
+   "after.events": 28,
+   "before.html": 48,
+   "before.anchor": 50,
+   "before.focus": 50,
+   "before.text": 34,
+   "before.direction": 52,
+   "before.enabled": 48,
+   "before.eligible": 52,
+   "before.connected": 50,
+   "before.events": 52,
+   "returned": 48,
+   "redone.html": 44,
+   "redone.anchor": 18,
+   "redone.focus": 18,
+   "redone.text": 32,
+   "redone.direction": 34,
+   "redone.enabled": 34,
+   "redone.eligible": 42,
+   "redone.connected": 24,
+   "redone.events": 10,
+   "redo": 42,
+   "restored.html": 38,
+   "restored.anchor": 26,
+   "restored.focus": 26,
+   "restored.text": 34,
+   "restored.direction": 36,
+   "restored.enabled": 36,
+   "restored.eligible": 38,
+   "restored.connected": 20,
+   "restored.events": 10
+  },
+  "losses": [
+   [
+    [
+     "invisible-space",
+     "forward",
+     false
+    ],
+    "redone.text"
+   ],
+   [
+    [
+     "invisible-space",
+     "forward",
+     false
+    ],
+    "restored.text"
+   ],
+   [
+    [
+     "invisible-space",
+     "reverse",
+     false
+    ],
+    "redone.text"
+   ],
+   [
+    [
+     "invisible-space",
+     "reverse",
+     false
+    ],
+    "restored.text"
+   ]
+  ],
+  "targets": []
+ }
+}

@@ -25,8 +25,10 @@ pub struct EventTargetData {
     pub key: TargetKey,
     /// The functions in this wrapper's listener array, by slot.
     listeners: ListenerFns,
-    /// Its listener list went to another owner ([`EventTargetData::hand_over`]).
-    handed_over: std::cell::Cell<bool>,
+    /// Only standalone targets own the native listener list. Window wrappers
+    /// in every world share a key owned by the document, which can transfer
+    /// it when the initial about:blank Window is reused.
+    owns_listener_list: bool,
 }
 
 /// The listener functions of a target wrapper's hidden array ([`LISTENERS`]),
@@ -72,7 +74,7 @@ impl EventTargetData {
     /// with (`Scope::wrap`), so that dispatch finds it to invoke its listeners.
     pub fn wrapper_identity(&self) -> Option<pyro_js::IdentityKey> {
         match self.key {
-            TargetKey::Other(k) if !self.page.is_window_key(self.key) => Some(self.page.other_identity(k)),
+            TargetKey::Other(k) if self.owns_listener_list => Some(self.page.other_identity(k)),
             _ => None,
         }
     }
@@ -89,23 +91,21 @@ impl EventTargetData {
     /// same key (a reused Window's): dropping this one leaves it.
     pub fn hand_over(&self, to: &EventTargetData) {
         debug_assert_eq!(self.key, to.key);
-        self.handed_over.set(true);
         *to.listeners.0.borrow_mut() = self.listeners.0.take();
     }
     /// The data of a wrapper of target `key`.
     pub(crate) fn for_key(page: Rc<PageDom>, key: TargetKey) -> EventTargetData {
-        EventTargetData { page, key, listeners: ListenerFns::default(), handed_over: std::cell::Cell::new(false) }
+        let owns_listener_list = matches!(key, TargetKey::Other(_)) && !page.is_window_key(key);
+        EventTargetData { page, key, listeners: ListenerFns::default(), owns_listener_list }
     }
 }
 
 impl Drop for EventTargetData {
     fn drop(&mut self) {
         // Non-node, non-window targets own their listener list.
-        if let TargetKey::Other(_) = self.key {
-            if !self.handed_over.get() && !self.page.is_window_key(self.key) {
-                if let Ok(mut d) = self.page.dom.try_borrow_mut() {
-                    d.forget_target(self.key);
-                }
+        if self.owns_listener_list {
+            if let Ok(mut d) = self.page.dom.try_borrow_mut() {
+                d.forget_target(self.key);
             }
         }
     }
@@ -192,9 +192,7 @@ pub(crate) fn target_object<'s>(s: &Scope<'s>, page: &PageDom, key: TargetKey) -
             Some(o) => Ok(Some(o)),
             // `visualViewport` / `screen.orientation` keep a per-window
             // identity ([SameObject]); this realm's wrapper must own `key`.
-            // `MediaQueryList`s are kept per realm and query text.
             None => Ok(crate::window::viewport_target_object(s, page, key)
-                .or_else(|| crate::layout_api::media_query_object(s, page, key))
                 .or_else(|| sibling_window(s, page, key))),
         },
     }
@@ -394,6 +392,8 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, obj: Object<'s>, a: Args
     let added = t.page.dom.borrow_mut().add_listener(t.key, &ty, handle, opts);
     if added {
         maybe_pin(s, &t.page, t.key, obj);
+        if &*ty == "prioritychange" { crate::task_signal::sync_listener(s, obj)?; }
+        if &*ty == "change" { crate::layout_api::sync_media_listener(s, obj); }
         if let Some(sig) = signal {
             if let Some(sd) = s.unwrap::<crate::abort::AbortSignal>(sig.value()) {
                 let registration = t.page.dom.borrow().listener_registration(t.key, &ty, handle, opts.capture);
@@ -429,6 +429,8 @@ fn remove_listener<'s>(s: &Scope<'s>, t: &EventTargetData, obj: Object<'s>, a: A
             break;
         }
     }
+    if &*ty == "prioritychange" { crate::task_signal::sync_listener(s, obj)?; }
+    if &*ty == "change" { crate::layout_api::sync_media_listener(s, obj); }
     Ok(())
 }
 
@@ -573,13 +575,14 @@ pub(crate) fn release_listener_slots(page: &PageDom, released: Vec<(TargetKey, L
             let dom = page.dom.borrow();
             dom.handle_in_use(key, handle) || dom.handle_in_use(key, other)
         };
-        if in_use {
-            continue;
-        }
+        if in_use && matches!(key, TargetKey::Node(_)) { continue; }
         let realm_id = RealmId((handle.0 >> 32) as u32);
         let Some(realm) = page.listener_realm(realm_id) else { continue };
         let Ok(s) = realm.scope() else { continue };
         let Ok(Some(obj)) = target_object(&s, page, key) else { continue };
+        if matches!(key, TargetKey::Other(_)) { let _ = crate::task_signal::sync_listener(&s, obj); }
+        if matches!(key, TargetKey::Other(_)) { crate::layout_api::sync_media_listener(&s, obj); }
+        if in_use { continue; }
         if let Ok(Some(arr)) = listener_array(&s, obj, false) {
             let _ = set_listener_slot(&s, obj, arr, handle.0 as u32 & !HANDLER_SLOT, s.undefined());
         }
@@ -610,9 +613,9 @@ fn is_revoked_proxy(s: &Scope<'_>, value: Value<'_>) -> bool {
 
 impl ListenerInvoker for Invoker<'_> {
     fn invoke(&mut self, callback: ListenerHandle, current: TargetKey, _target: TargetKey) {
-        // HTML "check if we can run script": not with scripting disabled, nor
-        // in a document that is no longer fully active (its frame was removed).
-        if self.page.scripting_disabled() || !self.page.is_fully_active() {
+        // HTML "check if we can run script": not in a document that is no longer fully active (its
+        // frame was removed); scripting disabled is checked below, for the callback's realm.
+        if !self.page.is_fully_active() {
             return;
         }
         // The relatedTarget as this invocation target sees it (DOM "invoke").
@@ -658,6 +661,14 @@ impl ListenerInvoker for Invoker<'_> {
         // `cs`: the callback's realm, which is entered for the call, owns the
         // current event and reports the exception.
         let cs = callback_scope.as_ref().unwrap_or(&s);
+        // HTML "check if we can run script" for the callback's realm: a listener or handler
+        // function its embedder added to a document sandboxed without `allow-scripts` still
+        // runs (it is the embedder's script, not the document's).
+        let scripting_disabled =
+            page_of(cs).map_or_else(|_| self.page.scripting_disabled(), |p| p.scripting_disabled());
+        if scripting_disabled {
+            return;
+        }
         // DOM "inner invoke": the callback's global (a Window) exposes the
         // event as its current event unless the invocation target was in a
         // shadow tree; the previous value is restored afterwards, including on
@@ -813,17 +824,38 @@ fn dispatch_at(
         // Dispatch retargets the relatedTarget for each invocation target.
         let mut state = event.state.borrow_mut();
         state.target = Some(target);
-        state.related_target = event.fields.borrow().related_target;
+        let fields = event.fields.borrow();
+        // Use the source visible to the initial target when trimming an
+        // interest event's path. A host can itself receive interest from its
+        // shadow tree. The IDL getter retains the original source.
+        state.related_target = if event.iface == crate::event::EventInterface::InterestEvent {
+            fields.submitter.map(|key| page.dom.borrow().retarget_live(key, target))
+        } else {
+            fields.related_target
+        };
     }
     event.refresh_wrappers();
     // A callback can detach ancestors and run GC during dispatch. The path
     // is built once, here, and dispatched on below.
-    let path = match target_override {
+    let mut path = match target_override {
         Some(target_override) => {
             page.dom.borrow().event_path_with_target_override(target, target_override, &event.state.borrow())
         }
         None => page.dom.borrow().event_path(target, &event.state.borrow()),
     };
+    // Stop before a shadow host that would expose the same target and
+    // source. The original target always receives the event. Keep source
+    // separate from Event.relatedTarget.
+    if matches!(event.iface, crate::event::EventInterface::CommandEvent | crate::event::EventInterface::ToggleEvent) {
+        if let Some(source) = event.fields.borrow().submitter {
+            let dom = page.dom.borrow();
+            if let Some(end) = path.iter().enumerate().skip(1).find_map(|(i, &(observer, adjusted))| {
+                (observer == adjusted && dom.retarget_live(source, observer) == observer).then_some(i)
+            }) {
+                path.truncate(end);
+            }
+        }
+    }
     // No listener for the type on any target: no callback runs, so the path
     // needs no holding and no invocation target is asked about its tree.
     let heard = page.dom.borrow().listens_for(&event.state.borrow().ty);
@@ -917,7 +949,44 @@ pub(crate) fn event_handler<'s>(s: &Scope<'s>, target: &EventTargetData, ty: &'s
     if handler_slot(s, target, object, ty)?.is_none() {
         return Ok(s.null());
     }
-    Ok(handler_get(s, object, &format!("__lpHandler_{ty}"))?.unwrap_or(s.null()))
+    let value = handler_get(s, object, &format!("__lpHandler_{ty}"))?.unwrap_or(s.null());
+    resolve_raw_handler(s, &target.page, target.key, object, ty, value)
+}
+
+/// HTML "getting the current value of the event handler": a content attribute's handler is kept
+/// as its raw body (a string, which the IDL setter can never store) until first read or called,
+/// then compiled. A body that does not compile leaves the handler null, set before the error is
+/// reported (so a `<body onerror>` that fails is not itself called), and keeps its listener's
+/// position among the target's listeners.
+fn resolve_raw_handler<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    key: TargetKey,
+    object: Object<'_>,
+    ty: &str,
+    value: Value<'s>,
+) -> JsResult<Value<'s>> {
+    if !value.is_string() {
+        return Ok(value);
+    }
+    let body = dom_string(value)?;
+    let value_key = format!("__lpHandler_{ty}");
+    let location = handler_get(s, object, &format!("__lpHandlerAt_{ty}"))?
+        .filter(|v| v.is_string())
+        .map(dom_string)
+        .transpose()?
+        .and_then(|at| decode_location(&at));
+    match crate::handlers::compile_handler(s, page, key, ty, &body, location.as_ref()) {
+        Ok(handler) => {
+            handler_set(s, object, &value_key, handler)?;
+            Ok(handler)
+        }
+        Err(error) => {
+            handler_set(s, object, &value_key, s.null())?;
+            s.report_exception(&error);
+            Ok(s.null())
+        }
+    }
 }
 
 /// The handler's listener slot while its native listener is still
@@ -939,8 +1008,48 @@ pub(crate) fn set_event_handler(
     ty: &'static str,
     value: Value<'_>,
 ) -> JsResult<()> {
+    // EventHandler is [LegacyTreatNonObjectAsNull]: any object is kept
+    // (and registers the listener), a non-callable one is never called.
+    let value = if value.as_object().is_some() { value } else { s.null() };
+    store_event_handler(s, target, ty, value, None)
+}
+
+/// An `on*` content attribute's handler: its raw uncompiled body, compiled when the handler is
+/// first read or called ([`resolve_raw_handler`]). `location`: where it was set, for the CSP
+/// violations of that compile.
+pub(crate) fn set_raw_event_handler(
+    s: &Scope<'_>,
+    target: &EventTargetData,
+    ty: &'static str,
+    body: &str,
+    location: Option<&crate::csp::SourceLocation>,
+) -> JsResult<()> {
+    store_event_handler(s, target, ty, s.string(body), location)
+}
+
+/// A raw handler's set-time location as kept next to it: `line:column:sourceFile`.
+fn encode_location(location: &crate::csp::SourceLocation) -> String {
+    format!("{}:{}:{}", location.line, location.column, location.source_file)
+}
+
+fn decode_location(at: &str) -> Option<crate::csp::SourceLocation> {
+    let mut parts = at.splitn(3, ':');
+    let line = parts.next()?.parse().ok()?;
+    let column = parts.next()?.parse().ok()?;
+    Some(crate::csp::SourceLocation { source_file: parts.next()?.to_owned(), line, column })
+}
+
+/// Stores an event handler's value: null, a callback object, or a raw body (a string) with the
+/// location it was set at (none for the others, clearing a previous raw body's).
+fn store_event_handler(
+    s: &Scope<'_>,
+    target: &EventTargetData,
+    ty: &'static str,
+    value: Value<'_>,
+    location: Option<&crate::csp::SourceLocation>,
+) -> JsResult<()> {
     if let Some(window) = forwarded_target(target, ty) {
-        return set_event_handler(s, &window, ty, value);
+        return store_event_handler(s, &window, ty, value, location);
     }
     let ty = handler_event_type(ty);
     crate::handlers::drain_inline(&target.page);
@@ -948,9 +1057,10 @@ pub(crate) fn set_event_handler(
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
     let value_key = format!("__lpHandler_{ty}");
     let slot_key = format!("__lpHandlerSlot_{ty}");
-    let value = if value.as_object().is_some_and(|o| o.is_function()) { value } else { s.null() };
     let slot = handler_slot(s, target, object, ty)?;
     handler_set(s, object, &value_key, value)?;
+    let at = location.map_or(s.undefined(), |l| s.string(&encode_location(l)));
+    handler_set(s, object, &format!("__lpHandlerAt_{ty}"), at)?;
     if let Some(slot) = slot {
         if value.is_null() {
             let handle = handler_handle_for(s.realm_id(), slot);
@@ -959,17 +1069,28 @@ pub(crate) fn set_event_handler(
                 set_listener_slot(s, object, array, slot, s.undefined())?;
             }
             handler_set(s, object, &slot_key, s.undefined())?;
+            if ty == "prioritychange" { crate::task_signal::sync_listener(s, object)?; }
+            if ty == "change" { crate::layout_api::sync_media_listener(s, object); }
         }
         return Ok(());
     }
     if value.is_null() {
         return Ok(());
     }
-    let cancel_on_false = !matches!(ty, "mouseover" | "error");
     let window_error = ty == "error" && target.page.is_window_key(target.key);
+    // For compiling a raw handler when it is called; weak, as the page owns the realm that keeps
+    // this function.
+    let (page, target_key) = (Rc::downgrade(&target.page), target.key);
     let callback = s.function("eventHandler", move |s, this, args| {
         if let Some(object) = this.as_object() {
-            if let Some(handler) = handler_get(s, object, &value_key)?.and_then(|v| v.as_object()) {
+            let mut handler = handler_get(s, object, &value_key)?;
+            if let Some(raw) = handler.filter(|v| v.is_string()) {
+                handler = match page.upgrade() {
+                    Some(page) => Some(resolve_raw_handler(s, &page, target_key, object, ty, raw)?),
+                    None => None,
+                };
+            }
+            if let Some(handler) = handler.and_then(|v| v.as_object()).filter(|h| h.is_function()) {
                 let event = args.get(0);
                 // HTML "special error event handling" (OnErrorEventHandler):
                 // the Window's `onerror` gets an ErrorEvent's fields as five
@@ -1016,7 +1137,12 @@ pub(crate) fn set_event_handler(
                                 true
                             }
                             Some(_) => false,
-                            None => cancel_on_false && result.is_boolean() && !result.to_bool(),
+                            // An `onbeforeunload` handler's return value is a `DOMString?`: `false`
+                            // converts to "false", which is not `false`, so another event (a
+                            // CustomEvent named beforeunload) is not canceled.
+                            None if ty == "beforeunload" => false,
+                            // Returning false cancels (mouseover is no longer special).
+                            None => result.is_boolean() && !result.to_bool(),
                         }
                     }
                 };
@@ -1049,6 +1175,8 @@ pub(crate) fn set_event_handler(
         AddOptions { capture: false, once: false, passive: None },
     );
     maybe_pin(s, &target.page, target.key, object);
+    if ty == "prioritychange" { crate::task_signal::sync_listener(s, object)?; }
+    if ty == "change" { crate::layout_api::sync_media_listener(s, object); }
     Ok(())
 }
 

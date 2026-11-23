@@ -1,0 +1,52 @@
+{
+  "after": {
+    "idCount": 36,
+    "keyCount": 36,
+    "html": 36,
+    "glyphs": 36,
+    "anchor": 36,
+    "focus": 36,
+    "direction": 36,
+    "text": 36,
+    "value": 36,
+    "mixed": 36,
+    "connected": 36
+  },
+  "twice": {
+    "idCount": 36,
+    "keyCount": 36,
+    "html": 28,
+    "glyphs": 36,
+    "anchor": 36,
+    "focus": 36,
+    "direction": 36,
+    "text": 36,
+    "value": 36,
+    "mixed": 36,
+    "connected": 36
+  },
+  "onceUndo": {
+    "idCount": 36,
+    "keyCount": 36,
+    "html": 36,
+    "glyphs": 36,
+    "anchor": 36,
+    "focus": 36,
+    "direction": 36,
+    "text": 36,
+    "value": 36,
+    "mixed": 36
+  },
+  "restored": {
+    "idCount": 36,
+    "keyCount": 36,
+    "html": 36,
+    "glyphs": 36,
+    "anchor": 36,
+    "focus": 36,
+    "direction": 36,
+    "text": 36,
+    "value": 36,
+    "mixed": 36
+  }
+}

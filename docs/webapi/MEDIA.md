@@ -252,6 +252,17 @@ first use of any of `BaseAudioContext`, `AudioContext`,
   uses band-limited tables, so the last three differ near their edges),
   `frequency`, `detune`. `ConstantSourceNode`: `offset`. `GainNode`:
   `gain`.
+- `BiquadFilterNode` implements the eight Web Audio filter types with
+  per-sample or per-quantum frequency, detune, Q and gain automation.
+  `IIRFilterNode` accepts up to 20 feedforward and feedback coefficients.
+  Both compute magnitude and phase responses and retain separate filter
+  history for each rendered channel across quanta. `ChannelMergerNode`
+  mixes each input to mono and places it in the corresponding output channel.
+- `ConvolverNode` snapshots a mono, stereo, or four-channel impulse response
+  at the context's sample rate. Offline rendering combines a direct first
+  block with FFT overlap-add partitions, preserving zero algorithmic latency
+  and the response tail. The optional RMS normalization is calculated when
+  the buffer is assigned.
 - `OfflineAudioContext(channels, length, rate)` or `({ numberOfChannels,
   length, sampleRate })`: `startRendering()` renders in a task (state
   `running`, then `closed`), resolves with the `AudioBuffer` and fires
@@ -284,10 +295,10 @@ first use of any of `BaseAudioContext`, `AudioContext`,
   `MediaElementAudioSourceNode`, `MediaStreamAudioDestinationNode` and
   `captureStream` are missing.
 - Web Audio has only the nodes above: no `AnalyserNode`,
-  `BiquadFilterNode`, `DelayNode`, `DynamicsCompressorNode`,
-  `ConvolverNode`, `PannerNode`/`AudioListener`, `StereoPannerNode`,
-  `WaveShaperNode`, `ChannelSplitterNode`/`ChannelMergerNode`,
-  `PeriodicWave`, `IIRFilterNode` or `AudioWorklet`. Audio fingerprinting
+  `DelayNode`, `DynamicsCompressorNode`,
+  `PannerNode`/`AudioListener`, `StereoPannerNode`,
+  `WaveShaperNode`, `ChannelSplitterNode`,
+  `PeriodicWave` or `AudioWorklet`. Audio fingerprinting
   scripts that use a compressor fail where Chrome succeeds.
 - `decodeAudioData` keeps AAC priming and padding samples and WebM Opus end
   padding: those buffers are up to a few thousand frames longer than

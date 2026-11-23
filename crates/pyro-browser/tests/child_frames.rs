@@ -211,7 +211,9 @@ fn frame_indices_and_names_follow_removal_and_queued_navigation_is_stale_safe() 
     let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
-    eval(&root,"globalThis.a=document.createElement('iframe');globalThis.b=document.createElement('iframe');a.srcdoc='<p>unused</p>';document.body.appendChild(a);document.body.appendChild(b);b.name='second';a.remove()");
+    // (`name` before insertion: a container's later name change leaves its child's name, as in
+    // Chrome since ac2cd04f9.)
+    eval(&root,"globalThis.a=document.createElement('iframe');globalThis.b=document.createElement('iframe');a.srcdoc='<p>unused</p>';document.body.appendChild(a);b.name='second';document.body.appendChild(b);a.remove()");
     settle(&mut t);
     assert_eq!(t.browser.frames(page).len(), 2);
     assert_eq!(t.browser.frames(page)[1].name, "second");
@@ -267,9 +269,14 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             immutable_local: false,
             content_disposition: None,
             header_csp: None,
+            allow_csp_from: None,
             refresh: None,
             content_language: None,
+            last_modified: None,
+            reporting_endpoints: None,
+            dictionary_links: Vec::new(),
             referrer_policy: None,
+            origin_agent_cluster: false,
             sent_referrer: None,
             timing: None,
             partial: None,
@@ -304,7 +311,7 @@ fn repeated_frame_removal_releases_native_realms_without_retaining_the_page() {
 }
 
 #[test]
-fn failed_child_fetch_releases_parent_load_without_destroying_initial_document() {
+fn failed_child_fetch_releases_parent_load_and_commits_the_error_document() {
     let mut t = crate::browser_thread().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert("https://example.test/main", "text/html", "<iframe src='/missing'></iframe>", Duration::ZERO);
@@ -318,7 +325,9 @@ fn failed_child_fetch_releases_parent_load_without_destroying_initial_document()
     assert_eq!(frames.len(), 2);
     assert!(frames.iter().all(|f| f.loaded));
     let child = frames.iter().find(|f| f.parent.is_some()).unwrap();
-    assert_eq!(child.url, "about:blank");
+    // As Chrome, the failed navigation commits the error document (1d848465f; WPT
+    // navigating-across-documents/redirect-to-about).
+    assert_eq!(child.url, "chrome-error://chromewebdata/");
     assert!(events
         .0
         .borrow()
@@ -670,6 +679,29 @@ fn a_navigated_away_document_stays_usable_while_held() {
     assert_eq!(engine.lingering_realms(), 0, "nothing reaches the old document: its realm is disposed");
 }
 
+/// A removed frame's window that script still holds lingers with its realm, and a Location made
+/// for it then still gets its [LegacyUnforgeable] own members: the function installing them is a
+/// root of the realm's own, handed to its global when it lingers, not one of the window's that
+/// kept every lingering global alive.
+#[test]
+fn a_lingering_windows_location_keeps_its_own_members() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(&root, "globalThis.f=document.createElement('iframe'); f.srcdoc='<p>x</p>'; document.body.appendChild(f)");
+    settle(&mut t);
+    eval(&root, "globalThis.w = f.contentWindow; f.remove()");
+    settle(&mut t);
+    for _ in 0..3 {
+        t.browser.engine.collect_garbage_now();
+        t.browser.engine.drain_finalized();
+    }
+    assert_eq!(
+        eval(&root, "[typeof w.location.replace, typeof w.location.href, Object.hasOwn(w.location, 'assign')].join()"),
+        "function,string,true"
+    );
+}
+
 /// The documents an iframe navigates through linger only while something
 /// reaches them: after 50 navigations nobody holds, none is left (fork mode
 /// and long e2e runs keep one engine for many pages).
@@ -742,8 +774,8 @@ fn intersection_observer_sees_targets_in_child_documents() {
 }
 
 /// A `Content-Security-Policy` header's Trusted Types directives apply to the document
-/// (`require-trusted-types-for 'script'`: string HTML assignments throw) while its other
-/// directives are not enforced (`script-src 'none'` blocks nothing).
+/// (`require-trusted-types-for 'script'`: string HTML assignments throw), next to its other
+/// directives (`script-src 'unsafe-inline'` lets the inline script run).
 #[test]
 fn csp_header_trusted_types_directives_apply_others_do_not() {
     let mut t = crate::browser_thread().unwrap();
@@ -758,12 +790,86 @@ fn csp_header_trusted_types_directives_apply_others_do_not() {
          const p = trustedTypes.createPolicy('p', { createHTML: s => s }); d.innerHTML = p.createHTML('<i>y</i>'); out.push(d.innerHTML);</script>",
         Duration::ZERO,
     );
-    loader.set_csp("http://site.test/", "script-src 'none'; require-trusted-types-for 'script'; trusted-types p");
+    loader.set_csp("http://site.test/", "script-src 'unsafe-inline'; require-trusted-types-for 'script'; trusted-types p");
     t.browser.set_loader(Some(loader.clone()));
     t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
     settle(&mut t);
     let root = main_realm(&t, page);
     assert_eq!(eval(&root, "out.join('|')"), "TypeError|TypeError|<i>y</i>");
+}
+
+/// CSP `script-src 'none'` (a header) blocks the document's inline script.
+#[test]
+fn csp_header_script_src_none_blocks_inline_scripts() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert("http://site.test/", "text/html", "<script>globalThis.ran = true</script>", Duration::ZERO);
+    loader.set_csp("http://site.test/", "script-src 'none'");
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(eval(&root, "String(globalThis.ran)"), "undefined");
+}
+
+/// CSP's inline check is part of "prepare the script element" (at its end tag): an inline
+/// script a stylesheet holds is checked with the nonce it had there, not one a script changed
+/// while it waited (WPT content-security-policy/script-src/scriptnonce-changed-1).
+#[test]
+fn csp_inline_script_held_by_a_stylesheet_keeps_its_end_tag_nonce() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<link rel=stylesheet href=/slow.css><script src=/change.js async></script>\
+         <script id=s nonce=abc>globalThis.ran = true</script>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/slow.css", "text/css", "p {}", Duration::from_millis(100));
+    loader.insert(
+        "http://site.test/change.js",
+        "text/javascript",
+        "globalThis.changed = true; document.getElementById('s').setAttribute('nonce', 'zzz')",
+        Duration::from_millis(10),
+    );
+    loader.set_csp("http://site.test/", "script-src 'self' 'nonce-abc'");
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(eval(&root, "[globalThis.changed, globalThis.ran].join()"), "true,true");
+}
+
+/// CSP `'self'` in a sandboxed (opaque-origin) document matches its precursor origin, the one
+/// it would have without the sandbox, as Chrome (WPT content-security-policy/meta/sandbox-iframe).
+#[test]
+fn csp_self_matches_the_precursor_origin_of_a_sandboxed_document() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let loader = Rc::new(pyro_browser::StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        "<script>globalThis.got = 'none'; addEventListener('message', e => { globalThis.got = String(e.data) })</script>\
+         <iframe sandbox=allow-scripts src=/child></iframe>",
+        Duration::ZERO,
+    );
+    loader.insert(
+        "http://site.test/child",
+        "text/html",
+        "<meta http-equiv=Content-Security-Policy content=\"script-src 'self' 'unsafe-inline'\">\
+         <script src=/s.js></script><script>parent.postMessage(String(globalThis.loaded), '*')</script>",
+        Duration::ZERO,
+    );
+    loader.insert("http://site.test/s.js", "text/javascript", "globalThis.loaded = 1", Duration::ZERO);
+    t.browser.set_loader(Some(loader.clone()));
+    t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    assert_eq!(eval(&root, "globalThis.got"), "1");
 }
 
 /// SVG `<use>` instances: a closed user-agent shadow root with a deep clone
@@ -1051,4 +1157,93 @@ fn a_markup_snapshot_paints_a_stuck_sticky_box_where_the_page_holds_it() {
         image.data[i..i + 3].to_vec()
     };
     assert_eq!((at(5, 5), at(5, 15), at(5, 30)), (vec![0, 128, 0], vec![0, 128, 0], vec![0, 0, 255]));
+}
+
+#[test]
+fn cookie_partition_and_site_for_cookies_follow_the_whole_frame_chain() {
+    use pyro_net::cookies::SiteContext::{CrossSite, SameSite};
+
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    let top_url = "https://app.example.test/page";
+    let sibling_url = "https://static.example.test/sibling";
+    let cross_url = "https://other.test/middle";
+    let nested_url = "https://app.example.test/leaf";
+    loader.insert(top_url, "text/html", &format!("<iframe src='{sibling_url}'></iframe><iframe src='{cross_url}'></iframe>"), Duration::ZERO);
+    loader.insert(cross_url, "text/html", &format!("<iframe src='{nested_url}'></iframe>"), Duration::ZERO);
+    for url in [nested_url, sibling_url] {
+        loader.insert(url, "text/html", "<p>loaded</p>", Duration::ZERO);
+    }
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar(top_url)).unwrap();
+    settle(&mut t);
+    let frames = t.browser.frames(page);
+    for (url, expected) in [(top_url, SameSite), (sibling_url, SameSite), (cross_url, CrossSite), (nested_url, CrossSite)] {
+        let frame = frames.iter().find(|f| f.url == url).unwrap();
+        let document = t.browser.frame(page, &frame.id).unwrap().page_dom.unwrap();
+        assert_eq!(document.cookie_partition_key().as_deref(), Some("https://example.test"), "{url}");
+        assert_eq!(document.cookie_site_context(), expected, "{url}");
+    }
+}
+
+/// css-sizing-4 responsive iframes: a script of the embedder reads an iframe of `frame-sizing:
+/// content-height` (`content-width`, a logical value by the iframe's writing mode) at the content
+/// size of a document that opted in with `<meta name="responsive-embedded-sizing">` admitting the
+/// embedder's origin, and at the default 300x150 otherwise. `window.requestResize()` throws
+/// `NotAllowedError` outside such a document. (WPT css-sizing `responsive-iframe/responsive-iframe-value`,
+/// `-allow-origins`, `-request-resize-error`.)
+#[test]
+fn an_embedders_script_reads_a_responsive_iframe_at_its_content_size() {
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("https://example.test/main", "text/html", "<body></body>", Duration::ZERO);
+    let child = |allow: &str| {
+        format!(
+            "<!doctype html><style>* {{ margin: 0 }} :root {{ width: 400px; height: 200px }}</style>\
+             <meta name=responsive-embedded-sizing content=\"{allow}\"><body>\
+             <script>try {{ requestResize(); window.resized = 'ok' }} catch (e) {{ window.resized = e.name }}</script>"
+        )
+    };
+    loader.insert("https://example.test/any", "text/html", &child("allow-origins=*"), Duration::ZERO);
+    loader.insert("https://example.test/parent", "text/html", &child("allow-origins=https://example.test"), Duration::ZERO);
+    loader.insert("https://example.test/other", "text/html", &child("allow-origins=https://other.test"), Duration::ZERO);
+    loader.insert("https://example.test/prefix", "text/html", &child("ALLOW-ORIGINS=*"), Duration::ZERO);
+    loader.insert(
+        "https://example.test/plain",
+        "text/html",
+        "<!doctype html><style>:root { height: 200px }</style><body><script>try { requestResize(); window.resized = 'ok' } catch (e) { window.resized = e.name }</script>",
+        Duration::ZERO,
+    );
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("https://example.test/main")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.frames_ = {}; \
+         for (const [name, sizing, wm] of [['any', 'content-height'], ['parent', 'content-height'], \
+              ['other', 'content-height'], ['prefix', 'content-height'], ['plain', 'content-height'], \
+              ['width', 'content-width'], ['inline', 'content-inline-size', 'vertical-rl']]) { \
+           const f = document.createElement('iframe'); f.frameBorder = '0'; \
+           f.style.setProperty('frame-sizing', sizing); if (wm) f.style.writingMode = wm; \
+           f.src = ['width', 'inline'].includes(name) ? '/any' : '/' + name; \
+           document.body.appendChild(f); frames_[name] = f; } 'ok'",
+    );
+    settle(&mut t);
+    let size = |name: &str| eval(&root, &format!("[frames_.{name}.offsetWidth, frames_.{name}.offsetHeight].join()"));
+    assert_eq!(size("any"), "300,200");
+    assert_eq!(size("parent"), "300,200");
+    assert_eq!(size("other"), "300,150", "the list does not admit the embedder");
+    assert_eq!(size("prefix"), "300,150", "`allow-origins=` is case-sensitive");
+    assert_eq!(size("plain"), "300,150", "not responsively embedded");
+    assert_eq!(size("width"), "400,150");
+    assert_eq!(size("inline"), "300,200", "a vertical iframe's inline size is its height");
+    assert_eq!(eval(&root, "frames_.any.contentWindow.resized + ' ' + frames_.plain.contentWindow.resized"), "ok NotAllowedError");
+    assert_eq!(
+        eval(&root, "try { requestResize(); 'ok' } catch (e) { e.name }"),
+        "NotAllowedError",
+        "a top-level document is not embedded"
+    );
 }

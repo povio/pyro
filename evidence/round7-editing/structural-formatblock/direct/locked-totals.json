@@ -1,0 +1,42 @@
+{
+  "before": {
+    "html": 64,
+    "anchor": 64,
+    "focus": 64,
+    "direction": 64,
+    "value": 64
+  },
+  "result": {
+    "result": 64
+  },
+  "after": {
+    "html": 64,
+    "anchor": 64,
+    "focus": 64,
+    "direction": 64,
+    "text": 48,
+    "value": 64
+  },
+  "inserted": {
+    "inserted": 64
+  },
+  "typed": {
+    "html": 24,
+    "anchor": 40,
+    "focus": 40,
+    "direction": 64,
+    "text": 64,
+    "value": 64
+  },
+  "undo": {
+    "undo": 64
+  },
+  "restored": {
+    "html": 44,
+    "direction": 64,
+    "value": 52,
+    "anchor": 28,
+    "focus": 12,
+    "text": 12
+  }
+}

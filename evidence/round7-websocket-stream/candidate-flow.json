@@ -1,0 +1,17 @@
+{
+  "surface": "function",
+  "initialReady": true,
+  "order": [
+    "one",
+    "two",
+    "echo"
+  ],
+  "empty": [
+    0,
+    "TypeError"
+  ],
+  "closed": [
+    true,
+    1005
+  ]
+}

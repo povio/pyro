@@ -8,9 +8,15 @@
 //   moduleGraph(url) -> id of the graph that fetched it (evaluate's `graph`), -1 for none
 //   awaitGraph(url) -> promise of such a module's graph (it and its imports fetched and evaluated, or
 //     failed), or null when the engine cannot wait for one
+//   fetch(url, init) -> fetch() of a module, as a "paintworklet" request (CSP: script-src-elem)
 //   evaluate(source, url, credentials, graph) -> promise of the module's evaluation in the worklet
 //     global as graph `graph` (its imports recorded as that graph's),
-//     its imports fetched with `credentials`; one graph at a time (see `graphs`)
+//     its imports fetched with `credentials`; one graph at a time (see `graphs`). It rejects when the
+//     graph fails to load or link, and fulfills once the module ran, also when evaluation threw
+//     (reported, not rethrown)
+// A Worklet takes these from its backend: `native` for CSS.paintWorklet, the natives
+// audio_worklet.rs makes for each BaseAudioContext's audioWorklet (an `AudioWorklet`, made by
+// `audioWorklet(backend)`).
 (function (native) {
   'use strict';
   const token = Symbol('pyro');
@@ -20,9 +26,10 @@
   const TypeErrorC = TypeError;
   const URLC = URL;
   const StringC = String;
-  const fetchC = fetch;
   const reject = (e) => PromiseC.reject(e);
   const worklets = new WeakSet();
+  // Each worklet's natives (see above): the global its modules run in and that global's module map.
+  const backends = new WeakMap();
   // Each worklet's module map ("module responses map"), by requested URL: a module being fetched or
   // evaluated, or one that loaded, answers a later addModule() of that URL without a new fetch. A
   // failed one leaves the map, so a later call fetches it again.
@@ -35,15 +42,17 @@
   const runs = new Map();
   let nextGraph = 1;
   class Worklet {
-    constructor(t) {
+    constructor(t, backend = native) {
       if (t !== token) throw new TypeErrorC("Failed to construct 'Worklet': Illegal constructor");
       worklets.add(this);
       moduleMaps.set(this, new Map());
+      backends.set(this, backend);
     }
     addModule(moduleURL, options = undefined) {
       try {
         if (!worklets.has(this)) throw new TypeErrorC("Failed to execute 'addModule' on 'Worklet': Illegal invocation");
         if (arguments.length < 1) throw new TypeErrorC("Failed to execute 'addModule' on 'Worklet': 1 argument required, but only 0 present.");
+        const native = backends.get(this);
         if (!native.active()) throw new DOMExceptionC('This frame is not fully active.', 'InvalidStateError');
         let url;
         try {
@@ -77,7 +86,7 @@
           const aborted = () => new DOMExceptionC('Unable to load a worklet\'s module.', 'AbortError');
           // Evaluated under the response's URL (after redirects), which import.meta.url and the module's
           // relative imports use.
-          const loading = fetchC(url, { credentials, mode: 'cors' }).then(
+          const loading = native.fetch(url, { credentials, mode: 'cors' }).then(
             (response) => {
               if (!response.ok) throw aborted();
               return response.text().then((source) => [source, response.url || url]);
@@ -102,5 +111,17 @@
   }
   O.defineProperty(Worklet.prototype, Symbol.toStringTag, { value: 'Worklet', configurable: true });
   O.defineProperty(Worklet.prototype, 'addModule', { enumerable: true });
-  return { Worklet, paintWorklet: new Worklet(token) };
+  // Web Audio's AudioWorklet: a Worklet whose modules run in its BaseAudioContext's own
+  // AudioWorkletGlobalScope (audio_worklet.rs).
+  class AudioWorklet extends Worklet {
+    // (`...args`: AudioWorklet.length is 0, as its IDL declares no constructor arguments.)
+    constructor(...args) {
+      const [t, backend] = args;
+      if (t !== token) throw new TypeErrorC("Failed to construct 'AudioWorklet': Illegal constructor");
+      super(t, backend);
+    }
+  }
+  O.defineProperty(AudioWorklet.prototype, Symbol.toStringTag, { value: 'AudioWorklet', configurable: true });
+  const audioWorklet = (backend) => new AudioWorklet(token, backend);
+  return { Worklet, AudioWorklet, audioWorklet, paintWorklet: new Worklet(token) };
 });

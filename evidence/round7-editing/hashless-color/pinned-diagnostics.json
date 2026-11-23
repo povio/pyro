@@ -1,0 +1,36 @@
+{
+  "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\" compare innerHTML": {
+    "parent": {
+      "name": "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foobarbaz\" but got \"foo<font color=\\\"#000fff\\\">bar</font>baz\""
+    },
+    "signed": {
+      "name": "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foobarbaz\" but got \"foo<font color=\\\"#000fff\\\">bar</font>baz\""
+    }
+  },
+  "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\" queryCommandValue(\"forecolor\") after": {
+    "parent": {
+      "name": "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\" queryCommandValue(\"forecolor\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\" queryCommandValue(\"forecolor\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned (after color normalization) expected \"rgb(0, 0, 0)\" but got \"rgb(0, 15, 255)\""
+    },
+    "signed": {
+      "name": "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\" queryCommandValue(\"forecolor\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned (after color normalization) expected \"rgb(0, 0, 0)\" but got \"rgb(0, 15, 255)\""
+    }
+  }
+}

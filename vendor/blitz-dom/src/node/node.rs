@@ -198,6 +198,13 @@ bitflags! {
         const POSITION_TRY_OPTIONS = 1 << 38;
         const POSITION_VISIBILITY_CHECK = 1 << 39;
         const ANCHOR_QUERIES = 1 << 40;
+        /// pyro: a `content-visibility: hidden` element whose contents a geometry query needs laid
+        /// out (`BaseDocument::force_hidden_contents`): they get boxes until the next frame, still
+        /// unpainted, unhit and not sizing it (its size containment stays).
+        const CV_HIDDEN_FORCED = 1 << 41;
+        /// pyro: the node is an ordinary MathML fraction whose numerator and denominator are its
+        /// layout children (`layout::math`). Set by its construction.
+        const IS_MATH_FRACTION = 1 << 42;
     }
 }
 
@@ -398,6 +405,7 @@ impl NodeFlags {
         self.remove(Self::IS_TABLE_ROOT);
         self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
         self.remove(Self::IS_SPLIT_INLINE);
+        self.remove(Self::IS_MATH_FRACTION);
     }
 }
 
@@ -570,6 +578,7 @@ impl Node {
     pub fn clear_layout_cache(&mut self) {
         if let Some(layout_data) = self.try_layout_data_mut() {
             layout_data.cache.clear();
+            layout_data.calc_size_inputs = [None; 2];
         }
     }
 
@@ -1032,7 +1041,7 @@ impl Node {
             && !groups(b.overflow_y)
             && b.isolation != style::computed_values::isolation::T::Isolate
             && s.get_effects().mix_blend_mode == style::computed_values::mix_blend_mode::T::Normal
-            && !b.slow_clone_contain().contains(Contain::PAINT)
+            && !b.used_containment().contains(Contain::PAINT)
             && !self.applies_atomic_paint_effect()
     }
 
@@ -1375,6 +1384,22 @@ impl Node {
         (transform, context)
     }
 
+    /// Flex item identities and their indices within the logical flex lines.
+    pub fn flex_reading_positions(&self) -> Option<&[(taffy::NodeId, usize, usize)]> {
+        match &self.element_data()?.detailed_layout_info {
+            taffy::DetailedLayoutInfo::FlexReadingOrder(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    /// Placed in-flow items of this grid, as recorded by Taffy.
+    pub fn placed_grid_items(&self) -> Option<&[taffy::DetailedGridItemsInfo]> {
+        match &self.element_data()?.detailed_layout_info {
+            taffy::DetailedLayoutInfo::Grid(info) => Some(&info.items),
+            _ => None,
+        }
+    }
+
     pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
         match index {
             0 => self.after(),
@@ -1405,6 +1430,19 @@ impl Node {
                 display
             },
         )
+    }
+
+    pub fn table_box_display_inside(&self) -> Option<DisplayInside> {
+        let inside = self.display_style()?.inside();
+        match inside {
+            DisplayInside::TableRow | DisplayInside::TableRowGroup | DisplayInside::TableHeaderGroup
+            | DisplayInside::TableFooterGroup | DisplayInside::TableColumn | DisplayInside::TableColumnGroup => {
+                let element = self.element_data()?;
+                let control = matches!(element.name.local.as_ref(), "input" | "select" | "textarea");
+                (!control && !crate::layout::replaced::is_replaced(element)).then_some(inside)
+            }
+            _ => None,
+        }
     }
 
     /// Whether this is a `<br>` that generates a line break. Like Chrome, a `<br>` is a piece of
@@ -2293,10 +2331,21 @@ impl Node {
                     flags |= stylo_taffy::StyleFlags::IS_AUDIO_CONTROL;
                 }
                 // pyro
-                if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el) {
+                if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el)
+                    && {
+                        use style::values::computed::Contain;
+                        let containment = crate::layout::node_size_containment(self, &styles);
+                        !containment.contains(Contain::INLINE_SIZE) || containment.contains(Contain::BLOCK_SIZE)
+                    }
+                {
                     flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
                     natural_ratio = crate::layout::replaced::natural_ratio(el);
                 }
+            } else if el.image_broken && styles.get_position().aspect_ratio.auto {
+                // pyro: a broken image showing its alt text is not sized by the `auto <ratio>` its
+                // width and height attributes map to, as in Chromium (WPT html/rendering
+                // img-aspect-ratio-alt-text): the flag makes it `auto`, with no natural ratio.
+                flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
             }
             // pyro: not the box of a `::scroll-button()` (an anonymous `button` node), laid out as
             // any box is (WPT css-overflow `scroll-markers/scroll-buttons-disabled-snapping`).
@@ -2618,7 +2667,7 @@ impl Node {
                 || !matches!(b.rotate, Rotate::None)
                 || !matches!(b.scale, Scale::None)
                 || !matches!(b.perspective, Perspective::None)
-                || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
+                || b.used_containment().intersects(Contain::LAYOUT | Contain::PAINT)
                 || b.will_change.bits.intersects(WillChangeBits::TRANSFORM | WillChangeBits::PERSPECTIVE | WillChangeBits::CONTAIN)
         })
     }
@@ -2723,7 +2772,7 @@ impl Node {
         // than a cell (WPT css-contain `contain-paint-stacking-context-*`).
         {
             use style::values::specified::box_::{Contain, DisplayInside, DisplayOutside};
-            if box_style.slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT) {
+            if box_style.used_containment().intersects(Contain::LAYOUT | Contain::PAINT) {
                 let display = box_style.display;
                 let inline_box = display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow;
                 let table_internal =

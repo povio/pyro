@@ -1,0 +1,186 @@
+[
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<font color=\\\"blue\\\">[foo]</font>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<span style=\\\"color: #0000ff\\\">[foo]</span>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<span style=\\\"color: blue\\\">[foo]</span>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<span style=\\\"color: hsl(240, 100%, 50%)\\\">[foo]</span>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<span style=\\\"color: rgb( 0 ,0 ,255)\\\">[foo]</span>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<span style=\\\"color: rgb(0%, 0%, 100%)\\\">[foo]</span>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<span style=\\\"color: rgb(0, 0, 255)\\\">[foo]</span>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"fo[o<font color=brown>b]ar</font>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"foo<font color=blue>[bar]</font>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"foo<font color=brown>ba[r</font>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"foo{<font color=blue>bar</font>}baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"<font color=\\\"blue\\\">[foo]</font>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"<font color=blue>foo<font color=brown>[bar]</font>baz</font>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"fo[o<font color=brown>b]ar</font>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"fo[o<font color=brown>bar</font>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"foo<font color=blue>[bar]</font>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"foo<font color=brown>ba[r</font>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1001-2000",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"foo{<font color=blue>bar</font>}baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?2001-last",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<font color=brown>fo[o</font><span style=color:brown>b]ar</span>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?2001-last",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"<span style=color:brown>fo[o</span><span style=color:#0000ff>b]ar</span>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?2001-last",
+    "[[\"stylewithcss\",\"false\"],[\"forecolor\",\"#0000FF\"]] \"fo[o<font color=brown>bar</font>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?2001-last",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"<font color=brown>fo[o</font><span style=color:brown>b]ar</span>\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?2001-last",
+    "[[\"stylewithcss\",\"true\"],[\"forecolor\",\"#0000FF\"]] \"fo[o<font color=brown>bar</font>b]az\" queryCommandIndeterm(\"forecolor\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]

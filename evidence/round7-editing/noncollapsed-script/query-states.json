@@ -1,0 +1,146 @@
+{
+  "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<span style=vertical-align:sub>[bar]</span>baz\" queryCommandState(\"subscript\") after": {
+    "base": {
+      "actual": true,
+      "diagnostic": "",
+      "status": "Pass"
+    },
+    "chrome": {
+      "actual": false,
+      "diagnostic": "assert_equals: Wrong result returned expected true but got false",
+      "status": "Fail"
+    },
+    "head": {
+      "actual": false,
+      "diagnostic": "assert_equals: Wrong result returned expected true but got false",
+      "status": "Fail"
+    },
+    "pinned": true
+  },
+  "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<span style=vertical-align:sub>[bar]</span>baz\" queryCommandState(\"subscript\") before": {
+    "base": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "chrome": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "head": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "pinned": false
+  },
+  "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<span style=vertical-align:super>[bar]</span>baz\" queryCommandState(\"superscript\") after": {
+    "base": {
+      "actual": true,
+      "diagnostic": "",
+      "status": "Pass"
+    },
+    "chrome": {
+      "actual": false,
+      "diagnostic": "assert_equals: Wrong result returned expected true but got false",
+      "status": "Fail"
+    },
+    "head": {
+      "actual": false,
+      "diagnostic": "assert_equals: Wrong result returned expected true but got false",
+      "status": "Fail"
+    },
+    "pinned": true
+  },
+  "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<span style=vertical-align:super>[bar]</span>baz\" queryCommandState(\"superscript\") before": {
+    "base": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "chrome": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "head": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "pinned": false
+  },
+  "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"foo<span style=vertical-align:sub>[bar]</span>baz\" queryCommandState(\"subscript\") after": {
+    "base": {
+      "actual": true,
+      "diagnostic": "",
+      "status": "Pass"
+    },
+    "chrome": {
+      "actual": false,
+      "diagnostic": "assert_equals: Wrong result returned expected true but got false",
+      "status": "Fail"
+    },
+    "head": {
+      "actual": false,
+      "diagnostic": "assert_equals: Wrong result returned expected true but got false",
+      "status": "Fail"
+    },
+    "pinned": true
+  },
+  "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"foo<span style=vertical-align:sub>[bar]</span>baz\" queryCommandState(\"subscript\") before": {
+    "base": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "chrome": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "head": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "pinned": false
+  },
+  "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<span style=vertical-align:super>[bar]</span>baz\" queryCommandState(\"superscript\") after": {
+    "base": {
+      "actual": true,
+      "diagnostic": "",
+      "status": "Pass"
+    },
+    "chrome": {
+      "actual": false,
+      "diagnostic": "assert_equals: Wrong result returned expected true but got false",
+      "status": "Fail"
+    },
+    "head": {
+      "actual": false,
+      "diagnostic": "assert_equals: Wrong result returned expected true but got false",
+      "status": "Fail"
+    },
+    "pinned": true
+  },
+  "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<span style=vertical-align:super>[bar]</span>baz\" queryCommandState(\"superscript\") before": {
+    "base": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "chrome": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "head": {
+      "actual": true,
+      "diagnostic": "assert_equals: Wrong result returned expected false but got true",
+      "status": "Fail"
+    },
+    "pinned": false
+  }
+}

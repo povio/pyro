@@ -1,0 +1,56 @@
+{
+  "scores": {
+    "baseFull": 11,
+    "candidateFull": 18,
+    "chrome158Full": 21,
+    "baseNamed": 660,
+    "candidateNamed": 767,
+    "chrome158Named": 878,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 149,
+    "lpOnly": 38,
+    "gained": 107
+  },
+  "gainsByPage": {
+    "webcodecs/idlharness.https.any.html": 21,
+    "webcodecs/idlharness.https.any.worker.html": 21,
+    "webcodecs/videoFrame-alpha-discard.any.html": 14,
+    "webcodecs/videoFrame-alpha-discard.any.worker.html": 14,
+    "webcodecs/videoFrame-alpha.any.html": 2,
+    "webcodecs/videoFrame-alpha.any.worker.html": 2,
+    "webcodecs/videoFrame-construction.any.html": 13,
+    "webcodecs/videoFrame-construction.any.worker.html": 13,
+    "webcodecs/videoFrame-construction.window.html": 1,
+    "webcodecs/videoFrame-copyTo-canvas.window.html": 2,
+    "webcodecs/videoFrame-createImageBitmap.any.html": 2,
+    "webcodecs/videoFrame-createImageBitmap.any.worker.html": 2
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 28
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "d6174f9a1ebd7d7ab32480296719525d7314aef967adce399058bd1be11f3dfb"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 28
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "14854e8b7238de900d304601284d0aa30e3586cd5ff12e6f4d56f224879c7dad"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 28
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "ba478949fc2b4eac2e5902fe459977ca04c3d4a87c5b1c5eedbd2717a9e57da7"
+    }
+  }
+}

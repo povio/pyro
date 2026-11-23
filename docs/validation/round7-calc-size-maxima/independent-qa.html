@@ -1,0 +1,27 @@
+<!doctype html><meta charset=utf-8><title>Max-size direct controls</title>
+<style>#parent { width:200px; height:160px } #box { width:180px; height:120px } #child { width:40px; height:40px }</style>
+<div id=parent><div id=box><div id=child></div></div></div><pre id=report></pre>
+<script>
+addEventListener('load', () => {
+  const box = document.getElementById('box'), rows = [];
+  for (const writingMode of ['horizontal-tb', 'vertical-rl']) {
+    for (const prop of ['max-width', 'max-height', 'max-inline-size', 'max-block-size']) {
+      const horizontal = prop === 'max-width' || prop === (writingMode === 'horizontal-tb' ? 'max-inline-size' : 'max-block-size');
+      const axis = horizontal ? 'width' : 'height';
+      for (const [value, expected] of [['calc-size(any, 17px)',17], ['calc-size(min-content, size + 10px)',50], ['calc-size(calc-size(20px, size * 2), size - 3px)',37]]) {
+        box.style.cssText = `writing-mode:${writingMode}`;
+        box.style.setProperty(prop,value);
+        const specified = box.style.getPropertyValue(prop), computed = getComputedStyle(box).getPropertyValue(prop), used = box.getBoundingClientRect()[axis];
+        rows.push({writingMode,prop,value,specified,computed,used,expected,pass:CSS.supports(prop,value) && computed.startsWith('calc-size(') && used === expected});
+      }
+      box.style.setProperty(prop,'123px');
+      for (const basis of ['none','auto','content','calc-size(auto, size)']) {
+        const value = `calc-size(${basis}, size)`;
+        box.style.setProperty(prop,value);
+        rows.push({writingMode,prop,value,pass:!CSS.supports(prop,value) && box.style.getPropertyValue(prop) === '123px'});
+      }
+    }
+  }
+  document.getElementById('report').textContent = JSON.stringify(rows);
+});
+</script>

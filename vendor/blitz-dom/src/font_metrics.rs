@@ -42,6 +42,10 @@ pub(crate) struct BlitzFontMetricsProvider {
     pub(crate) font_ctx: Arc<Mutex<FontContext>>,
 }
 
+pub fn font_metrics_provider(font_ctx: Arc<Mutex<FontContext>>) -> Box<dyn FontMetricsProvider> {
+    Box::new(BlitzFontMetricsProvider { font_ctx })
+}
+
 impl core::fmt::Debug for BlitzFontMetricsProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "BlitzFontMetricsProvider")
@@ -49,6 +53,37 @@ impl core::fmt::Debug for BlitzFontMetricsProvider {
 }
 
 impl FontMetricsProvider for BlitzFontMetricsProvider {
+    #[cfg(target_os = "macos")]
+    fn system_font(&self, role: style::values::specified::font::SystemFont) -> style::device::servo::SystemFontMetrics {
+        use objc2_core_text::{CTFont, CTFontSymbolicTraits, CTFontUIFontType};
+        use style::device::servo::SystemFontMetrics;
+        use style::values::{computed::font, specified::font::SystemFont};
+        use std::sync::OnceLock;
+
+        static ROLES: [OnceLock<Option<(f32, CTFontSymbolicTraits)>>; 6] = [const { OnceLock::new() }; 6];
+        let ui_type = match role {
+            SystemFont::Caption => CTFontUIFontType::WindowTitle,
+            SystemFont::Icon => CTFontUIFontType::Label,
+            SystemFont::Menu => CTFontUIFontType::MenuItem,
+            SystemFont::MessageBox => CTFontUIFontType::Message,
+            SystemFont::SmallCaption => CTFontUIFontType::UtilityWindowTitle,
+            SystemFont::StatusBar => CTFontUIFontType::SystemDetail,
+        };
+        let platform = ROLES[role as usize].get_or_init(|| unsafe {
+            let face = CTFont::new_ui_font_for_language(ui_type, 0.0, None)?;
+            Some((face.size() as f32, face.symbolic_traits()))
+        });
+        let mut result = SystemFontMetrics::regular(self.base_size_for_generic(font::GenericFontFamily::SystemUi));
+        if let Some((size, traits)) = platform {
+            result.font_size = CSSPixelLength::new(*size);
+            if traits.contains(CTFontSymbolicTraits::TraitBold) { result.font_weight = font::FontWeight::BOLD; }
+            if traits.contains(CTFontSymbolicTraits::TraitItalic) { result.font_style = font::FontStyle::ITALIC; }
+            if traits.contains(CTFontSymbolicTraits::TraitExpanded) { result.font_width = font::FontWidth::EXPANDED; }
+            if traits.contains(CTFontSymbolicTraits::TraitCondensed) { result.font_width = font::FontWidth::CONDENSED; }
+        }
+        result
+    }
+
     fn query_font_metrics(
         &self,
         vertical: bool,
@@ -163,6 +198,50 @@ impl BlitzFontMetricsProvider {
             .english_or_first()
             .is_some_and(|family| ["Times", "Helvetica", "Courier"].iter().any(|name| family.chars().eq(name.chars())));
         Some(((metrics.ascent, -metrics.descent, metrics.leading, cap_height), adjusted))
+    }
+
+    /// pyro: the math parameters (MathML Core § 3.1.3) of the first available font of
+    /// `font_styles` (the first of its list that has U+0020, as `query_font_metrics`) at
+    /// `font_size`: its OpenType MATH constants, when it has a MATH table, and its x-height.
+    pub(crate) fn math_parameters_for(&self, font_styles: &FontStyles, font_size: f32) -> crate::layout::math::MathFontParameters {
+        use crate::layout::math::{MathFontParameters, read_math_constants};
+        use parley::fontique::{QueryFont, QueryStatus};
+        use skrifa::instance::{LocationRef, Size};
+        use skrifa::metrics::Metrics;
+
+        let mut font_ctx = self.font_ctx.lock().unwrap();
+        let font_ctx = &mut *font_ctx;
+        let mut query = query_for_font_styles(font_ctx, font_styles);
+        let variations = stylo_to_parley::font_variations(font_styles, font_size);
+        let mut found = None;
+        query.matches_with(|q_font: &QueryFont| {
+            if !q_font.unicode_range.contains(' '.into()) {
+                return QueryStatus::Continue;
+            }
+            let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index) else {
+                return QueryStatus::Continue;
+            };
+            if font_ref.charmap().map(' ').is_none() {
+                return QueryStatus::Continue;
+            }
+            found = Some(q_font.clone());
+            QueryStatus::Stop
+        });
+        let Some(font) = found else { return MathFontParameters::default() };
+        let Ok(font_ref) = skrifa::FontRef::from_index(font.blob.as_ref(), font.index) else {
+            return MathFontParameters::default();
+        };
+        let location = font_ref
+            .axes()
+            .location(variations.iter().map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)));
+        let metrics = Metrics::new(&font_ref, Size::new(font_size), LocationRef::from(&location));
+        let upem = f32::from(metrics.units_per_em);
+        let constants = font_ref
+            .table_data(skrifa::Tag::new(b"MATH"))
+            .and_then(|data| read_math_constants(data.as_bytes()))
+            .filter(|_| upem > 0.0)
+            .map(|values| values.map(|value| f32::from(value) * font_size / upem));
+        MathFontParameters { constants, x_height: metrics.x_height.filter(|x| *x > 0.0) }
     }
 
     /// pyro: the metrics of the first font of `font_styles`' list that draws `text_char` (in its

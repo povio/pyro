@@ -1,0 +1,291 @@
+{
+ "start": "2026-11-22T00:07:19.989Z",
+ "end": "2026-11-22T00:07:22.855Z",
+ "preciseHost": {
+  "durationSeconds": 2.866,
+  "hostBusyPct": 26.494
+ },
+ "perArm": {
+  "numeric-convert-base-cc4f21a5e": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 1.295,
+   "weightedHostBusyPct": 26.14
+  },
+  "numeric-convert-09e9b79fd": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 1.57,
+   "weightedHostBusyPct": 26.79
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:07:19.989Z",
+   "end": "2026-11-22T00:07:20.354Z",
+   "durationSeconds": 0.365,
+   "hostBusyPct": 20.371
+  },
+  {
+   "order": 2,
+   "binary": "numeric-convert-09e9b79fd",
+   "start": "2026-11-22T00:07:20.354Z",
+   "end": "2026-11-22T00:07:20.746Z",
+   "durationSeconds": 0.392,
+   "hostBusyPct": 24.5
+  },
+  {
+   "order": 3,
+   "binary": "numeric-convert-09e9b79fd",
+   "start": "2026-11-22T00:07:20.747Z",
+   "end": "2026-11-22T00:07:21.136Z",
+   "durationSeconds": 0.389,
+   "hostBusyPct": 24.5
+  },
+  {
+   "order": 4,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:07:21.136Z",
+   "end": "2026-11-22T00:07:21.457Z",
+   "durationSeconds": 0.321,
+   "hostBusyPct": 27.099
+  },
+  {
+   "order": 5,
+   "binary": "numeric-convert-09e9b79fd",
+   "start": "2026-11-22T00:07:21.457Z",
+   "end": "2026-11-22T00:07:21.850Z",
+   "durationSeconds": 0.393,
+   "hostBusyPct": 27.2
+  },
+  {
+   "order": 6,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:07:21.850Z",
+   "end": "2026-11-22T00:07:22.155Z",
+   "durationSeconds": 0.305,
+   "hostBusyPct": 27.273
+  },
+  {
+   "order": 7,
+   "binary": "numeric-convert-base-cc4f21a5e",
+   "start": "2026-11-22T00:07:22.155Z",
+   "end": "2026-11-22T00:07:22.459Z",
+   "durationSeconds": 0.304,
+   "hostBusyPct": 30.9
+  },
+  {
+   "order": 8,
+   "binary": "numeric-convert-09e9b79fd",
+   "start": "2026-11-22T00:07:22.459Z",
+   "end": "2026-11-22T00:07:22.855Z",
+   "durationSeconds": 0.396,
+   "hostBusyPct": 30.9
+  }
+ ],
+ "benchmarkSHA256": "382ed44753a8105c86fa53546023965429ad46e51c72dc1d902788825baa795f",
+ "minOneSecondBusyPct": 14.9,
+ "maxOneSecondBusyPct": 30.9,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-22T00:07:19.144Z",
+   "end": "2026-11-22T00:07:20.146Z",
+   "cpuBusyPct": 14.9
+  },
+  {
+   "start": "2026-11-22T00:07:20.146Z",
+   "end": "2026-11-22T00:07:21.148Z",
+   "cpuBusyPct": 24.5
+  },
+  {
+   "start": "2026-11-22T00:07:21.148Z",
+   "end": "2026-11-22T00:07:22.149Z",
+   "cpuBusyPct": 27.2
+  },
+  {
+   "start": "2026-11-22T00:07:22.149Z",
+   "end": "2026-11-22T00:07:23.152Z",
+   "cpuBusyPct": 30.9
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-22T00:07:46.024Z",
+   "elapsedMs": 30002,
+   "cpuBusyPct": 25.6,
+   "load": [
+    11.22998046875,
+    18.27099609375,
+    22.01123046875
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1122,
+     "pctCpu": 63.5,
+     "rssMiB": 35265
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 104
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-22T00:07:07.912Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T00:05:04.777098+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 1,
+    "ordinary": 0,
+    "policy": "General b73d56f8e QA released +12/-0. Ordinary next distinct frozen-corpus investigation on 1d846ee53 in source selection; no new base build yet, will verify equivalence and single ownership on frozen selection."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-22T00:07:37.920Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T00:05:04.777098+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 1,
+    "ordinary": 0,
+    "policy": "General b73d56f8e QA released +12/-0. Ordinary next distinct frozen-corpus investigation on 1d846ee53 in source selection; no new base build yet, will verify equivalence and single ownership on frozen selection."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-22T00:05:59.379864+00:00",
+ "qaEnd": "2026-11-22T00:05:59.653863+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "directControlsWrittenUTC": {
+  "numeric-convert-direct-head.json": "2026-11-22T00:06:00.134171+00:00",
+  "numeric-convert-direct-chrome.json": "2026-11-22T00:06:00.943032+00:00"
+ },
+ "workloadNotes": "Ordinary direct and sum conversion timings remain paired; compound cancellation is candidate-only. Both new ordinary and editing compiler admissions happened after timing and prior census pipe was closed."
+}

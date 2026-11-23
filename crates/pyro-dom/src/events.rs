@@ -406,6 +406,11 @@ impl Dom {
         self.events.connected_hook.is_some()
     }
 
+    /// Whether this target has a registered listener of the given type.
+    pub fn has_listener_for(&self, target: TargetKey, ty: &str) -> bool {
+        self.events.map.get(&target).is_some_and(|list| list.iter().any(|listener| &*listener.ty == ty))
+    }
+
     pub fn has_listeners(&self, target: TargetKey) -> bool {
         self.events.map.get(&target).is_some_and(|l| !l.is_empty())
     }
@@ -419,6 +424,11 @@ impl Dom {
     /// Drops every listener of a non-node target (e.g. XHR finalized).
     pub fn forget_target(&mut self, target: TargetKey) {
         self.events.forget(target);
+    }
+
+    /// Pending cleanup makes the next task checkpoint observable to the binding.
+    pub fn has_released_listeners(&self) -> bool {
+        !self.events.released.is_empty()
     }
 
     /// Handles whose listener entries were removed natively; bindings
@@ -506,7 +516,7 @@ impl Dom {
     }
     /// [`Dom::retarget`] for keys that may name a freed node (an event's
     /// relatedTarget is only as alive as the bindings keep it).
-    fn retarget_live(&self, a: TargetKey, b: TargetKey) -> TargetKey {
+    pub fn retarget_live(&self, a: TargetKey, b: TargetKey) -> TargetKey {
         let live = |key: TargetKey| !matches!(key, TargetKey::Node(i) if !self.slot_live(i));
         if live(a) && live(b) {
             self.retarget(a, b)
@@ -712,6 +722,16 @@ pub fn dispatch_on_path(
                 let at_target = k == 0 || shadow_target == cur;
                 items.push(PathItem { invocation_target: cur, target: shadow_target, related_target, at_target });
             }
+            // UI Events permits a trusted wheel input to be non-cancelable
+            // when no non-passive wheel listener is on its dispatch path.
+            // A legacy mousewheel listener can also cancel the default scroll.
+            if ev.is_trusted && ev.cancelable && &*ev.ty == "wheel" {
+                ev.cancelable = items.iter().any(|item| {
+                    d.events.map.get(&item.invocation_target).is_some_and(|listeners| {
+                        listeners.iter().any(|l| !l.passive && matches!(&*l.ty, "wheel" | "mousewheel"))
+                    })
+                });
+            }
             // Steps 6.10 and 6.11 ("clearTargets"), decided before listeners
             // can move nodes: the outermost target or relatedTarget the event
             // exposes is a node of a shadow tree.
@@ -855,6 +875,7 @@ fn legacy_event_type(ty: &str) -> Option<&'static str> {
         "animationiteration" => "webkitAnimationIteration",
         "animationstart" => "webkitAnimationStart",
         "transitionend" => "webkitTransitionEnd",
+        "wheel" => "mousewheel",
         _ => return None,
     })
 }

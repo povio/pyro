@@ -120,7 +120,7 @@ fn caret_at(page: &PageDom, x: f64, y: f64) -> Option<(NodeId, u32)> {
     if !x.is_finite() || !y.is_finite() {
         return None;
     }
-    let hit = crate::layout_api::hit_test(page, x, y)?;
+    let hit = crate::layout_api::hit_test_box(page, x, y)?;
     let dom = page.dom.borrow();
     if !crate::editing::is_container(&dom, hit)
         || matches!(crate::editing::local(&dom, hit).as_str(), "textarea" | "select" | "button" | "audio")

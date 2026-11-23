@@ -2,11 +2,267 @@
 //! text editing primitives used by input dispatch (HTML §4.10).
 //! All offsets are UTF-16 code units, as exposed to JS.
 
+use std::cell::Cell;
+use std::rc::{Rc, Weak};
+
 use markup5ever::{local_name, LocalName};
 
 use crate::dom::{utf16_len, utf16_range, Dom};
 use crate::error::{DomError, DomErrorKind, DomResult};
 use crate::node::{NodeId, NodeKind, NIL};
+
+/// Selection offsets and direction used by text-control editing history.
+#[derive(Clone, Copy)]
+pub struct ControlSelection {
+    pub range: (u32, u32),
+    pub direction: Option<bool>,
+}
+
+/// Live UTF-16 boundaries in a form control's value space. The public range
+/// does not expose the control's UA-internal text nodes.
+pub struct OpaqueRange {
+    element: Cell<Option<NodeId>>,
+    offsets: Cell<(u32, u32)>,
+    release_control: Cell<Option<Box<dyn FnOnce()>>>,
+}
+
+impl OpaqueRange {
+    pub fn element(&self) -> Option<NodeId> {
+        self.element.get()
+    }
+
+    pub fn offsets(&self) -> (u32, u32) {
+        self.offsets.get()
+    }
+
+    /// The binding holds the associated control, including a detached one,
+    /// until the range is disconnected or its last wrapper is collected.
+    pub fn hold_control(&self, release: Box<dyn FnOnce()>) {
+        self.release_control.set(Some(release));
+    }
+
+    pub fn disconnect(&self) {
+        self.element.set(None);
+        self.offsets.set((0, 0));
+        if let Some(release) = self.release_control.take() {
+            release();
+        }
+    }
+}
+
+impl Drop for OpaqueRange {
+    fn drop(&mut self) {
+        self.disconnect();
+    }
+}
+
+impl Dom {
+    pub fn create_value_range(&mut self, id: NodeId, start: u32, end: u32) -> DomResult<Rc<OpaqueRange>> {
+        let i = self.check(id)?;
+        let supported = self.html_local(i) == Some(&local_name!("textarea"))
+            || self.is_input(i) && self.input_type_idx(i).supports_value_ranges();
+        if !supported {
+            return Err(DomError::new(DomErrorKind::NotSupported, "control does not support value ranges"));
+        }
+        let length = utf16_len(&self.value(id)?);
+        if start > length || end > length {
+            return Err(DomError::new(DomErrorKind::IndexSize, "offset exceeds the control value length"));
+        }
+        let range = Rc::new(OpaqueRange {
+            element: Cell::new(Some(id)),
+            offsets: Cell::new((start, end.max(start))),
+            release_control: Cell::new(None),
+        });
+        let ranges = self.value_ranges.entry(i).or_default();
+        if ranges.len() == ranges.capacity() {
+            ranges.retain(|weak| weak.upgrade().is_some_and(|r| r.element().is_some()));
+        }
+        ranges.push(Rc::downgrade(&range));
+        Ok(range)
+    }
+
+    fn change_value_ranges(&mut self, i: u32, adjust: impl Fn(u32) -> u32) {
+        let Some(ranges) = self.value_ranges.get_mut(&i) else { return };
+        ranges.retain(|weak| {
+            let Some(r) = weak.upgrade().filter(|r| r.element().is_some()) else { return false };
+            let (start, end) = r.offsets();
+            r.offsets.set((adjust(start), adjust(end)));
+            true
+        });
+        if ranges.is_empty() {
+            self.value_ranges.remove(&i);
+        }
+    }
+
+    pub(crate) fn replace_all_value_ranges(&mut self, i: u32) {
+        self.change_value_ranges(i, |_| 0);
+    }
+
+    fn edit_value_ranges(&mut self, i: u32, value: &str, bytes: std::ops::Range<usize>, replacement: &str) {
+        if !self.value_ranges.contains_key(&i) || &value[bytes.clone()] == replacement {
+            return;
+        }
+        // Use the actual edited span (the UTF-8-backed control editor may
+        // snap an offset within a surrogate pair to a scalar boundary).
+        let start = utf16_len(&value[..bytes.start]);
+        let end = start + utf16_len(&value[bytes]);
+        let added = utf16_len(replacement);
+        self.change_value_ranges(i, |offset| {
+            if offset <= start { offset }
+            else if offset < end { start }
+            else { (offset - (end - start)).saturating_add(added) }
+        });
+    }
+
+    pub(crate) fn disconnect_value_ranges(&mut self, i: u32) {
+        if let Some(ranges) = self.value_ranges.remove(&i) {
+            for range in ranges.iter().filter_map(Weak::upgrade) {
+                range.disconnect();
+            }
+        }
+    }
+
+    pub(crate) fn disconnect_subtree_value_ranges(&mut self, root: u32) {
+        let controls: Vec<_> = self.value_ranges.keys().copied()
+            .filter(|&i| self.is_host_including_inclusive_ancestor(root, i)).collect();
+        for i in controls {
+            self.disconnect_value_ranges(i);
+        }
+    }
+
+    /// Only direct text children supply a clean textarea's default value.
+    /// Tracked when the textarea has value ranges or a selection script set.
+    pub(crate) fn tracked_textarea_value(&self, parent: u32) -> Option<(NodeId, String)> {
+        // A node without a parent (a fresh clone, a removed node) is in no textarea.
+        if parent == NIL || self.html_local(parent) != Some(&local_name!("textarea")) {
+            return None;
+        }
+        let el = self.n(parent).element()?;
+        let control = el.control.as_ref();
+        if control.is_some_and(|control| control.value.is_some())
+            || !(self.value_ranges.contains_key(&parent) || control.is_some_and(|c| c.selection_set))
+        {
+            return None;
+        }
+        let id = self.id_of(parent);
+        Some((id, self.value(id).ok()?))
+    }
+
+    /// A clean textarea's value changed with its children: its value ranges
+    /// are replaced, and its selection is clamped to the new value, so a
+    /// removal that empties it leaves the selection at 0 (as Chrome).
+    pub(crate) fn update_tracked_textarea(&mut self, old: Option<(NodeId, String)>) {
+        let Some((id, old)) = old else { return };
+        let Ok(value) = self.value(id) else { return };
+        if value == old {
+            return;
+        }
+        if self.value_ranges.contains_key(&id.idx) {
+            self.replace_all_value_ranges(id.idx);
+        }
+        let len = utf16_len(&value);
+        if let Ok(c) = self.control_state_mut(id) {
+            if c.selection_set {
+                let clamped = (c.selection.0.min(len), c.selection.1.min(len));
+                if clamped != c.selection {
+                    c.selection = clamped;
+                    c.selection_direction = None;
+                }
+            }
+        }
+    }
+
+    /// `<output>`'s `defaultValue`: its default value override, else its descendant text content.
+    pub fn output_default_value(&self, id: NodeId) -> DomResult<String> {
+        match self.control_state(id)?.and_then(|c| c.output_default_override.clone()) {
+            Some(value) => Ok(value),
+            None => Ok(self.text_content(id)?.unwrap_or_default()),
+        }
+    }
+
+    /// Setting `<output>`'s `defaultValue`: without an override it replaces the element's
+    /// children (string replace all), else it becomes the override.
+    pub fn set_output_default_value(&mut self, id: NodeId, value: &str) -> DomResult<()> {
+        if self.control_state(id)?.is_some_and(|c| c.output_default_override.is_some()) {
+            self.control_state_mut(id)?.output_default_override = Some(value.to_owned());
+            return Ok(());
+        }
+        self.set_text_content(id, value)
+    }
+
+    /// Setting `<output>`'s `value`: the default value is kept as the override first, then
+    /// the value replaces the element's children.
+    pub fn set_output_value(&mut self, id: NodeId, value: &str) -> DomResult<()> {
+        if !self.control_state(id)?.is_some_and(|c| c.output_default_override.is_some()) {
+            let current = self.text_content(id)?.unwrap_or_default();
+            self.control_state_mut(id)?.output_default_override = Some(current);
+        }
+        self.set_text_content(id, value)
+    }
+
+    /// `<output>`'s reset algorithm: its children become its default value and the override
+    /// is cleared.
+    pub fn reset_output(&mut self, id: NodeId) -> DomResult<()> {
+        let default = self.output_default_value(id)?;
+        self.set_text_content(id, &default)?;
+        if self.control_state(id)?.is_some_and(|c| c.output_default_override.is_some()) {
+            self.control_state_mut(id)?.output_default_override = None;
+        }
+        Ok(())
+    }
+
+    /// Restore default value, checkedness and selectedness while retaining
+    /// custom validity. A changed relevant value is a wholesale replacement.
+    pub fn reset_control(&mut self, id: NodeId) -> DomResult<()> {
+        let i = self.check(id)?;
+        if self.control_state(id)?.is_none() { return Ok(()) }
+        // A text control whose value the reset changes has its cursor moved to
+        // the end of the new value (HTML "set the value" steps, as Chrome); one
+        // whose value stays keeps its selection.
+        let text_input = (self.is_input(i) && self.input_type_idx(i).is_textual())
+            || self.html_local(i) == Some(&local_name!("textarea"));
+        let before = (text_input || self.value_ranges.contains_key(&i)).then(|| self.value(id)).transpose()?;
+        let state = self.control_state_mut(id)?;
+        *state = crate::node::ControlState {
+            custom_validity: state.custom_validity.take(),
+            selection: state.selection,
+            selection_set: state.selection_set,
+            selection_direction: state.selection_direction,
+            ..Default::default()
+        };
+        if let Some(before) = before {
+            let after = self.value(id)?;
+            if after != before {
+                if self.value_ranges.contains_key(&i) { self.replace_all_value_ranges(i); }
+                if text_input {
+                    let end = utf16_len(&after);
+                    let c = self.control_state_mut(id)?;
+                    c.selection = (end, end);
+                    c.selection_set = true;
+                    c.selection_direction = None;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// HTML "rules for parsing integers". Saturates: callers range-check against
+/// values far inside `i64`.
+pub fn parse_html_int(input: &str) -> Option<i64> {
+    let bytes = input.trim_start_matches([' ', '\t', '\n', '\x0c', '\r']).as_bytes();
+    let (negative, digits) = match bytes.first()? {
+        b'-' => (true, &bytes[1..]),
+        b'+' => (false, &bytes[1..]),
+        _ => (false, bytes),
+    };
+    let len = digits.iter().take_while(|c| c.is_ascii_digit()).count();
+    if len == 0 {
+        return None;
+    }
+    let value = digits[..len].iter().fold(0i64, |v, d| v.saturating_mul(10).saturating_add((d - b'0') as i64));
+    Some(if negative { -value } else { value })
+}
 
 /// `<input type>` keyword after normalization.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -77,6 +333,9 @@ impl InputType {
             _ => ValueMode::Value,
         }
     }
+    pub(crate) fn supports_value_ranges(self) -> bool {
+        matches!(self, Self::Text | Self::Search | Self::Tel | Self::Url | Self::Password)
+    }
     /// Types whose value is edited as free text (selection APIs apply).
     pub fn is_textual(self) -> bool {
         use InputType::*;
@@ -121,7 +380,8 @@ fn sanitize(ty: InputType, v: &str) -> String {
     let keep_if = |ok: bool| if ok { v.to_owned() } else { String::new() };
     match ty {
         Text | Search | Tel | Password => strip_newlines(v).into_owned(),
-        Url | Email => strip_newlines(v).trim_matches(|c: char| c.is_ascii_whitespace()).to_owned(),
+        Url => strip_newlines(v).trim_matches(|c: char| c.is_ascii_whitespace()).to_owned(),
+        Email => sanitize_email(v, false),
         Number => keep_if(parse_float(v).is_some()),
         Date => keep_if(datetime::parse_date(v).is_some()),
         Month => keep_if(datetime::parse_month(v).is_some()),
@@ -133,6 +393,49 @@ fn sanitize(ty: InputType, v: &str) -> String {
         }
         Color => crate::color_well::sanitize(v, false, false),
         _ => v.to_owned(),
+    }
+}
+
+/// Whether a sign typed into a number input fits where it goes (as Chrome,
+/// which rejects the key otherwise): a `-` at the start, or a sign right
+/// after the exponent's `e`, and never before another sign. Other text is
+/// not checked here.
+fn number_sign_fits(before: &str, text: &str, after: &str) -> bool {
+    let sign = |c: char| c == '+' || c == '-';
+    let mut chars = text.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else { return true };
+    if !sign(c) {
+        return true;
+    }
+    if after.starts_with(sign) {
+        return false;
+    }
+    match before.chars().next_back() {
+        None => c == '-',
+        Some(p) => p == 'e' || p == 'E',
+    }
+}
+
+/// The email state's value sanitization, as Chrome's: one address has its
+/// newlines removed and its ASCII whitespace trimmed; with `multiple` each
+/// comma-separated address is trimmed. A non-ASCII domain is converted to
+/// ASCII (IDNA), kept as it is when that fails.
+fn sanitize_email(v: &str, multiple: bool) -> String {
+    let one = |a: &str| email_to_ascii(a.trim_matches(|c: char| c.is_ascii_whitespace()));
+    if multiple {
+        v.split(',').map(one).collect::<Vec<_>>().join(",")
+    } else {
+        one(&*strip_newlines(v))
+    }
+}
+
+fn email_to_ascii(a: &str) -> String {
+    match a.split_once('@') {
+        Some((local, domain)) if !domain.is_ascii() => match url::Host::parse(domain) {
+            Ok(url::Host::Domain(d)) => format!("{local}@{d}"),
+            _ => a.to_owned(),
+        },
+        _ => a.to_owned(),
     }
 }
 
@@ -263,9 +566,50 @@ struct StepRange {
     base: f64,
 }
 
+/// `x`'s shortest decimal form as (mantissa, exponent): `x == mantissa * 10^exponent`.
+fn decimal_parts(x: f64) -> Option<(i128, i32)> {
+    if !x.is_finite() {
+        return None;
+    }
+    let text = format!("{x:e}");
+    let (mantissa, exponent) = text.split_once('e')?;
+    let mut exponent: i32 = exponent.parse().ok()?;
+    let (sign, mantissa) = match mantissa.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, mantissa),
+    };
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    exponent -= i32::try_from(frac.len()).ok()?;
+    let digits: i128 = format!("{int}{frac}").parse().ok()?;
+    Some((sign * digits, exponent))
+}
+
+/// Whether `value - base` is not an integral multiple of `step`, computed exactly in decimal;
+/// `None` when the scaled numbers do not fit an i128.
+fn decimal_step_mismatch(value: f64, base: f64, step: f64) -> Option<bool> {
+    let parts = [decimal_parts(value)?, decimal_parts(base)?, decimal_parts(step)?];
+    let low = parts.iter().map(|&(_, e)| e).min()?;
+    let mut scaled = [0i128; 3];
+    for (slot, &(m, e)) in scaled.iter_mut().zip(parts.iter()) {
+        let shift = u32::try_from(e - low).ok().filter(|&s| s <= 36)?;
+        *slot = m.checked_mul(10i128.checked_pow(shift)?)?;
+    }
+    let [v, b, s] = scaled;
+    if s == 0 {
+        return None;
+    }
+    Some(v.checked_sub(b)?.rem_euclid(s.abs()) != 0)
+}
+
 impl StepRange {
     fn mismatch(&self, v: f64) -> bool {
         let Some(step) = self.step else { return false };
+        // Chrome checks the step with decimal arithmetic: done exactly on the numbers' shortest
+        // decimal forms when they fit, so a tiny step (3e-15 against 17) is not lost to
+        // binary rounding.
+        if let Some(mismatch) = decimal_step_mismatch(v, self.base, step) {
+            return mismatch;
+        }
         let d = v - self.base;
         let q = d / step;
         // A step too small (or too large) to count steps in binary floating
@@ -291,6 +635,11 @@ impl StepRange {
 /// compile is ignored, as in browsers. Compiled per check: only elements
 /// with a pattern pay for it.
 fn pattern_mismatch(p: &str, value: &str) -> bool {
+    // HTML: a pattern that does not compile on its own (with the v flag) applies no constraint,
+    // even when the wrapped `^(?:p)$` would ("a)(b" escaping the group).
+    if regress::Regex::with_flags(p, "v").is_err() {
+        return false;
+    }
     match regress::Regex::with_flags(&format!("^(?:{p})$"), "v") {
         Ok(re) => re.find(value).is_none(),
         Err(_) => false,
@@ -314,6 +663,97 @@ fn is_valid_email(a: &str) -> bool {
 }
 
 mod datetime;
+
+/// An `<input>`'s state before its type attribute is written.
+pub(crate) struct InputTypeBefore {
+    ty: InputType,
+    /// The element's value in value mode (else unused).
+    value: String,
+}
+
+impl Dom {
+    pub(crate) fn input_type_before_change(&self, i: u32) -> InputTypeBefore {
+        let ty = self.input_type_idx(i);
+        let value = if ty.value_mode() == ValueMode::Value {
+            self.value(self.id_of(i)).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        InputTypeBefore { ty, value }
+    }
+
+    /// HTML "type attribute state change" value steps: move the value
+    /// between the value modes, then the new state's value sanitization
+    /// (stored sanitized only for free text; other states sanitize on
+    /// read). Setting the value content attribute waits for the type
+    /// mutation to be queued (`apply_pending_input_value_attr`).
+    pub(crate) fn input_type_changed(&mut self, i: u32, before: InputTypeBefore) {
+        let new = self.input_type_idx(i);
+        if new == before.ty {
+            return;
+        }
+        let selectable = |t: InputType| t.is_textual() && t != InputType::Email;
+        let (previously_selectable, now_selectable) = (selectable(before.ty), selectable(new));
+        self.input_type_changed_value(i, before, new);
+        // Step 9: a control that becomes selectable has its cursor at the
+        // beginning of the text, direction "none".
+        if !previously_selectable && now_selectable {
+            let id = self.id_of(i);
+            if let Ok(c) = self.control_state_mut(id) {
+                c.selection = (0, 0);
+                c.selection_set = true;
+                c.selection_direction = None;
+            }
+        }
+    }
+
+    fn input_type_changed_value(&mut self, i: u32, before: InputTypeBefore, new: InputType) {
+        let (old_mode, new_mode) = (before.ty.value_mode(), new.value_mode());
+        if old_mode == ValueMode::Value && matches!(new_mode, ValueMode::Default | ValueMode::DefaultOn) {
+            if !before.value.is_empty() {
+                self.pending_input_value_attr = Some((i, before.value));
+            }
+            return;
+        }
+        let has_control = self.n(i).element().is_some_and(|e| e.control.is_some());
+        if !has_control {
+            return;
+        }
+        let id = self.id_of(i);
+        if old_mode != new_mode {
+            // Into value mode: the value content attribute, not dirty.
+            // Into or out of filename mode: no value (no selected files).
+            let Ok(c) = self.control_state_mut(id) else { return };
+            c.value = None;
+            if new_mode == ValueMode::Value {
+                c.dirty_value = false;
+            }
+            return;
+        }
+        if new_mode != ValueMode::Value || !new.has_length_limits() {
+            return;
+        }
+        let Some(stored) = self.n(i).element().and_then(|e| e.control.as_ref()).and_then(|c| c.value.clone()) else {
+            return;
+        };
+        let sanitized = self.sanitize_for(i, new, &stored);
+        if sanitized != stored {
+            // A changed value moves the cursor to the end, direction "none".
+            let end = utf16_len(&sanitized);
+            let Ok(c) = self.control_state_mut(id) else { return };
+            c.value = Some(sanitized);
+            c.selection = (end, end);
+            c.selection_set = true;
+        }
+    }
+
+    /// The value content attribute an `<input>`'s type change left to set.
+    pub(crate) fn apply_pending_input_value_attr(&mut self, i: u32) {
+        if let Some((_, value)) = self.pending_input_value_attr.take_if(|(idx, _)| *idx == i) {
+            let _ = self.set_attribute(self.id_of(i), "value", &value);
+        }
+    }
+}
 
 impl Dom {
     pub(crate) fn html_local(&self, idx: u32) -> Option<&LocalName> {
@@ -358,7 +798,7 @@ impl Dom {
         )
     }
 
-    /// Whether `required` applies to element `idx`, which `:required` and `:optional` match
+    /// Whether `required` applies to element `idx`, where `:required` can match
     /// (HTML §4.16.3): a `select`, a `textarea`, or an `input` of a type it applies to (not
     /// Hidden, Range, Color or the buttons).
     pub(crate) fn required_applies_idx(&self, idx: u32) -> bool {
@@ -382,16 +822,21 @@ impl Dom {
         let Some(local) = self.html_local(idx) else { return false };
         let e = self.n(idx).element().unwrap();
         match &**local {
+            // As Chromium: a disabled select disables its options and optgroups too.
             "option" => {
+                if self.option_disabled_idx(idx) {
+                    return true;
+                }
+                let select = self.option_nearest_ancestor_select(idx);
+                select != NIL && self.is_disabled_idx(select)
+            }
+            "optgroup" => {
                 if e.attr_local(&local_name!("disabled")).is_some() {
                     return true;
                 }
-                let p = self.n(idx).parent;
-                p != NIL
-                    && self.html_local(p) == Some(&local_name!("optgroup"))
-                    && self.n(p).element().unwrap().attr_local(&local_name!("disabled")).is_some()
+                let select = self.subtree_ancestor_select(idx);
+                select != NIL && self.is_disabled_idx(select)
             }
-            "optgroup" => e.attr_local(&local_name!("disabled")).is_some(),
             "input" | "button" | "select" | "textarea" | "fieldset" => {
                 if e.attr_local(&local_name!("disabled")).is_some() {
                     return true;
@@ -417,8 +862,32 @@ impl Dom {
             _ => self.face_disabled_idx(idx),
         }
     }
+    /// An option's own disabledness (HTML): its `disabled` attribute, or
+    /// its nearest optgroup's, past wrapper elements but not past a select,
+    /// datalist, hr or option. The selectedness setting algorithm skips
+    /// these options.
+    pub(crate) fn option_disabled_idx(&self, idx: u32) -> bool {
+        if self.n(idx).element().is_some_and(|e| e.attr_local(&local_name!("disabled")).is_some()) {
+            return true;
+        }
+        let mut p = self.n(idx).parent;
+        while p != NIL {
+            match self.html_local(p).map(|l| &**l) {
+                Some("optgroup") => return self.n(p).element().unwrap().attr_local(&local_name!("disabled")).is_some(),
+                Some("select" | "datalist" | "hr" | "option") => return false,
+                _ => {}
+            }
+            p = self.n(p).parent;
+        }
+        false
+    }
     pub fn is_disabled(&self, id: NodeId) -> DomResult<bool> {
         Ok(self.is_disabled_idx(self.check(id)?))
+    }
+
+    /// Whether a text edit at this control is permitted by its current state.
+    pub fn is_mutable_text(&self, id: NodeId) -> DomResult<bool> {
+        Ok(self.is_mutable_text_idx(self.check(id)?))
     }
 
     /// Editable text control (input text-like or textarea), not readonly/disabled.
@@ -439,7 +908,12 @@ impl Dom {
         if !self.is_input(idx) || !matches!(self.input_type_idx(idx), InputType::Checkbox | InputType::Radio) {
             return false;
         }
-        let e = self.n(idx).element().unwrap();
+        self.raw_checkedness_idx(idx)
+    }
+    /// The checkedness an input of any type keeps (only checkboxes and
+    /// radios use it).
+    fn raw_checkedness_idx(&self, idx: u32) -> bool {
+        let Some(e) = self.n(idx).element() else { return false };
         match &e.control {
             Some(c) if c.dirty_checked => c.checked.unwrap_or(false),
             _ => e.attr_local(&local_name!("checked")).is_some(),
@@ -447,6 +921,11 @@ impl Dom {
     }
     pub fn checked(&self, id: NodeId) -> DomResult<bool> {
         Ok(self.checkedness_idx(self.check(id)?))
+    }
+    /// The `checked` IDL attribute: an input's checkedness whatever its type.
+    pub fn checked_idl(&self, id: NodeId) -> DomResult<bool> {
+        let i = self.check(id)?;
+        Ok(self.is_input(i) && self.raw_checkedness_idx(i))
     }
 
     /// `input.checked = v`; unchecks other radios in the group when set.
@@ -470,14 +949,110 @@ impl Dom {
         Ok(())
     }
 
+    /// HTML radio button state: when `i` is a radio whose checkedness is true
+    /// after it joined a group, the other radios of that group are unchecked.
+    fn radio_joined_group(&mut self, i: u32) {
+        if !self.is_input(i) || self.input_type_idx(i) != InputType::Radio || !self.checkedness_idx(i) {
+            return;
+        }
+        for other in self.radio_group(i) {
+            if other != i && self.checkedness_idx(other) {
+                let oid = self.id_of(other);
+                if let Ok(c) = self.control_state_mut(oid) {
+                    c.checked = Some(false);
+                    c.dirty_checked = true;
+                }
+            }
+        }
+    }
+
+    /// After `nodes` were inserted: their radios that became connected or got
+    /// a form owner join a group, in tree order (the last checked one stays
+    /// checked). A disconnected tree without a form updates nothing, as in
+    /// Chrome.
+    pub(crate) fn radios_after_insert(&mut self, nodes: &[u32], connected: bool) {
+        let mut radios = Vec::new();
+        for &k in nodes {
+            let mut cur = k;
+            while cur != NIL {
+                if self.is_input(cur) && self.input_type_idx(cur) == InputType::Radio {
+                    radios.push(cur);
+                }
+                cur = self.following_in(cur, k);
+            }
+        }
+        for r in radios {
+            if connected || self.form_owner_idx(r) != NIL {
+                self.radio_joined_group(r);
+            }
+        }
+    }
+
+    /// The value sanitization of `i`'s state `ty` (email depends on
+    /// `multiple`).
+    fn sanitize_for(&self, i: u32, ty: InputType, v: &str) -> String {
+        if ty == InputType::Email {
+            let multiple = self.n(i).element().is_some_and(|e| e.attr_local(&local_name!("multiple")).is_some());
+            return sanitize_email(v, multiple);
+        }
+        sanitize(ty, v)
+    }
+
+    /// After attribute `local` of input `i` changed from `old`: a radio
+    /// joins a group when its type becomes radio or its name or form owner
+    /// changes, and a `checked` attribute added while the checkedness is not
+    /// dirty checks it; an email input's `multiple` sanitizes its value again.
+    pub(crate) fn input_after_attr(&mut self, i: u32, local: &str, old: Option<&str>) {
+        if !self.is_input(i) {
+            return;
+        }
+        if local == "multiple" {
+            self.email_multiple_changed(i);
+            return;
+        }
+        let join = match local {
+            "type" => InputType::parse(old) != InputType::Radio,
+            "name" | "form" => true,
+            "checked" => {
+                old.is_none() && !self.n(i).element().and_then(|e| e.control.as_ref()).is_some_and(|c| c.dirty_checked)
+            }
+            _ => false,
+        };
+        if join {
+            self.radio_joined_group(i);
+        }
+    }
+
+    fn email_multiple_changed(&mut self, i: u32) {
+        if self.input_type_idx(i) != InputType::Email {
+            return;
+        }
+        let Some(stored) = self.n(i).element().and_then(|e| e.control.as_ref()).and_then(|c| c.value.clone()) else {
+            return;
+        };
+        let sanitized = self.sanitize_for(i, InputType::Email, &stored);
+        if sanitized != stored {
+            let end = utf16_len(&sanitized);
+            let id = self.id_of(i);
+            let Ok(c) = self.control_state_mut(id) else { return };
+            c.value = Some(sanitized);
+            c.selection = (end, end);
+            c.selection_set = true;
+        }
+    }
+
     /// Form owner: `form` attribute target or nearest ancestor form.
     pub(crate) fn form_owner_idx(&self, idx: u32) -> u32 {
         let Some(e) = self.n(idx).element() else { return NIL };
-        if let Some(fid) = e.attr_local(&local_name!("form")) {
-            // The first element with that id in the tree: the tree scope's
-            // id map (an empty id is never indexed: walk for it).
+        // HTML "reset the form owner": a connected element with a `form` attribute is owned by the
+        // first element in its tree whose ID is the value, when that is a form (an empty value
+        // names no ID, so no owner); a disconnected one falls back to its nearest ancestor form.
+        if let Some(fid) = e.attr_local(&local_name!("form")).filter(|_| self.is_connected_idx(idx)) {
+            if fid.is_empty() {
+                return NIL;
+            }
             let root = self.root_idx(idx);
-            let found = if fid.is_empty() { self.walk_by_id(root, fid) } else { self.first_by_id(root, fid) };
+            let found = self.resolve_reference_target_idx(self.first_by_id(root, fid));
             return if found != NIL && self.html_local(found) == Some(&local_name!("form")) { found } else { NIL };
         }
         let mut p = self.n(idx).parent;
@@ -492,6 +1067,27 @@ impl Dom {
     pub fn form_owner(&self, id: NodeId) -> DomResult<Option<NodeId>> {
         let i = self.check(id)?;
         Ok(self.opt_id(self.form_owner_idx(i)))
+    }
+
+    /// Controls with this owner, including external references to an exposed
+    /// shadow form, in shadow-including tree order.
+    pub fn owned_form_elements(&self, form: NodeId) -> DomResult<Vec<NodeId>> {
+        let f = self.check(form)?;
+        let root = self.reference_scope_idx(f);
+        let cross_scope = root != self.root_idx(f);
+        let mut out = Vec::new();
+        let mut node = root;
+        while node != NIL {
+            if (self.html_local(node).is_some_and(|l| matches!(&**l,
+                "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea" | "img"))
+                || self.is_face_idx(node))
+                && self.form_owner_idx(node) == f
+            {
+                out.push(self.id_of(node));
+            }
+            node = if cross_scope { self.next_shadow_including(node, root) } else { self.following_in(node, root) };
+        }
+        Ok(out)
     }
 
     pub(crate) fn radio_group(&self, idx: u32) -> Vec<u32> {
@@ -537,27 +1133,137 @@ impl Dom {
     /// Before `node` leaves its parent: an option its select shows as
     /// selected only by default (the selectedness setting algorithm picked
     /// it) keeps that selectedness outside the select, as its selectedness
-    /// is state of the option. Covers an option and the options of an
-    /// optgroup.
+    /// is state of the option. Covers an option and every option of the
+    /// select's list of options inside `node` (an optgroup, a wrapper div).
     pub(crate) fn options_before_remove(&mut self, node: u32) {
-        let (select, options): (u32, Vec<u32>) = match self.html_local(node).map(|l| &**l) {
-            Some("option") => (self.option_select(node), vec![node]),
-            Some("optgroup") => {
-                let parent = self.n(node).parent;
-                if parent == NIL || self.html_local(parent) != Some(&local_name!("select")) {
-                    return;
-                }
-                let options =
-                    self.child_idx_iter(node).filter(|&c| self.html_local(c) == Some(&local_name!("option"))).collect();
-                (parent, options)
-            }
-            _ => return,
+        if self.options_batch_removal {
+            return;
+        }
+        // 0: nothing, 1: an option, 2: an element that can hold options.
+        let kind = match self.html_local(node).map(|l| &**l) {
+            Some("option") => 1,
+            // Elements whose options are never their ancestor select's.
+            Some("select" | "datalist" | "hr") => 0,
+            _ if self.n(node).element().is_none() || self.n(node).first_child == NIL => 0,
+            _ => 2,
         };
+        match kind {
+            1 => {
+                let select = self.option_select(node);
+                if select != NIL {
+                    self.keep_default_selectedness(select, &[node]);
+                    self.queue_selectedcontent_update(select, false);
+                }
+            }
+            2 => self.subtree_options_before_remove(node),
+            _ => {}
+        }
+    }
+    /// [`Self::options_before_remove`] for an element that can hold options
+    /// of a select around it.
+    fn subtree_options_before_remove(&mut self, node: u32) {
+        let select = self.subtree_ancestor_select(node);
         if select == NIL {
             return;
         }
+        let options: Vec<u32> =
+            self.select_options_idx(select).into_iter().filter(|&o| self.is_inclusive_ancestor_idx(node, o)).collect();
+        if !options.is_empty() {
+            self.keep_default_selectedness(select, &options);
+            self.queue_selectedcontent_update(select, false);
+        }
+    }
+    /// [`Self::options_before_remove`] for every child of `parent` at once
+    /// (`replace_all`), with the selectedness from before any removal.
+    /// Returns whether the children's removals can skip it.
+    pub(crate) fn options_before_remove_children(&mut self, parent: u32) -> bool {
+        let select = if self.html_local(parent) == Some(&local_name!("select")) {
+            parent
+        } else {
+            match self.html_local(parent).map(|l| &**l) {
+                Some("datalist" | "hr" | "option") => return true,
+                _ => self.subtree_ancestor_select(parent),
+            }
+        };
+        if select == NIL {
+            return true;
+        }
+        let options: Vec<u32> = self
+            .select_options_idx(select)
+            .into_iter()
+            .filter(|&o| o != parent && self.is_inclusive_ancestor_idx(parent, o))
+            .collect();
+        if !options.is_empty() {
+            self.keep_default_selectedness(select, &options);
+            self.queue_selectedcontent_update(select, false);
+        }
+        true
+    }
+    /// After `nodes` were inserted into `parent`: when the last of their
+    /// options that is selected joins a single select, it stays its selected
+    /// option (as in browsers, an inserted selected option wins), so a selected
+    /// option after it in tree order is deselected.
+    pub(crate) fn options_after_insert(&mut self, nodes: &[u32], parent: u32) {
+        let select = if self.html_local(parent) == Some(&local_name!("select")) {
+            parent
+        } else {
+            match self.html_local(parent).map(|l| &**l) {
+                Some("datalist" | "hr" | "option" | "selectedcontent") => return,
+                _ => self.subtree_ancestor_select(parent),
+            }
+        };
+        if select == NIL || self.is_multiple(select) {
+            return;
+        }
+        // Only an inserted explicitly selected option can deselect others: without one, skip
+        // the walk over the select's whole list (the parser inserts its options one by one).
+        let explicit_in = |root: u32| {
+            let mut cur = root;
+            while cur != NIL {
+                if self.html_local(cur) == Some(&local_name!("option")) && self.option_explicit(cur) {
+                    return true;
+                }
+                cur = self.following_in(cur, root);
+            }
+            false
+        };
+        if !nodes.iter().any(|&k| explicit_in(k)) {
+            return;
+        }
+        let options = self.select_options_idx(select);
+        let inserted = |o: u32| nodes.iter().any(|&k| self.is_inclusive_ancestor_idx(k, o));
+        let Some(winner) = options.iter().rposition(|&o| inserted(o) && self.option_explicit(o)) else { return };
+        let later: Vec<u32> =
+            options[winner + 1..].iter().copied().filter(|&o| !inserted(o) && self.option_explicit(o)).collect();
+        for o in later {
+            if let Some(e) = self.n_mut(o).element_mut() {
+                e.control.get_or_insert_with(Default::default).selected = Some(false);
+            }
+            // Selectedness is form-control state: `:checked` restyles.
+            self.bump();
+            self.note(crate::dom::Change::State(o));
+        }
+    }
+    /// After a select's `multiple` attribute was added or removed: once it is
+    /// single, only its first selected option in tree order stays selected.
+    pub(crate) fn select_multiple_changed(&mut self, select: u32, multiple: bool) {
+        if multiple || self.html_local(select) != Some(&local_name!("select")) {
+            return;
+        }
+        let selected: Vec<u32> =
+            self.select_options_idx(select).into_iter().filter(|&o| self.option_explicit(o)).skip(1).collect();
+        for o in selected {
+            if let Some(e) = self.n_mut(o).element_mut() {
+                e.control.get_or_insert_with(Default::default).selected = Some(false);
+            }
+            // Selectedness is form-control state: `:checked` restyles.
+            self.bump();
+            self.note(crate::dom::Change::State(o));
+        }
+    }
+    fn keep_default_selectedness(&mut self, select: u32, options: &[u32]) {
         let selected = self.selected_options_idx(select);
-        for option in options {
+        for &option in options {
             if selected.contains(&option) && !self.option_explicit(option) {
                 if let Some(e) = self.n_mut(option).element_mut() {
                     e.control.get_or_insert_with(Default::default).selected = Some(true);
@@ -565,28 +1271,150 @@ impl Dom {
             }
         }
     }
-    fn option_select(&self, opt: u32) -> u32 {
-        let mut p = self.n(opt).parent;
-        if p != NIL && self.html_local(p) == Some(&local_name!("optgroup")) {
-            p = self.n(p).parent;
-        }
-        if p != NIL && self.html_local(p) == Some(&local_name!("select")) {
-            p
-        } else {
-            NIL
-        }
-    }
-    /// Options of a select (children and optgroup children), tree order.
-    pub(crate) fn select_options_idx(&self, select: u32) -> Vec<u32> {
-        let mut out = Vec::new();
-        for c in self.child_idx_iter(select) {
-            match self.html_local(c).map(|l| &**l) {
-                Some("option") => out.push(c),
+    /// The select whose list of options the options inside `node` can be
+    /// in: the nearest select ancestor, unless a datalist, hr or option (or
+    /// a second optgroup, `node` included) comes first.
+    fn subtree_ancestor_select(&self, node: u32) -> u32 {
+        let mut optgroup = self.html_local(node) == Some(&local_name!("optgroup"));
+        let mut p = self.n(node).parent;
+        while p != NIL {
+            match self.html_local(p).map(|l| &**l) {
+                Some("datalist" | "hr" | "option" | "selectedcontent") => return NIL,
                 Some("optgroup") => {
-                    out.extend(self.child_idx_iter(c).filter(|&g| self.html_local(g) == Some(&local_name!("option"))))
+                    if optgroup {
+                        return NIL;
+                    }
+                    optgroup = true;
                 }
+                Some("select") => return p,
                 _ => {}
             }
+            p = self.n(p).parent;
+        }
+        NIL
+    }
+    fn is_inclusive_ancestor_idx(&self, ancestor: u32, mut node: u32) -> bool {
+        while node != NIL {
+            if node == ancestor {
+                return true;
+            }
+            node = self.n(node).parent;
+        }
+        false
+    }
+    /// The select whose list of options holds `opt`: its "option element
+    /// nearest ancestor select" (HTML).
+    fn option_select(&self, opt: u32) -> u32 {
+        self.option_nearest_ancestor_select(opt)
+    }
+    /// An option's "option element nearest ancestor select" (HTML): the
+    /// closest select ancestor, past at most one optgroup and no datalist,
+    /// hr or option.
+    pub(crate) fn option_nearest_ancestor_select(&self, opt: u32) -> u32 {
+        let mut optgroup = false;
+        let mut p = self.n(opt).parent;
+        while p != NIL {
+            match self.html_local(p).map(|l| &**l) {
+                Some("datalist" | "hr" | "option" | "selectedcontent") => return NIL,
+                Some("optgroup") => {
+                    if optgroup {
+                        return NIL;
+                    }
+                    optgroup = true;
+                }
+                Some("select") => return p,
+                _ => {}
+            }
+            p = self.n(p).parent;
+        }
+        NIL
+    }
+    /// A select's "enabled selectedcontent" (HTML): none for a multiple
+    /// select, else its first selectedcontent descendant unless that one is
+    /// disabled, which it is inside a nested select.
+    fn enabled_selectedcontent(&self, select: u32) -> u32 {
+        if self.is_multiple(select) {
+            return NIL;
+        }
+        let mut cur = self.following_in(select, select);
+        while cur != NIL && self.html_local(cur).map(|l| &**l) != Some("selectedcontent") {
+            cur = self.following_in(cur, select);
+        }
+        if cur == NIL {
+            return NIL;
+        }
+        let mut p = self.n(cur).parent;
+        while p != select {
+            if p == NIL || self.html_local(p) == Some(&local_name!("select")) {
+                return NIL;
+            }
+            p = self.n(p).parent;
+        }
+        cur
+    }
+    /// "Maybe clone an option into selectedcontent" (HTML), which the HTML
+    /// parser runs whenever it pops an option off its stack of open
+    /// elements: a selected option of a select with an enabled
+    /// selectedcontent has its children cloned into that selectedcontent.
+    pub(crate) fn maybe_clone_option_into_selectedcontent(&mut self, opt: u32) {
+        if self.html_local(opt) != Some(&local_name!("option")) {
+            return;
+        }
+        let select = self.option_nearest_ancestor_select(opt);
+        if select == NIL || !self.option_selected_idx(opt) {
+            return;
+        }
+        let selectedcontent = self.enabled_selectedcontent(select);
+        if selectedcontent != NIL {
+            let _ = self.clone_selected_option_into(opt, selectedcontent);
+            self.note_selectedcontent_option(select, opt);
+        }
+    }
+    /// "Clone selected option into select content": a fragment of deep
+    /// clones of the option's children replaces the selectedcontent's.
+    pub(crate) fn clone_selected_option_into(&mut self, opt: u32, selectedcontent: u32) -> DomResult<()> {
+        let doc = self.id_of(self.n(opt).owner_doc);
+        let fragment = self.create_fragment(doc)?;
+        let children: Vec<NodeId> = self.child_idx_iter(opt).map(|c| self.id_of(c)).collect();
+        for child in children {
+            let clone = self.clone_node(child, true, None)?;
+            self.append_child(fragment, clone)?;
+        }
+        let selectedcontent = self.id_of(selectedcontent);
+        self.replace_all(selectedcontent, Some(fragment))
+    }
+    /// A select's list of options (HTML "get the list of options"): its
+    /// option descendants in tree order whose option element nearest
+    /// ancestor select is this select. A walk skips what holds none: the
+    /// insides of options, hrs, datalists, nested selects, and of an
+    /// optgroup inside another optgroup.
+    pub(crate) fn select_options_idx(&self, select: u32) -> Vec<u32> {
+        let mut out = Vec::new();
+        // The optgroup the walk is inside (NIL: none).
+        let mut optgroup = NIL;
+        let mut cur = self.n(select).first_child;
+        while cur != NIL {
+            if optgroup != NIL && !self.is_inclusive_ancestor_idx(optgroup, cur) {
+                optgroup = NIL;
+            }
+            let descend = match self.html_local(cur).map(|l| &**l) {
+                Some("option") => {
+                    out.push(cur);
+                    false
+                }
+                // Nor in a selectedcontent: its contents copy an option, they are not the select's.
+                Some("hr" | "datalist" | "select" | "selectedcontent") => false,
+                Some("optgroup") => {
+                    if optgroup != NIL {
+                        false
+                    } else {
+                        optgroup = cur;
+                        true
+                    }
+                }
+                _ => self.n(cur).element().is_some(),
+            };
+            cur = if descend { self.following_in(cur, select) } else { self.following_skipping(cur, select) };
         }
         out
     }
@@ -617,11 +1445,38 @@ impl Dom {
             .and_then(|s| s.trim().parse::<u32>().ok())
             .unwrap_or(1);
         if size <= 1 {
-            if let Some(&first) = opts.iter().find(|&&o| !self.is_disabled_idx(o)) {
+            if let Some(&first) = opts.iter().find(|&&o| !self.option_disabled_idx(o)) {
                 return vec![first];
             }
         }
         Vec::new()
+    }
+    /// A select's "placeholder label option" (HTML), NIL when none: for a
+    /// single select of display size 1, the first option of its list of
+    /// options when that option's value is empty and no optgroup groups it
+    /// (a wrapper element does not stop it from being one).
+    fn select_placeholder_idx(&self, select: u32) -> u32 {
+        let e = self.n(select).element().unwrap();
+        if e.attr_local(&local_name!("multiple")).is_some() {
+            return NIL;
+        }
+        let size = e.attr_local(&local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(1);
+        if size > 1 {
+            return NIL;
+        }
+        let Some(&first) = self.select_options_idx(select).first() else { return NIL };
+        let mut p = self.n(first).parent;
+        while p != select {
+            if self.html_local(p) == Some(&local_name!("optgroup")) {
+                return NIL;
+            }
+            p = self.n(p).parent;
+        }
+        if self.option_value(self.id_of(first)).is_ok_and(|v| v.is_empty()) {
+            first
+        } else {
+            NIL
+        }
     }
     pub fn select_options(&self, select: NodeId) -> DomResult<Vec<NodeId>> {
         let s = self.check(select)?;
@@ -639,6 +1494,12 @@ impl Dom {
             None => -1,
         })
     }
+    /// An option's "option element nearest ancestor select" (HTML): the
+    /// select whose list of options holds it.
+    pub fn option_nearest_select(&self, opt: NodeId) -> DomResult<Option<NodeId>> {
+        let o = self.check(opt)?;
+        Ok(self.opt_id(self.option_nearest_ancestor_select(o)))
+    }
     pub fn option_selected(&self, opt: NodeId) -> DomResult<bool> {
         Ok(self.option_selected_idx(self.check(opt)?))
     }
@@ -652,13 +1513,38 @@ impl Dom {
                 self.control_state_mut(oid)?.selected = Some(false);
             }
         }
-        self.control_state_mut(opt)?.selected = Some(v);
+        let c = self.control_state_mut(opt)?;
+        c.selected = Some(v);
+        c.selected_clean = false;
         // The setter asks the select for a reset.
         if select != NIL {
             self.set_no_selection(select, None);
+            self.update_select_selectedcontent(select, false);
         }
         Ok(())
     }
+    /// The `Option()` constructor's selectedness: set without the
+    /// dirtiness, so the `selected` attribute still changes it.
+    pub fn set_option_selectedness_clean(&mut self, opt: NodeId, v: bool) -> DomResult<()> {
+        let c = self.control_state_mut(opt)?;
+        c.selected = Some(v);
+        c.selected_clean = true;
+        Ok(())
+    }
+
+    /// After an option's `selected` attribute changed: while its dirtiness
+    /// is false the selectedness follows the attribute again.
+    pub(crate) fn option_selected_attr_changed(&mut self, i: u32) {
+        let clean = self.n(i).element().and_then(|e| e.control.as_ref()).is_some_and(|c| c.selected_clean);
+        if clean && self.html_local(i) == Some(&local_name!("option")) {
+            let id = self.id_of(i);
+            if let Ok(c) = self.control_state_mut(id) {
+                c.selected = None;
+                c.selected_clean = false;
+            }
+        }
+    }
+
     /// Records that script left the options `opts` of `select` all
     /// deselected (`None`: the default selection applies again).
     fn set_no_selection(&mut self, select: u32, opts: Option<Vec<u32>>) {
@@ -677,10 +1563,13 @@ impl Dom {
         let opts = self.select_options_idx(s);
         for (k, &o) in opts.iter().enumerate() {
             let oid = self.id_of(o);
-            self.control_state_mut(oid)?.selected = Some(k as i32 == index);
+            let c = self.control_state_mut(oid)?;
+            c.selected = Some(k as i32 == index);
+            c.selected_clean = false;
         }
         let none = index < 0 || index as usize >= opts.len();
         self.set_no_selection(s, none.then_some(opts));
+        self.update_select_selectedcontent(s, true);
         Ok(())
     }
 
@@ -692,9 +1581,21 @@ impl Dom {
         }
         Ok(self.option_text_idx(o))
     }
+    /// HTML `option.text`: the option's descendant text, leaving out the contents of HTML and
+    /// SVG `script` elements, with ASCII whitespace stripped and collapsed.
     fn option_text_idx(&self, o: u32) -> String {
         let mut s = String::new();
-        self.collect_text(o, &mut s);
+        let mut cur = self.n(o).first_child;
+        while cur != NIL {
+            let node = self.n(cur);
+            if let NodeKind::Text(t) | NodeKind::CData(t) = &node.kind {
+                s.push_str(t);
+            }
+            let script = node.element().is_some_and(|e| {
+                &*e.name.local == "script" && (e.is_html() || e.name.ns == markup5ever::ns!(svg))
+            });
+            cur = if script { self.following_skipping(cur, o) } else { self.following_in(cur, o) };
+        }
         s.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
     }
     pub fn option_text(&self, opt: NodeId) -> DomResult<String> {
@@ -719,6 +1620,9 @@ impl Dom {
                         // what the user typed (a number input's bad input)
                         // or what an earlier type allowed, and range
                         // depends on min/max/step: sanitized on read.
+                        // What the user typed into an email or URL field
+                        // keeps its spaces: sanitized on read.
+                        Some(v) if matches!(ty, InputType::Email | InputType::Url) => self.sanitize_for(i, ty, v),
                         Some(v) if ty.has_length_limits() => v.clone(),
                         Some(v) if ty == InputType::Range => self.range_value(i, v),
                         Some(v) if ty == InputType::Color => self.color_value(i, v),
@@ -729,7 +1633,7 @@ impl Dom {
                         None if ty == InputType::Color => {
                             self.color_value(i, e.attr_local(&local_name!("value")).unwrap_or(""))
                         }
-                        None => sanitize(ty, e.attr_local(&local_name!("value")).unwrap_or("")),
+                        None => self.sanitize_for(i, ty, e.attr_local(&local_name!("value")).unwrap_or("")),
                     },
                     ValueMode::Default => e.attr_local(&local_name!("value")).unwrap_or("").to_owned(),
                     ValueMode::DefaultOn => e.attr_local(&local_name!("value")).unwrap_or("on").to_owned(),
@@ -742,11 +1646,7 @@ impl Dom {
             }
             "textarea" => match e.control.as_ref().and_then(|c| c.value.as_ref()) {
                 Some(v) => v.clone(),
-                None => {
-                    let mut s = String::new();
-                    self.collect_text(i, &mut s);
-                    s.replace("\r\n", "\n").replace('\r', "\n")
-                }
+                None => self.child_text_content(id).replace("\r\n", "\n").replace('\r', "\n"),
             },
             "select" => match self.selected_options_idx(i).first() {
                 Some(&o) => self.option_value(self.id_of(o))?,
@@ -769,9 +1669,14 @@ impl Dom {
                         let v = match ty {
                             InputType::Range => self.range_value(i, v),
                             InputType::Color => self.color_value(i, v),
-                            _ => sanitize(ty, v),
+                            _ => self.sanitize_for(i, ty, v),
                         };
-                        let changed = self.value(id)? != v;
+                        // An email or URL field can show unsanitized text
+                        // whose value equals `v`: that text changes too.
+                        let shown =
+                            self.n(i).element().and_then(|e| e.control.as_ref()).and_then(|c| c.value.as_deref());
+                        let changed = shown.is_some_and(|s| s != v) || self.value(id)? != v;
+                        if changed { self.replace_all_value_ranges(i); }
                         let end = utf16_len(&v);
                         let c = self.control_state_mut(id)?;
                         c.value = Some(v);
@@ -796,6 +1701,7 @@ impl Dom {
             "textarea" => {
                 let v = v.replace("\r\n", "\n").replace('\r', "\n");
                 let changed = self.value(id)? != v;
+                if changed { self.replace_all_value_ranges(i); }
                 let end = utf16_len(&v);
                 let c = self.control_state_mut(id)?;
                 c.value = Some(v);
@@ -812,10 +1718,13 @@ impl Dom {
                     let oid = self.id_of(o);
                     let hit = !found && self.option_value(oid)? == v;
                     found |= hit;
-                    self.control_state_mut(oid)?.selected = Some(hit);
+                    let c = self.control_state_mut(oid)?;
+                    c.selected = Some(hit);
+                    c.selected_clean = false;
                 }
                 let opts = self.select_options_idx(i);
                 self.set_no_selection(i, (!found).then_some(opts));
+                self.update_select_selectedcontent(i, true);
             }
             _ => self.set_attribute(id, "value", v)?,
         }
@@ -920,7 +1829,8 @@ impl Dom {
                 return Ok(());
             }
         }
-        let before = ty.string_to_number(&self.value(id)?).unwrap_or(0.0);
+        let parsed = ty.string_to_number(&self.value(id)?);
+        let before = parsed.unwrap_or(0.0);
         let mut v = if r.mismatch(before) {
             if up {
                 r.ceil(before, step)
@@ -936,7 +1846,9 @@ impl Dom {
         if let Some(hi) = max.filter(|&hi| v > hi) {
             v = r.floor(hi, step);
         }
-        if (up && v < before) || (!up && v > before) {
+        // From no value (zero), a step clamped back across it still sets one
+        // (Chrome: an empty number input with min 7 steps down to 7).
+        if parsed.is_some() && ((up && v < before) || (!up && v > before)) {
             return Ok(());
         }
         let text = match ty {
@@ -1014,44 +1926,33 @@ impl Dom {
         self.value(self.id_of(i))
     }
 
-    /// `selectionStart/End` of a text control.
-    pub fn selection(&self, id: NodeId) -> DomResult<(u32, u32)> {
-        let i = self.check(id)?;
-        let len = utf16_len(&self.edit_text(i)?);
-        let e = self.n(i).element().ok_or(DomError::Type("not an element"))?;
-        Ok(match &e.control {
-            Some(c) if c.selection_set => (c.selection.0.min(len), c.selection.1.min(len)),
-            // A fresh control has its cursor at the start of its value (as in Chromium and
-            // Gecko; a value set by script moves it to the end: HTML § 4.10.5.4 "value" mode).
-            _ => (0, 0),
-        })
+    fn selection_for_length(&self, id: NodeId, len: u32) -> DomResult<ControlSelection> {
+        let control = self.element(id)?.control.as_ref();
+        let range = control.filter(|c| c.selection_set)
+            .map_or((0, 0), |c| (c.selection.0.min(len), c.selection.1.min(len)));
+        let direction = control.and_then(|c| c.selection_direction)
+            .filter(|(_, of)| *of == range)
+            .map(|(backward, _)| backward);
+        Ok(ControlSelection { range, direction })
     }
 
-    pub fn reset_control_state(&mut self, id: NodeId) -> DomResult<()> {
-        let index = self.check(id)?;
-        let text = self.html_local(index) == Some(&local_name!("textarea")) || (self.is_input(index) && self.input_type_idx(index).is_textual());
-        let Some(state) = self.control_state(id)? else { return Ok(()) };
-        let previous = if text && state.dirty_value { Some(self.value(id)?) } else { None };
-        let state = self.control_state_mut(id)?;
-        *state = crate::node::ControlState {
-            custom_validity: state.custom_validity.take(),
-            selection: state.selection,
-            selection_set: state.selection_set,
-            selection_direction: state.selection_direction,
-            ..Default::default()
-        };
-        if let Some(previous) = previous {
-            let value = self.value(id)?;
-            if value != previous {
-                let end = utf16_len(&value);
-                let state = self.control_state_mut(id)?;
-                state.selection = (end, end);
-                state.selection_set = true;
-                state.selection_direction = None;
-            }
-        }
-        Ok(())
+    /// Read both the bounds and direction against the current editable value.
+    pub fn selection_snapshot(&self, id: NodeId) -> DomResult<ControlSelection> {
+        let len = utf16_len(&self.edit_text(self.check(id)?)?);
+        self.selection_for_length(id, len)
     }
+
+    /// Editing has just updated the value and bounds together. Copy them
+    /// directly for the inverse history step, without rereading the value.
+    pub fn selection_after_edit(&self, id: NodeId) -> DomResult<ControlSelection> {
+        self.selection_for_length(id, u32::MAX)
+    }
+
+    /// `selectionStart/End` of a text control.
+    pub fn selection(&self, id: NodeId) -> DomResult<(u32, u32)> {
+        Ok(self.selection_snapshot(id)?.range)
+    }
+
     pub fn set_selection_range(&mut self, id: NodeId, start: u32, end: u32) -> DomResult<()> {
         let len = utf16_len(&self.edit_text(self.check(id)?)?);
         let end = end.min(len);
@@ -1065,14 +1966,7 @@ impl Dom {
     /// `selectionDirection`: `Some(true)` backward, `Some(false)` forward,
     /// `None` for "none" (no direction was given for the current selection).
     pub fn selection_direction(&self, id: NodeId) -> DomResult<Option<bool>> {
-        let selection = self.selection(id)?;
-        let i = self.check(id)?;
-        let e = self.n(i).element().ok_or(DomError::Type("not an element"))?;
-        Ok(e.control
-            .as_ref()
-            .and_then(|c| c.selection_direction)
-            .filter(|(_, of)| *of == selection)
-            .map(|(backward, _)| backward))
+        Ok(self.selection_snapshot(id)?.direction)
     }
     /// Gives the current selection a direction (`None`: "none"). A later
     /// selection change resets it.
@@ -1084,15 +1978,40 @@ impl Dom {
         Ok(())
     }
 
+    /// Use a computed deletion span without changing the direction of the
+    /// user's original selection before replacing it.
+    pub fn replace_text_in_range(&mut self, id: NodeId, range: (u32, u32), text: &str) -> DomResult<bool> {
+        self.replace_control_text(id, Some(range), text)
+    }
+
+    /// Forgets the user's edits since focus (`ControlState::edited_since_focus`);
+    /// state no selector reads, so no restyle.
+    pub fn clear_edited_since_focus(&mut self, id: NodeId) {
+        if let Ok(i) = self.check(id) {
+            if let Some(c) = self.n_mut(i).element_mut().and_then(|e| e.control.as_mut()) {
+                c.edited_since_focus = false;
+            }
+        }
+    }
+
     /// Replaces the current selection with `text` (typing, Input.insertText,
     /// or deletion with empty text). Returns true if the value changed.
     pub fn insert_text(&mut self, id: NodeId, text: &str) -> DomResult<bool> {
+        self.replace_control_text(id, None, text)
+    }
+
+    fn replace_control_text(&mut self, id: NodeId, range: Option<(u32, u32)>, text: &str) -> DomResult<bool> {
         let i = self.check(id)?;
         if !self.is_mutable_text_idx(i) || !matches!(self.html_local(i).map(|l| &**l), Some("input" | "textarea")) {
             return Ok(false);
         }
         let mut value = self.edit_text(i)?;
-        let (s, e) = self.selection(id)?;
+        let value_len = utf16_len(&value);
+        let original = self.selection_for_length(id, value_len)?;
+        let (s, e) = range.map_or(original.range, |(start, end)| {
+            let end = end.min(value_len);
+            (start.min(end), end)
+        });
         let is_input = self.html_local(i) == Some(&local_name!("input"));
         let mut text = if is_input { strip_newlines(text).into_owned() } else { text.to_owned() };
         if s == e && text.is_empty() {
@@ -1109,7 +2028,7 @@ impl Dom {
             .filter(|_| limited && !text.is_empty())
             .and_then(|m| m.trim().parse::<u32>().ok())
         {
-            let room = max.saturating_sub(utf16_len(&value).saturating_sub(e - s));
+            let room = max.saturating_sub(value_len.saturating_sub(e - s));
             if utf16_len(&text) > room {
                 let mut units = 0;
                 let cut = text
@@ -1126,13 +2045,20 @@ impl Dom {
             }
         }
         let (a, b) = utf16_range(&value, s, e - s)?;
+        let number = is_input && self.input_type_idx(i) == InputType::Number;
+        if number && !number_sign_fits(&value[..a], &text, &value[b..]) {
+            return Ok(false);
+        }
+        self.edit_value_ranges(i, &value, a..b, &text);
         value.replace_range(a..b, &text);
         let caret = s + utf16_len(&text);
         let c = self.control_state_mut(id)?;
         c.value = Some(value);
         c.dirty_value = true;
         c.user_edited = true;
+        c.edited_since_focus = true;
         c.selection = (caret, caret);
+        c.selection_direction = original.direction.map(|_| (false, c.selection));
         c.selection_set = true;
         Ok(true)
     }
@@ -1151,8 +2077,9 @@ impl Dom {
         let (start, end) = (start.min(len), end.min(len));
         let (mut sel_start, mut sel_end) = self.selection(id)?;
         let (a, b) = utf16_range(&value, start, end.saturating_sub(start))?;
-        value.replace_range(a..b, &text);
         let text_len = utf16_len(&text);
+        self.edit_value_ranges(i, &value, a..b, &text);
+        value.replace_range(a..b, &text);
         let new_end = start + text_len;
         match mode {
             RangeMode::Select => (sel_start, sel_end) = (start, new_end),
@@ -1192,7 +2119,7 @@ impl Dom {
             // Snap to the start of the code point ending at the caret.
             let (a, _) = utf16_range(&v, s - 1, 0)?;
             let start = utf16_len(&v[..a]);
-            self.set_selection_range(id, start, s)?;
+            return self.replace_text_in_range(id, (start, s), "");
         }
         self.insert_text(id, "")
     }
@@ -1207,7 +2134,7 @@ impl Dom {
             }
             let (a, _) = utf16_range(&v, s, 0)?;
             let ch = v[a..].chars().next().map_or(1, |c| c.len_utf16() as u32);
-            self.set_selection_range(id, s, s + ch)?;
+            return self.replace_text_in_range(id, (s, s + ch), "");
         }
         self.insert_text(id, "")
     }
@@ -1246,6 +2173,33 @@ impl Dom {
         matches!(&self.n(doc).kind, NodeKind::Document(d) if d.focus_visible)
     }
 
+    /// Whether the focused element of `doc` matches `:focus-visible`: the flag its focusing set
+    /// (keyboard modality, script focus without a pointer focus), or, as Chrome decides it when it
+    /// matches, the element is a field a virtual keyboard would type into (a textarea, a text-like
+    /// input), whatever focused it. A button that becomes `type=text` while focused shows the ring
+    /// (WPT css/selectors `focus-visible-027`).
+    pub(crate) fn focus_visible_now(&self, doc: u32) -> bool {
+        if self.focus_visible_flag(doc) {
+            return true;
+        }
+        let f = self.focused_idx(doc);
+        f != NIL
+            && match self.html_local(f).map(|l| &**l) {
+                Some("textarea") => true,
+                Some("input") => matches!(
+                    self.input_type_idx(f),
+                    InputType::Text
+                        | InputType::Search
+                        | InputType::Tel
+                        | InputType::Url
+                        | InputType::Email
+                        | InputType::Password
+                        | InputType::Number
+                ),
+                _ => false,
+            }
+    }
+
     /// The element being activated (`:active`), if any.
     pub fn activated(&self, doc: NodeId) -> Option<NodeId> {
         let d = self.check(doc).ok()?;
@@ -1278,7 +2232,7 @@ impl Dom {
 
     /// Whether the focused element matches `:focus-visible`.
     pub fn focus_visible(&self, doc: NodeId) -> bool {
-        self.check(doc).is_ok_and(|d| self.focus_visible_flag(d))
+        self.check(doc).is_ok_and(|d| self.focus_visible_now(d))
     }
 
     /// Sets whether the focused element matches `:focus-visible`.
@@ -1312,19 +2266,51 @@ impl Dom {
         if !self.is_connected(id)? || self.is_disabled_idx(i) {
             return Ok(false);
         }
-        if e.attr_local(&local_name!("tabindex")).is_some_and(|t| t.trim().parse::<i32>().is_ok()) {
+        if self.tabindex_attr(i).is_some() {
             return Ok(true);
         }
         if e.attr_local(&local_name!("contenteditable")).is_some_and(|v| !v.eq_ignore_ascii_case("false")) {
             return Ok(true);
         }
+        if e.namespace() == &markup5ever::ns!(mathml) && e.name.local == local_name!("a") {
+            return Ok(e.attr_local(&local_name!("href")).is_some());
+        }
+        // An SVG `a` with an `href` (or `xlink:href`) is a link, focusable as an HTML one.
+        if e.namespace() == &markup5ever::ns!(svg) && e.name.local == local_name!("a") {
+            return Ok(e.attr_local(&local_name!("href")).is_some()
+                || e.attrs.iter().any(|a| a.name.ns == markup5ever::ns!(xlink) && &*a.name.local == "href"));
+        }
         Ok(e.is_html()
             && match &*e.name.local {
                 "a" | "area" => e.attr_local(&local_name!("href")).is_some(),
                 "input" => self.input_type_idx(i) != InputType::Hidden,
-                "button" | "select" | "textarea" | "iframe" | "summary" => true,
+                "summary" => self.is_details_summary(id),
+                // A select's button (its first child button) is part of the select, which takes
+                // the focus (customizable select).
+                "button" => !self.is_select_button_idx(i),
+                "select" | "textarea" | "iframe" => true,
+                // An object showing a document is a navigable container, focusable as an iframe.
+                "object" => self.is_document_object(id),
+                // An option is focusable while its select's picker is open.
+                "option" => {
+                    let select = self.option_nearest_ancestor_select(i);
+                    select != NIL && self.is_select_picker_open_idx(select)
+                }
                 _ => false,
             })
+    }
+    /// Whether `i` is a select's button: a button that is the select's first
+    /// element child (HTML customizable select).
+    pub(crate) fn is_select_button_idx(&self, i: u32) -> bool {
+        let parent = self.n(i).parent;
+        if parent == NIL || self.html_local(parent) != Some(&local_name!("select")) {
+            return false;
+        }
+        let mut c = self.n(parent).first_child;
+        while c != NIL && self.n(c).element().is_none() {
+            c = self.n(c).next;
+        }
+        c == i
     }
 
     /// Document's focused element (`activeElement` is body when None).
@@ -1354,8 +2340,10 @@ impl Dom {
         let doc = self.node_document(root)?;
         let candidate = self.focused(doc)?.and_then(|f| self.retarget_node(f, root));
         let in_tree = candidate.filter(|&c| self.root_node(c, false).is_ok_and(|r| r == root));
+        // Nothing focused: the body, or null without one (as Chromium, which does not fall back to
+        // the document element: WPT html/editing/focus focusing-disconnected-noop).
         if root == doc {
-            return Ok(in_tree.or(self.body(doc)?).or(self.document_element(doc)?));
+            return Ok(in_tree.or(self.body(doc)?));
         }
         Ok(in_tree)
     }
@@ -1399,11 +2387,73 @@ impl Dom {
         Ok(())
     }
 
+    /// HTML: a `readonly` attribute that applies to the element (a textarea, or an input in a
+    /// text, search, URL, telephone, email, password, date/time or number state) is set; it is
+    /// what bars such a control from constraint validation. Elsewhere `readonly` means nothing.
+    fn readonly_applies_and_set_idx(&self, i: u32) -> bool {
+        let Some(e) = self.n(i).element() else { return false };
+        e.attr_local(&local_name!("readonly")).is_some() && self.readonly_applies_idx(i)
+    }
+
+    /// HTML: the elements `readonly` applies to: a textarea, and an input in a text, search,
+    /// URL, telephone, email, password, date/time or number state.
+    fn readonly_applies_idx(&self, i: u32) -> bool {
+        match self.html_local(i).map(|l| &**l) {
+            Some("textarea") => true,
+            Some("input") => matches!(
+                self.input_type_idx(i),
+                InputType::Text
+                    | InputType::Search
+                    | InputType::Url
+                    | InputType::Tel
+                    | InputType::Email
+                    | InputType::Password
+                    | InputType::Date
+                    | InputType::Month
+                    | InputType::Week
+                    | InputType::Time
+                    | InputType::DateTimeLocal
+                    | InputType::Number
+            ),
+            _ => false,
+        }
+    }
+
+    /// Whether `:read-write` matches element `i` (HTML § 4.16.3): a textarea or an input that
+    /// `readonly` applies to and that is mutable (neither readonly nor disabled), or any other
+    /// element that is editable: an editing host or inside one (its nearest `contenteditable`
+    /// says true or plaintext-only), or in a document in design mode. `:read-only` matches the
+    /// others.
+    pub(crate) fn matches_read_write_idx(&self, i: u32) -> bool {
+        let Some(e) = self.n(i).element() else { return false };
+        if matches!(self.html_local(i).map(|l| &**l), Some("input" | "textarea")) {
+            return self.readonly_applies_idx(i)
+                && e.attr_local(&local_name!("readonly")).is_none()
+                && !self.is_disabled_idx(i);
+        }
+        let mut cur = i;
+        while cur != NIL {
+            if let Some(el) = self.n(cur).element() {
+                if let Some(v) = el.attr_local(&local_name!("contenteditable")) {
+                    let v = v.trim();
+                    if v.is_empty() || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("plaintext-only") {
+                        return true;
+                    }
+                    if v.eq_ignore_ascii_case("false") {
+                        return false;
+                    }
+                }
+            }
+            cur = self.n(cur).parent;
+        }
+        let doc = self.n(i).owner_doc;
+        matches!(&self.n(doc).kind, NodeKind::Document(d) if d.design_mode)
+    }
+
     /// Whether the element is a candidate for constraint validation.
     pub fn will_validate(&self, id: NodeId) -> DomResult<bool> {
         let i = self.check(id)?;
         let Some(local) = self.html_local(i) else { return Ok(false) };
-        let e = self.n(i).element().unwrap();
         let listed = match &**local {
             "input" => !matches!(self.input_type_idx(i), InputType::Hidden | InputType::Reset | InputType::Button),
             "select" | "textarea" => true,
@@ -1411,10 +2461,12 @@ impl Dom {
             _ if self.is_face_idx(i) => return Ok(self.face_will_validate_idx(i)),
             _ => false,
         };
-        if !listed
-            || self.is_disabled_idx(i)
-            || (e.attr_local(&local_name!("readonly")).is_some() && &**local != "select")
-        {
+        // HTML "barred from constraint validation": an input with a readonly attribute is barred whatever its
+        // type, even where readonly does not otherwise apply (color, file, submit; the WPT willValidate page); so is a readonly
+        // textarea. A readonly button or select stays a candidate.
+        let readonly_bars = matches!(&**local, "input" | "textarea")
+            && self.n(i).element().is_some_and(|e| e.attr_local(&local_name!("readonly")).is_some());
+        if !listed || self.is_disabled_idx(i) || readonly_bars {
             return Ok(false);
         }
         // Not inside a <datalist>.
@@ -1467,19 +2519,10 @@ impl Dom {
     /// and `textarea` elements gets user validity (HTML form submission,
     /// "interactively validate the constraints").
     pub fn set_form_user_validity(&mut self, form: NodeId) -> DomResult<()> {
-        let f = self.check(form)?;
-        let root = self.root_idx(f);
-        let mut controls = Vec::new();
-        let mut n = root;
-        while n != NIL {
-            let control = self.html_local(n).is_some_and(|l| matches!(&**l, "input" | "select" | "textarea"));
-            if control && self.form_owner_idx(n) == f {
-                controls.push(self.id_of(n));
+        for c in self.owned_form_elements(form)? {
+            if self.html_local(self.check(c)?).is_some_and(|l| matches!(&**l, "input" | "select" | "textarea")) {
+                self.set_user_validity(c, true)?;
             }
-            n = self.following_in(n, root);
-        }
-        for c in controls {
-            self.set_user_validity(c, true)?;
         }
         Ok(())
     }
@@ -1505,6 +2548,11 @@ impl Dom {
             return Ok(if self.will_validate(id)? { self.face_validity_idx(i) } else { v });
         }
         let Some(local) = self.html_local(i) else { return Ok(v) };
+        let e = self.n(i).element().unwrap();
+        // Any element with `setCustomValidity` suffers from a custom error, also one that is
+        // never a candidate (`<output>`, `<object>`, `<fieldset>`, a hidden input).
+        v.custom_error =
+            e.control.as_ref().is_some_and(|c| c.custom_validity.as_deref().is_some_and(|m| !m.is_empty()));
         let listed = match &**local {
             "input" => !matches!(self.input_type_idx(i), InputType::Hidden | InputType::Reset | InputType::Button),
             "select" | "textarea" => true,
@@ -1514,23 +2562,30 @@ impl Dom {
         if !listed {
             return Ok(v);
         }
-        let e = self.n(i).element().unwrap();
-        let mutable = !self.is_disabled_idx(i) && !(e.attr_local(&local_name!("readonly")).is_some() && &**local != "select");
+        let mutable = !self.is_disabled_idx(i) && !self.readonly_applies_and_set_idx(i);
         let local = self.html_local(i).map(|l| l.to_string()).unwrap_or_default();
-        v.custom_error =
-            e.control.as_ref().is_some_and(|c| c.custom_validity.as_deref().is_some_and(|m| !m.is_empty()));
-        let required = mutable && e.attr_local(&local_name!("required")).is_some();
+        // HTML: a text-like control or textarea is suffering from being missing only when it is
+        // mutable; a checkbox, radio group, file input or select also when disabled.
+        let required_attr = e.attr_local(&local_name!("required")).is_some();
+        let required = mutable && required_attr;
         let value = self.value(id)?;
         match local.as_str() {
             "input" => {
                 let ty = self.input_type_idx(i);
                 match ty {
-                    InputType::Checkbox => v.value_missing = required && !self.checkedness_idx(i),
+                    InputType::Checkbox => v.value_missing = required_attr && !self.checkedness_idx(i),
                     InputType::Radio => {
-                        v.value_missing = required && !self.radio_group(i).into_iter().any(|r| self.checkedness_idx(r))
+                        // Any required member makes an unchecked group missing (as Chrome, a radio
+                        // without a name is in no group and never missing).
+                        let named = e.attr_local(&local_name!("name")).is_some_and(|n| !n.is_empty());
+                        let group = self.radio_group(i);
+                        let group_required = group.iter().any(|&r| {
+                            self.n(r).element().is_some_and(|m| m.attr_local(&local_name!("required")).is_some())
+                        });
+                        v.value_missing = named && group_required && !group.iter().any(|&r| self.checkedness_idx(r));
                     }
                     InputType::File => {
-                        v.value_missing = required && e.control.as_ref().and_then(|c| c.value.as_ref()).is_none()
+                        v.value_missing = required_attr && e.control.as_ref().and_then(|c| c.value.as_ref()).is_none()
                     }
                     _ => v.value_missing = required && value.is_empty(),
                 }
@@ -1578,13 +2633,9 @@ impl Dom {
             }
             "textarea" => v.value_missing = required && value.is_empty(),
             "select" => {
-                v.value_missing = required && {
+                v.value_missing = required_attr && {
                     let sel = self.selected_options_idx(i);
-                    // Placeholder label option (first, empty value, size 1 single select).
-                    sel.is_empty()
-                        || (e.attr_local(&local_name!("multiple")).is_none()
-                            && sel.first() == self.select_options_idx(i).first()
-                            && self.option_value(self.id_of(sel[0]))?.is_empty())
+                    sel.is_empty() || sel.first().is_some_and(|&o| self.select_placeholder_idx(i) == o)
                 };
             }
             _ => {}
@@ -1702,8 +2753,9 @@ pub fn autofill_idl_value(attr: Option<&str>, anchor: bool) -> String {
     let mut credential = false;
     if category == Credential {
         credential = true;
+        // A lone `webauthn` is a valid autofill detail of its own (WPT form-autocomplete, Chrome).
         if index == 0 {
-            return String::new();
+            return "webauthn".into();
         }
         index -= 1;
         match autofill_category(&tokens[index]) {
@@ -1762,7 +2814,7 @@ mod autofill_tests {
         assert_eq!(v(Some("\tusername webauthn"), false), "username webauthn");
         assert_eq!(v(Some("  section-LOGIN  shipping work tel webauthn "), false), "section-login shipping work tel webauthn");
         assert_eq!(v(Some("foo section-bar billing work tel webauthn"), false), "");
-        assert_eq!(v(Some("webauthn"), false), "");
+        assert_eq!(v(Some("webauthn"), false), "webauthn");
         assert_eq!(v(Some("on webauthn"), false), "");
     }
 }

@@ -38,6 +38,15 @@ pub(crate) fn fonts<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>
     MODULE.module(s, page)?.get("fonts")
 }
 
+/// pyro: `bytes` as a renderer reads them: WOFF and WOFF2 decompressed, `None` when that fails.
+pub(crate) fn sfnt_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
+    match bytes.get(..4) {
+        Some(b"wOFF") => wuff::decompress_woff1(&bytes).ok(),
+        Some(b"wOF2") => wuff::decompress_woff2(&bytes).ok(),
+        _ => Some(bytes),
+    }
+}
+
 /// Whether `bytes` is font data a face can use: an OpenType/TrueType font or collection, WOFF or
 /// WOFF2 compressed or not, whose tables parse.
 pub fn is_font(bytes: &[u8]) -> bool {
@@ -97,6 +106,10 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })
     })?;
     natives.set_atom("descriptor", f.value())?;
+    // fetch(url, init): fetch() of a FontFace source, as a "font" request (CSP: font-src, not
+    // connect-src).
+    let f = crate::fetch::internal_fetch(s, pyro_net::csp::RequestDest::Font)?;
+    natives.set_atom("fetch", f.value())?;
     // sources(text, base): the source string as [kind, url-or-name] pairs, or null.
     let f = s.function("sources", |s, _this, a| {
         let text = crate::util::dom_string(a.get(0))?;
@@ -213,6 +226,24 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     natives.set_atom("register", f.value())?;
+    // pyro: canvasFaces(entries): the realm's set (a document's or a worker's), entries as for
+    // `register`; the loaded ones (with bytes) are the faces canvas text draws with.
+    let f = s.function("canvasFaces", |s, _this, a| {
+        let page = crate::target::page_of(s)?;
+        let entries = a.get(0).as_object().ok_or_else(|| pyro_js::JsError::Type("canvasFaces: not an array".into()))?;
+        let count = crate::util::to_u32(entries.get("length")?)?;
+        let mut faces = Vec::new();
+        for i in 0..count {
+            let Some(entry) = entries.get_index(i)?.as_object() else { continue };
+            let family = crate::util::dom_string(entry.get_index(0)?)?;
+            let Some(bytes) = crate::encoding::buffer_source_bytes(s, entry.get_index(2)?)? else { continue };
+            let Some(bytes) = sfnt_bytes(bytes) else { continue };
+            faces.push(pyro_canvas::text::WebFace::new(family, bytes));
+        }
+        page.set_canvas_faces(faces);
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("canvasFaces", f.value())?;
     Ok(natives)
 }
 

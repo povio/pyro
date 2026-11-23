@@ -10,10 +10,39 @@ use markup5ever::local_name;
 use crate::dom::Dom;
 use crate::error::DomResult;
 use crate::forms::InputType;
-use crate::node::{NodeId, NIL};
+use crate::node::{NodeId, NodeKind, NIL};
 use crate::tree_scope::label_for_of;
 
 impl Dom {
+    /// Resolve a host's reference target through nested shadow roots. An
+    /// unconfigured root leaves the host exposed; a dangling ID resolves to null.
+    pub fn resolve_reference_target(&self, element: NodeId) -> DomResult<Option<NodeId>> {
+        Ok(self.opt_id(self.resolve_reference_target_idx(self.check(element)?)))
+    }
+
+    pub(crate) fn resolve_reference_target_idx(&self, mut el: u32) -> u32 {
+        while el != NIL {
+            let Some(root) = self.n(el).element().map(|e| e.shadow_root).filter(|&r| r != NIL) else { break };
+            let NodeKind::Fragment(fragment) = &self.n(root).kind else { break };
+            let Some(id) = fragment.reference_target.as_deref() else { break };
+            el = self.first_by_id(root, id);
+        }
+        el
+    }
+
+    /// Outermost tree in which an ID reference can resolve to this element.
+    pub(crate) fn reference_scope_idx(&self, mut el: u32) -> u32 {
+        loop {
+            let root = self.root_idx(el);
+            let NodeKind::Fragment(f) = &self.n(root).kind else { return root };
+            let Some(id) = f.reference_target.as_deref() else { return root };
+            if f.shadow.is_none() || self.first_by_id(root, id) != el {
+                return root;
+            }
+            el = f.host;
+        }
+    }
+
     /// Whether `idx` is a labelable element (HTML §4.10.2): a button,
     /// meter, output, progress, select, textarea, a non-hidden input or a
     /// form-associated custom element.
@@ -56,16 +85,17 @@ impl Dom {
         Ok((c != NIL).then(|| self.id_of(c)))
     }
 
-    fn labeled_control_idx(&self, l: u32) -> u32 {
+    pub(crate) fn labeled_control_idx(&self, l: u32) -> u32 {
         let e = self.n(l).element().expect("label element");
         if let Some(f) = e.attr_local(&local_name!("for")) {
-            let target = self.first_by_id(self.root_idx(l), f);
+            let target = self.resolve_reference_target_idx(self.first_by_id(self.root_idx(l), f));
             return if target != NIL && self.labelable_idx(target) { target } else { NIL };
         }
         let mut cur = self.n(l).first_child;
         while cur != NIL {
-            if self.labelable_idx(cur) {
-                return cur;
+            let target = self.resolve_reference_target_idx(cur);
+            if target != NIL && self.labelable_idx(target) {
+                return target;
             }
             cur = self.following_in(cur, l);
         }
@@ -81,11 +111,23 @@ impl Dom {
             return Ok(Vec::new());
         }
         let root = self.root_idx(c);
+        let outer = self.reference_scope_idx(c);
+        if outer != root {
+            let mut out = Vec::new();
+            let mut node = outer;
+            while node != NIL {
+                if self.html_local(node) == Some(&local_name!("label")) && self.labeled_control_idx(node) == c {
+                    out.push(self.id_of(node));
+                }
+                node = self.next_shadow_including(node, outer);
+            }
+            return Ok(out);
+        }
         let mut out: Vec<u32> = Vec::new();
         // Labels naming it by `for`: those whose `for` is its id, when it is
         // the first element of the tree with that id.
         if let Some(id) = self.n(c).element().and_then(|e| e.id()).filter(|id| !id.is_empty()) {
-            if self.first_by_id(root, id) == c {
+            if self.resolve_reference_target_idx(c) == c && self.first_by_id(root, id) == c {
                 match self.labels_for_indexed(root, id) {
                     Some(labels) => out.extend_from_slice(labels),
                     // A detached tree has no index: its root included.

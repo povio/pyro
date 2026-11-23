@@ -1,0 +1,142 @@
+Pyro patch 0041: the window's prototype chain as WebIDL has it.
+
+Patch 0004 put the named properties object right under the global: window -> WindowProperties ->
+Object.prototype, with Window.prototype off to the side, and the global proxy fixed to that. WebIDL's
+chain is window -> Window.prototype -> WindowProperties -> EventTarget.prototype -> Object.prototype,
+which JavaScript cannot build (the global and the named properties object are immutable prototype
+exotic objects). JSGlobalContextSetNamedPropertiesChain (JSForkPrivate.h) re-links it once the
+embedder has made the interface prototype objects, keeping the global proxy: the global gets the new
+prototype directly, and its proxy, retargeted to the same global, takes it into its structure
+(resetPrototype would make a new proxy, which code already holding globalThis would not see).
+
+The named properties object (patch 0004) now has WebIDL's internal methods besides [[GetOwnProperty]]:
+[[DefineOwnProperty]], [[Delete]] and [[PreventExtensions]] fail (it stays extensible), and so does an
+ordinary [[Set]] that would define a property on it, unless a setter further up the chain takes it
+(`__proto__`). Script reaches the object under Window.prototype with Object.getPrototypeOf, where the
+embedder's Proxy stand-in used to answer for it.
+
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -20,6 +20,7 @@
+ #include "OperationResult.h"
+ #include "Snippet.h"
+ #include "SnippetParams.h"
++#include "TypeError.h"
+ #include "TopExceptionScope.h"
+ #include <wtf/HashMap.h>
+ #include <wtf/Lock.h>
+@@ -764,7 +765,7 @@ namespace {
+ class JSNamedPropertiesObject final : public JSNonFinalObject {
+ public:
+     using Base = JSNonFinalObject;
+-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | IsImmutablePrototypeExoticObject;
++    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | IsImmutablePrototypeExoticObject | OverridesPut;
+ 
+     template<typename CellType, SubspaceAccess>
+     static GCClient::IsoSubspace* subspaceFor(VM& vm)
+@@ -829,6 +830,58 @@ public:
+         return getOwnPropertySlot(object, globalObject, Identifier::from(vm, index), slot);
+     }
+ 
++    // Pyro patch 0041: WebIDL's named properties object refuses [[DefineOwnProperty]], [[Delete]] and
++    // [[PreventExtensions]] (it stays extensible), so an ordinary [[Set]] with it as the receiver fails
++    // too, unless a setter further up the chain takes the assignment (`__proto__`). As the window's
++    // prototype that object was its own; under Window.prototype (JSGlobalContextSetNamedPropertiesChain)
++    // script reaches it with Object.getPrototypeOf.
++    static bool defineOwnProperty(JSObject*, JSGlobalObject* globalObject, PropertyName, const PropertyDescriptor&, bool shouldThrow)
++    {
++        VM& vm = getVM(globalObject);
++        auto scope = DECLARE_THROW_SCOPE(vm);
++        return typeError(globalObject, scope, shouldThrow, "Cannot define a property on a named properties object"_s);
++    }
++
++    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&)
++    {
++        return false;
++    }
++
++    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned)
++    {
++        return false;
++    }
++
++    static bool preventExtensions(JSObject*, JSGlobalObject*)
++    {
++        return false;
++    }
++
++    static bool put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
++    {
++        VM& vm = getVM(globalObject);
++        auto scope = DECLARE_THROW_SCOPE(vm);
++        auto* object = uncheckedDowncast<JSObject>(cell);
++        if (slot.thisValue() != cell)
++            RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
++        // A setter on the chain runs with this object as `this`; anything else would define a property here.
++        if (JSObject* prototype = object->getPrototypeDirect().getObject()) {
++            PropertySlot found(prototype, PropertySlot::InternalMethodType::Get);
++            bool has = prototype->getPropertySlot(globalObject, propertyName, found);
++            RETURN_IF_EXCEPTION(scope, false);
++            if (has && (found.isAccessor() || found.isCustom()))
++                RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
++        }
++        return typeError(globalObject, scope, slot.isStrictMode(), "Cannot set a property on a named properties object"_s);
++    }
++
++    static bool putByIndex(JSCell*, JSGlobalObject* globalObject, unsigned, JSValue, bool shouldThrow)
++    {
++        VM& vm = getVM(globalObject);
++        auto scope = DECLARE_THROW_SCOPE(vm);
++        return typeError(globalObject, scope, shouldThrow, "Cannot set a property on a named properties object"_s);
++    }
++
+     static inline JSNamedPropertyFilter s_filter { nullptr };
+     static inline JSObjectGetPropertyCallback s_getter { nullptr };
+ 
+@@ -873,3 +926,26 @@ void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedProper
+     JSNamedPropertiesObject::s_getter = getter;
+     globalObject->resetPrototype(vm, JSNamedPropertiesObject::create(vm, globalObject));
+ }
++
++bool JSGlobalContextSetNamedPropertiesChain(JSGlobalContextRef ctx, JSObjectRef interfacePrototype, JSObjectRef parentPrototype)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    JSObject* prototype = globalObject->getPrototypeDirect().getObject();
++    auto* named = prototype ? dynamicDowncast<JSNamedPropertiesObject>(prototype) : nullptr;
++    JSObject* interfaceObject = interfacePrototype ? toJS(interfacePrototype) : nullptr;
++    JSObject* parentObject = parentPrototype ? toJS(parentPrototype) : nullptr;
++    if (!named || !interfaceObject || !parentObject || interfaceObject == globalObject || interfaceObject == named || parentObject == named)
++        return false;
++    // window -> Window.prototype -> WindowProperties -> EventTarget.prototype -> Object.prototype.
++    named->setPrototypeDirect(vm, parentObject);
++    interfaceObject->setPrototypeDirect(vm, named);
++    globalObject->setPrototypeDirect(vm, interfaceObject);
++    // The global proxy keeps the global's prototype in its own structure: the same proxy, retargeted
++    // to the same global, takes the new one (resetPrototype would make a new proxy, which code
++    // holding globalThis would not see).
++    if (auto* proxy = dynamicDowncast<JSGlobalProxy>(globalObject->globalThis()); proxy && proxy->target() == globalObject)
++        proxy->setTarget(vm, globalObject);
++    return true;
++}
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -78,6 +78,15 @@ typedef bool (*JSNamedPropertyFilter)(JSContextRef ctx, const void* characters,
+    anything holds `globalThis`; JSContextGetGlobalObject returns the new proxy. */
+ JS_EXPORT void JSGlobalContextInstallNamedProperties(JSGlobalContextRef ctx, JSNamedPropertyFilter filter, JSObjectGetPropertyCallback getter);
+ 
++/* Pyro patch 0041: WebIDL's prototype chain for a [Global] interface with named properties. With the
++   named properties object JSGlobalContextInstallNamedProperties installed as the prototype of the global
++   object of `ctx`, makes the global inherit from `interfacePrototype`, it from the named properties
++   object, and that from `parentPrototype` (window -> Window.prototype -> WindowProperties ->
++   EventTarget.prototype), which JavaScript cannot do (immutable prototype exotic objects). The global
++   proxy stays the same object. Returns false, changing nothing, when the global's prototype is not a
++   named properties object or an argument is missing or one of those objects. */
++JS_EXPORT bool JSGlobalContextSetNamedPropertiesChain(JSGlobalContextRef ctx, JSObjectRef interfacePrototype, JSObjectRef parentPrototype);
++
+ /* Makes the global object of `ctx` the target of `proxy`, the global proxy of another
+    context of the same group (what JSContextGetGlobalObject returned there): a WindowProxy
+    that follows its browsing context to the next document. From then on `proxy` is the

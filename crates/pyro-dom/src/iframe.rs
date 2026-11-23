@@ -21,6 +21,10 @@ pub enum IframeChange {
     /// `src` attribute it lacked. Queued with the iframe events because both
     /// are post-connection steps and run in one (tree) order.
     Script,
+    /// A permission element (`<geolocation>`, `<install>`, `<usermedia>`, `<camera>`,
+    /// `<microphone>`: WICG PEPC, tentative) became connected: it registers and checks its
+    /// validity (`validationstatuschange`). A post-connection step like the others.
+    PermissionElement,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IframeEvent {
@@ -168,6 +172,12 @@ impl Dom {
                 && e.flags & (PARSER_INSERTED | SCRIPT_ALREADY_STARTED) == 0
         })
     }
+    /// Whether `idx` is an HTML permission element ([`IframeChange::PermissionElement`]).
+    fn permission_element(&self, idx: u32) -> bool {
+        self.n(idx).element().is_some_and(|e| {
+            e.is_html() && matches!(&*e.name.local, "geolocation" | "install" | "usermedia" | "camera" | "microphone")
+        })
+    }
     /// The iframes and preparable scripts of `root`'s subtree in
     /// shadow-including tree order: the order of their post-connection steps.
     fn post_connection_subtree(&self, root: u32) -> Vec<(u32, IframeChange)> {
@@ -178,6 +188,8 @@ impl Dom {
                 found.push((idx, IframeChange::Connected));
             } else if self.preparable_script(idx) {
                 found.push((idx, IframeChange::Script));
+            } else if self.permission_element(idx) {
+                found.push((idx, IframeChange::PermissionElement));
             }
             idx = self.next_shadow_including(idx, root);
         }
@@ -205,6 +217,8 @@ impl Dom {
             IframeChange::Connected
         } else if self.preparable_script(idx) {
             IframeChange::Script
+        } else if self.permission_element(idx) {
+            IframeChange::PermissionElement
         } else {
             return;
         };

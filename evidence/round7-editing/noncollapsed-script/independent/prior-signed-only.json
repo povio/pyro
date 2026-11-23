@@ -1,0 +1,524 @@
+[
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"<p>[foo<p><br><p>bar]\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"<sub>fo[o</sub><span style=vertical-align:sub>b]ar</span>\" queryCommandIndeterm(\"subscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<span style=vertical-align:super>[bar]</span>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<span style=vertical-align:top>[bar]</span>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sub><sup>[bar]</sup></sub>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sub><sup>[bar]</sup></sub>baz\" queryCommandState(\"subscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sub><sup>[bar]</sup></sub>baz\" queryCommandState(\"subscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sub><sup>b[a]r</sup></sub>baz\" queryCommandState(\"subscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sub><sup>b[a]r</sup></sub>baz\" queryCommandState(\"subscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sub>b<sup>[a]</sup>r</sub>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sub>b<sup>[a]</sup>r</sub>baz\" queryCommandState(\"subscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sub>b<sup>[a]</sup>r</sub>baz\" queryCommandState(\"subscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sup><sup>[bar]</sup></sup>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sup>[bar]</sup>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"foo<sup>b[a]r</sup>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"<sub>fo[o</sub><span style=vertical-align:sub>b]ar</span>\" queryCommandIndeterm(\"subscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"foo<sub><sup>[bar]</sup></sub>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"foo<sub><sup>[bar]</sup></sub>baz\" queryCommandState(\"subscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"foo<sub><sup>[bar]</sup></sub>baz\" queryCommandState(\"subscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"foo<sub><sup>b[a]r</sup></sub>baz\" queryCommandState(\"subscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"foo<sub><sup>b[a]r</sup></sub>baz\" queryCommandState(\"subscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"foo<sub>b<sup>[a]</sup>r</sub>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"foo<sub>b<sup>[a]</sup>r</sub>baz\" queryCommandState(\"subscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"foo<sub>b<sup>[a]</sup>r</sub>baz\" queryCommandState(\"subscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"subscript\",\"\"]] \"<span>foo[</span><span>]bar</span>\" queryCommandState(\"subscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"subscript\",\"\"]] \"fo[o<sub>b]ar</sub>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"subscript\",\"\"]] \"fo[o<sub>bar</sub>b]az\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"<p>[foo<p><br><p>bar]\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"<span>[foo</span> <span>bar]</span>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"<sup>fo[o</sup><span style=vertical-align:super>b]ar</span>\" queryCommandIndeterm(\"superscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<span style=vertical-align:bottom>[bar]</span>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<span style=vertical-align:sub>[bar]</span>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sub><sub>[bar]</sub></sub>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sub>[bar]</sub>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sub>b[a]r</sub>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sup><sub>[bar]</sub></sup>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sup><sub>[bar]</sub></sup>baz\" queryCommandState(\"superscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sup><sub>[bar]</sub></sup>baz\" queryCommandState(\"superscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sup><sub>b[a]r</sub></sup>baz\" queryCommandState(\"superscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sup><sub>b[a]r</sub></sup>baz\" queryCommandState(\"superscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sup>[bar]<br></sup>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sup>b<sub>[a]</sub>r</sup>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sup>b<sub>[a]</sub>r</sup>baz\" queryCommandState(\"superscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"foo<sup>b<sub>[a]</sub>r</sup>baz\" queryCommandState(\"superscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"<sup>fo[o</sup><span style=vertical-align:super>b]ar</span>\" queryCommandIndeterm(\"superscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<sup><sub>[bar]</sub></sup>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<sup><sub>[bar]</sub></sup>baz\" queryCommandState(\"superscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<sup><sub>[bar]</sub></sup>baz\" queryCommandState(\"superscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<sup><sub>b[a]r</sub></sup>baz\" queryCommandState(\"superscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<sup><sub>b[a]r</sub></sup>baz\" queryCommandState(\"superscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<sup>[bar]<br></sup>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<sup>b<sub>[a]</sub>r</sup>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<sup>b<sub>[a]</sub>r</sup>baz\" queryCommandState(\"superscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"foo<sup>b<sub>[a]</sub>r</sup>baz\" queryCommandState(\"superscript\") before",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"superscript\",\"\"]] \"<span>foo[</span><span>]bar</span>\" queryCommandState(\"superscript\") after",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"superscript\",\"\"]] \"fo[o<sup>b]ar</sup>baz\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"superscript\",\"\"]] \"fo[o<sup>bar</sup>b]az\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]

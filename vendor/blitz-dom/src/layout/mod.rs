@@ -36,6 +36,7 @@ pub(crate) mod hyphenate;
 pub(crate) mod inline;
 pub(crate) mod line_clamp;
 pub(crate) mod list;
+pub(crate) mod math;
 pub mod multicol;
 pub(crate) mod paint_tree;
 pub(crate) mod replaced;
@@ -130,8 +131,9 @@ fn has_calc_size(styles: &style::properties::ComputedValues) -> bool {
     use style::values::computed::Size;
     let is_calc_size = |size: &Size| {
         matches!(
-            size,
+            size.prepared_size(),
             Size::CalcSizeAuto(_) | Size::CalcSizeFitContent(_) | Size::CalcSizeMinContent(_) | Size::CalcSizeMaxContent(_)
+            | Size::CalcSizeStretch(_) | Size::CalcSizePercentage(_) | Size::CalcSizeAny(_)
         )
     };
     let position = styles.get_position();
@@ -176,7 +178,7 @@ pub(crate) struct LayoutPassState<'doc> {
     pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
     /// pyro: the sizes `calc_size_inputs` measured for boxes this pass (box, axis 0 width or 1
     /// height, size): a parent that hands one back as a known size hands back the result.
-    calc_size_results: Vec<(NodeId, u8, f32)>,
+    calc_size_results: Vec<(NodeId, u8, f32, Option<f32>)>,
     try_styles: std::collections::HashMap<NodeId, style::servo_arc::Arc<style::properties::ComputedValues>>,
     try_options: std::cell::RefCell<std::collections::HashMap<(Option<crate::NodeId>, usize), ([usize; 5], usize)>>,
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
@@ -353,7 +355,14 @@ impl LayoutPassState<'_> {
             Some(styles) => (Some(node_size_containment(&self.nodes[dom_node_id(node_id)], &styles)), has_calc_size(&styles)),
             None => (None, false),
         };
-        if contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::BLOCK_SIZE)) {
+        // pyro: the scope of an element-scoped view transition keeps its size during the update
+        // callback (`Self::view_transition_size`), whatever its contents.
+        if let Some(size) = self.view_transition_size(node_id) {
+            if inputs.run_mode != RunMode::PerformLayout {
+                return taffy::tree::LayoutOutput::from_outer_size(size);
+            }
+            inputs.known_dimensions = size.map(Some);
+        } else if contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::BLOCK_SIZE)) {
             if let Some(size) = self.size_contained_size(node_id, inputs) {
                 if inputs.run_mode != RunMode::PerformLayout {
                     return taffy::tree::LayoutOutput::from_outer_size(size);
@@ -440,8 +449,9 @@ impl LayoutPassState<'_> {
             return inputs;
         }
         let calculation = |size: &StyloSize| -> Option<LengthPercentage> {
-            match size {
+            match size.prepared_size() {
                 StyloSize::CalcSizeAuto(lp)
+                | StyloSize::CalcSizeStretch(lp)
                 | StyloSize::CalcSizeFitContent(lp)
                 | StyloSize::CalcSizeMinContent(lp)
                 | StyloSize::CalcSizeMaxContent(lp) => Some(lp.0.clone()),
@@ -449,10 +459,33 @@ impl LayoutPassState<'_> {
             }
         };
         // An `auto` or `fit-content` basis shrinks to fit when its parent measures it.
-        let shrinks = matches!(styles.get_position().width, StyloSize::CalcSizeAuto(_) | StyloSize::CalcSizeFitContent(_));
+        let shrinks = matches!(styles.get_position().width.prepared_size(), StyloSize::CalcSizeAuto(_) | StyloSize::CalcSizeFitContent(_));
         let position = styles.get_position();
+        let numeric_basis = |size: &StyloSize, parent: Option<f32>| match size.prepared_size() {
+            StyloSize::CalcSizePercentage(_) | StyloSize::CalcSizeAny(_) => Some(parent),
+            _ => None,
+        };
+        let numeric_width = numeric_basis(&position.width, inputs.parent_size.width);
+        let numeric_height = numeric_basis(&position.height, inputs.parent_size.height);
         let mut functions = taffy::Size { width: calculation(&position.width), height: calculation(&position.height) };
-        if functions.width.is_none() && functions.height.is_none() {
+        let mut measuring_flex_width = false;
+        if inputs.sizing_mode == taffy::SizingMode::ContentSize
+            && !styles.get_box().get_position().is_absolutely_positioned()
+            && let Some(parent) = node.layout_parent.get().and_then(|parent| self.nodes[parent].primary_styles())
+            && parent.clone_display().inside() == style::values::specified::box_::DisplayInside::Flex
+        {
+            let column = matches!(parent.get_position().flex_direction,
+                style::computed_values::flex_direction::T::Column | style::computed_values::flex_direction::T::ColumnReverse);
+            if column == parent.writing_mode.is_horizontal() {
+                if inputs.known_dimensions.height.is_some() { functions.height = None; }
+            } else if inputs.known_dimensions.width.is_some() {
+                functions.width = None;
+            } else {
+                measuring_flex_width = true;
+            }
+        }
+        if functions.width.is_none() && functions.height.is_none() &&
+            (inputs.run_mode != RunMode::PerformLayout || (numeric_width.is_none() && numeric_height.is_none())) {
             return inputs;
         }
         let content_box = styles.get_position().box_sizing == style::computed_values::box_sizing::T::ContentBox;
@@ -484,23 +517,31 @@ impl LayoutPassState<'_> {
             };
             self.dispatch_child_layout(node_id, probe, None).size
         });
-        let apply = |function: &LengthPercentage, size: f32, inset: f32| -> f32 {
+        let apply = |function: &LengthPercentage, size: f32, inset: f32, percent: Option<f32>| -> f32 {
             let basis = (size - inset).max(0.0);
-            function.resolve(CSSPixelLength::new(basis)).px().max(0.0) + inset
+            function.resolve_size(CSSPixelLength::new(basis), CSSPixelLength::new(percent.unwrap_or_default())).px().max(0.0) + inset
         };
-        let given = |state: &Self, axis: u8, known: Option<f32>| {
-            known.is_some_and(|known| state.calc_size_results.iter().any(|&(id, a, size)| id == node_id && a == axis && size == known))
+        let previous = |axis, known, has_function: bool| {
+            if !has_function { return None; }
+            self.calc_size_results.iter().rev().find_map(|&(id, recorded_axis, result, basis)| {
+                (id == node_id && recorded_axis == axis && Some(result) == known).then_some(basis)
+            })
         };
         let known_width = inputs.known_dimensions.width;
-        if functions.width.is_some() && given(self, 0, known_width) {
+        let mut width_basis = None;
+        let mut height_basis = None;
+        if let Some(basis) = previous(0, known_width, functions.width.is_some()) {
             functions.width = None;
+            width_basis = basis;
         }
-        if functions.height.is_some() && given(self, 1, inputs.known_dimensions.height) {
+        if let Some(basis) = previous(1, inputs.known_dimensions.height, functions.height.is_some()) {
             functions.height = None;
+            height_basis = basis;
         }
         if let Some(function) = &functions.width {
             let size = inputs.known_dimensions.width.or(measured.map(|size| size.width)).unwrap_or(0.0);
-            let mut width = apply(function, size, box_inset.width);
+            width_basis = Some(size);
+            let mut width = apply(function, size, box_inset.width, inputs.parent_size.width);
             // A size measured in definite space is the box's fit-content size: the space between
             // the calculation of its min-content and max-content sizes (as Blink), not the
             // calculation of the fit-content size of its basis.
@@ -515,30 +556,66 @@ impl LayoutPassState<'_> {
                         available_space: taffy::Size { width: available, ..inputs.available_space },
                         ..inputs
                     };
-                    apply(function, self.dispatch_child_layout(node_id, probe, None).size.width, box_inset.width)
+                    self.dispatch_child_layout(node_id, probe, None).size.width
                 };
                 let min_content = content(AvailableSpace::MinContent);
                 let max_content = content(AvailableSpace::MaxContent).max(min_content);
-                width = space.clamp(min_content, max_content);
+                if measuring_flex_width {
+                    let fit = space.clamp(min_content, max_content);
+                    width = apply(function, fit, box_inset.width, inputs.parent_size.width);
+                    width_basis = Some(fit);
+                } else {
+                    let minimum = apply(function, min_content, box_inset.width, inputs.parent_size.width);
+                    width = space.clamp(minimum, apply(function, max_content, box_inset.width, inputs.parent_size.width).max(minimum));
+                    width_basis = None;
+                }
             }
             let width = width.maybe_min(max.width).maybe_max(min.width);
             inputs.known_dimensions.width = Some(width.max(padding_border.width));
             if known_width.is_none() {
-                self.calc_size_results.push((node_id, 0, width.max(padding_border.width)));
+                self.calc_size_results.push((node_id, 0, width.max(padding_border.width), width_basis));
             }
         }
         if let Some(function) = &functions.height {
             let size = inputs.known_dimensions.height.or(measured.map(|size| size.height)).unwrap_or(0.0);
-            let height = apply(function, size, box_inset.height).maybe_min(max.height).maybe_max(min.height);
+            height_basis = Some(size);
+            let height = apply(function, size, box_inset.height, inputs.parent_size.height).maybe_min(max.height).maybe_max(min.height);
             if inputs.known_dimensions.height.is_none() {
-                self.calc_size_results.push((node_id, 1, height.max(padding_border.height)));
+                self.calc_size_results.push((node_id, 1, height.max(padding_border.height), height_basis));
                 if column_flex {
                     inputs.known_dimensions_are_definite.height = false;
                 }
             }
             inputs.known_dimensions.height = Some(height.max(padding_border.height));
         }
+        if inputs.run_mode == RunMode::PerformLayout {
+            let limits = |percent, intrinsic: Option<f32>, numeric: Option<Option<f32>>, inset: f32, padding: f32, minimum: Option<f32>, maximum: Option<f32>| {
+                numeric.or_else(|| intrinsic.map(|size| Some((size - inset).max(0.0)))).map(|basis| {
+                    (basis, percent, (minimum.unwrap_or(0.0).max(padding) - inset).max(0.0), maximum.map(|value| value - inset))
+                })
+            };
+            self.nodes[dom_node_id(node_id)].layout_data_mut().calc_size_inputs = [
+                limits(inputs.parent_size.width, width_basis, numeric_width, box_inset.width, padding_border.width, min.width, max.width),
+                limits(inputs.parent_size.height, height_basis, numeric_height, box_inset.height, padding_border.height, min.height, max.height),
+            ];
+        }
         inputs
+    }
+
+    /// pyro: the border-box size the scope of an element-scoped view transition keeps until its
+    /// update callback is done (`LayoutData::view_transition_size`, physical), in the axes of the
+    /// running algorithm (as `Self::size_contained_size`).
+    fn view_transition_size(&self, node_id: NodeId) -> Option<taffy::Size<f32>> {
+        let node = &self.nodes[dom_node_id(node_id)];
+        if !node.is_element() {
+            return None;
+        }
+        let size = node.layout_data().view_transition_size?;
+        #[cfg(feature = "writing-mode")]
+        let vertical = self.layout_wm.is_vertical();
+        #[cfg(not(feature = "writing-mode"))]
+        let vertical = false;
+        Some(if vertical { taffy::Size { width: size.height, height: size.width } } else { size })
     }
 
     /// pyro: the size of a box with size containment (`contain: size`, css-contain-2 §3.1): the
@@ -584,23 +661,14 @@ impl LayoutPassState<'_> {
             if !contained {
                 return None;
             }
-            // pyro: `auto` takes the last remembered size when there is one (CSS Sizing 4 § 5.1);
-            // `content-visibility: auto` adds `auto` to `contain-intrinsic-size` (CSS Contain 2
-            // § 4.1, csswg-drafts#8407).
-            let remembered = node.layout_data().remembered_size;
-            let cv_auto = styles.get_box().slow_clone_content_visibility()
-                == style::values::specified::box_::ContentVisibility::Auto;
-            let length = |size: &style::values::computed::ContainIntrinsicSize, axis: usize| match size {
-                ContainIntrinsicSize::None | ContainIntrinsicSize::Length(_) if cv_auto && remembered.is_some() => {
-                    let (w, h) = remembered.unwrap();
-                    if axis == 0 { w } else { h }
-                }
-                ContainIntrinsicSize::AutoNone | ContainIntrinsicSize::AutoLength(_) if remembered.is_some() => {
-                    let (w, h) = remembered.unwrap();
-                    if axis == 0 { w } else { h }
-                }
-                ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
-                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+            // pyro: `auto` takes the last remembered size in its axis when there is one and the
+            // box skips its contents (CSS Sizing 4 § 5.1; `contain: size` alone keeps the
+            // fallback: WPT css-sizing `contain-intrinsic-size/auto-004`, `auto-012`).
+            let remembered = [remembered_intrinsic_size(node, &styles, true), remembered_intrinsic_size(node, &styles, false)];
+            let length = |size: &style::values::computed::ContainIntrinsicSize, axis: usize| match (remembered[axis], size) {
+                (Some(remembered), _) => remembered,
+                (None, ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone) => 0.0,
+                (None, ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length)) => length.0.px(),
             };
             let position = styles.get_position();
             let (mut width, mut height) =
@@ -621,10 +689,12 @@ impl LayoutPassState<'_> {
                 // min-content width: WPT css-contain `contain-size-multicol-003`.)
                 let min_content = inputs.available_space.width == taffy::AvailableSpace::MinContent;
                 let empty = empty_container_size(&styles, min_content);
-                if none(&position.contain_intrinsic_width) {
+                // (Not over a remembered size: WPT css-sizing `contain-intrinsic-size/auto-014`, a
+                // multi-column container remembered 250px wide.)
+                if remembered[0].is_none() && none(&position.contain_intrinsic_width) {
                     width = empty.width;
                 }
-                if none(&position.contain_intrinsic_height) {
+                if remembered[1].is_none() && none(&position.contain_intrinsic_height) {
                     height = empty.height;
                 }
             }
@@ -719,9 +789,10 @@ impl LayoutPassState<'_> {
             }
             let position = styles.get_position();
             let inline = if vertical { &position.contain_intrinsic_height } else { &position.contain_intrinsic_width };
-            match inline {
-                ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
-                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+            match (remembered_intrinsic_size(node, &styles, !vertical), inline) {
+                (Some(remembered), _) => remembered,
+                (None, ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone) => 0.0,
+                (None, ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length)) => length.0.px(),
             }
         };
         let style = self.child_layout_style(node);
@@ -926,7 +997,16 @@ impl LayoutPassState<'_> {
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
         match self.leaf_layout_or_algorithm(node_id, inputs) {
-            ChildLayout::Done(output) => output,
+            ChildLayout::Done(output) => {
+                // pyro: HTML-in-Canvas: a canvas with content=drawable keeps its replaced box and
+                // lays its children out inside it. Any other leaf returns its output as before.
+                if inputs.run_mode == taffy::RunMode::PerformLayout
+                    && self.nodes[dom_node_id(node_id)].element_data().is_some_and(|element| element.is_drawable_canvas())
+                {
+                    self.layout_drawable_canvas_children(node_id, output.size);
+                }
+                output
+            }
             ChildLayout::Block => compute_block_layout(self, node_id, inputs, block_ctx),
             ChildLayout::FlowRoot => compute_block_layout(self, node_id, inputs, None),
             ChildLayout::Inline => self.inline_layout(node_id, inputs, block_ctx),
@@ -934,6 +1014,33 @@ impl LayoutPassState<'_> {
             ChildLayout::Grid => self.grid_layout(node_id, inputs),
             ChildLayout::Table => self.compute_table_root_layout(node_id, inputs),
             ChildLayout::Multicol { inline_root } => self.compute_multicol_layout(node_id, inputs, inline_root),
+            ChildLayout::MathFraction => self.compute_math_fraction_layout(node_id, inputs),
+        }
+    }
+
+    /// pyro: HTML-in-Canvas: lays out the children of a canvas with content=drawable (whose own
+    /// box is the replaced one, `size`) in flow inside that box, as a block container (an inline
+    /// root for inline content) of exactly that size. They paint only through
+    /// `drawElementImage`, not in place (blitz-paint `render_element_clipped`).
+    #[inline(never)]
+    fn layout_drawable_canvas_children(&mut self, node_id: NodeId, size: taffy::Size<f32>) {
+        let inputs = taffy::LayoutInput {
+            run_mode: taffy::RunMode::PerformLayout,
+            sizing_mode: taffy::SizingMode::InherentSize,
+            axis: taffy::RequestedAxis::Both,
+            known_dimensions: taffy::Size { width: Some(size.width), height: Some(size.height) },
+            known_dimensions_are_definite: taffy::Size { width: true, height: true },
+            parent_size: taffy::Size { width: Some(size.width), height: Some(size.height) },
+            available_space: taffy::Size {
+                width: taffy::AvailableSpace::Definite(size.width),
+                height: taffy::AvailableSpace::Definite(size.height),
+            },
+            vertical_margins_are_collapsible: taffy::Line::FALSE,
+        };
+        if self.nodes[dom_node_id(node_id)].flags.is_inline_root() {
+            let _ = self.inline_layout(node_id, inputs, None);
+        } else {
+            let _ = compute_block_layout(self, node_id, inputs, None);
         }
     }
 
@@ -1130,26 +1237,43 @@ impl LayoutPassState<'_> {
                 }
             });
         let resolved_line_height = font_styles.map(|s| s.1);
-        // A form control with a cyclic percentage width contributes zero to
-        // min-content sizing (CSS Sizing 3 §5.2.2, compressible): text
-        // inputs, textareas and selects shrink into a flex-wrap line. This is
-        // the measured content contribution, not a preferred width:
-        // ContentSize measurements ignore preferred-width styles. Auto and
-        // max-content sizing keep the intrinsic width; known dimensions and
-        // explicit minima remain the leaf/parent layout algorithm's.
-        let compressible_min_content = inputs.available_space.width == AvailableSpace::MinContent
+        let compressible_min_content = if inputs.available_space.width == AvailableSpace::MinContent
             && inputs.parent_size.width.is_none()
-            && matches!(node.layout_style().size().width.expand(), taffy::style::ExpandedDimension::Percent(_));
+            && inputs.known_dimensions.width.is_none()
+        {
+            let style = node.layout_style();
+            let width = style.size().width;
+            use taffy::style::ExpandedDimension::{Calc, Percent};
+            matches!(width.expand(), Percent(_) | Calc(_)).then(|| {
+                let edges = if style.box_sizing() == taffy::BoxSizing::BorderBox {
+                    style.padding().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum()
+                        + style.border().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum()
+                } else {
+                    0.0
+                };
+                (width.resolve_or_zero(Some(0.0), resolve_calc_value) - edges).max(0.0)
+            })
+        } else {
+            None
+        };
 
         // pyro: the root `<svg>` of an SVG document keeps usvg's size (see the `Svg` arm below).
         let is_root_element = node.is_root_element();
         let content_sized = node.primary_styles().is_some_and(|style| {
             style.get_ui().field_sizing == style::values::computed::FieldSizing::Content
         });
-        // pyro: `frame-sizing: content-height` (see the iframe step below)
-        let frame_sizing_content_height = node.primary_styles().is_some_and(|style| {
+        // pyro: the physical axes (width, height) `frame-sizing` sizes from the content: `content-width`,
+        // `content-height`, or a logical value in the iframe's own writing mode (see the iframe step below)
+        let frame_sizing_axes = node.primary_styles().map_or((false, false), |style| {
             use style::values::computed::FrameSizing;
-            matches!(style.get_position().frame_sizing, FrameSizing::ContentHeight | FrameSizing::ContentBlockSize)
+            let vertical = style.writing_mode.is_vertical();
+            match style.get_position().frame_sizing {
+                FrameSizing::Auto => (false, false),
+                FrameSizing::ContentWidth => (true, false),
+                FrameSizing::ContentHeight => (false, true),
+                FrameSizing::ContentBlockSize => (vertical, !vertical),
+                FrameSizing::ContentInlineSize => (!vertical, vertical),
+            }
         });
         match &mut node.data {
             NodeData::Text(data) => {
@@ -1188,18 +1312,20 @@ impl LayoutPassState<'_> {
             NodeData::Element(element_data) | NodeData::AnonymousBlock(element_data) => {
                 // TODO: deduplicate with single-line text input
                 if *element_data.name.local == *"textarea" {
+                    // pyro: HTML § 4.10.11 "the textarea element": `rows` and `cols` are
+                    // non-negative integers greater than zero, else their defaults (2 rows of 20
+                    // characters): `rows="-1"` or `rows="0"` is 2 rows, not none.
                     let rows = element_data
                         .attr(local_name!("rows"))
-                        .and_then(|val| val.parse::<f32>().ok())
-                        .unwrap_or(2.0);
+                        .and_then(positive_html_integer)
+                        .map_or(2.0, |rows| rows as f32);
 
                     // pyro: 20 when absent or not a valid positive integer (HTML § 4.10.11 "the
                     // textarea element": the default character width), not a fixed 300px.
                     let cols = Some(
                         element_data
                             .attr(local_name!("cols"))
-                            .and_then(|val| val.trim().parse::<u32>().ok())
-                            .filter(|&cols| cols > 0)
+                            .and_then(positive_html_integer)
                             .map_or(20.0, |cols| cols as f32),
                     );
 
@@ -1250,12 +1376,10 @@ impl LayoutPassState<'_> {
                                 return taffy::Size { width: 1.0, height: line_height };
                             }
                             taffy::Size {
-                                width: if compressible_min_content {
-                                    0.0
-                                } else {
+                                width: compressible_min_content.unwrap_or_else(|| {
                                     cols.map(|cols| cols * font_size.unwrap_or(16.0) * 0.6).unwrap_or(300.0)
                                         + scrollbar_room
-                                },
+                                }),
                                 height: resolved_line_height.unwrap_or(16.0) * rows,
                             }
                         },
@@ -1328,6 +1452,8 @@ impl LayoutPassState<'_> {
                 // `system-ui`: 1px there. Without this it had no box at all
                 // (its options are hidden).
                 if let Some((false, chars)) = select_label_chars {
+                    // pyro: an open customizable select's picker (`construct::is_open_base_select`).
+                    let open_picker = construct::is_open_base_select(node);
                     let font_size = font_size.unwrap_or(13.333);
                     let style = node.layout_style();
                     let line_height = select_line.map(|line| line.line_height / scale);
@@ -1345,11 +1471,7 @@ impl LayoutPassState<'_> {
                         2.0
                     };
                     let content = taffy::Size {
-                        width: if compressible_min_content {
-                            0.0
-                        } else {
-                            (chars as f32 * 0.5 * font_size + 21.0).ceil()
-                        },
+                        width: compressible_min_content.unwrap_or_else(|| (chars as f32 * 0.5 * font_size + 21.0).ceil()),
                         height: line_height.map_or((font_size * 1.25).ceil(), |h| h + extra),
                     };
                     let mut output =
@@ -1385,6 +1507,10 @@ impl LayoutPassState<'_> {
                         let offset = ((content_height - line.line_height / scale) / 2.0).floor().max(0.0);
                         let baseline = padding.top + border.top + offset + line.baseline / scale;
                         output.baselines = taffy::Baselines::new(Some(baseline), Some(baseline));
+                    }
+                    if open_picker {
+                        drop(style);
+                        self.lay_out_select_picker(dom_node_id(node_id), inputs, &mut output);
                     }
                     return ChildLayout::Done(output);
                 }
@@ -1441,7 +1567,9 @@ impl LayoutPassState<'_> {
                                 _ => None,
                             };
                             let natural = taffy::Size {
-                                width: (w - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
+                                width: compressible_min_content.filter(|_| kind == Some("range")).unwrap_or_else(|| {
+                                    (w - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0)
+                                }),
                                 height: (h - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),
                             };
                             let mut out = compute_leaf_layout(
@@ -1450,7 +1578,12 @@ impl LayoutPassState<'_> {
                                 resolve_calc_value,
                                 |_known_size, _available_space| natural,
                             );
-                            if let Some(min) = keyword_min_width.filter(|_| inputs.known_dimensions.width.is_none()) {
+                            // (Also over a known width: the leaf layout clamps one by `max-width`, and inline
+                            // layout hands an atomic inline with a keyword minimum its bounded width as one.
+                            // Not over one an aspect ratio gave: block layout resolves the keyword against
+                            // that ratio, CSS Sizing 4 § 5.1.)
+                            let known_from_ratio = inputs.known_dimensions.width.is_some() && style.aspect_ratio().is_some();
+                            if let Some(min) = keyword_min_width.filter(|_| !known_from_ratio) {
                                 out.size.width = out.size.width.max(min);
                             }
                             return ChildLayout::Done(out);
@@ -1485,7 +1618,7 @@ impl LayoutPassState<'_> {
                                 .and_then(|layout| layout.lines().next())
                                 .map(|line| *line.metrics());
                             let style = node.layout_style();
-                            let contribution_width = if compressible_min_content { 0.0 } else { width };
+                            let contribution_width = compressible_min_content.unwrap_or(width);
                             // pyro: as tall as its text's line, which is `normal`
                             // for a line height of no more than the font size.
                             let line_height = line
@@ -1677,18 +1810,30 @@ impl LayoutPassState<'_> {
                         _ => (intrinsic_sizes, default_object_size),
                     };
 
-                    // pyro: an iframe of `frame-sizing: content-height` showing a responsively embedded
-                    // document is as tall as its content (css-sizing-4; the height comes from pyro through the
-                    // render tree's `data-pyro-frame-content-height`; WPT css-sizing `responsive-iframe/*`)
+                    // pyro: an iframe of `frame-sizing: content-height` (`content-width`, or a logical value)
+                    // showing a responsively embedded document takes its content's size on that axis
+                    // (css-sizing-4; the size, width and height, comes from pyro through the render tree's
+                    // `data-pyro-frame-content-size`; WPT css-sizing `responsive-iframe/*`). The other axis
+                    // keeps the default object size.
                     let (intrinsic_sizes, default_object_size) = match element_data
-                        .reserved_attr("data-pyro-frame-content-height")
+                        .reserved_attr("data-pyro-frame-content-size")
                         .filter(|_| crate::engine_marked(&frames.nonce, element_data))
-                        .and_then(|value| value.parse::<f32>().ok())
-                    {
-                        Some(height)
-                            if element_data.name.local == local_name!("iframe") && frame_sizing_content_height =>
+                        .and_then(|value| {
+                            let (width, height) = value.split_once(',')?;
+                            Some((width.parse::<f32>().ok()?, height.parse::<f32>().ok()?))
+                        }) {
+                        Some((width, height))
+                            if element_data.name.local == local_name!("iframe")
+                                && (frame_sizing_axes.0 || frame_sizing_axes.1) =>
                         {
-                            (IntrinsicSizes { width: None, height: Some(height.max(0.0)), ratio: None }, default_object_size)
+                            (
+                                IntrinsicSizes {
+                                    width: frame_sizing_axes.0.then_some(width.max(0.0)),
+                                    height: frame_sizing_axes.1.then_some(height.max(0.0)),
+                                    ratio: None,
+                                },
+                                default_object_size,
+                            )
                         }
                         _ => (intrinsic_sizes, default_object_size),
                     };
@@ -1752,6 +1897,24 @@ impl LayoutPassState<'_> {
                             (intrinsic_sizes, default_object_size)
                         };
 
+                    let mut intrinsic_sizes = intrinsic_sizes;
+                    if let Some(styles) = node.primary_styles() {
+                        use style::values::computed::Contain;
+                        use style::values::generics::box_::ContainIntrinsicSize;
+                        let contain = node_size_containment(node, &styles);
+                        if contain.contains(Contain::INLINE_SIZE) && !contain.contains(Contain::BLOCK_SIZE) {
+                            let position = styles.get_position();
+                            let vertical = styles.writing_mode.is_vertical();
+                            let override_size = if vertical { &position.contain_intrinsic_height } else { &position.contain_intrinsic_width };
+                            intrinsic_sizes.width = Some(match (remembered_intrinsic_size(node, &styles, !vertical), override_size) {
+                                (Some(remembered), _) => remembered,
+                                (None, ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length)) => length.0.px(),
+                                _ => 0.0,
+                            });
+                            intrinsic_sizes.height.get_or_insert(default_object_size.height);
+                            intrinsic_sizes.ratio = None;
+                        }
+                    }
                     let ratio_in_box_sizing_box = node
                         .primary_styles()
                         .is_some_and(|style| !style.get_position().aspect_ratio.auto);
@@ -1801,6 +1964,11 @@ impl LayoutPassState<'_> {
                     return ChildLayout::Table;
                 }
 
+                // pyro: an ordinary MathML fraction, built as one (`math::construct_fraction`).
+                if node.flags.contains(NodeFlags::IS_MATH_FRACTION) {
+                    return ChildLayout::MathFraction;
+                }
+
                 if node.flags.is_inline_root() {
                     return match multicol::is_multicol_node(node) {
                         true => ChildLayout::Multicol { inline_root: true },
@@ -1823,6 +1991,9 @@ impl LayoutPassState<'_> {
                             |_, _| taffy::Size { width: 0.0, height: line_height },
                         ))
                     }
+                    // pyro: a fieldset establishes a block formatting context (HTML rendering
+                    // §15.3.13): it contains its floats (WPT `fieldset-block-formatting-context`).
+                    Display::Block if node.is_fieldset() => ChildLayout::FlowRoot,
                     Display::Block => ChildLayout::Block,
                     Display::FlowRoot => ChildLayout::FlowRoot,
                     Display::Flex => {
@@ -2079,6 +2250,103 @@ impl LayoutPassState<'_> {
 }
 
 impl LayoutPassState<'_> {
+    /// pyro: lays out the open picker of a customizable select (`construct::is_open_base_select`),
+    /// whose own box is the leaf `output`: its options, groups and separators (its layout
+    /// children) stacked below its border box, each as wide as the widest of them and at least
+    /// the select, as Chromium's `::picker(select)` popover anchored under its select. The
+    /// select's scrollable overflow takes them in, so that they are hit and painted with it.
+    #[inline(never)]
+    fn lay_out_select_picker(
+        &mut self,
+        select: blitz_traits::NodeId,
+        inputs: taffy::tree::LayoutInput,
+        output: &mut taffy::LayoutOutput,
+    ) {
+        let children: Vec<blitz_traits::NodeId> =
+            self.nodes[select].layout_children.borrow().as_ref().map(|c| c.to_vec()).unwrap_or_default();
+        if children.is_empty() {
+            return;
+        }
+        let horizontal = |node: &Node| {
+            let margin = node.layout_style().margin().resolve_or_zero(None, resolve_calc_value);
+            margin.left + margin.right
+        };
+        let mut width = output.size.width;
+        for &child in &children {
+            if self.nodes[child].primary_styles().is_none() {
+                continue;
+            }
+            let margins = horizontal(&self.nodes[child]);
+            let measure = taffy::tree::LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                sizing_mode: taffy::SizingMode::InherentSize,
+                axis: taffy::RequestedAxis::Horizontal,
+                known_dimensions: taffy::Size::NONE,
+                known_dimensions_are_definite: taffy::Size { width: true, height: true },
+                parent_size: taffy::Size::NONE,
+                available_space: taffy::Size {
+                    width: taffy::AvailableSpace::MaxContent,
+                    height: taffy::AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: taffy::Line::FALSE,
+            };
+            width = width.max(self.compute_child_layout(taffy_node_id(child), measure).size.width + margins);
+        }
+        let mut y = output.size.height;
+        for (order, &child) in children.iter().enumerate() {
+            if self.nodes[child].primary_styles().is_none() {
+                continue;
+            }
+            let margin = self.nodes[child].layout_style().margin().resolve_or_zero(Some(width), resolve_calc_value);
+            let inner = (width - margin.left - margin.right).max(0.0);
+            let child_inputs = taffy::tree::LayoutInput {
+                run_mode: inputs.run_mode,
+                sizing_mode: taffy::SizingMode::InherentSize,
+                axis: taffy::RequestedAxis::Both,
+                known_dimensions: taffy::Size { width: Some(inner), height: None },
+                known_dimensions_are_definite: taffy::Size { width: true, height: true },
+                parent_size: taffy::Size { width: Some(width), height: None },
+                available_space: taffy::Size {
+                    width: taffy::AvailableSpace::Definite(inner),
+                    height: taffy::AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: taffy::Line::FALSE,
+            };
+            let out = self.compute_child_layout(taffy_node_id(child), child_inputs);
+            if inputs.run_mode == RunMode::PerformLayout {
+                let (border, padding) = {
+                    let style = self.nodes[child].layout_style();
+                    (
+                        style.border().resolve_or_zero(Some(width), resolve_calc_value),
+                        style.padding().resolve_or_zero(Some(width), resolve_calc_value),
+                    )
+                };
+                let layout = taffy::Layout {
+                    order: order as u32,
+                    location: taffy::Point { x: margin.left, y: y + margin.top },
+                    size: out.size,
+                    scrollable_overflow_rect: out.scrollable_overflow_rect,
+                    scrollbar_size: taffy::Size::ZERO,
+                    border,
+                    padding,
+                    margin,
+                };
+                self.set_unrounded_layout(taffy_node_id(child), &layout);
+            }
+            y += margin.top + out.size.height + margin.bottom;
+        }
+        let rect = output.scrollable_overflow_rect.rect();
+        output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
+            taffy::Rect {
+                left: rect.left.min(0.0),
+                top: rect.top.min(0.0),
+                right: rect.right.max(width),
+                bottom: rect.bottom.max(y),
+            },
+            taffy::Point { x: false, y: false },
+        );
+    }
+
     /// pyro: the containing block of the absolutely positioned box `box_id` when it is a
     /// positioned row or row group of the table `table_id` (the nearest positioned ancestor of the
     /// box below the table): the part's box (rows span every column; a row group spans its rows),
@@ -2323,6 +2591,8 @@ enum ChildLayout {
     /// pyro: a multi-column container, whose content is a block or (`inline_root`) an inline
     /// formatting context.
     Multicol { inline_root: bool },
+    /// pyro: an ordinary MathML fraction (`layout::math`).
+    MathFraction,
 }
 
 impl TraversePartialTree for LayoutPassState<'_> {
@@ -2396,6 +2666,11 @@ impl LayoutPartialTree for LayoutPassState<'_> {
             });
     }
 
+    fn resolve_size_calculation(&self, calc_ptr: *const (), size: f32, percent: f32) -> f32 {
+        let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
+        calc.resolve_size(CSSPixelLength::new(size), CSSPixelLength::new(percent)).px()
+    }
+
     fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
         resolve_calc_value(calc_ptr, parent_size)
     }
@@ -2440,6 +2715,10 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         Self: 'a;
 
     fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
+        // pyro: the box is laid out: it records the anchors it resolves anew (`touch_cv_anchor_uses`).
+        if self.uses_anchor_queries(node_id) {
+            self.touch_cv_anchor_uses(dom_node_id(node_id));
+        }
         let mut style = self.child_layout_style(self.node_from_id(node_id));
         if !self.try_styles.is_empty() {
             if let Some(value) = self.try_styles.get(&node_id) { style.style.use_fallback(value); }
@@ -2581,11 +2860,22 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let size = |v:&Size,h| match v { Size::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Size::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
         let max = |v:&MaxSize,h| match v { MaxSize::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), MaxSize::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
         let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,inline_basis), _ => None };
-        Some(([
+        let sizes = [
             taffy::Size { width:size(&pos.width,true),height:size(&pos.height,false) },
             taffy::Size { width:size(&pos.min_width,true),height:size(&pos.min_height,false) },
             taffy::Size { width:max(&pos.max_width,true),height:max(&pos.max_height,false) }
-        ].map(|size| wm.logical_size(size)),wm.logical_rect(taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) })))
+        ];
+        // pyro: the used px, for CSS transitions of the values (`BaseDocument::take_anchor_evals`).
+        if !node.flags.contains(NodeFlags::POSITION_TRY_OPTIONS) {
+            for (i, s) in sizes.iter().enumerate() {
+                if let Some(px) = s.width { self.record_anchor_used(node.id, 4 + 2 * i, px); }
+                if let Some(px) = s.height { self.record_anchor_used(node.id, 5 + 2 * i, px); }
+            }
+        } else {
+            // (A box with position-try options: its used values are not recorded, so none go stale.)
+            self.forget_anchor_used(node.id);
+        }
+        Some((sizes.map(|size| wm.logical_size(size)),wm.logical_rect(taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) })))
     }
 
     fn oof_anchor_insets(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>) -> taffy::Rect<Option<f32>> {
@@ -2660,7 +2950,16 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             }
             None
         };
-        wm.logical_rect(taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) })
+        let insets = taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) };
+        // pyro: the used px, for CSS transitions of the values (`BaseDocument::take_anchor_evals`).
+        if !node.flags.contains(NodeFlags::POSITION_TRY_OPTIONS) {
+            for (slot, px) in [insets.left, insets.right, insets.top, insets.bottom].into_iter().enumerate() {
+                if let Some(px) = px { self.record_anchor_used(node.id, slot, px); }
+            }
+        } else {
+            self.forget_anchor_used(node.id);
+        }
+        wm.logical_rect(insets)
     }
 
     fn oof_anchor_area(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>, trial: bool) -> Option<(taffy::Size<f32>, taffy::Point<f32>, taffy::Point<taffy::AlignSelf>)> {
@@ -3059,6 +3358,9 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
             // pyro: so is a column spanner (Multi-column Layout 1 §6), as wide as its
             // container, not its column (its lines are not broken at the column's width).
             || self.is_current_column_spanner(dom_node_id(child_node_id))
+            // pyro: and a fieldset (HTML rendering §15.3.13), which its parent places beside
+            // floats, not over them.
+            || self.node_from_id(child_node_id).is_fieldset()
     }
 
     fn block_child_min_top(&self, child_node_id: NodeId) -> Option<f32> {
@@ -3245,6 +3547,15 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
             self.clear_layout_cache_of(node_id);
             return self.compute_child_layout_internal(node_id, inputs, block_ctx);
         }
+        // A block laid out with its parent's block-end margin trimming reaching into it (taffy's
+        // `BlockContext::trims_block_end`) is laid out afresh and not cached either: the cache
+        // does not key on it.
+        if block_ctx.as_ref().is_some_and(|ctx| ctx.trims_block_end()) {
+            self.clear_layout_cache_of(node_id);
+            let output = self.compute_child_layout_internal(node_id, inputs, block_ctx);
+            self.clear_layout_cache_of(node_id);
+            return output;
+        }
         let output = compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             tree.compute_child_layout_internal(node_id, inputs, block_ctx.as_deref_mut())
         });
@@ -3266,6 +3577,18 @@ impl taffy::LayoutFlexboxContainer for LayoutPassState<'_> {
         = TaffyStyloStyle<ComputedStyleRef<'a>>
     where
         Self: 'a;
+
+    fn record_flex_item_positions(&mut self, owner: NodeId, items: impl Iterator<Item = (NodeId, usize, usize)>) {
+        let node = self.node_from_id_mut(owner);
+        let requested = node.primary_styles().is_some_and(|s| s.get_position().reading_flow == style::values::computed::ReadingFlow::FlexVisual);
+        if let Some(el) = node.element_data_mut() {
+            if requested {
+                el.detailed_layout_info = DetailedLayoutInfo::FlexReadingOrder(Box::new(items.collect()));
+            } else if matches!(el.detailed_layout_info, DetailedLayoutInfo::FlexReadingOrder(_)) {
+                el.detailed_layout_info = DetailedLayoutInfo::None;
+            }
+        }
+    }
 
     fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
         self.get_core_container_style(node_id)
@@ -3494,9 +3817,26 @@ impl Iterator for RefCellChildIter<'_> {
     }
 }
 
+/// pyro: the last remembered size `node` is sized as in its physical width (`width`) or height
+/// axis (CSS Sizing 4 § 5.1): only while it skips its contents, when that axis's
+/// `contain-intrinsic-size` has `auto` (`content-visibility: auto` adds it: CSS Contain 2 § 4.1,
+/// csswg-drafts#8407) and a size is remembered in the logical axis it is now (WPT css-sizing
+/// `contain-intrinsic-size/auto-006`: the remembered size is logical).
+pub(crate) fn remembered_intrinsic_size(node: &crate::Node, styles: &style::properties::ComputedValues, width: bool) -> Option<f32> {
+    if !crate::resolve::skips_contents(node, styles) {
+        return None;
+    }
+    let (auto_width, auto_height) = crate::resolve::contain_intrinsic_auto(styles);
+    if !(if width { auto_width } else { auto_height }) {
+        return None;
+    }
+    let inline = width != styles.writing_mode.is_vertical();
+    node.layout_data().remembered_size[if inline { 0 } else { 1 }]
+}
+
 /// pyro: the `natural=W,H` token of the element's
 /// `urn:x-pyro:state` attribute.
-fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
+pub(crate) fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
     let attr = element.attrs.state("state")?;
     let token = attr.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
     let (w, h) = token.split_once(',')?;
@@ -3624,7 +3964,7 @@ pub(crate) fn effective_size_containment(styles: &style::properties::ComputedVal
     use style::values::computed::Contain;
     use style::values::specified::box_::ContainerType;
     let box_style = styles.get_box();
-    let mut contain = box_style.contain;
+    let mut contain = box_style.used_containment();
     if box_style.container_type.intersects(ContainerType::SIZE) {
         contain |= Contain::INLINE_SIZE | Contain::BLOCK_SIZE;
     } else if box_style.container_type.intersects(ContainerType::INLINE_SIZE) {
@@ -3701,4 +4041,15 @@ fn empty_editing_host(nodes: &crate::NodeTree, node_id: blitz_traits::node_id::N
         crate::NodeData::Text(text) => text.content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')),
         _ => false,
     })
+}
+
+/// pyro: HTML "rules for parsing non-negative integers" for an attribute that must be greater than
+/// zero (`<textarea rows cols>`): leading ASCII whitespace and a `+` are skipped, the leading digits
+/// are the value, and anything after them is ignored; none, a `-` sign or 0 is no value.
+fn positive_html_integer(value: &str) -> Option<u32> {
+    let value = value.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let value = value.strip_prefix('+').unwrap_or(value);
+    let digits = value.bytes().take_while(u8::is_ascii_digit).count();
+    let n = value[..digits].parse::<u64>().ok()?;
+    (n > 0).then(|| n.min(u64::from(u32::MAX)) as u32)
 }

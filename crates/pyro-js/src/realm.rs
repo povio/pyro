@@ -153,6 +153,8 @@ pub enum ModuleType {
     /// `with { type: "css" }`: resolve with [`ModuleRequest::resolve_object`]
     /// (a `CSSStyleSheet`).
     Css,
+    /// `with { type: "text" }`: a module whose only export is the decoded string.
+    Text,
     /// A type JavaScriptCore parses but HTML does not allow here
     /// (`"webassembly"`): reject it with a TypeError.
     Unsupported,
@@ -164,6 +166,7 @@ impl ModuleType {
             sys::modules::MODULE_TYPE_JAVASCRIPT => ModuleType::JavaScript,
             sys::modules::MODULE_TYPE_JSON => ModuleType::Json,
             sys::modules::MODULE_TYPE_CSS => ModuleType::Css,
+            sys::modules::MODULE_TYPE_TEXT => ModuleType::Text,
             _ => ModuleType::Unsupported,
         }
     }
@@ -176,6 +179,14 @@ pub struct ModuleRequest {
     /// The identifier JSC requested (module registry key); differs from `url`
     /// for root-relative specifiers remapped from `file://`.
     key: String,
+    /// The URL of the module's source: its `import.meta.url`, stack frames
+    /// and dynamic `import()` referrer. `key`, except for an inline module
+    /// script, whose identity is no URL ([`Scope::inline_module_identity`]).
+    source_url: String,
+    /// The registry key of the module whose import requested this one, or
+    /// the source URL of the script whose `import()` did (patch 0039; `None`
+    /// without it and for a top-level load).
+    referrer: Option<String>,
     realm: std::rc::Weak<RealmInner>,
     resolve: Persistent,
     reject: Persistent,
@@ -209,10 +220,29 @@ impl ModuleRequest {
         self.ty
     }
 
+    /// The referring script: the registry key of the module whose static
+    /// import requested this module (an inline module script's identity,
+    /// [`Scope::inline_module_identity`]), or the source URL of the script
+    /// whose `import()` did. `None` for a top-level load, and on an engine
+    /// that does not report it (patch 0039).
+    pub fn referrer_key(&self) -> Option<&str> {
+        self.referrer.as_deref()
+    }
+
+    /// The referring script's base URL, the fetch's referrer (HTML "fetch the
+    /// descendants of a module script", "HostLoadImportedModule"): an inline
+    /// module script's registered base URL, else [`ModuleRequest::referrer_key`].
+    pub fn referrer_url(&self) -> Option<String> {
+        let key = self.referrer.as_deref()?;
+        let realm = self.realm.upgrade()?;
+        let base = realm.inline_module_bases.borrow().get(key).cloned();
+        Some(base.unwrap_or_else(|| key.to_owned()))
+    }
+
     /// Provides module source text (a [`ModuleType::JavaScript`] request).
     pub fn resolve(self, scope: &Scope<'_>, source: &str) -> JsResult<()> {
         use crate::bytecode_cache::{Find, SourceKind};
-        let prefix = module_prefix(&self.key);
+        let prefix = module_prefix(&self.source_url);
         if let Some(cache) = scope.realm.engine.bytecode_cache_for(prefix.len() + source.len()) {
             match cache.find(SourceKind::Module, &self.key, &[&prefix, source]) {
                 Find::Hit(key, entry) => return self.resolve_cached(scope, &cache, key, &entry),
@@ -243,7 +273,7 @@ impl ModuleRequest {
         let ctx = scope.realm.global_ctx()?;
         // The engine itself has what it precompiled from the entry.
         let precompiled = scope.realm.engine.precompiled_from_cache.borrow().contains(&key);
-        let url = JsString::new(&self.key);
+        let url = JsString::new(&self.source_url);
         let cached = crate::bytecode_cache::CachedSource::new(entry, !precompiled);
         let mut exc: sys::JSValueRef = ptr::null();
         // SAFETY: a live context of this thread; `cached` is given to this
@@ -271,6 +301,18 @@ impl ModuleRequest {
         self.resolve_source(scope, text, sys::modules::MODULE_TYPE_JSON)
     }
 
+    /// Supplies a text module through the pinned JSC typed resolver. Its
+    /// module map already keys the entry by (URL, Text), but its C API
+    /// accepts only JavaScript and JSON source providers. Encode the data
+    /// as one quoted string literal in a module with only a default export.
+    pub fn resolve_text(self, scope: &Scope<'_>, text: &str) -> JsResult<()> {
+        let mut source = b"export default ".to_vec();
+        serde_json::to_writer(&mut source, text).expect("encoding a string into a Vec is infallible");
+        source.push(b';');
+        let module = std::str::from_utf8(&source).expect("serialized JSON is UTF-8");
+        self.resolve_source(scope, module, sys::modules::MODULE_TYPE_JAVASCRIPT)
+    }
+
     /// Provides the `default` export of a [`ModuleType::Css`] request (the
     /// module's `CSSStyleSheet`).
     pub fn resolve_object(mut self, scope: &Scope<'_>, value: Object<'_>) -> JsResult<()> {
@@ -286,8 +328,8 @@ impl ModuleRequest {
                 scope.realm.global_ctx()?,
                 source.as_ptr().cast(),
                 source.len(),
-                self.key.as_ptr().cast(),
-                self.key.len(),
+                self.source_url.as_ptr().cast(),
+                self.source_url.len(),
                 module_type,
                 &mut err,
             )
@@ -472,6 +514,9 @@ pub(crate) struct RealmInner {
     /// Sources of top-level modules passed to `eval_module`; JSC requests the
     /// entry module itself through the fetch hook.
     inline_modules: RefCell<HashMap<String, String>>,
+    /// Inline module script identities and their base URLs
+    /// ([`Scope::inline_module_identity`]).
+    inline_module_bases: RefCell<HashMap<String, String>>,
     embedder: RefCell<Option<Rc<dyn Any>>>,
     /// The realm's current event (`window.event`), set by the embedder
     /// around each listener call ([`Scope::set_current_event`]); null
@@ -1560,12 +1605,44 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// The registry identity of an inline module script whose base URL is
+    /// `base` (the document base URL when it was prepared), for
+    /// [`Scope::eval_module`] and [`Scope::load_module_graph`]; `tag` tells
+    /// the realm's inline scripts apart. JSC evaluates an identity once, so
+    /// each script needs its own, while its `import.meta.url`, the referrer
+    /// its specifiers resolve against (import map scopes included) and its
+    /// stack frames are `base`, fragment and all. With patch 0038 the
+    /// identity is no URL (it starts with U+0001, which a resolved URL
+    /// never holds), registered with its base, so no fetched module can be
+    /// named like it. Without it, `<base without fragment>#inline-module-<tag>`.
+    pub fn inline_module_identity(&self, base: &str, tag: &str) -> String {
+        let identity = format!("\u{1}inline-module-{tag} {base}");
+        let registered = match self.realm.global_ctx() {
+            // SAFETY: a live context of this thread; the slices outlive the call, which copies them.
+            Ok(ctx) => unsafe {
+                sys::modules::pyro_jsc_inline_module_base_set(
+                    ctx,
+                    identity.as_ptr().cast(),
+                    identity.len(),
+                    base.as_ptr().cast(),
+                    base.len(),
+                ) == 1
+            },
+            Err(_) => false,
+        };
+        if registered {
+            self.realm.inline_module_bases.borrow_mut().insert(identity.clone(), base.to_owned());
+            return identity;
+        }
+        format!("{}#inline-module-{tag}", base.split('#').next().unwrap_or(base))
+    }
+
     /// Evaluates a module script; returns its evaluation promise. Imports go
     /// through the realm's [`ModuleFetcher`].
     ///
     /// JSC's module registry is keyed by URL: a URL evaluated once is not
-    /// evaluated again, so inline module scripts need distinct URLs (the
-    /// browser layer appends a fragment, which leaves relative resolution intact).
+    /// evaluated again, so inline module scripts need distinct identities
+    /// ([`Scope::inline_module_identity`]).
     pub fn eval_module(&self, source: &str, url: &str) -> JsResult<Value<'s>> {
         if !self.realm.engine.caps.modules {
             return Err(JsError::Unsupported(&"ES modules (JSScript module SPI)"));
@@ -1619,6 +1696,27 @@ impl<'s> Scope<'s> {
         make.call(None, &[stand_in.value(), target.value(), child.value(), deny.value()])?
             .as_object()
             .ok_or_else(|| JsError::Type("windowProxy made no object".into()))
+    }
+
+    /// A WindowProxy of this realm for a Window of another origin it reaches through a frame
+    /// (helpers.js `crossOriginWindow`): `stand_in` answers HTML's CrossOriginProperties by name
+    /// and the child windows by index; the proxy hands out functions of this realm made once per
+    /// proxy, a cross-origin Location, null as its prototype, and throws a SecurityError for
+    /// anything else. `stand_in` is never handed to page code through it.
+    pub fn cross_origin_window(&self, stand_in: Object<'_>) -> JsResult<Object<'s>> {
+        let make = self.realm.cached_helper(self, "crossOriginWindow")?;
+        make.call(None, &[stand_in.value()])?
+            .as_object()
+            .ok_or_else(|| JsError::Type("crossOriginWindow made no object".into()))
+    }
+
+    /// The accessible global behind a popup WindowProxy created by this
+    /// realm. Uses the same live target check as property access. An
+    /// ordinary object, an author-created proxy, a cross-origin popup or a
+    /// closed popup has no result. Does not invoke author property traps.
+    pub fn accessible_popup_window(&self, object: Object<'_>) -> JsResult<Option<Object<'s>>> {
+        let get = self.realm.cached_helper(self, "accessiblePopupWindow")?;
+        Ok(get.call(None, &[self.rehome_object(object).value()])?.as_object())
     }
 
     /// Whether this JavaScriptCore runs a module script in HTML's two steps
@@ -1697,6 +1795,24 @@ impl<'s> Scope<'s> {
             return Err(JsError::Type("module evaluation failed".into()));
         }
         Ok(unsafe { Value::from_raw(self.ctx, v) })
+    }
+
+    /// Records `error`, which a module script's evaluation (or linking) threw and which was
+    /// reported, as a module's cached [[EvaluationError]]: the engine rejects a later graph load
+    /// that reaches the module with this same value ([`Scope::is_module_evaluation_error`]). An
+    /// object is held weakly; a primitive is not recorded.
+    pub fn note_module_evaluation_error(&self, error: Value<'_>) {
+        if let Ok(note) = self.realm.cached_helper(self, "noteModuleEvaluationError") {
+            let _ = note.call(None, &[error]);
+        }
+    }
+
+    /// Whether `error` is an object [`Scope::note_module_evaluation_error`] recorded.
+    pub fn is_module_evaluation_error(&self, error: Value<'_>) -> bool {
+        self.realm
+            .cached_helper(self, "isModuleEvaluationError")
+            .and_then(|is| is.call(None, &[error]))
+            .is_ok_and(|v| v.to_bool())
     }
 
     /// Calls `function_source` (a function expression) with `this` and `args`;
@@ -1785,6 +1901,14 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// Invoke a WebIDL callback with undefined as its this value and no
+    /// arguments. JavaScriptCore's C API substitutes the global for a null
+    /// object receiver; the realm's intrinsic Reflect.apply preserves undefined.
+    pub fn invoke_callback(&self, callback: Object<'_>) -> JsResult<Value<'s>> {
+        let call = self.realm.cached_helper(self, "callWith")?;
+        call.call(None, &[callback.value(), self.undefined()])
+    }
+
     /// Runs `f` inside a JavaScript frame (a helper calls it), so the
     /// microtasks the callbacks it invokes queue run when the frame returns,
     /// not after each callback (JavaScriptCore performs a checkpoint when the
@@ -1800,8 +1924,7 @@ impl<'s> Scope<'s> {
             }
             Ok(s.undefined())
         })?;
-        let call = self.realm.cached_helper(self, "callWith")?;
-        let called = call.call(None, &[native.value(), self.undefined()]);
+        let called = self.invoke_callback(native);
         let result = out.borrow_mut().take();
         match (result, called) {
             (Some(r), _) => Ok(r),
@@ -1912,6 +2035,25 @@ impl<'s> Scope<'s> {
     pub fn sequence(&self, value: Value<'_>, what: &str) -> JsResult<Object<'s>> {
         let seq = self.realm.cached_helper(self, "sequence")?.call(None, &[value, self.string(what)])?;
         seq.as_object().ok_or_else(|| JsError::Type("sequence conversion produced no array".into()))
+    }
+
+    /// WebIDL sequence conversion with observable per-item conversions.
+    pub fn convert_sequence<T: 'static>(
+        &self,
+        value: Value<'_>,
+        what: &str,
+        convert: impl for<'a> Fn(&Scope<'a>, Value<'a>) -> JsResult<T> + 'static,
+    ) -> JsResult<Vec<T>> {
+        let values = Rc::new(RefCell::new(Vec::new()));
+        let output = values.clone();
+        let item = self.function("", move |s, _, args| {
+            let converted = convert(s, args.get(0))?;
+            output.borrow_mut().push(converted);
+            Ok(s.undefined())
+        })?;
+        self.realm.cached_helper(self, "sequence")?.call(None, &[value, self.string(what), item.value()])?;
+        let converted = std::mem::take(&mut *values.borrow_mut());
+        Ok(converted)
     }
 
     // -- host objects ------------------------------------------------------
@@ -2263,6 +2405,26 @@ impl<'s> Scope<'s> {
         self.realm.engine.realm_for_global(context).map(|inner| Realm { inner })
     }
 
+    /// Whether `object` was created in a realm of this engine that is gone for
+    /// its embedder: disposed (calls into its functions throw "Execution
+    /// context was destroyed.") or lingering (its document is not fully
+    /// active). A Web IDL callback from such a realm is not run. `false` when
+    /// that cannot be told: without the global-context SPI, or for an object
+    /// of another engine. Runs no script.
+    pub fn object_realm_gone(&self, object: Object<'_>) -> bool {
+        let Some(get_context) = sys::spi::get().get_object_global_context else { return false };
+        if unsafe { sys::JSContextGetGroup(object.ctx) } != self.realm.engine.group() {
+            return false;
+        }
+        // SAFETY: object is live in this VM; reading its global runs no script.
+        let context = unsafe { get_context(object.raw) };
+        if context.is_null() || context == self.realm.ctx.get() {
+            return false;
+        }
+        // A disposed realm leaves the engine's map (RealmInner::dispose).
+        self.realm.engine.realm_for_global(context).is_none_or(|inner| inner.ctx.get().is_null() || inner.is_lingering())
+    }
+
     /// Tests for one of this engine's native wrappers/closures or a same-VM
     /// global object, without invoking getters, proxy traps, or other JS.
     /// Includes globals retained by another realm after their owner is disposed.
@@ -2312,6 +2474,27 @@ impl<'s> Scope<'s> {
     /// The global object's payload header (null before `set_global_data`).
     pub(crate) fn global_payload(&self) -> *mut Header {
         self.realm.global_payload.get()
+    }
+
+    /// Installs an interface on this global as a writable, configurable,
+    /// non-enumerable own data property. On the fork, a custom value defers
+    /// creation until the first access (including descriptor inspection).
+    /// Other JSC builds materialize the same property immediately.
+    pub fn define_lazy_global_interface<I: LazyGlobalInterface>(&self) -> JsResult<()> {
+        let spi = sys::spi::get();
+        let target = self.realm.global_target.get();
+        if let (Some(install), Some(_)) = (spi.set_custom_value, spi.throw_exception) {
+            if !target.is_null() {
+                // SAFETY: a live global target and its interned property name.
+                // The monomorphized callback needs no borrowed Rust state.
+                let ok = unsafe {
+                    install(self.ctx, target, crate::string::atom_raw(I::NAME), Some(read_global_interface::<I>),
+                        None, sys::kJSPropertyAttributeDontEnum)
+                };
+                if ok { return Ok(()) }
+            }
+        }
+        self.global().set_atom_with(I::NAME, I::value(self)?, sys::kJSPropertyAttributeDontEnum)
     }
 
     /// Makes `name` a constant attribute of the realm's global: a
@@ -2459,6 +2642,12 @@ impl<'s> Scope<'s> {
         Ok(unsafe { Value::from_raw(self.ctx, p) })
     }
 
+    /// Freeze a native binding's array using this realm's intrinsic.
+    pub fn frozen_array(&self, items: &[Value<'_>]) -> JsResult<Value<'s>> {
+        let array = self.array(items)?;
+        self.realm.cached_helper(self, "freeze")?.call(None, &[array.value()])
+    }
+
     /// Stores a GC-traced hidden value on a host object (wrappers and the
     /// global only). Use for per-wrapper JS state such as event listeners so
     /// cycles through it stay collectable. Keys are constants: the thread's
@@ -2469,6 +2658,23 @@ impl<'s> Scope<'s> {
 
     pub fn get_hidden(&self, object: Object<'_>, key: &'static str) -> JsResult<Option<Value<'s>>> {
         self.get_hidden_raw(object, crate::string::atom_raw(key))
+    }
+
+    /// pyro: keeps `value`, of this realm, for the embedder under `name` (one per name): a root of
+    /// the realm's own, like its cached helpers, so a lingering realm hands it to its global
+    /// ([`Realm::linger`]) and it never keeps the realm alive by itself. A lingering realm adds
+    /// no root (the value would keep its global): nothing is kept then. `name` shares a map with
+    /// the cached install.js helpers: give it a space (no helper name has one).
+    pub fn keep_value(&self, name: &'static str, value: Value<'_>) {
+        if self.realm.is_lingering() {
+            return;
+        }
+        self.realm.helper_cache.borrow_mut().insert(name, Persistent::new(self, value));
+    }
+
+    /// The value [`Scope::keep_value`] kept under `name`.
+    pub fn kept_value(&self, name: &'static str) -> Option<Value<'s>> {
+        self.realm.helper_cache.borrow().get(name).map(|p| p.get(self))
     }
 
     /// [`Scope::set_hidden`] for a key computed at run time (a string is
@@ -2622,11 +2828,40 @@ pub struct Deferred {
 }
 
 impl Deferred {
+    /// The resolving function, for a host object that traces its promise
+    /// capability through JavaScriptCore instead of keeping native roots.
+    pub fn resolver<'s>(&self, scope: &Scope<'s>) -> Value<'s> {
+        self.resolve.get(scope)
+    }
+
     pub fn resolve(&self, scope: &Scope<'_>, value: Value<'_>) -> JsResult<()> {
         self.resolve.get(scope).as_object().expect("resolve").call(None, &[value]).map(|_| ())
     }
     pub fn reject(&self, scope: &Scope<'_>, value: Value<'_>) -> JsResult<()> {
         self.reject.get(scope).as_object().expect("reject").call(None, &[value]).map(|_| ())
+    }
+}
+
+/// An interface constructor cached by its realm's bindings, for
+/// [`Scope::define_lazy_global_interface`].
+pub trait LazyGlobalInterface {
+    const NAME: &'static str;
+    fn value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>>;
+}
+
+unsafe extern "C" fn read_global_interface<I: LazyGlobalInterface>(
+    ctx: sys::JSContextRef, _holder: sys::JSValueRef, _uid: *const c_void,
+) -> sys::JSValueRef {
+    let mut exc = ptr::null();
+    // SAFETY: JSC calls a CustomValue with its slot base's realm as ctx,
+    // including when another realm reads the descriptor.
+    unsafe {
+        let spi = sys::spi::get();
+        let value = class::guard(ctx, &mut exc, ptr::null(), |s| I::value(s).map(|v| v.raw));
+        if !exc.is_null() {
+            spi.throw_exception.expect("checked at installation")(ctx, exc);
+        }
+        if value.is_null() { sys::JSValueMakeUndefined(ctx) } else { value }
     }
 }
 
@@ -2748,6 +2983,7 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> 
         native_callback_pending: RefCell::new(None),
         native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),
+        inline_module_bases: RefCell::new(HashMap::new()),
         embedder: RefCell::new(None),
         current_event: Cell::new(ptr::null()),
         named_properties: RefCell::new(None),
@@ -2914,6 +3150,13 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         chain
     });
     let global_name = realm.global_class.map(|gid| reg.classes[gid as usize].name);
+    let global_accessors: Vec<_> = global_chain
+        .iter()
+        .flatten()
+        .flat_map(|id| reg.classes[*id as usize].def.global_accessors.iter().copied())
+        .collect();
+    let member_class = reg.member;
+    let immutable_proto_class = reg.immutable_proto;
     // The pure getters of the global's classes, root-first (see below).
     let global_pure: Vec<(ClassId, &'static str, u16, bool)> = global_chain
         .iter()
@@ -2936,6 +3179,27 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         // every member from it cost each realm two definitions per member.
         // Without the proxy's target, the members are copied from the
         // populated prototype as before.
+        // WebIDL (interface prototype object): the prototype objects of a [Global] interface and of
+        // every interface it inherits from are immutable prototype exotic objects
+        // (Object.setPrototypeOf(EventTarget.prototype, {}) throws in a window). Patch 0043 gives
+        // that to objects of a class: these are made as such, ahead of `materialize`, which then
+        // uses them. Without the patch they stay ordinary objects.
+        // (Patch 0041 too: it builds the window's chain without setting these prototypes'.)
+        let spi = sys::spi::get();
+        if spi.set_global_proxy_refuses_prevent_extensions.is_some() && spi.set_named_properties_chain.is_some() {
+            let helpers = realm.helpers.borrow().as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
+            let class_protos =
+                helpers.as_object().expect("helpers").get("classProtos")?.as_object().expect("classProtos array");
+            let mut parent = object_proto;
+            for &c in &chain {
+                // SAFETY: a live immortal class; the realm's live context and an object of it.
+                let raw = unsafe { sys::JSObjectMake(scope.ctx, immutable_proto_class, ptr::null_mut()) };
+                unsafe { sys::JSObjectSetPrototype(scope.ctx, raw, parent.raw) };
+                let proto = unsafe { Value::from_raw(scope.ctx, raw as sys::JSValueRef) };
+                class_protos.set_index(c, proto)?;
+                parent = proto;
+            }
+        }
         let on_instance = !target.is_null();
         if on_instance {
             if let Some(&parent) = chain.iter().rev().nth(1) {
@@ -2944,6 +3208,27 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
             materialize(scope, gid)?;
         } else {
             populate_class(scope, gid)?;
+        }
+        // Patch 0041: the window inherits from Window.prototype, which inherits from the named
+        // properties object, which inherits from EventTarget.prototype, as in WebIDL. Without it
+        // the chain stays global -> named properties object -> Object.prototype, and
+        // `installGlobal` emulates the rest.
+        if name == "Window" && chain.len() >= 2 {
+            if let Some(set) = sys::spi::get().set_named_properties_chain {
+                let interface = realm.interface_object(scope, 0, gid)?.as_object();
+                let parent = realm.interface_object(scope, 0, chain[chain.len() - 2])?.as_object();
+                if let (Some(interface), Some(parent)) = (interface, parent) {
+                    // SAFETY: the realm's live context and two of its prototype objects.
+                    unsafe { set(realm.global_ctx()?, interface.raw, parent.raw) };
+                }
+            }
+        }
+        // Patch 0043: a window's global proxy is a WindowProxy, whose [[PreventExtensions]] fails.
+        if name == "Window" {
+            if let Some(set) = sys::spi::get().set_global_proxy_refuses_prevent_extensions {
+                // SAFETY: the realm's live context.
+                unsafe { set(realm.global_ctx()?) };
+            }
         }
         // Chain root-first: copy members onto the global, brand instanceof.
         let install_global = realm.helper(scope, "installGlobal")?;
@@ -2990,6 +3275,24 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
             let part = MemberPart::Instance(target);
             install_members_raw(scope.ctx, &realm.engine, Some(realm), gid, global, interface, helpers, part)?;
             realm.global_members_on_instance.set(true);
+        }
+        if !global_accessors.is_empty() {
+            let accessor = realm.helper(scope, "accessor")?;
+            let function_proto = scope.function_prototype()?;
+            for (name, call, set) in global_accessors {
+                let getter = make_member_fn(scope.ctx, &realm.engine, member_class, call, None, name, 0, &keys)?;
+                if let Some(proto) = function_proto {
+                    getter.set_prototype(proto);
+                }
+                let setter = if let Some(call) = set {
+                    let setter = make_member_fn(scope.ctx, &realm.engine, member_class, call, None, name, 1, &keys)?;
+                    if let Some(proto) = function_proto { setter.set_prototype(proto); }
+                    setter.value()
+                } else {
+                    scope.undefined()
+                };
+                accessor.call(None, &[global.value(), scope.string(name), getter.value(), setter])?;
+            }
         }
     }
     Ok(())
@@ -3357,8 +3660,8 @@ fn install_members_raw(
         }
         let g = native(name, 0, get)?;
         let st = match set {
-            // Setters keep length 0, as JSC's callback functions had.
-            Some(f) => native(name, 0, f)?.value(),
+            // Web IDL attribute setters have one argument on both installation paths.
+            Some(f) => native(name, 1, f)?.value(),
             None => undefined,
         };
         let mut args = vec![proto.value(), string(name), g.value(), st];
@@ -3721,10 +4024,16 @@ unsafe extern "C" fn module_fetch(
             let key = crate::string::to_rust_string(identifier);
             let origin = realm.origin.borrow().clone();
             let url = remap_module_url(&key, origin.as_deref());
+            let source_url = realm.inline_module_bases.borrow().get(&key).cloned().unwrap_or_else(|| key.clone());
+            // Valid only inside this callback (patch 0039).
+            let referrer = sys::modules::pyro_jsc_module_fetch_referrer(ctx as sys::JSContextRef);
+            let referrer = (!referrer.is_null()).then(|| JsString::from_raw_owned(referrer).to_string());
             let request = ModuleRequest {
                 url: url.clone(),
                 ty: ModuleType::from_raw(module_type),
                 key,
+                source_url,
+                referrer,
                 realm: Rc::downgrade(realm),
                 resolve: Persistent::new(scope, Value::from_raw(scope.ctx, resolve as sys::JSValueRef)),
                 reject: Persistent::new(scope, Value::from_raw(scope.ctx, reject as sys::JSValueRef)),
@@ -3914,5 +4223,29 @@ mod tests {
         }
         assert_eq!(retired(), 0, "the payloads outlived their realm's global");
         assert_eq!(engine.inner.member_payloads.borrow().len(), 0);
+    }
+
+    /// A function of a disposed realm is "gone" to every other realm; live
+    /// realms' functions, and the caller's own, are not.
+    #[test]
+    fn object_realm_gone_tells_disposed_realms_functions() {
+        if crate::sys::spi::get().get_object_global_context.is_none() {
+            return;
+        }
+        let engine = crate::Engine::new().unwrap();
+        let keep = engine.create_realm(Default::default()).unwrap();
+        let other = engine.create_realm(Default::default()).unwrap();
+        let f = other.scope().unwrap().eval("Function('')", None, 1).unwrap();
+        keep.scope().unwrap().global().set("foreign", f).unwrap();
+        let gone = |realm: &crate::Realm, src: &str| {
+            let s = realm.scope().unwrap();
+            let value = s.eval(src, None, 1).unwrap();
+            s.object_realm_gone(value.as_object().unwrap())
+        };
+        assert!(!gone(&keep, "foreign"));
+        assert!(!gone(&keep, "Function('')"));
+        other.dispose();
+        assert!(gone(&keep, "foreign"));
+        assert!(!gone(&keep, "Function('')"));
     }
 }

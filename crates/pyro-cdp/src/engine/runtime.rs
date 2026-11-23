@@ -277,10 +277,13 @@ struct EvaluateParams {
 }
 
 /// CDP `userGesture`: activation of the document of `scope`'s realm.
-fn user_activation(scope: &pyro_js::Scope<'_>) {
-    if let Some(page) = scope.embedder::<pyro_webapi::PageDom>() {
-        page.notify_user_activation();
+fn with_user_gesture<R>(scope: &Scope<'_>, enabled: bool, run: impl FnOnce() -> R) -> R {
+    if enabled {
+        if let Some(page) = scope.embedder::<pyro_webapi::PageDom>() {
+            return page.with_debugger_gesture(run);
+        }
     }
+    run()
 }
 
 #[derive(Deserialize)]
@@ -538,13 +541,10 @@ impl EngineHost {
         let reply = self.reply_for(cmd, p.return_by_value, p.generate_preview, group, &realm)?;
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
-        if p.user_gesture {
-            user_activation(&scope);
-        }
         let eval = crate::perf::span("js.eval");
         // DevTools evaluation is exempt from the page's Trusted Types eval/Function checks, as
         // Chrome exempts it from CSP: a driver's own code compiles on enforcing pages too.
-        let evaluated = scope.compile_exempt(|| scope.eval(&p.expression, None, 1));
+        let evaluated = with_user_gesture(&scope, p.user_gesture, || scope.compile_exempt(|| scope.eval(&p.expression, None, 1)));
         drop(eval);
         match evaluated {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),
@@ -578,9 +578,6 @@ impl EngineHost {
         let reply = self.reply_for(cmd, p.return_by_value, p.generate_preview, group, &realm)?;
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
-        if p.user_gesture {
-            user_activation(&scope);
-        }
         // Arguments live on the heap while the function source is compiled
         // and called, so they must be GC roots (docs/ARCHITECTURE.md rule 1).
         let mut args = RootedVec::new();
@@ -589,7 +586,9 @@ impl EngineHost {
             args.push(&scope, value);
         }
         let call = crate::perf::span("js.call_function");
-        let called = scope.compile_exempt(|| scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args));
+        let called = with_user_gesture(&scope, p.user_gesture, || {
+            scope.compile_exempt(|| scope.call_function_rooted(&p.function_declaration, this.as_deref(), &args))
+        });
         drop(call);
         match called {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),

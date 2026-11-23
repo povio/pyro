@@ -1,0 +1,234 @@
+[
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, and not clamped)",
+    "base": "Fail",
+    "baseMessage": "assert_equals: desiredSize must be calculated using double-precision floating-point arithmetic (subtracting a third chunk) expected -2.2044604925031312e-17 but got 0",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, but clamped)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up zero)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.html",
+    "name": "Floating point arithmetic must manifest near NUMBER.MAX_SAFE_INTEGER (total ends up positive)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.serviceworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, and not clamped)",
+    "base": "Fail",
+    "baseMessage": "assert_equals: desiredSize must be calculated using double-precision floating-point arithmetic (subtracting a third chunk) expected -2.2044604925031312e-17 but got 0",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.serviceworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, but clamped)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.serviceworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up zero)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.serviceworker.html",
+    "name": "Floating point arithmetic must manifest near NUMBER.MAX_SAFE_INTEGER (total ends up positive)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.sharedworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, and not clamped)",
+    "base": "Fail",
+    "baseMessage": "assert_equals: desiredSize must be calculated using double-precision floating-point arithmetic (subtracting a third chunk) expected -2.2044604925031312e-17 but got 0",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.sharedworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, but clamped)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.sharedworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up zero)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.sharedworker.html",
+    "name": "Floating point arithmetic must manifest near NUMBER.MAX_SAFE_INTEGER (total ends up positive)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.worker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, and not clamped)",
+    "base": "Fail",
+    "baseMessage": "assert_equals: desiredSize must be calculated using double-precision floating-point arithmetic (subtracting a third chunk) expected -2.2044604925031312e-17 but got 0",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.worker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, but clamped)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.worker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up zero)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/readable-streams/floating-point-total-queue-size.any.worker.html",
+    "name": "Floating point arithmetic must manifest near NUMBER.MAX_SAFE_INTEGER (total ends up positive)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, and not clamped)",
+    "base": "Fail",
+    "baseMessage": "assert_equals: desiredSize must be calculated using floating-point arithmetic (after the three chunks have finished writing) expected -2.2044604925031312e-17 but got 0",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, but clamped)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up zero)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.html",
+    "name": "Floating point arithmetic must manifest near NUMBER.MAX_SAFE_INTEGER (total ends up positive)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.serviceworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, and not clamped)",
+    "base": "Fail",
+    "baseMessage": "assert_equals: desiredSize must be calculated using floating-point arithmetic (after the three chunks have finished writing) expected -2.2044604925031312e-17 but got 0",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.serviceworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, but clamped)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.serviceworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up zero)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.serviceworker.html",
+    "name": "Floating point arithmetic must manifest near NUMBER.MAX_SAFE_INTEGER (total ends up positive)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.sharedworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, and not clamped)",
+    "base": "Fail",
+    "baseMessage": "assert_equals: desiredSize must be calculated using floating-point arithmetic (after the three chunks have finished writing) expected -2.2044604925031312e-17 but got 0",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.sharedworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, but clamped)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.sharedworker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up zero)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.sharedworker.html",
+    "name": "Floating point arithmetic must manifest near NUMBER.MAX_SAFE_INTEGER (total ends up positive)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.worker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, and not clamped)",
+    "base": "Fail",
+    "baseMessage": "assert_equals: desiredSize must be calculated using floating-point arithmetic (after the three chunks have finished writing) expected -2.2044604925031312e-17 but got 0",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.worker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up positive, but clamped)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.worker.html",
+    "name": "Floating point arithmetic must manifest near 0 (total ends up zero)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "streams/writable-streams/floating-point-total-queue-size.any.worker.html",
+    "name": "Floating point arithmetic must manifest near NUMBER.MAX_SAFE_INTEGER (total ends up positive)",
+    "base": "Pass",
+    "candidate": "Pass",
+    "chrome158": "Pass"
+  }
+]

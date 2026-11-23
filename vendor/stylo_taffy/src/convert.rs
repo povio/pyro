@@ -99,7 +99,8 @@ pub fn length_percentage(val: &stylo::LengthPercentage) -> taffy::LengthPercenta
 #[inline]
 pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
     match val {
-        stylo::Size::LengthPercentage(val) => length_percentage(&val.0).into(),
+        stylo::Size::CalcSizeBasis(_) => dimension(val.prepared_size()),
+        stylo::Size::LengthPercentage(val) | stylo::Size::CalcSizePercentage(val) | stylo::Size::CalcSizeAny(val) => length_percentage(&val.0).into(),
         stylo::Size::Auto => taffy::Dimension::AUTO,
 
         stylo::Size::MaxContent => taffy::Dimension::max_content(),
@@ -107,13 +108,14 @@ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
         stylo::Size::FitContent => taffy::Dimension::fit_content(),
         stylo::Size::FitContentFunction(val) => fit_content_function(&val.0),
 
-        stylo::Size::Stretch => taffy::Dimension::stretch(),
+        stylo::Size::Stretch | stylo::Size::CalcSizeStretch(_) => taffy::Dimension::stretch(),
         stylo::Size::WebkitFillAvailable => taffy::Dimension::stretch(),
 
         // pyro: `calc-size()` is laid out as its basis; blitz-dom applies the calculation.
         stylo::Size::CalcSizeAuto(_) => taffy::Dimension::AUTO,
         stylo::Size::CalcSizeFitContent(_) => taffy::Dimension::fit_content(),
         stylo::Size::CalcSizeMinContent(_) => taffy::Dimension::min_content(),
+        stylo::Size::CalcSizeContent(_) => taffy::Dimension::content(),
         stylo::Size::CalcSizeMaxContent(_) => taffy::Dimension::max_content(),
 
         stylo::Size::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::Dimension::AUTO, dimension),
@@ -139,7 +141,7 @@ pub fn fit_content_function(val: &stylo::LengthPercentage) -> taffy::Dimension {
 pub fn calc_size_function(val: &stylo::LengthPercentage) -> taffy::CalcSizeFunction {
     match val.unpack() {
         stylo::UnpackedLengthPercentage::Length(len) => taffy::CalcSizeFunction::Length(len.px()),
-        stylo::UnpackedLengthPercentage::Percentage(percentage) => taffy::CalcSizeFunction::Scale(percentage.0),
+        stylo::UnpackedLengthPercentage::Percentage(percentage) => taffy::CalcSizeFunction::Percentage(percentage.0),
         stylo::UnpackedLengthPercentage::Calc(calc_ptr) => {
             taffy::CalcSizeFunction::Calc(calc_ptr as *const stylo::CalcLengthPercentage as *const ())
         }
@@ -149,7 +151,7 @@ pub fn calc_size_function(val: &stylo::LengthPercentage) -> taffy::CalcSizeFunct
 /// pyro: the calculation of a `calc-size(auto, ...)` value.
 #[inline]
 pub fn calc_size_auto(val: &stylo::Size) -> Option<taffy::CalcSizeFunction> {
-    match val {
+    match val.prepared_size() {
         stylo::Size::CalcSizeAuto(calc) => Some(calc_size_function(&calc.0)),
         _ => None,
     }
@@ -158,7 +160,8 @@ pub fn calc_size_auto(val: &stylo::Size) -> Option<taffy::CalcSizeFunction> {
 #[inline]
 pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
     match val {
-        stylo::Size::LengthPercentage(val) => length_percentage(&val.0).into(),
+        stylo::Size::CalcSizeBasis(_) => min_size(val.prepared_size()),
+        stylo::Size::LengthPercentage(val) | stylo::Size::CalcSizePercentage(val) | stylo::Size::CalcSizeAny(val) => length_percentage(&val.0).into(),
         stylo::Size::Auto => taffy::LengthPercentageAuto::AUTO,
 
         // Sizing keywords are not supported for min/max size properties in Taffy
@@ -171,8 +174,10 @@ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
         // pyro: `calc-size(auto, ...)` is the automatic minimum through its calculation
         // (`CoreStyle::calc_size_min`); other bases are not supported.
         stylo::Size::CalcSizeAuto(_)
+        | stylo::Size::CalcSizeStretch(_)
         | stylo::Size::CalcSizeFitContent(_)
         | stylo::Size::CalcSizeMinContent(_)
+        | stylo::Size::CalcSizeContent(_)
         | stylo::Size::CalcSizeMaxContent(_) => taffy::LengthPercentageAuto::AUTO,
 
         stylo::Size::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, min_size),
@@ -184,12 +189,16 @@ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
 /// [`min_size`] drops.
 #[inline]
 pub fn min_size_keyword(val: &stylo::Size) -> taffy::Dimension {
-    match val {
+    match val.prepared_size() {
         stylo::Size::LengthPercentage(_)
+        | stylo::Size::CalcSizeAny(_)
+        | stylo::Size::CalcSizePercentage(_)
         | stylo::Size::Auto
+        | stylo::Size::CalcSizeStretch(_)
         | stylo::Size::CalcSizeAuto(_)
         | stylo::Size::CalcSizeFitContent(_)
         | stylo::Size::CalcSizeMinContent(_)
+        | stylo::Size::CalcSizeContent(_)
         | stylo::Size::CalcSizeMaxContent(_) => taffy::Dimension::AUTO,
         keyword => dimension(keyword),
     }
@@ -214,6 +223,7 @@ pub fn max_size_keyword(val: &stylo::MaxSize) -> taffy::Dimension {
 #[inline]
 pub fn max_size(val: &stylo::MaxSize) -> taffy::LengthPercentageAuto {
     match val {
+        stylo::MaxSize::Calculation(size) => min_size(size.prepared_size()),
         stylo::MaxSize::LengthPercentage(val) => length_percentage(&val.0).into(),
         stylo::MaxSize::None => taffy::LengthPercentageAuto::AUTO,
 
@@ -228,6 +238,18 @@ pub fn max_size(val: &stylo::MaxSize) -> taffy::LengthPercentageAuto {
         stylo::MaxSize::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, max_size),
         stylo::MaxSize::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
     }
+}
+
+#[inline]
+pub fn max_size_calculation(val: &stylo::MaxSize) -> Option<(taffy::Dimension, taffy::CalcSizeFunction)> {
+    let stylo::MaxSize::Calculation(size) = val else { return None };
+    let basis = size.prepared_size();
+    let calculation = match basis {
+        stylo::Size::CalcSizeMinContent(calc) | stylo::Size::CalcSizeMaxContent(calc)
+        | stylo::Size::CalcSizeFitContent(calc) | stylo::Size::CalcSizeStretch(calc) => calc,
+        _ => return None,
+    };
+    Some((dimension(basis), calc_size_function(&calculation.0)))
 }
 
 #[inline]
@@ -415,7 +437,7 @@ pub fn establishes_fixed_containing_block(style: &stylo::ComputedValues) -> bool
     // keep the containing block they had; WPT css-contain `contain-*-ignored-cases-ib-split-001`),
     // nor an internal table box other than a cell.
     if box_style
-        .contain
+        .used_containment()
         .intersects(Contain::LAYOUT | Contain::PAINT)
         && {
             use style::values::specified::box_::{DisplayInside, DisplayOutside};

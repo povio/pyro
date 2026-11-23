@@ -1,0 +1,13 @@
+# Inline formatting on empty plaintext paragraphs
+
+The parent executable was built at 44e431b5b4de43f3e29c36e1ecbd8d4fc39aa978. Integrated tip 90d89678f adds only the padding-LF evidence. This topic was built against that existing runtime and includes the evidence-only integration commit in its history. Candidate source is a3c4d05fe64d561a242b4365fbf6a1c748c922e6. Adjacent receipts identify each executable, source tree and pinned JSC. Parent and signed 158.0.8127.37 WPT arms were reused from the padding-LF comparison at WPT a421f2fea5eb7f91e0db399e44b0fb0779ee1603.
+
+When a plaintext paragraph splits at the leading or trailing edge of formatted text, the empty line's placeholder BR belongs inside the formatting ancestors. At a trailing edge the insertion caret belongs inside the innermost cloned wrapper, before that BR. A sibling beyond the caret within the paragraph prevents treating it as an empty edge. The existing link and rich-text paths retain their behavior.
+
+The four insertText variants contain 212 named occurrences. The parent passed 140 and the candidate passes 164; signed Chrome passes 134. All 24 matched gains pass Chrome. They cover the leading edge, trailing edge and trailing edge after a temporary caret move, via both real typing and execCommand in four white-space modes. All 30 parent-only passes on these pages remain. Across 38 pages and 8,564 matched occurrences there were 24 gains, zero losses and no membership changes. The 34 guard pages retained all 8,352 statuses. All 12 earlier padding-LF gains were checked individually and held. The named ledger records URL, name, occurrence, exact parent, head and signed statuses.
+
+The 30 direct traces cover plaintext and rich hosts, initial/middle/final text offsets, bold, nested italic and bold, inline color, links and following inline siblings. Exact markup immediately after splitting and after typing rose from 16/30 to 23/30. The candidate matches all 15 plaintext cases. Anchor and focus paths/offsets improved from 24/30 to 27/30, and original formatting-element connectivity from 20/30 to 24/30. Original text connectivity matched in all 30. Rich-host results retained their parent behavior. No previously matching measured field was lost.
+
+Undo grouping differs on both Pyro arms. The first undo returns to the split paragraphs in 30/30 cases; signed Chrome returns to the initial markup. After two undo calls the initial markup and caret match in 30/30, while original element and text connectivity still differ in all 30.
+
+Independent QA ran the candidate across all 38 pages and all 30 direct controls and confirmed the matched occurrence counts. The native phrasing-host paragraph and caret-style regression passed.

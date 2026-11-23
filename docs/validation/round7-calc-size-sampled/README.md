@@ -1,0 +1,10 @@
+# Sampled auto basis: Studio development QA
+
+Tested `45cbd3f2635d0ffea6fa8114b9c410afdc479409`, using the MacBook-built arm64 render executable on Studio. Archive SHA-256 `69d89840fd86f84a28f8a3c94f538a83f5db85845ed9f1d62ee31354397bb5b9`; extracted executable `7fda1c9e279b56037a960ccff105ee16c3d8479d44e92bc3017166764b901c3a`. The retained parent executable was built from `4b6249f2f`, runtime-equivalent to direct parent `0e6341d8b` (see `source-difference.txt`). No parent replay, release claim or integration write.
+
+Pinned WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`; identical inventory, URL/name multiplicities and 13 complete OK harnesses in both arms. Compare occurrences in order within each URL/name. Passes 2,665 → 2,697 of 3,303: 32 gains, no losses, 606 persistent failures, no new strict pages. Physical height 988 → 1,004 of 1,156; width 624 → 640 of 732. All 32 gains match passing signed Chrome 158.0.8127.37 names in the retained stable reference (`signed-gains.json`); no fresh Chrome run. Sixteen gains use explicit-property transitions and sixteen use `transition: all`. No CSS Animation or WAAPI result changed. The eleven other pages were unchanged.
+
+At 75% on `auto` → `calc-size(any, 50px)`, the candidate passes width 87.5px and height 62.5px instead of reading the live 50px endpoint; the retained paired diagnostic records the parent and animation controls. No ordinary physical transition failures remain for that exact pair. Residuals include the height Typed OM zero-term serialization (`0.25 * size` rather than the expected explicit zero sum); this is not a claim to fix all interpolation. Raw messages and every changed occurrence are retained. `vendor-check.log` records the successful forward/reverse vendor patch round trip; `provenance.json` and `build.log.gz` identify the build, Rust toolchain and pinned JSC.
+# Direct residual
+
+The adjacent `min-content` → `calc-size(any, 50px)` height transition still returns 50px instead of 112.5px at −0.25 progress. This patch resolves an ordinary `auto` basis, not an intrinsic `min-content` basis.

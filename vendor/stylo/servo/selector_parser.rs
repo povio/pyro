@@ -72,6 +72,10 @@ pub enum PseudoElement {
     // `Highlight(ANY_HIGHLIGHT)`, `rule_map_key`; a lazy style for one name matches it with a
     // `matching_fn`). Both are styled lazily, when highlights are painted.
     TargetText,
+    SpellingError,
+    GrammarError,
+    SearchText,
+    Checkmark,
     Highlight(u16),
     ViewTransition,
     ViewTransitionGroup(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
@@ -122,6 +126,17 @@ pub const PSEUDO_COUNT: usize = PseudoElement::ServoTableWrapper.discriminant() 
 pub const ANY_HIGHLIGHT: u16 = 0;
 
 static HIGHLIGHT_NAMES: std::sync::RwLock<Vec<Atom>> = std::sync::RwLock::new(Vec::new());
+
+/// Parses a highlight name selector shared by stylesheet and CSSOM queries.
+pub fn highlight_selector(input: &mut CssParser) -> Result<PseudoElement, ParseError> {
+    let id = if input.try_parse(|input| input.expect_delim('*')).is_ok() {
+        ANY_HIGHLIGHT
+    } else {
+        highlight_name_id(&crate::values::CustomIdent::parse(input, &[])?.0)
+    };
+    input.expect_exhausted()?;
+    Ok(PseudoElement::Highlight(id))
+}
 
 /// Parses the named transition selector argument, preserving escaped wildcard identifiers.
 pub fn transition_selector(kind: &str, input: &mut CssParser) -> Result<PseudoElement, ParseError> {
@@ -199,6 +214,10 @@ impl ToCss for PseudoElement {
             ScrollButtonLeft => "::scroll-button(left)",
             ScrollButtonRight => "::scroll-button(right)",
             TargetText => "::target-text",
+            SpellingError => "::spelling-error",
+            GrammarError => "::grammar-error",
+            SearchText => "::search-text",
+            Checkmark => "::checkmark",
             ViewTransition => "::view-transition",
             ViewTransitionGroup(ref parts) | ViewTransitionPair(ref parts) | ViewTransitionOld(ref parts) | ViewTransitionNew(ref parts) => {
                 dest.write_str(match self { ViewTransitionGroup(_) => "::view-transition-group(", ViewTransitionPair(_) => "::view-transition-image-pair(", ViewTransitionOld(_) => "::view-transition-old(", _ => "::view-transition-new(" })?;
@@ -212,7 +231,9 @@ impl ToCss for PseudoElement {
             },
             Highlight(id) => {
                 dest.write_str("::highlight(")?;
-                if let Some(name) = highlight_name(id) {
+                if id == ANY_HIGHLIGHT {
+                    dest.write_char('*')?;
+                } else if let Some(name) = highlight_name(id) {
                     serialize_identifier(&name.to_string(), dest)?;
                 }
                 return dest.write_char(')');
@@ -248,7 +269,9 @@ impl ToCss for PseudoElement {
 
 impl ::selectors::parser::PseudoElement for PseudoElement {
     fn is_in_pseudo_element_tree(&self) -> bool { self.transition_argument().is_some() }
-    fn specificity_count(&self) -> u32 { u32::from(!self.transition_argument().is_some_and(|parts| parts.is_empty())) }
+    fn specificity_count(&self) -> u32 {
+        u32::from(!matches!(self, Self::Highlight(ANY_HIGHLIGHT)) && !self.transition_argument().is_some_and(|parts| parts.is_empty()))
+    }
     fn parses_as_element_backed(&self) -> bool {
         matches!(self, Self::DetailsContent)
     }
@@ -270,7 +293,7 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
     // accepts them too, or the parser would reject them after its `::scroll-marker` as well
     // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
     fn accepts_state_pseudo_classes(&self) -> bool {
-        self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::Column | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
+        self.is_in_pseudo_element_tree() || self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::FileSelectorButton | Self::Column | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
     }
 
     // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),
@@ -539,6 +562,8 @@ impl PseudoElement {
             | PseudoElement::ScrollButtonLeft
             | PseudoElement::ScrollButtonRight
             | PseudoElement::TargetText
+            | PseudoElement::SpellingError | PseudoElement::GrammarError
+            | PseudoElement::SearchText | PseudoElement::Checkmark
             | PseudoElement::ViewTransition | PseudoElement::ViewTransitionGroup(_) | PseudoElement::ViewTransitionPair(_) | PseudoElement::ViewTransitionOld(_) | PseudoElement::ViewTransitionNew(_)
             | PseudoElement::PickerSelect
             | PseudoElement::PickerIcon
@@ -580,7 +605,8 @@ impl PseudoElement {
                 PropertyFlags::APPLIES_TO_MARKER
             },
             PseudoElement::Placeholder => PropertyFlags::APPLIES_TO_PLACEHOLDER,
-            PseudoElement::Selection | PseudoElement::TargetText | PseudoElement::Highlight(_) => {
+            PseudoElement::Selection | PseudoElement::TargetText | PseudoElement::Highlight(_)
+            | PseudoElement::SpellingError | PseudoElement::GrammarError | PseudoElement::SearchText => {
                 PropertyFlags::APPLIES_TO_HIGHLIGHT
             },
             _ => PropertyFlags::empty(),
@@ -721,6 +747,9 @@ pub enum NonTSPseudoClass {
     MozMeterSubOptimum,
     MozMeterSubSubOptimum,
     MozTopmostModal,
+    /// pyro: `:-pyro-active-view-transition-scope` (UA sheets only): an element whose
+    /// element-scoped view transition is active (css-view-transitions-2).
+    PyroActiveViewTransitionScope,
     Open,
     Optional,
     OutOfRange,
@@ -835,6 +864,7 @@ impl ToCss for NonTSPseudoClass {
             Self::MozMeterSubOptimum => ":-moz-meter-sub-optimum",
             Self::MozMeterSubSubOptimum => ":-moz-meter-sub-sub-optimum",
             Self::MozTopmostModal => ":-moz-topmost-modal",
+            Self::PyroActiveViewTransitionScope => ":-pyro-active-view-transition-scope",
             Self::Open => ":open",
             Self::Optional => ":optional",
             Self::OutOfRange => ":out-of-range",
@@ -887,6 +917,7 @@ impl NonTSPseudoClass {
             Self::MozMeterSubOptimum => ElementState::SUB_OPTIMUM,
             Self::MozMeterSubSubOptimum => ElementState::SUB_SUB_OPTIMUM,
             Self::MozTopmostModal => ElementState::TOPMOST_MODAL,
+            Self::PyroActiveViewTransitionScope => ElementState::ACTIVE_VIEW_TRANSITION,
             Self::Open => ElementState::OPEN,
             Self::Optional => ElementState::OPTIONAL_,
             Self::OutOfRange => ElementState::OUTOFRANGE,
@@ -999,7 +1030,9 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
         let pseudo_class = match_ignore_ascii_case! { &name,
             "active" => NonTSPseudoClass::Active,
             "any-link" => NonTSPseudoClass::AnyLink,
-            "autofill" => NonTSPseudoClass::Autofill,
+            // pyro: the legacy alias Chromium and WebKit keep (WPT html/semantics/selectors
+            // pseudo-classes/autofill.html); it serializes as `:autofill`.
+            "autofill" | "-webkit-autofill" => NonTSPseudoClass::Autofill,
             "checked" => NonTSPseudoClass::Checked,
             "default" => NonTSPseudoClass::Default,
             "defined" => NonTSPseudoClass::Defined,
@@ -1053,6 +1086,14 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
                 }
                 NonTSPseudoClass::MozTopmostModal
             },
+            "-pyro-active-view-transition-scope" => {
+                if !self.in_user_agent_stylesheet() {
+                    return Err(ParseError::custom(
+                        SelectorParseErrorKind::UnexpectedIdent
+                    ))
+                }
+                NonTSPseudoClass::PyroActiveViewTransitionScope
+            },
             "-servo-nonzero-border" => {
                 if !self.in_user_agent_stylesheet() {
                     return Err(ParseError::custom(
@@ -1071,17 +1112,19 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
         &self,
         name: &str,
         parser: &mut CssParser<'i>,
-        after_part: bool,
+        _after_part: bool,
     ) -> Result<NonTSPseudoClass, ParseError> {
         let pseudo_class = match_ignore_ascii_case! { &name,
-            "lang" if !after_part => {
+            // pyro: `:lang()` and `:dir()` are not tree-structural, so they may follow `::part()`
+            // as Chrome allows (WPT css/selectors/parsing `parse-part`, invalidation `part-lang`).
+            "lang" => {
                 NonTSPseudoClass::Lang(parser.expect_ident_or_string()?.as_ref().into())
             },
             "state" => {
                 let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                 NonTSPseudoClass::CustomState(CustomState(result))
             },
-            "dir" if !after_part => {
+            "dir" => {
                 NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
             },
             "has-slotted" => {
@@ -1123,6 +1166,10 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "scroll-marker" => ScrollMarker,
             "column" => Column,
             "target-text" => TargetText,
+            "spelling-error" => SpellingError,
+            "grammar-error" => GrammarError,
+            "search-text" => SearchText,
+            "checkmark" => Checkmark,
             "view-transition" => ViewTransition,
             "details-content" => DetailsContent,
             "color-swatch" => ColorSwatch,
@@ -1203,8 +1250,7 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
     ) -> Result<PseudoElement, ParseError> {
         use self::PseudoElement::*;
         if name.eq_ignore_ascii_case("highlight") {
-            let ident = arguments.expect_ident()?;
-            return Ok(Highlight(highlight_name_id(&Atom::from(ident.as_ref()))));
+            return highlight_selector(arguments);
         }
         if name.get(..16).is_some_and(|prefix| prefix.eq_ignore_ascii_case("view-transition-")) {
             return transition_selector(&name.to_ascii_lowercase(), arguments);

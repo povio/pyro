@@ -1,0 +1,62 @@
+{
+  "base": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "wallMs": 12182,
+    "browserCpuS": 5.1,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "commit": "f329ccf6b20a6e9ae7d6927590bf14c6f54c107d",
+    "tree": "8968b15f666eee604bc9a67647d8684474275978",
+    "binarySHA256": "20765c79e60c957ca6a770ce738d0ff803639055f4151b90d1a0b5968fce3f03"
+  },
+  "candidate": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "wallMs": 15856,
+    "browserCpuS": 6.9,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "commit": "3c9fb8ea02c34338381d301ab4763e779888ca06",
+    "tree": "d841ef2e85776602b731f0547e99466db3556827",
+    "binarySHA256": "f26d36b5ba152cb597a57f0489f755ee8f4953210a88974fbbd71bb51b5f0724"
+  },
+  "precursor": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "wallMs": 13200,
+    "browserCpuS": 4.95,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "commit": "815aadea31cc250f6f93c5b85e80a22daf891528",
+    "tree": "2e7c6d9e8112b9dc69aac4dcb26653f2c4f7fc79",
+    "binarySHA256": "11e2be7298888f5d87d5656748f8c8069d1915f09fc077428dace4b1a16ca693"
+  },
+  "jscArchiveKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "profile": "wptiter (release-fast; no LTO; 16 codegen units; incremental; render; 1 Cargo job)",
+  "urlsSHA256": "b2ac83b623b3768ad68cf13d19d41bf09c61fab6093f2778ad32c157abe22ce4",
+  "release": {
+    "commit": "0cddcec2c197ce368e1812bf720244fe160b3b82",
+    "tree": "43798094be04ed9e2e1267553f4402b515bc1128",
+    "deltaFromMeasuredProduct": [
+      "crates/pyro-webapi/tests/crypto_js.rs"
+    ],
+    "changes": "Add the newly enumerable getDirectory method to the native StorageManager.prototype-list assertion."
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "surface": {
+    "secure": true,
+    "storageKeys": [
+      "estimate",
+      "persisted",
+      "getDirectory",
+      "persist"
+    ],
+    "getDirectory": "function",
+    "handles": [
+      "function",
+      "function",
+      "function",
+      "function",
+      "undefined"
+    ]
+  },
+  "main": {
+    "root": [
+      "",
+      "directory",
+      true
+    ],
+    "identity": true,
+    "isWritable": true,
+    "beforeClose": [],
+    "first": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "aborted": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "after": [
+      1,
+      8,
+      9,
+      4
+    ],
+    "path": [
+      "normal-fixture",
+      "inner",
+      "leaf"
+    ],
+    "stalePath": [
+      "normal-fixture",
+      "inner",
+      "leaf"
+    ],
+    "entries": [
+      [
+        "bytes",
+        "file"
+      ],
+      [
+        "inner",
+        "directory"
+      ]
+    ],
+    "names": [
+      [
+        "mismatch",
+        "TypeMismatchError"
+      ],
+      [
+        "invalid",
+        "TypeError"
+      ],
+      [
+        "absent",
+        "NotFoundError"
+      ],
+      [
+        "nonempty",
+        "InvalidModificationError"
+      ]
+    ],
+    "file": [
+      "bytes",
+      true
+    ]
+  },
+  "crossRealm": {
+    "same": true,
+    "mode": "siloed",
+    "text": "NotFoundError",
+    "types": [
+      "text/plain",
+      ""
+    ],
+    "deleted": "accepted"
+  },
+  "queue": [
+    1,
+    9
+  ],
+  "worker": {
+    "initial": [
+      1,
+      8,
+      9,
+      4
+    ],
+    "written": 2,
+    "read": 4,
+    "out": [
+      1,
+      70,
+      71,
+      4
+    ],
+    "length": 4,
+    "closed": "InvalidStateError",
+    "final": [
+      1,
+      70,
+      71
+    ],
+    "api": "function"
+  },
+  "reload": [
+    1,
+    70,
+    71
+  ],
+  "sameContext": true,
+  "otherOrigin": true,
+  "otherContext": true
+}

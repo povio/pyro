@@ -1,0 +1,30 @@
+supportsel-main-candidate 8082 page passes 5531 named passes 178206 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+supportsel-main-parent 8082 page passes 5526 named passes 178178 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+supportsel-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+supportsel-main-parent pages left only 5 right only 0
+supportsel-main-parent passes left only 45 right only 17
+supportsel-main-parent observed left only 0 right only 0
+supportsel-main-stable pages left only 264 right only 1683
+supportsel-main-stable passes left only 5732 right only 10489
+supportsel-main-stable observed left only 309 right only 681
+Losses vs parent by URL: Counter({'css/css-pseudo/parsing/highlight-pseudos.html': 6, 'css/css-highlight-api/custom-highlight-universal-parsing-and-computed-style.html': 3, 'css/css-pseudo/parsing/highlight-pseudos-search-text.tentative.html': 3, 'css/css-forms/parsing/checkmark-pseudo-element.html': 3, 'css/selectors/parsing/parse-class-prefix.tentative.html': 1, 'css/css-pseudo/parsing/tree-abiding-pseudo-elements.html': 1})
+supportsel-focus-candidate 36 page passes 25 named passes 2771 observed names 2834 statuses {'complete:0': 36}
+supportsel-focus-parent 36 page passes 22 named passes 2760 observed names 2834 statuses {'complete:0': 36}
+supportsel-focus-stable 36 page passes 31 named passes 2807 observed names 2834 statuses {'complete:0': 36}
+supportsel-focus-parent pages left only 3 right only 0
+supportsel-focus-parent passes left only 11 right only 0
+supportsel-focus-parent observed left only 0 right only 0
+supportsel-focus-stable pages left only 0 right only 6
+supportsel-focus-stable passes left only 20 right only 56
+supportsel-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+supportsel-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+supportsel-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+supportsel-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+supportsel-supplement-parent pages left only 0 right only 0
+supportsel-supplement-parent passes left only 0 right only 0
+supportsel-supplement-parent observed left only 0 right only 0
+supportsel-supplement-stable pages left only 0 right only 8
+supportsel-supplement-stable passes left only 0 right only 42
+supportsel-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

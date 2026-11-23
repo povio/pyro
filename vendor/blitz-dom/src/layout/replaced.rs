@@ -118,6 +118,11 @@ pub(crate) fn object_shows_image(image: &crate::node::ImageData) -> bool {
 /// then means that ratio (css-sizing-4 §5.1); without one it means `<ratio>`.
 pub(crate) fn has_natural_ratio(element: &ElementData) -> bool {
     use crate::node::{ImageData, SpecialElementData};
+    // pyro: or the natural size pyro-dom reports (`natural=W,H`: a video with its metadata, an
+    // image pyro-dom has loaded), by which it is sized.
+    if pyro_size_ratio(element).is_some() {
+        return true;
+    }
     match &element.special_data {
         SpecialElementData::Image(image) => match &**image {
             ImageData::Raster(image) => image.width > 0 && image.height > 0,
@@ -138,6 +143,9 @@ pub(crate) fn has_natural_ratio(element: &ElementData) -> bool {
 pub(crate) fn natural_ratio(element: &ElementData) -> Option<f32> {
     use crate::node::{ImageData, SpecialElementData};
     let usable = |ratio: f32| (ratio.is_finite() && ratio > 0.0).then_some(ratio);
+    if let Some(ratio) = pyro_size_ratio(element) {
+        return Some(ratio);
+    }
     match &element.special_data {
         SpecialElementData::Image(image) => match &**image {
             ImageData::Raster(image) => usable(image.width as f32 / image.height as f32),
@@ -156,13 +164,26 @@ pub(crate) fn natural_ratio(element: &ElementData) -> Option<f32> {
     }
 }
 
+/// pyro: the ratio of the natural size pyro-dom reports for `element` (`natural=W,H`), when both
+/// sides are positive.
+fn pyro_size_ratio(element: &ElementData) -> Option<f32> {
+    let (w, h) = crate::layout::pyro_natural_size(element)?;
+    let ratio = w / h;
+    (w > 0.0 && h > 0.0 && ratio.is_finite()).then_some(ratio)
+}
+
 /// pyro: whether `element` is laid out as an atomic inline box when inline-level:
 /// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image or a document.
 pub(crate) fn is_inline_box(element: &ElementData) -> bool {
     if element.image_broken && !is_content_image(element) {
         return false;
     }
-    is_inline_box_element(&element.name.local) || is_image_object(element) || is_document_object(element)
+    is_inline_box_element(&element.name.local)
+        || is_image_object(element)
+        || is_document_object(element)
+        // pyro: a MathML fraction is an atomic inline (`layout::math`; one that is not an
+        // ordinary fraction holds its children's inline layout, as an inline-block would).
+        || (element.name.ns == markup5ever::ns!(mathml) && element.name.local == markup5ever::local_name!("mfrac"))
 }
 
 /// The intrinsic dimensions of a replaced element per CSS Images 3
@@ -493,19 +514,21 @@ pub fn compute_replaced_layout(
     let is_content_keyword = |d: taffy::Dimension| d.is_sizing_keyword() && !d.is_stretch();
     let mut min_size = min_size;
     let mut max_size = max_size;
+    if min_style.width.is_stretch() { min_size.width = stretch_size.width; }
+    if max_style.width.is_stretch() { max_size.width = stretch_size.width; }
+    if min_style.height.is_stretch() { min_size.height = stretch_size.height; }
+    if max_style.height.is_stretch() { max_size.height = stretch_size.height; }
     if is_content_keyword(min_style.width)
         || is_content_keyword(max_style.width)
         || is_content_keyword(min_style.height)
         || is_content_keyword(max_style.height)
     {
-        let content_width = style_size
-            .height
+        let content_width = style_size.height.or(Some(inherent_size.height).filter(|_| min_size.height.is_some() || max_size.height.is_some()))
             .map(|h| h.maybe_clamp(min_size.height, max_size.height))
             .zip(aspect_ratio)
             .map(|(h, ratio)| h * ratio)
             .unwrap_or(inherent_size.width);
-        let content_height = style_size
-            .width
+        let content_height = style_size.width.or(Some(inherent_size.width).filter(|_| min_size.width.is_some() || max_size.width.is_some()))
             .map(|w| w.maybe_clamp(min_size.width, max_size.width))
             .zip(aspect_ratio)
             .map(|(w, ratio)| w / ratio)
@@ -570,11 +593,7 @@ pub fn compute_replaced_layout(
     if known_dimensions.width.is_some() | known_dimensions.height.is_some() {
         // Style max sizes without the available-space fallback: available space must not
         // constrain the aspect-ratio transfer of parent-resolved dimensions.
-        let style_max_size = style
-            .max_size()
-            .maybe_resolve(basis_for_max_and_preferred, &resolve_calc_value)
-            .maybe_sub(box_sizing_adjustment)
-            .maybe_max(min_size);
+        let style_max_size = max_size.maybe_max(min_size);
 
         let content_box_known_dimensions = known_dimensions.maybe_sub(pb_sum);
         let transferred = content_box_known_dimensions
@@ -591,14 +610,14 @@ pub fn compute_replaced_layout(
         return LayoutOutput::from_sizes(size + pb_sum, overflow_rect_for(size));
     }
 
-    let unclamped_size = if style_size.width.is_some() | style_size.height.is_some() {
-        apply_ratio(style_size).unwrap_or(inherent_size)
-    } else {
-        inherent_size
-    };
+    if style_size.width.is_some() || style_size.height.is_some() {
+        let preferred = style_size.maybe_clamp(min_size, max_size);
+        let size = apply_ratio(preferred).unwrap_or(inherent_size).maybe_clamp(min_size, max_size);
+        return LayoutOutput::from_sizes(size + pb_sum, overflow_rect_for(size));
+    }
 
     // Floor size at zero
-    let size = unclamped_size.map(|s| s.max(0.0));
+    let size = inherent_size.map(|s| s.max(0.0));
 
     // Violations
     let width_violation = if size.width < min_size.width.unwrap_or(0.0) {

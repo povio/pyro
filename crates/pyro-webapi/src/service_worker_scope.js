@@ -211,18 +211,26 @@
     }
     get scriptURL() { return workerData.get(this).scriptURL; }
     get state() { return workerData.get(this).state; }
-    postMessage() {
-      throw new DOMExceptionC("Failed to execute 'postMessage' on 'ServiceWorker': A service worker cannot message itself.", 'NotSupportedError');
+    postMessage(message, options) {
+      if (!workerData.has(this)) throw new TypeErrorC('Illegal invocation');
+      if (arguments.length === 0) throw new TypeErrorC("ServiceWorker.postMessage requires a message.");
+      native.postToSelf(message, options);
     }
   }
   tag(ServiceWorker, 'ServiceWorker');
   const me = new ServiceWorker(token, { scriptURL: info.scriptURL, state: 'parsed' });
 
+  const managers = new WeakMap();
   class ServiceWorkerRegistration extends EventTargetC {
     constructor(t) {
       if (t !== token) throw illegal('ServiceWorkerRegistration');
       super();
       defineProperty(this, Symbol.toStringTag, { value: 'ServiceWorkerRegistration', configurable: true });
+    }
+    get cookies() {
+      if (this !== registration) throw illegal('ServiceWorkerRegistration.cookies');
+      if (!managers.has(this)) managers.set(this, native.cookieManager());
+      return managers.get(this);
     }
     get scope() { return info.scope; }
     get updateViaCache() { return info.updateViaCache; }
@@ -233,6 +241,7 @@
     update() { return query('update').then(() => registration); }
     unregister() { return query('unregister'); }
   }
+  defineProperty(ServiceWorkerRegistration.prototype, 'cookies', { enumerable: true });
   tag(ServiceWorkerRegistration, 'ServiceWorkerRegistration');
   const registration = new ServiceWorkerRegistration(token);
   const slots = { installing: null, waiting: null, active: null };
@@ -253,12 +262,13 @@
   }
 
   // -- Dispatch -------------------------------------------------------------------
-  const dispatch = (event) => {
+  const dispatch = (event, trusted = false, originKey = undefined) => {
     const d = extendData.get(event);
     d.internal = true;
     d.dispatching = true;
     try {
-      self.dispatchEvent(event);
+      if (trusted) native.dispatchTrustedEvent(event, originKey);
+      else self.dispatchEvent(event);
     } finally {
       d.dispatching = false;
     }
@@ -304,18 +314,19 @@
     ).then(undefined, (error) => native.failFetch(id, String(error && error.message || error)));
   }
 
-  function dispatchMessage(data, ports, source, origin) {
+  function dispatchMessage(data, ports, source, origin, originKey) {
     const event = new ExtendableMessageEvent('message', {
       data,
       origin,
       ports: ports || [],
-      source: client(source),
+      source: source === null ? me : client(source),
     });
-    dispatch(event);
+    dispatch(event, true, originKey);
   }
 
-  function dispatchMessageError(source, origin) {
-    dispatch(new ExtendableMessageEvent('messageerror', { origin, source: client(source) }));
+  function dispatchMessageError(source, origin, originKey) {
+    const event = new ExtendableMessageEvent('messageerror', { origin, source: source === null ? me : client(source) });
+    dispatch(event, true, originKey);
   }
 
   for (const [name, C] of [
@@ -328,6 +339,11 @@
 
   return {
     clients,
+    ExtendableEvent,
+    dispatchCookieChange(event) {
+      const d = dispatch(event, true);
+      settled(d).catch(error => { self.reportError(error); });
+    },
     registration,
     serviceWorker: me,
     skipWaiting: () => query('skipWaiting').then(() => undefined),

@@ -1,0 +1,66 @@
+[
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"subscript\",\"\"]] \"<sub>fo[o</sub><span style=vertical-align:sub>b]ar</span>\" queryCommandIndeterm(\"subscript\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"subscript\",\"\"]] \"<sub>fo[o</sub><span style=vertical-align:sub>b]ar</span>\" queryCommandIndeterm(\"subscript\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"subscript\",\"\"]] \"fo[o<sub>b]ar</sub>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/subscript.html",
+    "[[\"subscript\",\"\"]] \"fo[o<sub>bar</sub>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"false\"],[\"superscript\",\"\"]] \"<sup>fo[o</sup><span style=vertical-align:super>b]ar</span>\" queryCommandIndeterm(\"superscript\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"stylewithcss\",\"true\"],[\"superscript\",\"\"]] \"<sup>fo[o</sup><span style=vertical-align:super>b]ar</span>\" queryCommandIndeterm(\"superscript\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"superscript\",\"\"]] \"fo[o<sup>b]ar</sup>baz\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/superscript.html",
+    "[[\"superscript\",\"\"]] \"fo[o<sup>bar</sup>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]

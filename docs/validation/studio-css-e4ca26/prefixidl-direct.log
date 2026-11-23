@@ -1,0 +1,9 @@
+prefixidl-direct-candidate 59 page passes 48 named passes 1859 observed names 1885 statuses {'complete:0': 59}
+prefixidl-direct-parent 59 page passes 48 named passes 1835 observed names 1885 statuses {'complete:0': 59}
+prefixidl-direct-stable 59 page passes 53 named passes 1858 observed names 1885 statuses {'complete:0': 59}
+prefixidl-direct-parent pages left only 0 right only 0
+prefixidl-direct-parent passes left only 24 right only 0
+prefixidl-direct-parent observed left only 0 right only 0
+prefixidl-direct-stable pages left only 3 right only 8
+prefixidl-direct-stable passes left only 23 right only 22
+prefixidl-direct-stable observed left only 0 right only 0

@@ -542,6 +542,13 @@ impl ElementCx<'_, '_> {
             widths.x1 * fraction,
             widths.y1 * fraction,
         );
+        // pyro: shaped corners shrink along their contour (radii not scaled to fit the smaller
+        // box): scaled, a concave corner's curve left the border's middle and the background
+        // showed past its outer edge (WPT css-borders `render-corner-shape.html?corner-shape=-1&
+        // border-top-left-radius=100%&border-width=20`).
+        if let Some(contour) = self.frame.inset_contour(insets) {
+            return Some(contour.path());
+        }
         let radii = self.frame.border_radii;
         let shrink = |r: Vec2, dx: f64, dy: f64| Vec2::new((r.x - dx).max(0.0), (r.y - dy).max(0.0));
         let radii = NonUniformRoundedRectRadii {
@@ -684,6 +691,13 @@ impl ElementCx<'_, '_> {
         area: Rect,
         current_color: &style::color::AbsoluteColor,
     ) {
+        // pyro: HTML-in-Canvas privacy: an image layer other than a URL or a gradient (a
+        // cross-fade, an image set) is not classified by origin: it taints (`Privacy`).
+        if let Some(privacy) = &self.context.privacy
+            && !matches!(layer.stylo_image, GenericImage::None | GenericImage::Gradient(_) | GenericImage::Url(_))
+        {
+            privacy.unclassified.set(true);
+        }
         match layer.stylo_image {
             GenericImage::None => {
                 // Do nothing
@@ -692,6 +706,17 @@ impl ElementCx<'_, '_> {
                 self.draw_gradient_layer(scene, gradient, layer, area, current_color)
             }
             GenericImage::Url(_) => {
+                // pyro: HTML-in-Canvas privacy: a layer image from an opaque response is left out,
+                // the pixels of any other are allowed (`Privacy`).
+                if let Some(privacy) = &self.context.privacy {
+                    let Some(data) = layer.image_data else { return };
+                    if super::Privacy::opaque(&data.image) {
+                        return;
+                    }
+                    if let ImageData::Raster(raster) = &data.image {
+                        privacy.allowed.borrow_mut().push(raster.data.id());
+                    }
+                }
                 self.draw_raster_image_layer(scene, layer, area);
                 #[cfg(feature = "svg")]
                 self.draw_svg_image_layer(scene, layer, area);

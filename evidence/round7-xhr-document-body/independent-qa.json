@@ -1,0 +1,13 @@
+{
+  "files": {
+    "xhr-head.json": "d64f547a0af4c2addc3964f72263417d152eae0aadd02a460ee1afa8cecbb97c",
+    "xhr-all-names.json": "13dfeeece87b6ffb891c9593ea59d2db4a02623f203a066e6e8bef029b7d88ab",
+    "xhr-wire.json": "fa08c5868834fd8bd79e4890b49ee1e3b160c08ba8483581905d366bf8b22f14",
+    "xhr-compare.py": "4dff4751e7b3fe70e1150719bdc741b6475dda57fab0e5dba47d9ea3a2e47f89"
+  },
+  "confirmedGain": 20,
+  "confirmedLoss": 0,
+  "confirmedCompletedWireRequests": 82,
+  "wireChromeMatchesBefore": 76,
+  "wireChromeMatchesAfter": 78
+}

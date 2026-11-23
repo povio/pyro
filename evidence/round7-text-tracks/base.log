@@ -1,0 +1,6 @@
+wptserve on http://web-platform.test:64095 (log /var/folders/nn/qnd33c214r50y2h5h2b3bp700000gn/T/pyro-wptserve-CgaB4x/serve.log)
+base: 52/94 (30 s)
+base: 64/94 (60 s)
+base: 76/94 (91 s)
+base: 88/94 (121 s)
+base: done 94 pages in 131.2 s (CPU: browser 2.1 s, runner 2.4 s, server 0.0 s), restarts 0, event loop lag p50 2 ms p99 10 ms

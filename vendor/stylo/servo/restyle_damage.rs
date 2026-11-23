@@ -224,6 +224,17 @@ impl ComputedValues {
 }
 
 impl style_structs::Box {
+    #[allow(missing_docs)]
+    pub fn used_containment(&self) -> crate::values::computed::Contain {
+        use crate::values::computed::{Contain, ContentVisibility};
+        let content = Contain::LAYOUT | Contain::STYLE | Contain::PAINT;
+        self.contain | match self.content_visibility {
+            ContentVisibility::Visible => Contain::NONE,
+            ContentVisibility::Auto => content,
+            ContentVisibility::Hidden => content | Contain::SIZE,
+        }
+    }
+
     /// Whether there is a non-default transform or perspective style set
     pub fn has_transform_or_perspective(&self) -> bool {
         !self.transform.0.is_empty()

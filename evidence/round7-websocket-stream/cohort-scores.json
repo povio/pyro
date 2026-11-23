@@ -1,0 +1,40 @@
+{
+  "guards": {
+    "baseNamed": 134,
+    "baseObserved": 142,
+    "candidateNamed": 134,
+    "candidateObserved": 142,
+    "chromeNamed": 136,
+    "chromeObserved": 142,
+    "matchedGain": 0,
+    "newlyObservedPass": 0,
+    "lostPass": 0,
+    "candidateOnlyPass": 0,
+    "chromeOnlyPass": 2,
+    "recoveredChromeOnly": 0,
+    "missingFromCandidate": 0,
+    "newlyObserved": 0,
+    "baseStrict": 13,
+    "candidateStrict": 13,
+    "chromeStrict": 14
+  },
+  "target": {
+    "baseNamed": 0,
+    "baseObserved": 580,
+    "candidateNamed": 420,
+    "candidateObserved": 580,
+    "chromeNamed": 412,
+    "chromeObserved": 580,
+    "matchedGain": 420,
+    "newlyObservedPass": 0,
+    "lostPass": 0,
+    "candidateOnlyPass": 8,
+    "chromeOnlyPass": 0,
+    "recoveredChromeOnly": 412,
+    "missingFromCandidate": 0,
+    "newlyObserved": 0,
+    "baseStrict": 0,
+    "candidateStrict": 44,
+    "chromeStrict": 36
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "target": [
+    "html/semantics/the-button-element/command-and-commandfor/button-event-dispatch-content-attribute.html",
+    "html/semantics/the-button-element/command-and-commandfor/button-event-dispatch.html",
+    "html/semantics/the-button-element/command-and-commandfor/button-type-behavior.html",
+    "html/semantics/the-button-element/command-and-commandfor/button-type-reflection.html",
+    "html/semantics/the-button-element/command-and-commandfor/command-reflection.html",
+    "html/semantics/the-button-element/command-and-commandfor/event-interface.html",
+    "html/semantics/the-button-element/command-and-commandfor/interface.html",
+    "html/semantics/the-button-element/command-and-commandfor/invalid-element-types.html?command=--custom-event&half=first",
+    "html/semantics/the-button-element/command-and-commandfor/invalid-element-types.html?command=--custom-event&half=second",
+    "html/semantics/the-button-element/command-and-commandfor/invalid-element-types.html?command=show-modal&half=first",
+    "html/semantics/the-button-element/command-and-commandfor/invalid-element-types.html?command=show-modal&half=second",
+    "html/semantics/the-button-element/command-and-commandfor/invalid-element-types.html?command=show-popover&half=first",
+    "html/semantics/the-button-element/command-and-commandfor/invalid-element-types.html?command=show-popover&half=second",
+    "html/semantics/the-button-element/command-and-commandfor/on-details-behavior.tentative.html",
+    "html/semantics/the-button-element/command-and-commandfor/on-details-invalid-behavior.tentative.html",
+    "html/semantics/the-button-element/command-and-commandfor/on-dialog-behavior.html",
+    "html/semantics/the-button-element/command-and-commandfor/on-dialog-invalid-behavior.html",
+    "html/semantics/the-button-element/command-and-commandfor/on-input-number.tentative.html",
+    "html/semantics/the-button-element/command-and-commandfor/on-popover-behavior.html",
+    "html/semantics/the-button-element/command-and-commandfor/on-popover-invalid-behavior.html"
+  ],
+  "guards": [
+    "html/semantics/the-button-element/command-and-commandfor/commandfor-shadow-host.html",
+    "html/semantics/the-button-element/command-and-commandfor/event-dispatch-shadow.html",
+    "html/semantics/the-button-element/command-and-commandfor/source-attribute-retargeting.html",
+    "html/semantics/the-button-element/command-and-commandfor/toggleevent-source-attribute-retargeting.html"
+  ]
+}

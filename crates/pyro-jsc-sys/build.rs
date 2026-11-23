@@ -47,6 +47,10 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_custom_value)");
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_compile_strings)");
     println!("cargo::rustc-check-cfg=cfg(pyro_jsc_rejection_tracker)");
+    println!("cargo::rustc-check-cfg=cfg(pyro_jsc_deferred_work)");
+    println!("cargo::rustc-check-cfg=cfg(pyro_jsc_named_properties_chain)");
+    println!("cargo::rustc-check-cfg=cfg(pyro_jsc_refuse_delete)");
+    println!("cargo::rustc-check-cfg=cfg(pyro_jsc_immutable_prototype_wrappers)");
 
     if target_os == "linux" {
         let Some(dir) = source_jsc(&inputs, &["libJavaScriptCore.a"], &linux_cache, false) else {
@@ -118,6 +122,14 @@ fn source_shim(lib: &Path) {
     if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0037-module-graph-phases.patch").is_file()) {
         build.define("PYRO_JSC_MODULE_PHASES", None);
     }
+    // Patch 0038: inline module scripts' registered base URLs.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0038-inline-module-bases.patch").is_file()) {
+        build.define("PYRO_JSC_INLINE_MODULE_BASES", None);
+    }
+    // Patch 0039: the referrer of a module fetch.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0039-module-fetch-referrer.patch").is_file()) {
+        build.define("PYRO_JSC_MODULE_FETCH_REFERRER", None);
+    }
     build.compile("pyro_jsc_shim");
 }
 
@@ -149,6 +161,22 @@ fn link_static(lib: &Path) {
     // Patch 0036 (JSGlobalContextSetPromiseRejectionTracker), the same way.
     if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0036-promise-rejection-tracker.patch").is_file()) {
         println!("cargo:rustc-cfg=pyro_jsc_rejection_tracker");
+    }
+    // Patch 0040 (JSContextGroupSetDeferredWorkCallback, JSContextGroupRunDeferredWork), the same way.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0040-deferred-work.patch").is_file()) {
+        println!("cargo:rustc-cfg=pyro_jsc_deferred_work");
+    }
+    // Patch 0041 (JSGlobalContextSetNamedPropertiesChain), the same way.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0041-named-properties-chain.patch").is_file()) {
+        println!("cargo:rustc-cfg=pyro_jsc_named_properties_chain");
+    }
+    // Patch 0042 (JSObjectRefuseDeleteProperty), the same way.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0042-refused-deletes.patch").is_file()) {
+        println!("cargo:rustc-cfg=pyro_jsc_refuse_delete");
+    }
+    // Patch 0043 (JSGlobalContextSetGlobalProxyRefusesPreventExtensions), the same way.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0043-immutable-prototype-wrappers.patch").is_file()) {
+        println!("cargo:rustc-cfg=pyro_jsc_immutable_prototype_wrappers");
     }
 }
 

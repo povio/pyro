@@ -137,6 +137,49 @@ onconnect = (e) => {
 };
 "#;
 
+/// A dedicated or shared worker whose `probe` replaces its [Replaceable]
+/// `origin` and `name`, reads the descriptors, deletes and replaces them
+/// again and checks a same-origin fetch still goes through; `read` reports
+/// both.
+const REPLACEABLE_WORKER: &str = r#"
+const kind = (k) => {
+  for (let o = self; o; o = Object.getPrototypeOf(o)) {
+    const d = Object.getOwnPropertyDescriptor(o, k);
+    if (d) return (o === self ? 'own-' : 'proto-') + ('get' in d ? 'accessor' : 'data');
+  }
+  return 'missing';
+};
+// Another realm's global prototype keeps its own `origin`; this one is per realm.
+const owner = (k) => { for (let o = self; o; o = Object.getPrototypeOf(o)) if (Object.hasOwn(o, k)) return o === self ? 'self' : o === Object.getPrototypeOf(self) ? 'global-proto' : 'other'; return 'none'; };
+const desc = (k) => { const d = Object.getOwnPropertyDescriptor(self, k); return [d.value, d.writable, d.enumerable, d.configurable].join(':'); };
+const probe = async () => {
+  const real = [self.origin, self.name];
+  const layout = [owner('origin'), owner('name')].join();
+  const before = [kind('origin'), kind('name')].join();
+  self.origin = 'replaced-origin';
+  self.name = 42;
+  const after = [desc('origin'), desc('name'), typeof self.name, kind('origin'), kind('name')].join();
+  self.origin = 'again';
+  const again = self.origin;
+  const gone = (k, v) => (kind(k) === 'missing' ? self[k] === undefined : self[k] === v);
+  const deleted = [delete self.origin, delete self.name, gone('origin', real[0]), gone('name', real[1]), kind('origin'), kind('name')].join();
+  self.origin = 'kept';
+  self.name = 'kept-name';
+  const body = await (await fetch('/real')).text();
+  return [layout, real.join('|'), before, after, again, deleted, body, new URL(location.href).origin === real[0]].join(' / ');
+};
+const answer = (target, data) => {
+  if (data === 'probe') probe().then((r) => target.postMessage(r), (e) => target.postMessage('error:' + e));
+  else if (data === 'read') target.postMessage([self.origin, self.name].join('|'));
+};
+if (typeof SharedWorkerGlobalScope !== 'undefined' && self instanceof SharedWorkerGlobalScope) {
+  let connections = 0;
+  onconnect = (e) => { connections++; const port = e.ports[0]; port.onmessage = (m) => m.data === 'count' ? port.postMessage(connections) : answer(port, m.data); };
+} else {
+  onmessage = (m) => answer(self, m.data);
+}
+"#;
+
 const PORTS_WORKER: &str = r#"
 onmessage = async (e) => {
   if (e.data.kind === 'port') {
@@ -150,6 +193,10 @@ onmessage = async (e) => {
   }
 };
 "#;
+
+/// Module fixtures are never reused from the HTTP cache: each fetch reports
+/// its own Cookie header.
+const MODULE_JS: [(&str, &str); 2] = [("Content-Type", "text/javascript"), ("Cache-Control", "no-store")];
 
 struct Server {
     origin: String,
@@ -184,10 +231,15 @@ impl Server {
                 }
                 let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
                 let mut length = 0;
+                // What the module shared worker fixtures report back.
+                let mut cookie = String::from("none");
                 loop {
                     let mut line = String::new();
                     if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
                         break;
+                    }
+                    if line.to_ascii_lowercase().starts_with("cookie:") {
+                        cookie = line["cookie:".len()..].trim().to_string();
                     }
                     if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
                         length = v.trim().parse().unwrap_or(0);
@@ -258,6 +310,43 @@ impl Server {
                     "/throws.js" => respond(&mut stream, "200 OK", &js, b"throw new Error('top level')"),
                     "/ports-worker.js" => respond(&mut stream, "200 OK", &js, PORTS_WORKER.as_bytes()),
                     "/shared-worker.js" => respond(&mut stream, "200 OK", &js, SHARED_WORKER.as_bytes()),
+                    // Module shared workers: each fixture reports the Cookie
+                    // header its main script and its import were fetched with.
+                    "/module-shared-worker.js" => {
+                        let body = format!(
+                            "import {{ cookie }} from './module-dep.js'; const main = {cookie:?}; let n = 0; \
+                             onconnect = (e) => e.ports[0].postMessage(self.name + ':' + main + ':' + cookie + ':' + (++n));"
+                        );
+                        respond(&mut stream, "200 OK", &MODULE_JS, body.as_bytes())
+                    }
+                    "/module-dep.js" => {
+                        respond(&mut stream, "200 OK", &MODULE_JS, format!("export const cookie = {cookie:?};").as_bytes())
+                    }
+                    "/module-missing-import.js" => respond(
+                        &mut stream,
+                        "200 OK",
+                        &MODULE_JS,
+                        b"import './missing-module.js'; onconnect = (e) => e.ports[0].postMessage('ran');",
+                    ),
+                    "/module-syntax.js" => respond(
+                        &mut stream,
+                        "200 OK",
+                        &MODULE_JS,
+                        b"onconnect = (e) => e.ports[0].postMessage('ran'); export let = ;",
+                    ),
+                    "/module-bad-link.js" => respond(
+                        &mut stream,
+                        "200 OK",
+                        &MODULE_JS,
+                        b"import { missing } from './module-dep.js'; onconnect = (e) => e.ports[0].postMessage('ran' + missing);",
+                    ),
+                    "/module-throws.js" => respond(
+                        &mut stream,
+                        "200 OK",
+                        &MODULE_JS,
+                        b"onconnect = (e) => e.ports[0].postMessage('after-throw'); throw new Error('top level');",
+                    ),
+                    "/replaceable-worker.js" => respond(&mut stream, "200 OK", &js, REPLACEABLE_WORKER.as_bytes()),
                     "/real" | "/api/passthrough" => {
                         respond(&mut stream, "200 OK", &[("Content-Type", "text/plain")], b"from network")
                     }
@@ -608,6 +697,41 @@ fn message_ports_and_streams_cross_to_a_dedicated_worker() {
     assert_eq!(eval(&thread, page, "detachedPost + ':' + locked"), "DataCloneError:true");
 }
 
+/// A blob worker uses its creator's lock manager; ending its event loop
+/// releases even a lock whose callback returned an unresolved promise.
+#[test]
+fn terminated_blob_worker_releases_web_lock_to_window() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    eval(&thread, page, r#"
+        globalThis.log = [];
+        const url = URL.createObjectURL(new Blob([`
+            navigator.locks.request('worker-held', lock => {
+                postMessage([lock.name, lock.mode, lock instanceof Lock, navigator.locks instanceof LockManager]);
+                return new Promise(() => {});
+            });
+        `], {type: 'text/javascript'}));
+        const holder = new Worker(url);
+        holder.onmessage = e => {
+            log.push(e.data.join(','));
+            navigator.locks.request('worker-held', {ifAvailable: true}, lock => {
+                log.push(lock === null ? 'busy' : 'available');
+            });
+        };
+        "ok"
+    "#);
+    until(&mut thread, page, "log.length === 2");
+    assert_eq!(eval(&thread, page, "log.join('|')"), "worker-held,exclusive,true,true|busy");
+    eval(&thread, page, r#"
+        navigator.locks.request('worker-held', lock => log.push('granted:' + lock.name));
+        holder.terminate();
+        URL.revokeObjectURL(url);
+        "ok"
+    "#);
+    until(&mut thread, page, "log.length === 3");
+    assert_eq!(eval(&thread, page, "log[2]"), "granted:worker-held");
+}
+
 /// Runs the thread's loop for a moment, so tasks other threads posted run.
 fn spin(thread: &mut BrowserThread, page: PageId) {
     eval(thread, page, "globalThis.spun = false; setTimeout(() => { spun = true; }, 30); 'ok'");
@@ -776,6 +900,33 @@ fn register_survives_a_navigation_during_the_script_fetch() {
     until(&mut thread, page, "globalThis.done !== undefined");
     assert_eq!(eval(&thread, page, "done"), format!("ok:{}/", server.origin));
     until(&mut thread, page, "navigator.serviceWorker.controller !== null");
+}
+
+#[test]
+fn cookie_subscriptions_survive_update_and_allow_cleanup_after_unregister() {
+    let (server, mut thread) = setup();
+    let page = open(&mut thread, &server, "/page");
+    eval(&thread, page, "navigator.serviceWorker.register('/wait.js', {scope:'/worker/'}).then(r => globalThis.reg = r); 'ok'");
+    until(&mut thread, page, "globalThis.reg?.active?.state === 'activated'");
+    eval(&thread, page, r#"
+        globalThis.done = null;
+        (async () => {
+            const manager = reg.cookies, subscriptions = [{name:'unchanged'}];
+            await manager.subscribe(subscriptions);
+            await reg.update();
+            const worker = await new Promise(resolve => reg.addEventListener('updatefound',
+                () => resolve(reg.installing), {once:true}));
+            if (worker.state !== 'activated') await new Promise(resolve => worker.addEventListener(
+                'statechange', () => { if (worker.state === 'activated') resolve(); }));
+            const saved = await manager.getSubscriptions();
+            await reg.unregister();
+            await manager.unsubscribe(subscriptions);
+            return [saved.length, saved[0].name, (await manager.getSubscriptions()).length].join(',');
+        })().then(value => done = value, error => done = error.name);
+        'ok'
+    "#);
+    until(&mut thread, page, "done !== null");
+    assert_eq!(eval(&thread, page, "done"), "1,unchanged,0");
 }
 
 #[test]
@@ -1193,8 +1344,189 @@ fn shared_workers_are_shared_between_documents_by_url_and_name() {
     eval(&thread, a, connect);
     until(&mut thread, a, "got.length === 1");
     assert_eq!(eval(&thread, a, "got.join()"), "one:1");
+    // A module worker with the key of the live classic one (its name is part of
+    // the key): `error` at the new object, no connection. Without the engine's
+    // module loader the constructor throws, as `Worker`'s does.
+    let module = "(() => { try { const m = new SharedWorker('/shared-worker.js', {type: 'module', name: 'one'}); \
+        globalThis.mismatch = []; m.onerror = (e) => mismatch.push(e.type); return 'made' } catch (e) { return e.name } })()";
+    if module_shared_workers() {
+        assert_eq!(eval(&thread, a, module), "made");
+        until(&mut thread, a, "mismatch.length === 1");
+        assert_eq!(eval(&thread, a, "mismatch.join()"), "error");
+    } else {
+        assert_eq!(eval(&thread, a, module), "NotSupportedError");
+    }
+}
+
+/// Whether this engine runs module shared workers: the module loader in its
+/// two steps, which tell a graph that fails to load from a throw.
+fn module_shared_workers() -> bool {
+    pyro_js::Capabilities::detect().modules && pyro_js::Scope::has_module_phases()
+}
+
+/// A module `SharedWorker` starts once its graph loaded and is shared like a
+/// classic one; its main script and imports are fetched with its
+/// `credentials` mode (`omit` sends no cookie); a key that matches a live
+/// worker of another credentials mode gets `error`.
+#[test]
+fn module_shared_workers_start_and_fetch_with_their_credentials() {
+    if !module_shared_workers() {
+        return;
+    }
+    let (server, mut thread) = setup();
+    let a = open(&mut thread, &server, "/page");
+    assert_eq!(eval(&thread, a, CONNECT_MODULE), "k=v");
+    eval(&thread, a, "connect('/module-shared-worker.js', {type: 'module', name: 'same'}, 'same'); 'ok'");
+    until(&mut thread, a, "got.length === 1");
+    assert_eq!(eval(&thread, a, "got.join()"), "same>same:k=v:k=v:1");
+    // The same worker, a second connection.
+    eval(&thread, a, "connect('/module-shared-worker.js', {type: 'module', name: 'same'}, 'again'); 'ok'");
+    until(&mut thread, a, "got.length === 2");
+    assert_eq!(eval(&thread, a, "got[1]"), "again>same:k=v:k=v:2");
+    eval(&thread, a, "connect('/module-shared-worker.js', {type: 'module', name: 'omit', credentials: 'omit'}, 'omit'); 'ok'");
+    until(&mut thread, a, "got.length === 3");
+    assert_eq!(eval(&thread, a, "got[2]"), "omit>omit:none:none:1");
+    eval(&thread, a, "connect('/module-shared-worker.js', {type: 'module', name: 'include', credentials: 'include'}, 'include'); 'ok'");
+    until(&mut thread, a, "got.length === 4");
+    assert_eq!(eval(&thread, a, "got[3]"), "include>include:k=v:k=v:1");
+    // The live 'same' worker is same-origin: an `omit` construction does not join it.
+    eval(&thread, a, "connect('/module-shared-worker.js', {type: 'module', name: 'same', credentials: 'omit'}, 'mismatch'); 'ok'");
+    until(&mut thread, a, "errors.length === 1");
+    spin(&mut thread, a);
+    assert_eq!(eval(&thread, a, "errors.join() + '|' + got.length"), "mismatch>error|4");
     assert_eq!(
-        eval(&thread, a, "(() => { try { new SharedWorker('/shared-worker.js', {type: 'module'}); } catch (e) { return e.name } })()"),
-        "NotSupportedError"
+        eval(&thread, a, "(() => { try { new SharedWorker('/module-shared-worker.js', {type: 'module', credentials: 'bogus'}); } catch (e) { return e.name } })()"),
+        "TypeError"
     );
+}
+
+/// A module `SharedWorker` whose graph fails to fetch, parse or link fails to
+/// load: `error` at every object waiting on it and no `connect`. A throw of
+/// its evaluation is the worker's own: its connections go through.
+#[test]
+fn module_shared_worker_load_failures_reach_every_client_without_connecting() {
+    if !module_shared_workers() {
+        return;
+    }
+    let (server, mut thread) = setup();
+    let a = open(&mut thread, &server, "/page");
+    assert_eq!(eval(&thread, a, CONNECT_MODULE), "k=v");
+    for (n, path) in ["/module-missing-import.js", "/module-syntax.js", "/module-bad-link.js"].iter().enumerate() {
+        // Two objects wait on the same worker before it fails.
+        eval(&thread, a, &format!("connect('{path}', {{type: 'module'}}, 'first'); connect('{path}', {{type: 'module'}}, 'second'); 'ok'"));
+        until(&mut thread, a, &format!("errors.length === {}", 2 * (n + 1)));
+        spin(&mut thread, a);
+        spin(&mut thread, a);
+        assert_eq!(
+            eval(&thread, a, &format!("errors.slice({}).join() + '|' + got.length", 2 * n)),
+            "first>error,second>error|0",
+            "{path}"
+        );
+    }
+    eval(&thread, a, "connect('/module-throws.js', {type: 'module'}, 'throws'); 'ok'");
+    until(&mut thread, a, "got.length === 1");
+    spin(&mut thread, a);
+    assert_eq!(eval(&thread, a, "got.join() + '|' + errors.length"), "throws>after-throw|6");
+}
+
+/// Sets a cookie and defines `connect(url, options, key)`: a `SharedWorker`
+/// whose messages go to `got` and `error` events to `errors`, as `key>…`.
+const CONNECT_MODULE: &str = "document.cookie = 'k=v; path=/'; globalThis.got = []; globalThis.errors = []; \
+    globalThis.connect = (url, options, key) => { const w = new SharedWorker(url, options); \
+    w.port.onmessage = (e) => got.push(key + '>' + e.data); w.onerror = (e) => errors.push(key + '>' + e.type); return w; }; \
+    document.cookie";
+
+/// [Replaceable] `origin` (Window and workers) and `name` (dedicated and
+/// shared workers): assignment shadows the attribute with an own writable,
+/// enumerable, configurable data property of that global only. Window
+/// `origin` and worker `name` are the global's own accessors ([Global]), so
+/// deleting the replacement leaves no property, as in Chrome. Worker `origin`
+/// is WorkerGlobalScope's, inherited in Chrome, but a worker global's chain has
+/// no interface prototype objects and the prototype it has (the named
+/// properties object) refuses new properties under JSC patch 0041, so it stays
+/// the global's own accessor (469bc73df) and deleting the replacement leaves
+/// none. The realm's origin (postMessage's origin,
+/// same-origin fetch) and the worker's name (SharedWorker matching) stay.
+#[test]
+fn origin_and_worker_name_are_replaceable_per_global() {
+    let (server, mut thread) = setup();
+    let a = open(&mut thread, &server, "/page");
+    let b = open(&mut thread, &server, "/page2");
+    let origin = server.origin.clone();
+    // Window.
+    assert_eq!(
+        eval(
+            &thread,
+            a,
+            "globalThis.real = self.origin;
+             const k = (n) => { for (let o = self; o; o = Object.getPrototypeOf(o)) { const d = Object.getOwnPropertyDescriptor(o, n); if (d) return (o === self ? 'own-' : 'proto-') + ('get' in d ? 'accessor' : 'data'); } return 'missing'; };
+             const before = k('origin');
+             self.origin = 'replaced';
+             const d = Object.getOwnPropertyDescriptor(self, 'origin');
+             const after = [d.value, d.writable, d.enumerable, d.configurable, k('origin'), origin].join(':');
+             origin = 7;
+             const again = typeof origin + ':' + origin;
+             const deleted = [delete self.origin, before === 'own-accessor' ? self.origin === undefined : self.origin === real, k('origin')].join(':');
+             self.origin = 'kept';
+             globalThis.log = [];
+             addEventListener('message', (e) => log.push(e.origin));
+             postMessage('x', '*');
+             [real, before, after, again, deleted].join(' / ')",
+        ),
+        format!("{origin} / own-accessor / replaced:true:true:true:own-data:replaced / number:7 / true:true:missing")
+    );
+    until(&mut thread, a, "log.length === 1");
+    assert_eq!(eval(&thread, a, "log[0] === real && self.origin"), "kept");
+    // Another window keeps its own attribute.
+    assert_eq!(
+        eval(&thread, b, "[self.origin, 'get' in Object.getOwnPropertyDescriptor(self, 'origin')].join()"),
+        format!("{origin},true")
+    );
+
+    // Dedicated workers: one replaces, the other (same URL, other name) keeps its own.
+    eval(
+        &thread,
+        a,
+        "globalThis.got = { one: [], two: [] };
+         globalThis.one = new Worker('/replaceable-worker.js', { name: 'dw-one' });
+         globalThis.two = new Worker('/replaceable-worker.js', { name: 'dw-two' });
+         one.onmessage = (e) => got.one.push(e.data);
+         two.onmessage = (e) => got.two.push(e.data);
+         one.postMessage('probe'); 'ok'",
+    );
+    until(&mut thread, a, "got.one.length === 1");
+    let expected = |name: &str| {
+        format!(
+            "self,self / {origin}|{name} / own-accessor,own-accessor / \
+             replaced-origin:true:true:true,42:true:true:true,number,own-data,own-data / again / \
+             true,true,true,true,missing,missing / from network / true"
+        )
+    };
+    assert_eq!(eval(&thread, a, "got.one[0]"), expected("dw-one"));
+    eval(&thread, a, "one.postMessage('read'); two.postMessage('read'); 'ok'");
+    until(&mut thread, a, "got.one.length === 2 && got.two.length === 1");
+    assert_eq!(eval(&thread, a, "got.one[1] + ' ' + got.two[0]"), format!("kept|kept-name {origin}|dw-two"));
+    eval(&thread, a, "one.terminate(); two.terminate(); 'ok'");
+
+    // Shared worker: replacing its name leaves the name it is matched by.
+    eval(
+        &thread,
+        a,
+        "globalThis.shared = [];
+         globalThis.sh = new SharedWorker('/replaceable-worker.js', 'sn');
+         sh.port.onmessage = (e) => shared.push(e.data);
+         sh.port.postMessage('probe'); 'ok'",
+    );
+    until(&mut thread, a, "shared.length === 1");
+    assert_eq!(eval(&thread, a, "shared[0]"), expected("sn"));
+    eval(
+        &thread,
+        b,
+        "globalThis.shared = [];
+         globalThis.sh = new SharedWorker('/replaceable-worker.js', { name: 'sn' });
+         sh.port.onmessage = (e) => shared.push(e.data);
+         sh.port.postMessage('count'); sh.port.postMessage('read'); 'ok'",
+    );
+    until(&mut thread, b, "shared.length === 2");
+    assert_eq!(eval(&thread, b, "shared.join(' ')"), "2 kept|kept-name");
 }

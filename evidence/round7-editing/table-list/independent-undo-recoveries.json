@@ -1,0 +1,210 @@
+[
+  {
+    "suite": "tables",
+    "case": {
+      "cmd": "insertOrderedList",
+      "shape": "cellBox",
+      "reverse": false,
+      "cellTag": "td"
+    },
+    "parent": "def",
+    "second": "def\t",
+    "candidate": "def",
+    "signed": "def"
+  },
+  {
+    "suite": "tables",
+    "case": {
+      "cmd": "insertOrderedList",
+      "shape": "cellBox",
+      "reverse": false,
+      "cellTag": "th"
+    },
+    "parent": "def",
+    "second": "def\t",
+    "candidate": "def",
+    "signed": "def"
+  },
+  {
+    "suite": "tables",
+    "case": {
+      "cmd": "insertOrderedList",
+      "shape": "cellBox",
+      "reverse": true,
+      "cellTag": "td"
+    },
+    "parent": "def",
+    "second": "def\t",
+    "candidate": "def",
+    "signed": "def"
+  },
+  {
+    "suite": "tables",
+    "case": {
+      "cmd": "insertOrderedList",
+      "shape": "cellBox",
+      "reverse": true,
+      "cellTag": "th"
+    },
+    "parent": "def",
+    "second": "def\t",
+    "candidate": "def",
+    "signed": "def"
+  },
+  {
+    "suite": "tables",
+    "case": {
+      "cmd": "insertUnorderedList",
+      "shape": "cellBox",
+      "reverse": false,
+      "cellTag": "td"
+    },
+    "parent": "def",
+    "second": "def\t",
+    "candidate": "def",
+    "signed": "def"
+  },
+  {
+    "suite": "tables",
+    "case": {
+      "cmd": "insertUnorderedList",
+      "shape": "cellBox",
+      "reverse": false,
+      "cellTag": "th"
+    },
+    "parent": "def",
+    "second": "def\t",
+    "candidate": "def",
+    "signed": "def"
+  },
+  {
+    "suite": "tables",
+    "case": {
+      "cmd": "insertUnorderedList",
+      "shape": "cellBox",
+      "reverse": true,
+      "cellTag": "td"
+    },
+    "parent": "def",
+    "second": "def\t",
+    "candidate": "def",
+    "signed": "def"
+  },
+  {
+    "suite": "tables",
+    "case": {
+      "cmd": "insertUnorderedList",
+      "shape": "cellBox",
+      "reverse": true,
+      "cellTag": "th"
+    },
+    "parent": "def",
+    "second": "def\t",
+    "candidate": "def",
+    "signed": "def"
+  },
+  {
+    "suite": "repeat",
+    "case": {
+      "cmd": "insertOrderedList",
+      "shape": "outside",
+      "reverse": false,
+      "cellTag": "td"
+    },
+    "parent": true,
+    "second": false,
+    "candidate": true,
+    "signed": true
+  },
+  {
+    "suite": "repeat",
+    "case": {
+      "cmd": "insertOrderedList",
+      "shape": "outside",
+      "reverse": false,
+      "cellTag": "th"
+    },
+    "parent": true,
+    "second": false,
+    "candidate": true,
+    "signed": true
+  },
+  {
+    "suite": "repeat",
+    "case": {
+      "cmd": "insertOrderedList",
+      "shape": "outside",
+      "reverse": true,
+      "cellTag": "td"
+    },
+    "parent": true,
+    "second": false,
+    "candidate": true,
+    "signed": true
+  },
+  {
+    "suite": "repeat",
+    "case": {
+      "cmd": "insertOrderedList",
+      "shape": "outside",
+      "reverse": true,
+      "cellTag": "th"
+    },
+    "parent": true,
+    "second": false,
+    "candidate": true,
+    "signed": true
+  },
+  {
+    "suite": "repeat",
+    "case": {
+      "cmd": "insertUnorderedList",
+      "shape": "outside",
+      "reverse": false,
+      "cellTag": "td"
+    },
+    "parent": true,
+    "second": false,
+    "candidate": true,
+    "signed": true
+  },
+  {
+    "suite": "repeat",
+    "case": {
+      "cmd": "insertUnorderedList",
+      "shape": "outside",
+      "reverse": false,
+      "cellTag": "th"
+    },
+    "parent": true,
+    "second": false,
+    "candidate": true,
+    "signed": true
+  },
+  {
+    "suite": "repeat",
+    "case": {
+      "cmd": "insertUnorderedList",
+      "shape": "outside",
+      "reverse": true,
+      "cellTag": "td"
+    },
+    "parent": true,
+    "second": false,
+    "candidate": true,
+    "signed": true
+  },
+  {
+    "suite": "repeat",
+    "case": {
+      "cmd": "insertUnorderedList",
+      "shape": "outside",
+      "reverse": true,
+      "cellTag": "th"
+    },
+    "parent": true,
+    "second": false,
+    "candidate": true,
+    "signed": true
+  }
+]

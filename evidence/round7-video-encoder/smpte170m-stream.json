@@ -1,0 +1,21 @@
+{
+    "programs": [
+
+    ],
+    "stream_groups": [
+
+    ],
+    "streams": [
+        {
+            "codec_name": "h264",
+            "profile": "Constrained Baseline",
+            "width": 64,
+            "height": 48,
+            "level": 30,
+            "color_range": "tv",
+            "color_space": "smpte170m",
+            "color_transfer": "smpte170m",
+            "color_primaries": "smpte170m"
+        }
+    ]
+}

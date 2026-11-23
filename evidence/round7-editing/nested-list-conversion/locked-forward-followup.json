@@ -1,0 +1,2934 @@
+[
+  {
+    "suite": "repeat",
+    "command": "insertOrderedList",
+    "arms": {
+      "parent": {
+        "cmd": "insertOrderedList",
+        "reverse": false,
+        "shape": "locked-child",
+        "before": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": true,
+          "value": "true",
+          "ol": true,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "ok": false,
+        "after": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": true,
+          "value": "true",
+          "ol": true,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "again": false,
+        "twice": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": true,
+          "value": "true",
+          "ol": true,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo": false,
+        "onceUndo": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": true,
+          "value": "true",
+          "ol": true,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo2": false,
+        "restored": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": true,
+          "value": "true",
+          "ol": true,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      "candidate": {
+        "cmd": "insertOrderedList",
+        "reverse": false,
+        "shape": "locked-child",
+        "before": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "ok": false,
+        "after": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "again": false,
+        "twice": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo": false,
+        "onceUndo": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo2": false,
+        "restored": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      "signed": {
+        "cmd": "insertOrderedList",
+        "reverse": false,
+        "shape": "locked-child",
+        "before": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "oo\n",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "ok": false,
+        "after": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol><br>",
+          "state": true,
+          "value": "true",
+          "ol": true,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "direction": "none",
+          "text": "",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "again": false,
+        "twice": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol><br><br>",
+          "state": true,
+          "value": "true",
+          "ol": true,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "direction": "none",
+          "text": "",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo": true,
+        "onceUndo": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol><br>",
+          "state": true,
+          "value": "true",
+          "ol": true,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "direction": "none",
+          "text": "",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo2": true,
+        "restored": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\">bar</li></ol></li></ol>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "direction": "forward",
+          "text": "oo\n",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "suite": "repeat",
+    "command": "insertUnorderedList",
+    "arms": {
+      "parent": {
+        "cmd": "insertUnorderedList",
+        "reverse": false,
+        "shape": "locked-child",
+        "before": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": true,
+          "value": "true",
+          "ol": false,
+          "ul": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "ok": false,
+        "after": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": true,
+          "value": "true",
+          "ol": false,
+          "ul": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "again": false,
+        "twice": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": true,
+          "value": "true",
+          "ol": false,
+          "ul": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo": false,
+        "onceUndo": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": true,
+          "value": "true",
+          "ol": false,
+          "ul": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo2": false,
+        "restored": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": true,
+          "value": "true",
+          "ol": false,
+          "ul": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      "candidate": {
+        "cmd": "insertUnorderedList",
+        "reverse": false,
+        "shape": "locked-child",
+        "before": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "ok": false,
+        "after": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "again": false,
+        "twice": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo": false,
+        "onceUndo": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo2": false,
+        "restored": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "ooba",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      "signed": {
+        "cmd": "insertUnorderedList",
+        "reverse": false,
+        "shape": "locked-child",
+        "before": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "direction": "forward",
+          "text": "oo\n",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "ok": false,
+        "after": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul><br>",
+          "state": true,
+          "value": "true",
+          "ol": false,
+          "ul": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "direction": "none",
+          "text": "",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "again": false,
+        "twice": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul><br><br>",
+          "state": true,
+          "value": "true",
+          "ol": false,
+          "ul": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "direction": "none",
+          "text": "",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo": true,
+        "onceUndo": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul><br>",
+          "state": true,
+          "value": "true",
+          "ol": false,
+          "ul": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "direction": "none",
+          "text": "",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "undo2": true,
+        "restored": {
+          "glyphs": [
+            [
+              "f",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "o",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "b",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "a",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ],
+            [
+              "r",
+              "rgb(0, 0, 0)",
+              "ltr",
+              "normal"
+            ]
+          ],
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\">bar</li></ul></li></ul>",
+          "state": false,
+          "value": "false",
+          "ol": false,
+          "ul": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0
+            ],
+            0
+          ],
+          "direction": "forward",
+          "text": "oo\n",
+          "connected": [
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  },
+  {
+    "suite": "locked",
+    "command": "insertOrderedList",
+    "arms": {
+      "parent": {
+        "shape": "same",
+        "reverse": false,
+        "cmd": "insertOrderedList",
+        "before": {
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": true,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        },
+        "ok": false,
+        "after": {
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": true,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        },
+        "again": false,
+        "twice": {
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": true,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        },
+        "undo": false,
+        "onceUndo": {
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": true,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        }
+      },
+      "candidate": {
+        "shape": "same",
+        "reverse": false,
+        "cmd": "insertOrderedList",
+        "before": {
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        },
+        "ok": false,
+        "after": {
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        },
+        "again": false,
+        "twice": {
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        },
+        "undo": false,
+        "onceUndo": {
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        }
+      },
+      "signed": {
+        "shape": "same",
+        "reverse": false,
+        "cmd": "insertOrderedList",
+        "before": {
+          "html": "<ol><li>foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": false,
+          "enabled": true,
+          "events": []
+        },
+        "ok": true,
+        "after": {
+          "html": "<ol style=\"display: inline !important;\"><li style=\"display: inline !important;\">foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li></ol><ol><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "ol": true,
+          "ul": false,
+          "enabled": true,
+          "events": [
+            [
+              "insertOrderedList",
+              null
+            ]
+          ]
+        },
+        "again": false,
+        "twice": {
+          "html": "<ol style=\"display: inline !important;\"><li style=\"display: inline !important;\">foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li></ol><br><ol><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "ol": true,
+          "ul": false,
+          "enabled": true,
+          "events": [
+            [
+              "insertOrderedList",
+              null
+            ],
+            [
+              "insertOrderedList",
+              null
+            ]
+          ]
+        },
+        "undo": true,
+        "onceUndo": {
+          "html": "<ol style=\"display: inline !important;\"><li style=\"display: inline !important;\">foo<ol><li contenteditable=\"false\" id=\"locked\">bar</li></ol></li></ol><ol><li>baz</li></ol>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "ol": true,
+          "ul": false,
+          "enabled": true,
+          "events": [
+            [
+              "insertOrderedList",
+              null
+            ],
+            [
+              "insertOrderedList",
+              null
+            ],
+            [
+              "historyUndo",
+              null
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "suite": "locked",
+    "command": "insertUnorderedList",
+    "arms": {
+      "parent": {
+        "shape": "same",
+        "reverse": false,
+        "cmd": "insertUnorderedList",
+        "before": {
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": true,
+          "enabled": false,
+          "events": []
+        },
+        "ok": false,
+        "after": {
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": true,
+          "enabled": false,
+          "events": []
+        },
+        "again": false,
+        "twice": {
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": true,
+          "enabled": false,
+          "events": []
+        },
+        "undo": false,
+        "onceUndo": {
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": true,
+          "enabled": false,
+          "events": []
+        }
+      },
+      "candidate": {
+        "shape": "same",
+        "reverse": false,
+        "cmd": "insertUnorderedList",
+        "before": {
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        },
+        "ok": false,
+        "after": {
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        },
+        "again": false,
+        "twice": {
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        },
+        "undo": false,
+        "onceUndo": {
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": false,
+          "enabled": false,
+          "events": []
+        }
+      },
+      "signed": {
+        "shape": "same",
+        "reverse": false,
+        "cmd": "insertUnorderedList",
+        "before": {
+          "html": "<ul><li>foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": true,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            2
+          ],
+          "ol": false,
+          "ul": false,
+          "enabled": true,
+          "events": []
+        },
+        "ok": true,
+        "after": {
+          "html": "<ul style=\"display: inline !important;\"><li style=\"display: inline !important;\">foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li></ul><ul><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "ol": false,
+          "ul": true,
+          "enabled": true,
+          "events": [
+            [
+              "insertUnorderedList",
+              null
+            ]
+          ]
+        },
+        "again": false,
+        "twice": {
+          "html": "<ul style=\"display: inline !important;\"><li style=\"display: inline !important;\">foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li></ul><br><ul><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "ol": false,
+          "ul": true,
+          "enabled": true,
+          "events": [
+            [
+              "insertUnorderedList",
+              null
+            ],
+            [
+              "insertUnorderedList",
+              null
+            ]
+          ]
+        },
+        "undo": true,
+        "onceUndo": {
+          "html": "<ul style=\"display: inline !important;\"><li style=\"display: inline !important;\">foo<ul><li contenteditable=\"false\" id=\"locked\">bar</li></ul></li></ul><ul><li>baz</li></ul>",
+          "lockedHTML": "<li contenteditable=\"false\" id=\"locked\">bar</li>",
+          "connected": false,
+          "anchor": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "focus": [
+            [
+              0,
+              0,
+              0
+            ],
+            1
+          ],
+          "ol": false,
+          "ul": true,
+          "enabled": true,
+          "events": [
+            [
+              "insertUnorderedList",
+              null
+            ],
+            [
+              "insertUnorderedList",
+              null
+            ],
+            [
+              "historyUndo",
+              null
+            ]
+          ]
+        }
+      }
+    }
+  }
+]

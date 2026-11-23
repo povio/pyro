@@ -149,6 +149,10 @@ impl LengthPercentage {
         Self::new_percent(Percentage::hundred())
     }
 
+    pub(crate) fn size_identity() -> Self {
+        Self::new_calc(CalcNode::Leaf(ComputedLeaf::Percentage(CalcPercentageLeaf { size_basis: true, ..CalcPercentageLeaf::new(1.0, Optional::Some(NumericBaseType::Length)) })), AllowedNumericType::All)
+    }
+
     fn to_calc_node(&self) -> CalcNode {
         match self.unpack() {
             Unpacked::Length(l) => CalcNode::Leaf(ComputedLeaf::Length(l)),
@@ -157,6 +161,21 @@ impl LengthPercentage {
             )),
             Unpacked::Calc(p) => p.node.clone(),
         }
+    }
+
+    pub(crate) fn substitute_size(&self, basis: &Self) -> Self {
+        let mut result = self.to_calc_node();
+        result.visit_depth_first(|node| {
+            if let CalcNode::Leaf(ComputedLeaf::Percentage(factor)) = node && factor.size_basis {
+                let mut scale = CalcNode::Leaf(ComputedLeaf::Number(factor.get()));
+                let mut replacement = basis.to_calc_node();
+                if !replacement.try_product_in_place(&mut scale) {
+                    replacement = CalcNode::Product(vec![scale, replacement].into());
+                }
+                *node = replacement;
+            }
+        });
+        Self::new_calc(result, AllowedNumericType::All)
     }
 
     fn map_lengths(&self, mut map_fn: impl FnMut(Length) -> Length) -> Self {
@@ -234,6 +253,9 @@ impl LengthPercentage {
     pub fn new_calc(mut node: CalcNode, clamping_mode: AllowedNumericType) -> Self {
         node.simplify_and_sort();
 
+        if matches!(&node, CalcNode::Leaf(ComputedLeaf::Percentage(p)) if p.size_basis) {
+            return Self::new_calc_unchecked(Box::new(CalcLengthPercentage { clamping_mode, node }));
+        }
         match node {
             CalcNode::Leaf(l) => match l {
                 ComputedLeaf::Length(l) => {
@@ -317,10 +339,33 @@ impl LengthPercentage {
     /// Resolves the percentage.
     #[inline]
     pub fn resolve(&self, basis: Length) -> Length {
+        self.resolve_size(basis, basis)
+    }
+
+    /// Resolves size and percentages against independent references.
+    pub fn resolve_size(&self, size: Length, basis: Length) -> Length {
         match self.unpack() {
             Unpacked::Length(l) => l,
             Unpacked::Percentage(p) => (basis * p.0).normalized(),
-            Unpacked::Calc(c) => c.resolve(basis),
+            Unpacked::Calc(c) => c.resolve_size(size, basis),
+        }
+    }
+
+    /// Resolves an intrinsic calculation without assuming an indefinite percentage basis is zero.
+    pub fn resolve_size_with_optional_basis(&self, size: Length, basis: Option<Length>) -> Option<Length> {
+        if let Some(basis) = basis { return Some(self.resolve_size(size, basis)); }
+        match self.unpack() {
+            Unpacked::Length(length) => Some(length),
+            Unpacked::Percentage(_) => None,
+            Unpacked::Calc(calc) => {
+                let value = calc.node.resolve_map(|leaf| match leaf {
+                    ComputedLeaf::Percentage(factor) if factor.size_basis => Ok(ComputedLeaf::Length(size * factor.get())),
+                    ComputedLeaf::Percentage(_) => Err(()),
+                    _ => Ok(leaf.clone()),
+                }).ok()?;
+                let ComputedLeaf::Length(length) = value else { return None };
+                Some(Length::new(calc.clamping_mode.clamp(length.px())).normalized())
+            }
         }
     }
 
@@ -665,12 +710,17 @@ impl CalcLengthPercentage {
     /// Resolves the percentage.
     #[inline]
     pub fn resolve(&self, basis: Length) -> Length {
+        self.resolve_size(basis, basis)
+    }
+
+    /// Resolves size and percentages against independent references.
+    pub fn resolve_size(&self, size: Length, basis: Length) -> Length {
         // unwrap() is fine because the conversion below is infallible.
         if let ComputedLeaf::Length(px) = self
             .node
             .resolve_map(|leaf| {
                 Ok(if let ComputedLeaf::Percentage(p) = leaf {
-                    ComputedLeaf::Length(Length::new(basis.px() * p.get()))
+                    ComputedLeaf::Length(Length::new((if p.size_basis { size } else { basis }).px() * p.get()))
                 } else {
                     leaf.clone()
                 })
@@ -842,7 +892,7 @@ impl specified::CalcLengthPercentage {
 
         let node = self.0.node.map_leaves(|leaf| match *leaf {
             Leaf::Percentage(p) => {
-                ComputedLeaf::Percentage(CalcPercentageLeaf::new(p.get(), p.hint))
+                ComputedLeaf::Percentage(p)
             },
             Leaf::Length(l) => ComputedLeaf::Length({
                 let result =
@@ -1010,8 +1060,23 @@ impl Animate for LengthPercentage {
                 }
 
                 let (l, r) = procedure.weights();
-                let one = product_with(self.to_calc_node(), l as f32);
-                let other = product_with(other.to_calc_node(), r as f32);
+                let one = self.to_calc_node();
+                let other = other.to_calc_node();
+                if let (CalcNode::Sum(left), CalcNode::Sum(right)) = (&one, &other) {
+                    if left.len() == right.len() {
+                        let terms = left.iter().zip(right.iter()).map(|(left, right)| {
+                            let merged = left.as_leaf().ok_or(())?.try_op(right.as_leaf().ok_or(())?, |from, to| {
+                                (f64::from(from) * l + f64::from(to) * r) as f32
+                            })?;
+                            Ok::<_, ()>(CalcNode::Leaf(merged))
+                        }).collect::<Result<Vec<_>, _>>();
+                        if let Ok(terms) = terms {
+                            return Ok(Self::new_calc(CalcNode::Sum(terms.into()), AllowedNumericType::All));
+                        }
+                    }
+                }
+                let one = product_with(one, l as f32);
+                let other = product_with(other, r as f32);
 
                 Self::new_calc(
                     CalcNode::Sum(vec![one, other].into()),
@@ -1024,6 +1089,12 @@ impl Animate for LengthPercentage {
 
 /// A wrapper of LengthPercentage, whose value must be >= 0.
 pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
+
+impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
+    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        self.0.to_calc_node().write_size_calculation::<SIZE, _>(dest)
+    }
+}
 
 impl NonNegativeLengthPercentage {
     /// Returns the used value.
@@ -1070,5 +1141,100 @@ impl TryTacticAdjustment for CalcNode {
             Self::AnchorSize(a) => a.try_tactic_adjustment(old_side, new_side),
             _ => {},
         });
+    }
+}
+
+/// pyro: interpolation of `anchor()` and `anchor-size()` values that do not interpolate as
+/// functions (other anchors, sides or sizes, or a length at the other end). The result is a
+/// `calc()` that weighs both ends, its anchor functions left for layout to resolve as it resolves
+/// any other: what Chrome gets by computing them to px before it interpolates.
+pub(crate) mod anchor_interpolation {
+    use super::{CalcNode, CalcPercentageLeaf, ComputedLeaf, LengthPercentage, Percentage};
+    use crate::typed_om::NumericBaseType;
+    use crate::values::animated::Procedure;
+    use crate::values::computed::length::{MaxSize, Size};
+    use crate::values::computed::position::{AnchorSide, Inset};
+    use crate::values::generics::calc::{CalcNodeLeaf, GenericAnchorFunctionFallback};
+    use crate::values::generics::length::GenericAnchorSizeFunction;
+    use crate::values::generics::position::{GenericAnchorFunction, GenericAnchorSide};
+    use crate::values::generics::Optional;
+    use style_traits::values::specified::AllowedNumericType;
+
+    type Fallback = Optional<Box<GenericAnchorFunctionFallback<ComputedLeaf>>>;
+
+    fn fallback<T>(value: Option<&T>, node: impl Fn(&T) -> Option<CalcNode>) -> Option<Fallback> {
+        Some(match value {
+            None => Optional::None,
+            Some(value) => Optional::Some(Box::new(GenericAnchorFunctionFallback::new(false, node(value)?))),
+        })
+    }
+
+    fn side(side: &AnchorSide) -> GenericAnchorSide<Box<CalcNode>> {
+        match side {
+            GenericAnchorSide::Keyword(keyword) => GenericAnchorSide::Keyword(*keyword),
+            GenericAnchorSide::Percentage(Percentage(p)) => GenericAnchorSide::Percentage(Box::new(CalcNode::Leaf(
+                ComputedLeaf::Percentage(CalcPercentageLeaf::new(*p, Optional::Some(NumericBaseType::Length))),
+            ))),
+        }
+    }
+
+    fn anchor_size<T>(
+        f: &GenericAnchorSizeFunction<T>,
+        node: impl Fn(&T) -> Option<CalcNode>,
+    ) -> Option<CalcNode> {
+        Some(CalcNode::AnchorSize(Box::new(GenericAnchorSizeFunction {
+            target_element: f.target_element.clone(),
+            size: f.size,
+            fallback: fallback(f.fallback.as_ref(), node)?,
+        })))
+    }
+
+    /// An inset as a calc node (`None`: `auto`).
+    pub fn inset_node(value: &Inset) -> Option<CalcNode> {
+        Some(match value {
+            Inset::LengthPercentage(lp) | Inset::AnchorContainingCalcFunction(lp) => lp.to_calc_node(),
+            Inset::Auto => return None,
+            Inset::AnchorFunction(f) => CalcNode::Anchor(Box::new(GenericAnchorFunction {
+                target_element: f.target_element.clone(),
+                side: side(&f.side),
+                fallback: fallback(f.fallback.as_ref(), inset_node)?,
+            })),
+            Inset::AnchorSizeFunction(f) => return anchor_size(&**f, inset_node),
+        })
+    }
+
+    /// A size as a calc node (`None`: a keyword).
+    pub fn size_node(value: &Size) -> Option<CalcNode> {
+        match value {
+            Size::LengthPercentage(lp) | Size::AnchorContainingCalcFunction(lp) => Some(lp.0.to_calc_node()),
+            Size::AnchorSizeFunction(f) => anchor_size(&**f, size_node),
+            _ => None,
+        }
+    }
+
+    /// A max size as a calc node (`None`: `none` or a keyword).
+    pub fn max_size_node(value: &MaxSize) -> Option<CalcNode> {
+        match value {
+            MaxSize::LengthPercentage(lp) | MaxSize::AnchorContainingCalcFunction(lp) => Some(lp.0.to_calc_node()),
+            MaxSize::AnchorSizeFunction(f) => anchor_size(&**f, max_size_node),
+            _ => None,
+        }
+    }
+
+    /// `from` and `to` weighed by `procedure`, as one calc.
+    pub fn mix(from: CalcNode, to: CalcNode, procedure: Procedure, clamping: AllowedNumericType) -> LengthPercentage {
+        fn product_with(mut node: CalcNode, product: f32) -> CalcNode {
+            let mut number = CalcNode::Leaf(ComputedLeaf::new_number(product));
+            if !node.try_product_in_place(&mut number) {
+                CalcNode::Product(vec![node, number].into())
+            } else {
+                node
+            }
+        }
+        let (l, r) = procedure.weights();
+        LengthPercentage::new_calc(
+            CalcNode::Sum(vec![product_with(from, l as f32), product_with(to, r as f32)].into()),
+            clamping,
+        )
     }
 }

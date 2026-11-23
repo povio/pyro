@@ -1,0 +1,62 @@
+{
+  "DOM AbortSignal guards": {
+    "matchedGain": 0,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0,
+    "baseStrict": 4,
+    "candidateStrict": 4,
+    "signedStrict": 4
+  },
+  "window": {
+    "matchedGain": 9,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 6,
+    "lpOnly": 2,
+    "baseStrict": 17,
+    "candidateStrict": 21,
+    "signedStrict": 21
+  },
+  "serviceworker": {
+    "matchedGain": 88,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 4,
+    "lpOnly": 0,
+    "baseStrict": 0,
+    "candidateStrict": 12,
+    "signedStrict": 13
+  },
+  "sharedworker": {
+    "matchedGain": 88,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 4,
+    "lpOnly": 0,
+    "baseStrict": 1,
+    "candidateStrict": 13,
+    "signedStrict": 14
+  },
+  "dedicatedworker": {
+    "matchedGain": 95,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 6,
+    "lpOnly": 0,
+    "baseStrict": 1,
+    "candidateStrict": 13,
+    "signedStrict": 15
+  },
+  "document BFCache scenarios": {
+    "matchedGain": 0,
+    "newPass": 6,
+    "lost": 0,
+    "signedOnly": 16,
+    "lpOnly": 0,
+    "baseStrict": 3,
+    "candidateStrict": 9,
+    "signedStrict": 16
+  }
+}

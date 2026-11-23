@@ -1,0 +1,69 @@
+{
+  "scores": {
+    "baseFull": 11,
+    "candidateFull": 27,
+    "chrome158Full": 35,
+    "baseNamed": 1494,
+    "candidateNamed": 1590,
+    "chrome158Named": 2039,
+    "lost": 0,
+    "new": 14,
+    "missing": 0,
+    "chromeOnly": 502,
+    "lpOnly": 53,
+    "gained": 96
+  },
+  "gainsByPage": {
+    "svg/animations/svglengthlist-animation-invalid-value-1.html": 1,
+    "svg/animations/svglengthlist-animation-invalid-value-2.html": 1,
+    "svg/animations/svglengthlist-animation-invalid-value-3.html": 1,
+    "svg/idlharness.window.html": 39,
+    "svg/types/SameObject-identity.html": 2,
+    "svg/types/scripted/SVGAnimatedLengthList.html": 1,
+    "svg/types/scripted/SVGLength-cap.html": 2,
+    "svg/types/scripted/SVGLength-ch.html": 3,
+    "svg/types/scripted/SVGLength-ex.html": 3,
+    "svg/types/scripted/SVGLength-ic.html": 2,
+    "svg/types/scripted/SVGLength-lh.html": 2,
+    "svg/types/scripted/SVGLength-px-with-context.html": 1,
+    "svg/types/scripted/SVGLength-rlh.html": 2,
+    "svg/types/scripted/SVGLength-value-setter-font-change.html": 3,
+    "svg/types/scripted/SVGLengthList-appendItem.html": 1,
+    "svg/types/scripted/SVGLengthList-appendItemFromClearedList.html": 1,
+    "svg/types/scripted/SVGLengthList-basics.html": 1,
+    "svg/types/scripted/SVGLengthList-getItem.html": 1,
+    "svg/types/scripted/SVGList-animVal-reflects-base-value.html": 5,
+    "svg/types/scripted/SVGList-getItem-identity.html": 5,
+    "svg/types/scripted/SVGList-identity-across-attribute-change.html": 4,
+    "svg/types/scripted/SVGList-mutator-return-identity.html": 4,
+    "svg/types/scripted/SVGList-parse-invalid-clears-items.html": 1,
+    "svg/types/scripted/SVGList-reflected-attribute-synchronize.html": 10
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 35,
+        "error": 6
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "2d6929083877f9a2acc50b9d511304478bab03296ea0216bafb40cce5877fbe3"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 41
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "354523a5f46a7cc465b42e31e38db2b4da939c74db3714196a97321ee56f5569"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 41
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "8eb09cca1dd0a05dfb1813cb06370ee0208b6233bd10b11c098836a2949a498b"
+    }
+  }
+}

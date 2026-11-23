@@ -125,6 +125,20 @@ fn check(name: &str, html: &str, scroll_y: i32, expected: &[(&str, [f64; 8])], d
 }
 
 #[test]
+fn flex_container_intrinsic_height_bounds() {
+    let layout = page("<!doctype html><style>
+        section {display:inline-flex;vertical-align:top;width:50px;border:2px solid}
+        section > div {height:30px;flex:none}
+        </style>
+        <section id=min style='height:0;min-height:min-content'><div></div></section>
+        <section id=max style='height:90px;max-height:max-content;flex-direction:column'><div></div><div></div></section>
+        <section id=unclamped style='height:90px;min-height:max-content'><div></div></section>");
+    assert_eq!(layout.metrics("min")[3], 34.0);
+    assert_eq!(layout.metrics("max")[3], 64.0);
+    assert_eq!(layout.metrics("unclamped")[3], 94.0);
+}
+
+#[test]
 fn flow_parity_stack() {
     let html = "<!doctype html><body><div id=a style=\"height:30px\"></div><div id=b style=\"height:40px;margin-top:10px\"></div><div id=c style=\"width:200px;height:20px;margin:5px auto\"></div><div id=d style=\"width:50%;height:10px\"></div></body>";
     check(
@@ -1207,6 +1221,33 @@ fn flow_parity_shrink_to_fit_min_content_floor() {
     // b and d wrap below a and c.
     assert!(p.metrics("b")[1] > p.metrics("a")[1] && p.metrics("d")[1] > p.metrics("c")[1], "wrapped");
     assert!(diffs.is_empty(), "shrink-to-fit:\n{}", diffs.join("\n"));
+}
+
+#[test]
+fn range_min_content_minimum_beats_a_percentage_maximum_inline() {
+    // `min-width: min-content` floors the range at its natural 129px over `max-width: 50%`, also
+    // when inline layout hands the box a width bounded by its keywords (WPT css-sizing
+    // `range-percent-intrinsic-size-1`, Chromium).
+    let html = "<!doctype html><div style='width:30px'><div style='display:inline-block'>\
+                <input id=r type=range style='margin:2px;max-width:50%;min-width:min-content'></div></div>";
+    assert_eq!(page(html).metrics("r")[2], 129.0);
+}
+
+#[test]
+fn flex_compressible_mixed_percentage_keeps_length() {
+    for (direction, writing_mode, metric) in [("row", "horizontal-tb", 2), ("column", "vertical-lr", 3)] {
+        for kind in ["text", "range"] {
+            for (sizing, expected) in [("border-box", 140.0), ("content-box", 154.0)] {
+                let html = format!(
+                    "<!doctype html><div style='display:flex;flex-direction:{direction};width:300px;height:300px'>\
+                     <div style='flex:0 0 200px'></div>\
+                     <input id=field type={kind} style='appearance:none;writing-mode:{writing_mode};\
+                     inline-size:calc(100% + 140px);box-sizing:{sizing};padding:5px;border:2px solid;margin:0'></div>"
+                );
+                assert_eq!(page(&html).metrics("field")[metric], expected, "{direction} {kind} {sizing}");
+            }
+        }
+    }
 }
 
 #[test]
@@ -3883,6 +3924,48 @@ fn text_range_and_hit_test_share_fractional_cluster_edges() {
     assert_eq!(page.layout.caret_from_point(&page.dom, element, cluster.left() + 0.1, cluster.top() + 5.0, &|_| true).unwrap().1, 3);
 }
 
+/// A fixed box's offset parent is the ancestor that holds it when one establishes its containing block
+/// (a transform here), and none otherwise (CSSOM View, as Chromium does).
+#[test]
+fn a_fixed_boxs_offset_parent_is_its_transformed_containing_block() {
+    let page = page("<body><div id=cb style='margin-left:30px;transform:translate(10px,20px)'><div id=in style='position:fixed;left:7px;top:5px'>in</div></div><div id=out style='position:fixed;left:7px'>out</div>");
+    let inside = page.id("in");
+    assert_eq!(page.layout.offset_parent(&page.dom, inside), Some(page.id("cb")));
+    assert_eq!(page.layout.offset_left(&page.dom, inside), 7.0);
+    assert_eq!(page.layout.offset_top(&page.dom, inside), 5.0);
+    assert_eq!(page.layout.offset_parent(&page.dom, page.id("out")), None);
+}
+
+#[test]
+fn offset_parent_origin_excludes_borders_before_transforms() {
+    let page = page("<body><div id=parent style='position:relative;border:solid;border-width:9px 3px 12px 6px;padding:20px;transform:scale(2)'><div id=flow>flow</div><div id=abs style='position:absolute;left:25px;top:-4px'>abs</div></div>");
+    for (id, left, top) in [("abs", 25.0, -4.0), ("flow", 20.0, 20.0)] {
+        let node = page.id(id);
+        assert_eq!(page.layout.offset_parent(&page.dom, node), Some(page.id("parent")));
+        assert_eq!(page.layout.offset_left(&page.dom, node), left);
+        assert_eq!(page.layout.offset_top(&page.dom, node), top);
+    }
+}
+
+#[test]
+fn vertical_ranges_and_carets_follow_the_inline_axis() {
+    for mode in ["vertical-rl", "vertical-lr", "sideways-lr"] {
+        let html = format!("<body><div id=p style='writing-mode:{mode};font:20px monospace'>ABC</div>");
+        let page = page(&html);
+        let element = page.id("p");
+        let text = page.dom.first_child(element).unwrap().unwrap();
+        let range = |start, end| page.layout.text_range_rect(&page.dom, text, start, end).unwrap();
+        let first = range(0, 1);
+        let second = range(1, 2);
+        let caret = range(1, 1);
+        assert!(first.width > 0.0 && first.height > 0.0, "{mode}");
+        assert_eq!(first.x, second.x, "{mode}");
+        assert_eq!(caret.height, 0.0, "{mode}");
+        assert_eq!(caret.y, if mode == "sideways-lr" { first.top() } else { first.bottom() }, "{mode}");
+        assert_eq!(page.layout.caret_from_point(&page.dom, element, second.x + second.width / 2.0, caret.y, &|_| true).unwrap().1, 1, "{mode}");
+    }
+}
+
 #[test]
 fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
     // Native selection needs the caret under a point. Chromium (measured,
@@ -4322,6 +4405,37 @@ fn atomic_inline_in_an_inline_element_is_hit_over_it() {
         assert_eq!(chain.first(), Some(&p.id(id)));
         assert_eq!(chain.get(1), Some(&p.id(parent)));
     }
+}
+
+/// Image maps (HTML § 4.8.14, WPT image-maps/hash-name-reference.html and
+/// the-area-element/area-coords.html): a point over an `img` whose `usemap`
+/// names a `map` (text after the first `#`, by `name` or `id`, first in tree
+/// order, case-sensitive) hits the map's `area` holding it in the image's
+/// content box, coordinates parsed as Blink's list of floating-point numbers.
+#[test]
+fn image_map_areas_are_hit_over_their_image() {
+    let p = page(concat!(
+        "<!doctype html><body style=\"margin:0\">",
+        "<img id=i1 data-natural=\"300,50\" style=\"display:block;width:300px;height:50px\" usemap=\" #m1\">",
+        "<map id=m1><area id=a1 coords=\"='2;2 10cm,10%' \"></map><map name=m1><area id=b1 shape=default></map>",
+        "<img id=i2 data-natural=\"300,50\" style=\"display:block;width:300px;height:50px\" usemap=\"#M2\">",
+        "<map name=m2><area id=a2 shape=default></map>",
+        "<img id=i3 data-natural=\"300,50\" style=\"display:block;width:300px;height:50px;border:5px solid;padding:5px\" usemap=\"x#m3\">",
+        "<map name=m3><area id=a3 shape=CIRC coords=\"20,20,10\"></map>",
+        "</body>"
+    ));
+    let at = |id: &str, dx: f64, dy: f64| {
+        let r = p.layout.bounding_client_rect(&p.dom, p.id(id));
+        p.layout.element_from_point(&p.dom, r.x + dx, r.y + dy)
+    };
+    assert_eq!(at("i1", 3.0, 3.0), Some(p.id("a1")), "rect area by id, first map in tree order");
+    assert_eq!(at("i1", 11.0, 3.0), Some(p.id("i1")), "outside the rect: the image");
+    assert_eq!(at("i2", 3.0, 3.0), Some(p.id("i2")), "usemap matches case-sensitively");
+    assert_eq!(at("i3", 30.0, 30.0), Some(p.id("a3")), "circle in content-box coordinates");
+    assert_eq!(at("i3", 3.0, 3.0), Some(p.id("i3")), "outside the circle, in the border: the image");
+    let r = p.layout.bounding_client_rect(&p.dom, p.id("i1"));
+    let chain = p.layout.elements_from_point(&p.dom, r.x + 3.0, r.y + 3.0);
+    assert_eq!(&chain[..2], &[p.id("a1"), p.id("i1")]);
 }
 
 /// Chat-composer autosize variants: the textarea is a flex item of a column
@@ -5084,4 +5198,141 @@ fn soft_hyphen_line_breaks_preserve_intrinsic_widths() {
     assert_eq!(wide[3], 46.0, "unconstrained text occupies one line");
     p.dom.set_attribute(b, "style", "max-width:90px").unwrap();
     assert_eq!(p.metrics("b"), narrow, "narrowing again preserves the same wrapping");
+}
+
+/// An orthogonal in-flow block child's width (its block size) is its content's unless its
+/// `justify-self` resolves to `stretch` (`auto` taking the container's `justify-items`): it then
+/// fills the block container's inline size (WPT css-align `blocks/justify-self-htb-ltr-vrl`,
+/// `-vlr-ltr-htb` and their direction variants: 40px, not the content's 20px).
+#[test]
+fn orthogonal_block_child_stretches_only_for_justify_self_stretch() {
+    let p = page(
+        r#"<!doctype html><style>
+        body{margin:0}
+        .c{display:inline-block;margin:20px;border:solid 4px;width:40px;height:40px}
+        .v{writing-mode:vertical-rl}
+        .vl{writing-mode:vertical-lr}
+        .i::before{width:20px;height:20px;content:'';display:block}
+        </style>
+        <div class=c id=c-stretch><div id=stretch class="i v" style="justify-self:stretch"></div></div>
+        <div class=c id=c-stretch-rtl><div id=stretch-rtl class="i v" style="justify-self:stretch;direction:rtl"></div></div>
+        <div class=c style="justify-items:stretch"><div id=items class="i v"></div></div>
+        <div class=c><div id=normal class="i v" style="justify-self:normal"></div></div>
+        <div class=c><div id=auto class="i v"></div></div>
+        <div class=c><div id=start class="i v" style="justify-self:start"></div></div>
+        <div class=c style="justify-items:stretch"><div id=items-start class="i v" style="justify-self:start"></div></div>
+        <div class="c vl"><div id=v-stretch class=i style="writing-mode:horizontal-tb;justify-self:stretch"></div></div>
+        <div class="c vl"><div id=v-normal class=i style="writing-mode:horizontal-tb"></div></div>"#,
+    );
+    let size = |id: &str| {
+        let m = p.metrics(id);
+        [m[2], m[3]]
+    };
+    // Stretched: as wide as the container's content box (its inline size), offset 0.
+    assert_eq!(size("stretch"), [40.0, 20.0], "justify-self: stretch");
+    assert_eq!(size("stretch-rtl"), [40.0, 20.0], "justify-self: stretch, rtl");
+    assert_eq!(size("items"), [40.0, 20.0], "auto taking justify-items: stretch");
+    for (container, id) in [("c-stretch", "stretch"), ("c-stretch-rtl", "stretch-rtl")] {
+        let (c, m) = (p.metrics(container), p.metrics(id));
+        assert_eq!([m[0] - c[0], m[1] - c[1]], [4.0, 4.0], "{id}: at the content box's start corner");
+    }
+    // Not stretched: its content's block size.
+    assert_eq!(size("normal"), [20.0, 20.0], "justify-self: normal");
+    assert_eq!(size("auto"), [20.0, 20.0], "justify-self: auto, justify-items: normal");
+    assert_eq!(size("start"), [20.0, 20.0], "justify-self: start");
+    assert_eq!(size("items-start"), [20.0, 20.0], "justify-self: start over justify-items: stretch");
+    // A vertical container: the horizontal child's height is its block size.
+    assert_eq!(size("v-stretch"), [20.0, 40.0], "horizontal child in vertical-lr, stretch");
+    assert_eq!(size("v-normal"), [20.0, 20.0], "horizontal child in vertical-lr, normal");
+}
+
+#[test]
+fn a_box_empty_in_one_axis_still_extends_its_scrollers_overflow_like_chromium() {
+    // Taffy dropped any box with zero size in either axis from its parent's scrollable overflow, so a
+    // 0x100 child of a 100x0 scroller left scrollHeight at 0, and a flex item shrunk to zero width lost
+    // its margin-inline-end (scrollWidth stayed 100). Chromium counts both (WPT css-overflow
+    // scrollable-overflow-zero-one-axis.html and scrollable-overflow-*-flex-item-margin-inline-end*.html).
+    let p = page(
+        r#"<!doctype html><body style="margin:0">
+<div id=block style="overflow:scroll;width:100px;height:0"><div style="width:0;height:100px"></div></div>
+<div id=blockw style="overflow:scroll;width:0;height:100px"><div style="width:100px;height:0"></div></div>
+<div id=row style="overflow:scroll;width:100px;height:0;display:flex"><div style="width:0;height:100px"></div></div>
+<div id=col style="overflow:scroll;width:0;height:100px;display:flex;flex-direction:column"><div style="width:100px;height:0"></div></div>
+<div id=margin style="overflow:auto;width:100px;height:100px;display:flex"><div style="width:50px;height:50px;margin-inline-end:950px"></div></div>
+<div id=rtl style="overflow:hidden;width:100px;height:100px;display:flex;direction:rtl"><div style="width:50px;height:50px;margin-inline-end:950px"></div></div>
+<div id=clip style="overflow:clip;width:100px;height:100px;display:flex"><div style="width:50px;height:50px;margin-inline-end:950px"></div></div>"#,
+    );
+    let sh = |id: &str| p.layout.scroll_height(&p.dom, p.id(id));
+    assert_eq!(sh("block"), 100.0);
+    assert_eq!(sw(&p, "blockw"), 100.0);
+    assert_eq!(sh("row"), 100.0);
+    assert_eq!(sw(&p, "col"), 100.0);
+    assert_eq!(sw(&p, "margin"), 950.0);
+    assert_eq!(sw(&p, "rtl"), 950.0);
+    // Not a scroll container: the margin does not extend it.
+    assert_eq!(sw(&p, "clip"), 100.0);
+}
+
+#[test]
+fn only_a_scroll_containers_in_flow_bounds_take_boxes_empty_in_one_axis() {
+    // Measured in Chrome 153 (scrollWidth x scrollHeight): a scroll container's in-flow bounds
+    // start at its scrollport and take a child empty in one axis, and count when the union is
+    // empty in neither axis (d, g, h, and c's padding); a box that does not scroll leaves such a
+    // child out (f, i), and so does a scroller whose union stays empty (a, b, e). WPT cssom-view
+    // `scrollWidthHeight-contain-layout` is c and a.
+    let cases = [
+        ("a", "contain:layout;height:0;width:0;overflow:hidden", "height:2000px"),
+        ("b", "height:0;width:0;overflow:hidden", "height:2000px"),
+        ("c", "contain:layout;height:0;width:0;overflow:hidden;padding:2px", "height:2000px"),
+        ("d", "height:0;width:100px;overflow:scroll", "width:0;height:100px"),
+        ("e", "height:0;width:0;overflow:scroll", "width:0;height:100px"),
+        ("f", "height:0;width:0;overflow:visible;contain:layout", "height:2000px"),
+        ("g", "height:0;width:100px;overflow:hidden", "width:0;height:100px;margin-left:50px"),
+        ("h", "height:100px;width:100px;overflow:hidden", "width:300px;height:0"),
+    ];
+    let mut out = Vec::new();
+    for (id, outer, inner) in cases {
+        let p = page(&format!(r#"<!doctype html><body style="margin:0"><div id=t style="{outer}"><div style="{inner}"></div></div>"#));
+        out.push(format!("{id}:{}x{}", sw(&p, "t"), p.layout.scroll_height(&p.dom, p.id("t"))));
+    }
+    // (i, as f, in a box that does not scroll.) A self-collapsing last child adds no end margin
+    // after the margins collapsed through it, from where its block starts (j to x, a2, d2); u, b2 (text in its
+    // line), c2 (multi-column) are not self-collapsing.
+    let tall = r#"<div style="height:300px"></div>"#;
+    for (id, outer, inner) in [
+        ("i", "height:100px;width:100px;overflow:hidden", r#"<div><div style="width:300px;height:0"></div></div>"#.to_owned()),
+        ("j", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:50px 0"></div>"#)),
+        ("k", "height:100px;width:100px;overflow:hidden", format!("{tall}<p></p>")),
+        ("l", "height:100px;width:100px;overflow:hidden;padding:10px", format!(r#"{tall}<div style="margin:50px 0"></div>"#)),
+        ("m", "height:100px;width:100px;overflow:hidden", r#"<div style="height:300px;margin-bottom:20px"></div><div style="margin:50px 0"></div>"#.to_owned()),
+        ("r", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:0 0 50px"></div>"#)),
+        ("s", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:20px 0 50px"></div>"#)),
+        ("t", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:50px 0"><div></div></div>"#)),
+        ("v", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="clear:both;margin:50px 0"></div>"#)),
+        ("w", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="overflow:clip;margin:50px 0"></div>"#)),
+        ("x", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:50px 0"><span></span></div>"#)),
+        // Margins collapsed through several self-collapsing blocks in a row count once.
+        ("a2", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin-top:80px"></div><div style="margin-bottom:100px"></div>"#)),
+        ("d2", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:50px 0"></div><div style="margin:30px 0"></div>"#)),
+        ("u", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="contain:layout;margin:50px 0"></div>"#)),
+        ("b2", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="height:0;margin:50px 0">text</div>"#)),
+        ("c2", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="columns:2;margin:50px 0"></div>"#)),
+        // Not self-collapsing: a formatting context root, a box holding one, a cleared box.
+        ("n", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="overflow:hidden;height:0;margin:50px 0"></div>"#)),
+        ("o", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="height:0;margin:50px 0"><div style="height:100px"></div></div>"#)),
+        ("q", "height:100px;width:100px;overflow:hidden", r#"<div style="float:left;height:300px;width:10px"></div><div style="clear:both;margin-bottom:50px"></div>"#.to_owned()),
+    ] {
+        let p = page(&format!(r#"<!doctype html><body style="margin:0"><div id=t style="{outer}">{inner}</div>"#));
+        out.push(format!("{id}:{}x{}", sw(&p, "t"), p.layout.scroll_height(&p.dom, p.id("t"))));
+    }
+    // A block ::after is among the margins too: 300 + 16 + 10 + its 30px end margin.
+    let p = page(
+        r#"<!doctype html><style>#t::after{content:"";display:block;margin-bottom:30px}</style><body style="margin:0"><div id=t style="height:100px;width:100px;overflow:hidden"><div style="height:300px"></div><p style="margin:16px 0;height:10px"></p></div>"#,
+    );
+    out.push(format!("p2:{}x{}", sw(&p, "t"), p.layout.scroll_height(&p.dom, p.id("t"))));
+    assert_eq!(
+        out.join(" "),
+        "a:0x0 b:0x0 c:4x2004 d:100x100 e:0x0 f:0x0 g:100x100 h:300x100 i:100x100 j:100x350 k:100x316 l:120x370 m:100x350 \
+         r:100x350 s:100x350 t:100x350 v:100x350 w:100x350 x:100x350 a2:100x400 d2:100x350 u:100x400 b2:100x400 c2:100x400 n:100x400 o:100x450 q:100x350 p2:100x356"
+    );
 }

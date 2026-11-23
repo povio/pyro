@@ -104,7 +104,10 @@ async function startOnce(wpt, ports, log) {
       http: [ports.http, ports.http2], https: [ports.https, ports.https2],
       'http-local': [ports.httpLocal], 'http-public': [ports.httpPublic],
       'https-local': [ports.httpsLocal], 'https-public': [ports.httpsPublic],
-      ws: [ports.ws], wss: [ports.wss], h2: [], 'webtransport-h3': [], dns: [],
+      // h2 is not started (--no-h2), but `{{ports[h2][0]}}` must substitute: websockets/constants.sub.js
+      // names it, and an empty list made wptserve answer that script with a 500 (SCHEME_DOMAIN_PORT undefined
+      // in every websockets page that loads it). A free port no server listens on.
+      ws: [ports.ws], wss: [ports.wss], h2: [await freePort()], 'webtransport-h3': [], dns: [],
     },
     aliases: [
       { 'url-path': '/resources/testharnessreport.js', 'local-dir': HERE },

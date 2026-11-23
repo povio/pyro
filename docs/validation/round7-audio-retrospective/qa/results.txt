@@ -1,0 +1,22 @@
+Chrome 158.0.8127.37
+native set [] native past=now: true
+native linear [] native past=now: true
+native exp [] native past=now: true
+native target [] native past=now: true
+native curve [] native past=now: true
+native cancel [] native past=now: true
+native hold [] native past=now: true
+base set [{"key":"past","frame":384,"got":2,"expected":5,"error":null,"expectedError":null}] native past=now: true
+base linear [{"key":"past","frame":384,"got":2,"expected":5,"error":null,"expectedError":null}] native past=now: true
+base exp [{"key":"past","frame":384,"got":2,"expected":5,"error":null,"expectedError":null}] native past=now: true
+base target [{"key":"past","frame":385,"got":2,"expected":2.0413787364959717,"error":null,"expectedError":null}] native past=now: true
+base curve [{"key":"past","frame":384,"got":2,"expected":3,"error":null,"expectedError":null}] native past=now: true
+base cancel [{"key":"past","frame":384,"got":1,"expected":2,"error":null,"expectedError":null}] native past=now: true
+base hold [{"key":"past","frame":384,"got":1,"expected":5,"error":null,"expectedError":null}] native past=now: true
+candidate set [] native past=now: true
+candidate linear [] native past=now: true
+candidate exp [] native past=now: true
+candidate target [] native past=now: true
+candidate curve [] native past=now: true
+candidate cancel [] native past=now: true
+candidate hold [] native past=now: true

@@ -481,7 +481,8 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
         use NonTSPseudoClass as N;
         match pc {
             N::Active => self.matches(PseudoClass::Active),
-            N::Visited | N::Fullscreen | N::Autofill => false,
+            N::Visited | N::Autofill => false,
+            N::Fullscreen => self.cx().dom.is_fullscreen_idx(self.i()),
             N::Target => self.matches(PseudoClass::Target),
             N::AnyLink | N::Link => self.matches(PseudoClass::Link),
             N::Checked => self.matches(PseudoClass::Checked),
@@ -502,8 +503,10 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             N::Valid => self.matches(PseudoClass::Valid),
             N::Invalid => self.matches(PseudoClass::Invalid),
             N::Open => self.matches(PseudoClass::Open),
-            N::Modal => self.matches(PseudoClass::Modal),
+            // A modal dialog, or (Fullscreen) an element in fullscreen.
+            N::Modal => self.matches(PseudoClass::Modal) || self.cx().dom.is_fullscreen_idx(self.i()),
             N::MozTopmostModal => self.cx().dom.is_dialog_in_top_layer_idx(self.i()),
+            N::PyroActiveViewTransitionScope => self.cx().dom.view_transition_scope_idx(self.i()).is_some(),
             N::PopoverOpen => self.cx().popovers.contains(&self.i()) || self.matches(PseudoClass::PopoverOpen),
             N::InRange => self.matches(PseudoClass::InRange),
             N::OutOfRange => self.matches(PseudoClass::OutOfRange),
@@ -557,6 +560,9 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             CaseSensitivity::CaseSensitive => classes.contains(&name.0),
             CaseSensitivity::AsciiCaseInsensitive => classes.iter().any(|c| c.eq_ignore_ascii_case(&name.0)),
         }
+    }
+    fn has_class_prefix(&self, prefix: &AtomIdent, quirks: bool) -> bool {
+        self.element().classes().iter().any(|class| selectors::attr::matches_class_prefix(class, &prefix.0, quirks))
     }
     fn imported_part(&self, _name: &AtomIdent) -> Option<AtomIdent> {
         None
@@ -620,9 +626,17 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
     fn is_svg_element(&self) -> bool {
         self.element().name.ns == ns!(svg)
     }
+    fn style_attribute_source(&self) -> Option<&str> {
+        let e = self.element();
+        e.semantic_inline_style().or_else(|| e.attr_local(&local_name!("style")))
+    }
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
-        let text = self.element().attr_local(&local_name!("style"))?;
+        let text = self.style_attribute_source()?;
         let (cx, i) = (self.cx(), self.i());
+        // pyro: a `style` attribute CSP blocked declares nothing (`style-src-attr`).
+        if cx.dom.style_attribute_blocked_idx(i) {
+            return None;
+        }
         // SAFETY: styling is sequential, and only this element's own style
         // computation reads its parsed style attribute.
         let cached = unsafe { cx.store.style_attr(i, cx.dom.generation_at(i)) };
@@ -679,6 +693,13 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
         }
         if self.cx().dom.is_dialog_in_top_layer_idx(self.i()) {
             s |= ElementState::TOPMOST_MODAL;
+        }
+        if self.cx().dom.view_transition_scope_idx(self.i()).is_some() {
+            s |= ElementState::ACTIVE_VIEW_TRANSITION;
+        }
+        // Fullscreen: `:fullscreen`, and `:modal` too.
+        if self.cx().dom.is_fullscreen_idx(self.i()) {
+            s |= ElementState::FULLSCREEN | ElementState::MODAL;
         }
         s
     }

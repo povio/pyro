@@ -164,12 +164,13 @@ fn animation_frame_callbacks_share_a_frame_and_timestamp() {
              console.log(JSON.stringify(seen.map(e => e[0])), seen[0][1] === seen[1][1], seen[2][1]); }); });
          const d = requestAnimationFrame(() => seen.push(['d']));
          cancelAnimationFrame(b);
-         clearTimeout(requestAnimationFrame(() => seen.push(['cleared'])));",
+         // Animation frame handles are their own sequence: clearTimeout leaves the callback.
+         clearTimeout(requestAnimationFrame(() => seen.push(['kept', true])));",
     );
     let r = t.run_until_idle(Some(Instant::now() + Duration::from_secs(5)));
     assert_eq!(r, RunOutcome::Idle);
     assert!(
-        rec.console.borrow().contains(&r#"log:["a","c","next"] true true"#.to_string()),
+        rec.console.borrow().contains(&r#"log:["a","c","kept","next"] true true"#.to_string()),
         "{:?}",
         rec.console.borrow()
     );
@@ -538,7 +539,7 @@ fn worker_runs_off_the_page_thread_and_messages_structured_clones_both_ways() {
     assert!(console.contains("log:clone-error:DataCloneError"), "{console}");
     assert!(
         console.contains(
-            "log:ready:undefined,undefined,undefined,true,true,true,true,wn,data:,x,é,http://h/a,function,function,number,string"
+            "log:ready:undefined,undefined,function,true,true,true,true,wn,data:,x,é,http://h/a,function,function,number,string"
         ),
         "{console}"
     );
@@ -552,6 +553,28 @@ fn worker_runs_off_the_page_thread_and_messages_structured_clones_both_ways() {
     assert!(console.contains("log:rest:0,timer:arg,interval"), "{console}");
     drop(console);
     assert!(rec.errors.borrow().is_empty(), "{:?}", rec.errors.borrow());
+    t.browser.close_all();
+    assert!(pyro_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+/// Headers iterators in a worker inherit %IteratorPrototype% through the
+/// worker realm's own "Headers Iterator" prototype, as in a window.
+#[test]
+fn worker_headers_iterators_inherit_the_iterator_prototype() {
+    let (mut t, rec, page) = worker_setup();
+    let script = data_url(
+        "const ip = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
+         const h = new Headers([['b', '2'], ['a', '1']]);
+         const p = Object.getPrototypeOf(h.keys());
+         const d = Object.getOwnPropertyDescriptor(p, 'next');
+         postMessage([Object.getPrototypeOf(p) === ip, Object.getPrototypeOf(h.entries()) === p, d.writable, d.enumerable,
+           d.configurable, [...h.keys()].join(), [...h.values()].join(), [...h.entries()].join(';')].join());",
+    );
+    eval(&t, page, &format!("const w = new Worker({script:?}); w.onmessage = (e) => console.log('headers:' + e.data);"));
+    until_console(&mut t, &rec, "headers:");
+    let console = rec.console.borrow().join("\n");
+    assert!(console.contains("log:headers:true,true,true,true,true,a,b,1,2,a,1;b,2"), "{console}");
+    drop(console);
     t.browser.close_all();
     assert!(pyro_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
 }
@@ -668,6 +691,112 @@ fn worker_report_error_reaches_its_error_event_and_the_page() {
     until_console(&mut t, &rec, "page:Uncaught RangeError: reported");
     t.browser.close_all();
     assert!(pyro_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
+/// Tests that count nested workers (`pyro_webapi::live_nested_workers` is
+/// the process's) run one at a time.
+static NESTED_WORKER_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn until_nested_workers(t: &mut BrowserThread, rec: &Recorder, want: usize) {
+    let r = t.run_until(Some(Instant::now() + Duration::from_secs(10)), |_| pyro_webapi::live_nested_workers() == want);
+    assert_eq!(
+        r,
+        pyro_runtime::RunOutcome::Done,
+        "{want} nested workers, not {}: {:?}",
+        pyro_webapi::live_nested_workers(),
+        rec.console.borrow()
+    );
+}
+
+/// A dedicated worker starts nested workers: messages cross both ways, a
+/// nested error reaches the creator's `Worker`, and each way a nested
+/// worker ends (close, load failure,
+/// terminate, its creator's end) gives back its place under the cap once its
+/// thread exits, while script still holds every wrapper.
+#[test]
+fn nested_workers_message_fail_end_and_give_their_places_back() {
+    let _serial = NESTED_WORKER_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut t, rec, page) = worker_setup();
+    assert_eq!(pyro_webapi::live_nested_workers(), 0);
+    let echo = data_url("onmessage = (e) => postMessage(`echo:${e.data}:${self.constructor.name}`);");
+    let thrower = data_url("setInterval(() => {}, 1000); throw new Error('nested');");
+    let closer = data_url("postMessage('closing'); close(); postMessage('after-close');");
+    let ticker = data_url("setInterval(() => postMessage('tick'), 1);");
+    let parent = data_url(&format!(
+        r#"const echo = new Worker({echo:?});
+        echo.onmessage = (e) => postMessage(e.data);
+        echo.postMessage('hi');
+        const thrower = new Worker({thrower:?});
+        thrower.onerror = (e) => {{
+            e.preventDefault();
+            postMessage('nested-error:' + e.constructor.name + ':' + e.message);
+        }};
+        const closer = new Worker({closer:?});
+        closer.onmessage = (e) => postMessage('closer:' + e.data);
+        const failed = new Worker('blob:http://h/none');
+        failed.onerror = (e) => postMessage('nested-load-failed:' + e.constructor.name);
+        const ticker = new Worker({ticker:?});
+        ticker.onmessage = () => {{
+            ticker.terminate();
+            ticker.onmessage = () => postMessage('after-terminate');
+            postMessage('terminated');
+        }};
+        // Every wrapper stays reachable: places come back on the end, not on GC.
+        self.keep = [echo, thrower, closer, failed, ticker];
+        postMessage('nested:' + typeof Worker);"#
+    ));
+    eval(
+        &t,
+        page,
+        &format!(
+            "const w = new Worker({parent:?});
+             globalThis.w = w;
+             w.onmessage = (e) => console.log(e.data);
+             // Keeps the page's loop turning while the test waits on threads.
+             globalThis.spin = setInterval(() => {{}}, 5);"
+        ),
+    );
+    until_console(&mut t, &rec, "nested:function");
+    until_console(&mut t, &rec, "echo:hi:DedicatedWorkerGlobalScope");
+    until_console(&mut t, &rec, "nested-error:ErrorEvent:Uncaught Error: nested");
+    until_console(&mut t, &rec, "closer:closing");
+    until_console(&mut t, &rec, "nested-load-failed:Event");
+    until_console(&mut t, &rec, "terminated");
+    // The threads of the closed, failed and terminated ones exited; echo's
+    // and thrower's run.
+    until_nested_workers(&mut t, &rec, 2);
+    // The creator's end ends the rest.
+    eval(&t, page, "w.terminate();");
+    until_nested_workers(&mut t, &rec, 0);
+    let console = rec.console.borrow().join("\n");
+    assert!(!console.contains("after-close"), "{console}");
+    assert!(!console.contains("after-terminate"), "{console}");
+    drop(console);
+    t.browser.close_all();
+    assert!(pyro_webapi::join_stopped(Duration::from_secs(5)), "worker threads, nested ones included, end");
+}
+
+/// Closing the page ends a chain of nested workers (page, worker, worker,
+/// worker): every place comes back and `join_stopped` joins every thread.
+#[test]
+fn closing_the_page_ends_a_chain_of_nested_workers() {
+    let _serial = NESTED_WORKER_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut t, rec, page) = worker_setup();
+    let leaf = data_url("postMessage('leaf'); setInterval(() => {}, 1000);");
+    let middle = data_url(&format!(
+        "const w = new Worker({leaf:?}); w.onmessage = (e) => postMessage('middle>' + e.data);
+         setInterval(() => {{}}, 1000);"
+    ));
+    let top = data_url(&format!(
+        "const w = new Worker({middle:?}); w.onmessage = (e) => postMessage('top>' + e.data);
+         setInterval(() => {{}}, 1000);"
+    ));
+    eval(&t, page, &format!("const w = new Worker({top:?}); w.onmessage = (e) => console.log(e.data);"));
+    until_console(&mut t, &rec, "top>middle>leaf");
+    assert_eq!(pyro_webapi::live_nested_workers(), 2, "the middle and leaf workers are nested");
+    t.browser.close_all();
+    assert!(pyro_webapi::join_stopped(Duration::from_secs(5)), "every thread of the chain ends");
+    assert_eq!(pyro_webapi::live_nested_workers(), 0);
 }
 
 #[test]

@@ -1,0 +1,81 @@
+{
+  "surface": [
+    "object",
+    "function",
+    "function",
+    "function",
+    "undefined"
+  ],
+  "legacy": [
+    true,
+    true,
+    true
+  ],
+  "basic": [
+    true,
+    true,
+    true,
+    [
+      "name",
+      "value"
+    ],
+    "alpha",
+    true,
+    true,
+    null
+  ],
+  "changes": [
+    [
+      true,
+      true,
+      [
+        [
+          "event-cookie",
+          "from-doc"
+        ]
+      ],
+      [],
+      true,
+      true
+    ],
+    [
+      true,
+      true,
+      [],
+      [
+        [
+          "event-cookie",
+          false
+        ]
+      ],
+      true,
+      true
+    ]
+  ],
+  "limits": [
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "TypeError"
+  ],
+  "window-url": "TypeError",
+  "service-worker": [
+    true,
+    true,
+    [
+      [
+        "sw-cookie",
+        "/"
+      ]
+    ],
+    {
+      "type": "cookiechange",
+      "changed": [
+        "sw-cookie"
+      ],
+      "deleted": []
+    },
+    0
+  ],
+  "otherContext": true
+}

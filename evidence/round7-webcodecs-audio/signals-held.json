@@ -1,0 +1,16 @@
+[
+  {
+    "workload": "supplemental multi-codec direct signal comparison",
+    "baseline": "AudioDecoder absent",
+    "signedReference": "page.evaluate: Target crashed; no completed result or per-codec attribution",
+    "candidate": "held",
+    "coverage": "missing; retained without retry or fault isolation"
+  },
+  {
+    "workload": "supplemental two-configuration stereo S24/F32 output-layout comparison",
+    "baseline": "AudioDecoder absent",
+    "signedReference": "Target crashed; no completed result or per-codec attribution",
+    "candidate": "held",
+    "coverage": "missing; no retry or isolation"
+  }
+]

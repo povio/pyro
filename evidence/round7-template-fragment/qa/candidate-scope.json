@@ -1,0 +1,15 @@
+{
+  "missing": "<template for=\"missing\"><b>fallback</b></template>",
+  "external": "<div><?marker name=\"p\"?></div><template for=\"p\" src=\"part.html\">fallback</template>",
+  "duplicate": "<p>new A <?marker name=\"p\"?> B</p>",
+  "nested": "<article>outer</article><template><i>inner</i></template>",
+  "modernShadow": "<p>start end</p>",
+  "filtered": [
+    true,
+    ""
+  ],
+  "activeScope": [
+    true,
+    "<b>applied</b><template for=\"outside\">untouched</template>"
+  ]
+}

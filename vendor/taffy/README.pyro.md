@@ -84,6 +84,14 @@ bottom margin of the last in-flow child and the collapsed-through children after
 out-of-flow boxes keep their margins. The container's own margins are not trimmed. The trimmed margins are
 reported as zero in the children's `Layout::margin`. Covered by `crates/pyro-render/tests/margin_trim.rs` and
 WPT `css/css-box/margin-trim` (42 of 42 reftests).
+The `end` trim reaches into the last child that is not collapsed through when the margins of its own last
+children collapse through its bottom edge: that child is laid out again with `BlockContext::trims_block_end`
+(stored as `BlockItem::trim_relayout`), which trims them as its own `end` would, and so on down. Its size is
+unchanged; its self-collapsing last children move up to the bottom of its last child with a height. Such a
+layout is not cached (`compute_block_child_layout` here and in blitz-dom clear the node's cache around it), and
+it is skipped when the formatting context has floats, which it would place again. WPT
+`block-container-block-end-self-collapsing-children-nested-*`, `-offsets-nested-*` and
+`-nested-last-child-with-border` (`block_end_trims_self_collapsing_boxes_nested_at_the_bottom`).
 
 `compute/block.rs`, `compute/grid/alignment.rs`, `style/mod.rs`, `style/block.rs`: `aspect-ratio` as
 css-sizing-4 §5 has it, in block layout (`RatioSizes`, `resolve_sizes_with_aspect_ratio`). Upstream applied
@@ -702,3 +710,21 @@ dimensions, but its height is definite (`LayoutInput::known_dimensions_are_defin
 its content was measured (its `height`, both insets, a ratio); one its content gives leaves its children's percentage
 heights `auto` (CSS 2.1 § 10.5; WPT CSS2 `normal-flow/blocks-025`). Covered by
 `crates/pyro-render/tests/abspos_percentage_heights.rs`.
+
+## Boxes empty in one axis count for scrollable overflow (WPT round 7, css-overflow)
+
+`src/compute/common/scrollable_overflow.rs` (`compute_scrollable_overflow_contribution`): upstream dropped a box
+empty in either axis from its parent's scrollable overflow. Only a box empty in both axes is dropped now: one empty
+in a single axis contributes its extent in the other axis and, in a scroll container, its end margin and the
+parent's end padding, as in Chromium (WPT `scrollable-overflow-zero-one-axis`, a flex item shrunk to zero width
+keeping its `margin-inline-end` in `scrollable-overflow-*-flex-item-margin-inline-end*`). Such a box sitting exactly
+on the scroll origin is not wholly unreachable (the start edge is compared strictly). Covered by pyro-layout
+`flow::a_box_empty_in_one_axis_still_extends_its_scrollers_overflow_like_chromium`.
+
+## The default overflow limit of a position-area box is its original containing block (WPT round 7)
+
+`src/compute/oof.rs` (`OofAxis::overflow_limit`, `solve_oof_box`): when a `position-area` cell replaces the
+containing block, an overflowing box with default overflow alignment is still kept inside the union of its IMCB and
+the original containing block (css-align-3 § auto-safety-position; Chrome), not the cell alone. Fallback fit tests
+still use the cell. WPT css-anchor-position `last-successful-{basic,animation,change-fallbacks,change-try-rule,
+intermediate-ignored}` ("No successful position, keep flip-block").

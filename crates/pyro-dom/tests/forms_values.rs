@@ -209,3 +209,125 @@ fn length_constraints_need_a_user_edit_and_a_text_state() {
     dom.insert_text(n, "1").unwrap();
     assert!(dom.validity(n).unwrap().valid(), "minlength does not apply to numbers");
 }
+
+#[test]
+fn opaque_ranges_follow_applied_utf16_replacements_before_selection_updates() {
+    use pyro_dom::forms::RangeMode;
+    let (dom, d) = doc("<textarea id=t>a🌱bc</textarea>");
+    let mut dom = dom.borrow_mut();
+    let t = el(&dom, d, "t");
+    let inside = dom.create_value_range(t, 2, 4).unwrap();
+    let boundary = dom.create_value_range(t, 3, 1).unwrap();
+    assert_eq!(boundary.offsets(), (3, 3));
+    dom.set_range_text(t, "xyz", 1, 3, RangeMode::End).unwrap();
+    assert_eq!(inside.offsets(), (1, 5));
+    assert_eq!(boundary.offsets(), (4, 4));
+    dom.set_selection_range(t, 1, 1).unwrap();
+    dom.insert_text(t, "🌱").unwrap();
+    assert_eq!(inside.offsets(), (1, 7));
+    assert_eq!(boundary.offsets(), (6, 6));
+    dom.set_value(t, "a🌱xyzbc").unwrap();
+    assert_eq!(inside.offsets(), (1, 7));
+    dom.set_value(t, "ab").unwrap();
+    assert_eq!(inside.offsets(), (0, 0));
+    assert!(inside.element().is_some());
+}
+
+#[test]
+fn opaque_ranges_disconnect_on_connected_removal_and_input_type_change() {
+    let (dom, d) = doc("<div id=p><input id=i value=abc></div>");
+    let mut dom = dom.borrow_mut();
+    let p = el(&dom, d, "p");
+    let i = el(&dom, d, "i");
+    let first = dom.create_value_range(i, 1, 3).unwrap();
+    let second = dom.create_value_range(i, 0, 1).unwrap();
+    first.disconnect();
+    first.disconnect();
+    assert_eq!(second.offsets(), (0, 1));
+    dom.remove_node(p).unwrap();
+    assert_eq!(second.element(), None);
+    let detached = dom.create_value_range(i, 0, 3).unwrap();
+    dom.remove_node(i).unwrap();
+    let other = dom.create_document(DocumentKind::Html, "about:blank");
+    dom.adopt_node(other, i).unwrap();
+    assert_eq!(detached.offsets(), (0, 3));
+    dom.set_attribute(i, "type", "search").unwrap();
+    assert_eq!(detached.element(), Some(i));
+    assert_eq!(detached.offsets(), (0, 0));
+    dom.set_attribute(i, "type", "email").unwrap();
+    assert_eq!(detached.element(), None);
+    assert_eq!(dom.create_value_range(i, 0, 0).err().unwrap().kind(), Some(DomErrorKind::NotSupported));
+}
+
+#[test]
+fn opaque_ranges_reset_only_when_the_relevant_value_changes() {
+    let (dom, d) = doc("<textarea id=t>abc</textarea><input id=i value=abc>");
+    let mut dom = dom.borrow_mut();
+    let t = el(&dom, d, "t");
+    let i = el(&dom, d, "i");
+    let clean = dom.create_value_range(i, 1, 3).unwrap();
+    dom.set_attribute(i, "value", "a").unwrap();
+    assert_eq!(clean.offsets(), (0, 0));
+    let clean = dom.create_value_range(t, 1, 3).unwrap();
+    dom.set_text_content(t, "abc").unwrap();
+    assert_eq!(clean.offsets(), (1, 3));
+    dom.set_text_content(t, "a").unwrap();
+    assert_eq!(clean.offsets(), (0, 0));
+    for control in [t, i] {
+        dom.set_value(control, "xyz").unwrap();
+        let dirty = dom.create_value_range(control, 1, 3).unwrap();
+        dom.set_custom_validity(control, "retained").unwrap();
+        dom.reset_control(control).unwrap();
+        assert_eq!(dirty.offsets(), (0, 0));
+        assert_eq!(dom.value(control).unwrap(), "a");
+        assert!(!dom.control_state(control).unwrap().unwrap().custom_validity.as_deref().unwrap().is_empty());
+    }
+}
+
+/// html/semantics/forms/the-input-element/type-change-state.html: the
+/// value mode transitions of a type attribute change.
+#[test]
+fn input_type_change_moves_the_value_between_value_modes() {
+    let (dom, d) = doc(r#"<input id=a><input id=b type=range><input id=c type=date><input id=e><input id=f type=hidden>"#);
+    let mut dom = dom.borrow_mut();
+    const INITIAL: &str = "  foo\rbar  ";
+    // Value mode → default/default-on: the value goes to the value attribute.
+    let a = el(&dom, d, "a");
+    dom.set_value(a, INITIAL).unwrap();
+    dom.set_attribute(a, "type", "checkbox").unwrap();
+    assert_eq!(dom.value(a).unwrap(), "  foobar  ");
+    assert_eq!(dom.get_attribute(a, "value").unwrap().as_deref(), Some("  foobar  "));
+    // The value as sanitized by the old state.
+    let b = el(&dom, d, "b");
+    dom.set_value(b, INITIAL).unwrap();
+    dom.set_attribute(b, "type", "hidden").unwrap();
+    assert_eq!(dom.value(b).unwrap(), "50");
+    // Value mode → filename: no value.
+    let c = el(&dom, d, "c");
+    dom.set_value(c, INITIAL).unwrap();
+    dom.set_attribute(c, "type", "file").unwrap();
+    assert_eq!(dom.value(c).unwrap(), "");
+    // Free text → url: the new state's sanitization, cursor at the end.
+    let e = el(&dom, d, "e");
+    dom.set_value(e, INITIAL).unwrap();
+    dom.set_selection_range(e, 2, 5).unwrap();
+    dom.set_attribute(e, "type", "url").unwrap();
+    assert_eq!(dom.value(e).unwrap(), "foobar");
+    assert_eq!(dom.selection(e).unwrap(), (6, 6));
+    // Text → search keeps value and selection.
+    dom.set_attribute(e, "type", "search").unwrap();
+    dom.set_selection_range(e, 1, 3).unwrap();
+    dom.set_attribute(e, "type", "text").unwrap();
+    assert_eq!(dom.value(e).unwrap(), "foobar");
+    assert_eq!(dom.selection(e).unwrap(), (1, 3));
+    // Default mode → value mode: the value attribute, not dirty.
+    let f = el(&dom, d, "f");
+    dom.set_attribute(f, "type", "text").unwrap();
+    dom.set_value(f, "typed").unwrap();
+    dom.set_attribute(f, "type", "hidden").unwrap();
+    dom.set_value(f, "attr").unwrap();
+    dom.set_attribute(f, "type", "text").unwrap();
+    assert_eq!(dom.value(f).unwrap(), "attr");
+    dom.set_attribute(f, "value", "later").unwrap();
+    assert_eq!(dom.value(f).unwrap(), "later", "not dirty: follows the attribute");
+}

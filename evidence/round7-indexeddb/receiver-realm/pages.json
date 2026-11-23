@@ -1,0 +1,58 @@
+{
+  "parent": {
+    "IndexedDB/idbindex-cross-realm-methods.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 0,
+      "n": 7
+    },
+    "IndexedDB/idbobjectstore-cross-realm-methods.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 0,
+      "n": 11
+    }
+  },
+  "candidate": {
+    "IndexedDB/idbindex-cross-realm-methods.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 7,
+      "n": 7
+    },
+    "IndexedDB/idbobjectstore-cross-realm-methods.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 11,
+      "n": 11
+    }
+  },
+  "repeat": {
+    "IndexedDB/idbindex-cross-realm-methods.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 7,
+      "n": 7
+    },
+    "IndexedDB/idbobjectstore-cross-realm-methods.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 11,
+      "n": 11
+    }
+  },
+  "chrome158": {
+    "IndexedDB/idbindex-cross-realm-methods.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 7,
+      "n": 7
+    },
+    "IndexedDB/idbobjectstore-cross-realm-methods.html": {
+      "status": "complete",
+      "harness": "OK",
+      "pass": 11,
+      "n": 11
+    }
+  }
+}

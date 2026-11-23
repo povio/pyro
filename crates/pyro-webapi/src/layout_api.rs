@@ -12,62 +12,13 @@ use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
 use crate::util::*;
 
-/// `DOMRect` / `DOMRectReadOnly` values as a plain JS object with the
-/// DOMRect shape (x, y, width, height, top, right, bottom, left, toJSON).
-pub fn rect_value<'s>(s: &Scope<'s>, r: pyro_dom::layout::Rect) -> JsResult<Value<'s>> {
-    let o = s.wrap::<DomRect>(r, None)?;
-    Ok(o.value())
-}
-
-pub struct DomRect;
-impl JsClass for DomRect {
-    const NAME: &'static str = "DOMRect";
-    type Data = pyro_dom::layout::Rect;
-    type Parent = NoParent;
-    fn define(def: &mut ClassDef<Self>) {
-        def.constructor(0, |s, nt, a| {
-            let n = |i: usize| -> JsResult<f64> {
-                if a.get(i).is_undefined() {
-                    Ok(0.0)
-                } else {
-                    a.get(i).to_number()
-                }
-            };
-            let r = pyro_dom::layout::Rect { x: n(0)?, y: n(1)?, width: n(2)?, height: n(3)? };
-            s.wrap_new::<DomRect>(r, nt, None)
-        });
-        def.getter("x", |s, r| Ok(s.number(r.x)));
-        def.getter("y", |s, r| Ok(s.number(r.y)));
-        def.getter("width", |s, r| Ok(s.number(r.width)));
-        def.getter("height", |s, r| Ok(s.number(r.height)));
-        def.getter("left", |s, r| Ok(s.number(r.left())));
-        def.getter("top", |s, r| Ok(s.number(r.top())));
-        def.getter("right", |s, r| Ok(s.number(r.right())));
-        def.getter("bottom", |s, r| Ok(s.number(r.bottom())));
-        def.method("toJSON", 0, |s, r, _a| {
-            let o = s.object();
-            for (k, v) in [
-                ("x", r.x),
-                ("y", r.y),
-                ("width", r.width),
-                ("height", r.height),
-                ("top", r.top()),
-                ("right", r.right()),
-                ("bottom", r.bottom()),
-                ("left", r.left()),
-            ] {
-                o.set(k, s.number(v))?;
-            }
-            Ok(o.value())
-        });
-    }
-}
-
 pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
     crate::animation_events::layout_flush(page, n.id);
     let r = page.layout().bounding_client_rect(&page.dom.borrow(), n.id);
-    rect_value(s, r.layout_units())
+    // HTML-in-Canvas: a drawable element's canvas transform places it (none: as laid out).
+    let r = crate::html_in_canvas::transformed_rect(page, n.id, r);
+    crate::canvas::rect_value(s, page, false, r.layout_units())
 }
 
 pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -76,9 +27,9 @@ pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s
     let rects = page.layout().client_rects(&page.dom.borrow(), n.id);
     let mut vals = pyro_js::RootedVec::new();
     for r in rects {
-        vals.push(s, rect_value(s, r.layout_units())?);
+        vals.push(s, crate::canvas::rect_value(s, page, false, r.layout_units())?);
     }
-    Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
+    crate::canvas::rect_list(s, page, &vals.iter(s).collect::<Vec<_>>())
 }
 
 /// Range geometry for (start container, start offset, end container, end
@@ -106,11 +57,11 @@ pub(crate) fn range_rect<'s>(
     if let Some(t) = text {
         if t == start && start == end {
             if let Some(rect) = page.layout().text_range_rect(&page.dom.borrow(), t, start_offset, end_offset) {
-                return rect_value(s, rect.layout_units());
+                return crate::canvas::rect_value(s, page, false, rect.layout_units());
             }
         }
         if let Some(r) = page.layout().text_rect(&page.dom.borrow(), t) {
-            return rect_value(s, r.layout_units());
+            return crate::canvas::rect_value(s, page, false, r.layout_units());
         }
     }
     // A range over the children of one node (`selectNodeContents`,
@@ -131,7 +82,7 @@ pub(crate) fn range_rect<'s>(
             for c in children {
                 unite_node_rects(&dom, &layout, c, &mut union);
             }
-            return rect_value(s, union.unwrap_or_default().layout_units());
+            return crate::canvas::rect_value(s, page, false, union.unwrap_or_default().layout_units());
         }
     }
     let el = {
@@ -146,7 +97,7 @@ pub(crate) fn range_rect<'s>(
         Some(e) => page.layout().bounding_client_rect(&page.dom.borrow(), e),
         None => pyro_dom::layout::Rect::default(),
     };
-    rect_value(s, r.layout_units())
+    crate::canvas::rect_value(s, page, false, r.layout_units())
 }
 
 /// Adds `node`'s rect to `union`: a text node's line box, an element's
@@ -183,12 +134,158 @@ fn unite_node_rects(
 }
 
 /// Queues the `scroll` event of a completed scroll of `target` (None: the
-/// viewport), followed by its `scrollend`.
+/// viewport), followed by its `scrollend`. The scroll interrupts a smooth scroll of the box.
 pub fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
+    crate::smooth_scroll::cancel(page, target);
     queue_scroll(page, target, true);
 }
 
-fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
+/// A ScrollBehavior (`ScrollOptions.behavior`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ScrollBehavior {
+    /// The scrolling box's `scroll-behavior` decides.
+    Auto,
+    Instant,
+    Smooth,
+}
+
+/// A scroll write of script (a scroll method, a `scrollTop`/`scrollLeft` setter,
+/// `scrollIntoView`, a fragment scroll): `boxes` (`None`: the viewport) are the boxes it scrolls
+/// whether or not they move, whose smooth scrolls it interrupts; `write` scrolls instantly and
+/// returns the boxes it moved. A moved box that scrolls smoothly (`behavior`, else its
+/// `scroll-behavior`) goes back where it was and smooth-scrolls to where the write put it
+/// (snapped there in the write's direction, [`crate::smooth_scroll`]); another fires its scroll
+/// events. Returns what waits for the smooth scrolls it started, if any.
+pub(crate) fn perform_scroll(
+    page: &Rc<PageDom>,
+    behavior: ScrollBehavior,
+    boxes: &[Option<NodeId>],
+    write: impl FnOnce(&pyro_dom::Dom, &mut pyro_dom::layout::Layout) -> Vec<Option<NodeId>>,
+) -> Option<Rc<crate::smooth_scroll::Waiter>> {
+    for &target in boxes {
+        crate::smooth_scroll::cancel(page, target);
+    }
+    let before = (behavior != ScrollBehavior::Instant).then(|| page.layout.borrow().scroll_positions());
+    let moved = {
+        let dom = page.dom.borrow();
+        let mut layout = page.layout.borrow_mut();
+        write(&*dom, &mut *layout)
+    };
+    let mut waiter: Option<Rc<crate::smooth_scroll::Waiter>> = None;
+    for target in moved {
+        let smooth = match behavior {
+            ScrollBehavior::Smooth => true,
+            ScrollBehavior::Instant => false,
+            ScrollBehavior::Auto => crate::smooth_scroll::css_smooth(page, target),
+        };
+        let from = before
+            .as_ref()
+            .filter(|_| smooth)
+            .map(|before| before.iter().find(|(t, _)| *t == target).map_or((0, 0), |&(_, pos)| pos));
+        let Some(from) = from else {
+            fire_scroll(page, target);
+            continue;
+        };
+        let to = {
+            let dom = page.dom.borrow();
+            let mut layout = page.layout.borrow_mut();
+            let to = layout.scroll_position(target);
+            layout.set_scroll_position(&dom, target, from);
+            to
+        };
+        let w = waiter.get_or_insert_with(crate::smooth_scroll::Waiter::new);
+        crate::smooth_scroll::start(page, target, from, to, w);
+    }
+    waiter
+}
+
+/// The promise a scroll method returns (Chrome's `Promise<ScrollResult>`; WPT cssom-view
+/// `*-scroll-promises`, `*-scroll-promise-interruption`), fulfilled with `{interrupted}`: at once
+/// for an instant scroll, else when the smooth scrolls `waiter` waits for end, `interrupted: true`
+/// when another scroll of one of their boxes cut it short.
+fn scroll_promise<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    waiter: Option<Rc<crate::smooth_scroll::Waiter>>,
+) -> JsResult<Value<'s>> {
+    let deferred = s.deferred()?;
+    let promise = deferred.promise.get(s);
+    match waiter {
+        Some(waiter) => crate::smooth_scroll::attach(page, &waiter, s.realm().downgrade(), deferred),
+        None => {
+            let o = s.object();
+            o.set_atom("interrupted", s.boolean(false))?;
+            deferred.resolve(s, o.value())?;
+        }
+    }
+    Ok(promise)
+}
+
+/// The `behavior` member of a ScrollOptions dictionary `o` (a ScrollBehavior: "auto", "instant"
+/// or "smooth"); another value is a TypeError.
+fn scroll_behavior(o: &Object<'_>, operation: &str, interface: &str) -> JsResult<ScrollBehavior> {
+    let behavior = o.get("behavior")?;
+    if behavior.is_undefined() {
+        return Ok(ScrollBehavior::Auto);
+    }
+    let b = dom_string(behavior)?;
+    match b.as_str() {
+        "smooth" => Ok(ScrollBehavior::Smooth),
+        "instant" => Ok(ScrollBehavior::Instant),
+        "auto" => Ok(ScrollBehavior::Auto),
+        _ => Err(pyro_js::JsError::type_error(format!(
+            "Failed to execute '{operation}' on '{interface}': The provided value '{b}' is not a valid enum value of type ScrollBehavior."
+        ))),
+    }
+}
+
+/// The arguments of `scroll()`, `scrollTo()` and `scrollBy()` (`optional ScrollToOptions` or
+/// `unrestricted double x, unrestricted double y`): left, top and the scroll's behavior.
+/// A single argument converts to the dictionary, so a number there is a TypeError.
+pub(crate) fn scroll_options<T>(
+    a: &Args<'_>,
+    operation: &str,
+    interface: &str,
+    number: impl Fn(Value<'_>) -> JsResult<T>,
+) -> JsResult<(Option<T>, Option<T>, ScrollBehavior)> {
+    let arg = a.get(0);
+    if let Some(o) = arg.as_object() {
+        // Dictionary members in order: ScrollOptions' behavior, then left, top.
+        let behavior = scroll_behavior(&o, operation, interface)?;
+        let l = o.get_atom("left")?;
+        let t = o.get_atom("top")?;
+        Ok((
+            (!l.is_undefined()).then(|| number(l)).transpose()?,
+            (!t.is_undefined()).then(|| number(t)).transpose()?,
+            behavior,
+        ))
+    } else if a.len() >= 2 {
+        Ok((Some(number(a.get(0))?), Some(number(a.get(1))?), ScrollBehavior::Auto))
+    } else if arg.is_undefined() || arg.is_null() {
+        Ok((None, None, ScrollBehavior::Auto))
+    } else {
+        Err(pyro_js::JsError::type_error(format!(
+            "Failed to execute '{operation}' on '{interface}': The provided value is not of type 'ScrollToOptions'."
+        )))
+    }
+}
+
+/// `Window.scroll()`, `scrollTo()` and `scrollBy()` (`by`) to `l`, `t`: returns their scroll
+/// promise ([`scroll_promise`]).
+pub(crate) fn window_scroll<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    (l, t, behavior): (Option<i32>, Option<i32>, ScrollBehavior),
+    by: bool,
+) -> JsResult<Value<'s>> {
+    let waiter = perform_scroll(page, behavior, &[None], |dom, layout| {
+        let moved = if by { layout.window_scroll_by(dom, l, t) } else { layout.window_scroll_to(dom, l, t) };
+        moved.then_some(None).into_iter().collect()
+    });
+    scroll_promise(s, page, waiter)
+}
+
+pub(crate) fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
     // HTML "run the scroll steps": a scrolled target is queued once and its
     // scroll event fires in the next rendering update before animation
     // callbacks. A 16 ms fallback also delivers it when no frame was requested.
@@ -197,10 +294,10 @@ fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
     // was 23-29 ms after Playwright's scroll step, after its click; on an
     // idle page a frame can run within ~1 ms. Fired as an immediate task, it
     // let close-on-scroll handlers close the popover before the click.
-    // Scrolls that complete (every scroll here is instant: programmatic,
-    // reveal, wheel) are followed by `scrollend` in the same update, as
-    // Chromium fires it after instant programmatic scrolls (Gap 35); layout
-    // clamps fire `scroll` only.
+    // Scrolls that complete (instant ones: programmatic, reveal, wheel; a
+    // smooth scroll's last step) are followed by `scrollend` in the same
+    // update, as Chromium fires it after instant programmatic scrolls (Gap
+    // 35); layout clamps and a smooth scroll's other steps fire `scroll` only.
     let doc = page.document();
     let token = {
         let mut pending = page.pending_scrolls.borrow_mut();
@@ -223,6 +320,7 @@ fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
             let Some(end) = pending else { return };
             dispatch_scroll(&p, doc, target, "scroll");
             if end {
+                fire_snap_events(&p);
                 dispatch_scroll(&p, doc, target, "scrollend");
             }
         }),
@@ -248,6 +346,9 @@ pub(crate) fn run_scroll_steps(page: &Rc<PageDom>) {
         clamp_scrolls(page, true);
     }
     flush_pending_scrolls(page);
+    // pyro: snap targets a layout change or an initial snap changed, without a scroll to report
+    // them before its `scrollend`.
+    fire_snap_events(page);
 }
 
 /// Runs queued scroll steps before animation-frame callbacks in a rendering update.
@@ -259,12 +360,181 @@ pub fn content_visibility_frame(page: &Rc<PageDom>) {
     }
 }
 
+/// pyro: the `contentvisibilityautostatechange` events of a rendering update of `page` (CSS
+/// Contain 2 § 4.1), right after relevance is determined at its start
+/// ([`content_visibility_frame`]), before its animation frame callbacks: each
+/// `content-visibility: auto` element whose skipped state was determined for the first time, or
+/// changed since its last event, gets one (`skipped`), in tree order. Layouts that geometry reads
+/// force between frames fire none (WPT css-contain `content-visibility-with-top-layer-008`); a
+/// disconnected element none either (`-auto-state-changed-removed`). A page that listens for no
+/// such event lays nothing out for it.
+pub fn content_visibility_events(page: &Rc<PageDom>) {
+    const TYPE: &str = "contentvisibilityautostatechange";
+    if page.is_disposed() {
+        return;
+    }
+    // (Handler content attributes the parser set are registered first, as a dispatch does.)
+    if crate::target::unheard(page, TYPE) {
+        return;
+    }
+    let states = {
+        let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) else { return };
+        let states = layout.content_visibility_auto_states(&dom);
+        // (What listeners change from here on is read again: `schedule_content_visibility_check`.)
+        page.cv_auto_check.set((page.cv_auto_check.get().0, Some((dom.version(), layout.scroll_generation()))));
+        states
+    };
+    let mut changed: Vec<(NodeId, bool)> = {
+        let mut recorded = page.cv_auto_states.borrow_mut();
+        let mut next = std::collections::HashMap::with_capacity(states.len());
+        let mut changed = Vec::new();
+        for (id, skipped) in states {
+            if recorded.get(&id) != Some(&skipped) {
+                changed.push((id, skipped));
+            }
+            next.insert(id, skipped);
+        }
+        // (Elements that left the document or `content-visibility: auto` are forgotten: one that
+        // comes back is determined anew.)
+        *recorded = next;
+        changed
+    };
+    if changed.is_empty() {
+        return;
+    }
+    {
+        let dom = page.dom.borrow();
+        let precedes = |a: NodeId, b: NodeId| dom.compare_document_position(b, a).is_ok_and(|p| p & 0x02 != 0);
+        changed.sort_by(|(a, _), (b, _)| {
+            if a == b {
+                std::cmp::Ordering::Equal
+            } else if precedes(*a, *b) {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        });
+    }
+    for (id, skipped) in changed {
+        // (A listener may have removed a later one.)
+        if !page.dom.borrow().is_connected(id).unwrap_or(false) {
+            page.cv_auto_states.borrow_mut().remove(&id);
+            continue;
+        }
+        let ev = crate::event::EventCore::trusted(
+            page,
+            crate::event::EventInterface::ContentVisibilityAutoStateChangeEvent,
+            TYPE,
+            false,
+            false,
+        );
+        ev.fields.borrow_mut().skipped = skipped;
+        crate::target::fire_at_node(page, id, &ev);
+    }
+}
+
+/// pyro: after a task of `page` that listens for `contentvisibilityautostatechange`: when the DOM
+/// or a scroll position changed since the states were last read, they are read again at the
+/// frame interval, as a rendering update without animation frame callbacks would (pyro runs
+/// frames only for them): relevance is determined, then the events fire
+/// ([`content_visibility_events`]). One lookup for a page without such a listener; none queued for
+/// a page whose DOM and scroll positions stay as they were (a quiet page stays idle).
+pub(crate) fn schedule_content_visibility_check(page: &Rc<PageDom>) {
+    const TYPE: &str = "contentvisibilityautostatechange";
+    let (pending, stamp) = page.cv_auto_check.get();
+    if pending || page.is_disposed() {
+        return;
+    }
+    {
+        let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) else { return };
+        if !dom.listens_for(TYPE) && !dom.has_pending_inline_handlers() {
+            return;
+        }
+        if stamp == Some((dom.version(), layout.scroll_generation())) {
+            return;
+        }
+    }
+    page.cv_auto_check.set((true, stamp));
+    let p = page.clone();
+    page.post_delayed_task(
+        std::time::Duration::from_millis(16),
+        Box::new(move || {
+            p.cv_auto_check.set((false, p.cv_auto_check.get().1));
+            // (A listener removed meanwhile: no frame to run for it.)
+            if crate::target::unheard(&p, TYPE) {
+                return;
+            }
+            content_visibility_frame(&p);
+            content_visibility_events(&p);
+        }),
+    );
+}
+
+/// pyro: the ResizeObserver step of a rendering update of `page` (after its animation frame
+/// callbacks, immediately before its ResizeObserver callbacks): elements with
+/// `contain-intrinsic-size: auto` remember their sizes (CSS Sizing 4 § 5.1).
+pub fn record_remembered_sizes(page: &PageDom) {
+    if page.is_disposed() {
+        return;
+    }
+    if let Some(layout) = page.try_layout() {
+        let Ok(dom) = page.dom.try_borrow() else { return };
+        layout.record_remembered_sizes(&dom);
+    }
+}
+
+/// pyro: the scroll steps of an animation frame of `page` (HTML "update the rendering"): a
+/// mandatory snap container not yet snapped snaps (CSS Scroll Snap 1 § 6.3: at its first layout,
+/// before script that waits a frame scrolls it), running smooth scrolls advance a frame, the
+/// queued scroll events fire, and so do the snap events of snap targets that changed without a
+/// scroll to report them (the initial snap's, as Chromium; CSS Scroll Snap 2 § 5.1).
+pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
+    if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
+        layout.snap_initial_positions(&dom);
+    }
+    crate::smooth_scroll::step(page);
+    flush_pending_scrolls(page);
+    fire_snap_events(page);
+}
+
 pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     let pending = std::mem::take(&mut *page.pending_scrolls.borrow_mut());
     for ((doc, target), end, _) in pending {
         dispatch_scroll(page, doc, target, "scroll");
         if end {
+            fire_snap_events(page);
             dispatch_scroll(page, doc, target, "scrollend");
+        }
+    }
+}
+
+/// pyro: CSS Scroll Snap 2 § 5.1: `scrollsnapchanging`, then `scrollsnapchange`, at each scroller
+/// whose snap targets changed since they were last reported (a scroll's, before its
+/// `scrollend`, as Chromium; a layout change's in the rendering update that re-snaps it): at the
+/// document for the viewport, bubbling, at the element otherwise, not; never cancelable. A
+/// scroller that stopped snapping reports `(null, null)`.
+pub(crate) fn fire_snap_events(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
+    let changes = match (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
+        (Ok(dom), Ok(mut layout)) => layout.take_snap_changes(&dom),
+        _ => return,
+    };
+    let doc = page.document();
+    for (scroller, targets) in changes {
+        for ty in ["scrollsnapchanging", "scrollsnapchange"] {
+            if page.is_disposed() || crate::target::unheard(page, ty) {
+                continue;
+            }
+            let Some(key) = page.dom.borrow().node_key(scroller.unwrap_or(doc)) else { continue };
+            let iface = crate::event::EventInterface::SnapEvent;
+            let ev = crate::event::EventCore::trusted(page, iface, ty, scroller.is_none(), false);
+            crate::event::set_snap_targets(page, &mut ev.fields.borrow_mut(), targets);
+            crate::target::fire(page, key, &ev);
         }
     }
 }
@@ -324,7 +594,8 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
     if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
         layout.snap_initial_positions(&dom);
     }
-    if !page.layout.borrow().has_scroll_offsets() {
+    // (A document with snap containers re-snaps unsnapped ones though nothing is scrolled.)
+    if !page.layout.borrow().has_scroll_offsets() && !page.layout.borrow().snap_owed() {
         return;
     }
     let moved = {
@@ -345,6 +616,11 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
             dispatch_scroll(page, doc, node, "scroll");
         }
     }
+    // pyro: a re-snap's snap events, after its `scroll` (a script read's at the next rendering
+    // update).
+    if now {
+        fire_snap_events(page);
+    }
 }
 
 /// After a task that changed the DOM while something is scrolled: re-clamp
@@ -352,7 +628,15 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
 /// rendering update would lay out without any script read.
 pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
     let (checked, queued) = page.scroll_clamp.get();
-    if queued || page.is_disposed() || !page.layout.borrow().has_scroll_offsets() {
+    if queued || page.is_disposed() {
+        return;
+    }
+    // (A document with snap containers re-snaps unsnapped ones though nothing is scrolled.)
+    let owed = {
+        let layout = page.layout.borrow();
+        layout.has_scroll_offsets() || layout.snap_owed()
+    };
+    if !owed {
         return;
     }
     if checked == Some(page.dom.borrow().version()) {
@@ -375,22 +659,17 @@ pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
 
 /// `scrollIntoView(arg)`: `(boolean or ScrollIntoViewOptions)`; `true`, a
 /// missing argument and `{}` align block start / inline nearest, `false`
-/// block end / inline nearest. `behavior` is accepted; scrolling is instant.
+/// block end / inline nearest. Each box it scrolls scrolls smoothly when `behavior` (else the
+/// box's `scroll-behavior`) says so ([`perform_scroll`]). Returns a scroll promise
+/// ([`scroll_promise`]).
 pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     use pyro_dom::layout::ScrollAlign;
     let arg = a.get(0);
     let (mut block, mut inline) = (ScrollAlign::Start, ScrollAlign::Nearest);
+    let mut behavior = ScrollBehavior::Auto;
     if let Some(o) = arg.as_object() {
         // Dictionary members in lexicographic order: behavior, block, inline.
-        let behavior = o.get("behavior")?;
-        if !behavior.is_undefined() {
-            let b = dom_string(behavior)?;
-            if !matches!(b.as_str(), "auto" | "instant" | "smooth") {
-                return Err(pyro_js::JsError::type_error(format!(
-                    "Failed to execute 'scrollIntoView' on 'Element': The provided value '{b}' is not a valid enum value of type ScrollBehavior."
-                )));
-            }
-        }
+        behavior = scroll_behavior(&o, "scrollIntoView", "Element")?;
         let position = |k: &str, out: &mut ScrollAlign| -> JsResult<()> {
             let v = o.get(k)?;
             if v.is_undefined() {
@@ -410,10 +689,18 @@ pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
         block = ScrollAlign::End;
     }
     let page = n.page();
-    let moved =
-        page.layout.borrow_mut().scroll_into_view_aligned_script_targets(&page.dom.borrow(), n.id, block, inline);
-    fire_scroll_targets(page, moved);
-    Ok(s.undefined())
+    let waiter = perform_scroll(page, behavior, &[], |dom, layout| {
+        let moved = layout.scroll_into_view_aligned_script_targets(dom, n.id, block, inline);
+        moved.iter().map(scroll_target_node).collect()
+    });
+    scroll_promise(s, page, waiter)
+}
+
+fn scroll_target_node(target: &pyro_dom::layout::ScrollTarget) -> Option<NodeId> {
+    match *target {
+        pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
+        pyro_dom::layout::ScrollTarget::Viewport => None,
+    }
 }
 
 pub(crate) fn scroll_into_view_if_needed<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
@@ -431,13 +718,13 @@ pub fn viewport_scroll(page: &Rc<PageDom>) -> (i32, i32) {
     (layout.scroll_x() as i32, layout.scroll_y() as i32)
 }
 
-/// Scrolls the viewport back to a history entry's persisted position.
+/// Scrolls the viewport back to a history entry's persisted position: smoothly under the root's
+/// `scroll-behavior: smooth`, as Chrome (WPT cssom-view `scroll-behavior-smooth-navigation`).
 pub fn restore_viewport_scroll(page: &Rc<PageDom>, (x, y): (i32, i32)) {
     crate::animation_events::layout_flush(page, page.document());
-    let moved = page.layout.borrow_mut().window_scroll_to(&page.dom.borrow(), Some(x), Some(y));
-    if moved {
-        fire_scroll(page, None);
-    }
+    perform_scroll(page, ScrollBehavior::Auto, &[None], |dom, layout| {
+        layout.window_scroll_to(dom, Some(x), Some(y)).then_some(None).into_iter().collect()
+    });
 }
 
 /// HTML "scroll to the fragment", after a same-document navigation to `fragment` (the URL's
@@ -466,35 +753,122 @@ pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
         };
         find(fragment).or_else(|| find(&decoded))
     };
+    // HTML "scroll to the fragment": the ancestor revealing algorithm runs on the target before
+    // it is scrolled to; `beforematch` handlers may move, remove or hide it, so layout is
+    // brought up to date again and a target no longer connected is not scrolled to.
+    let target = target.filter(|&el| {
+        reveal_ancestors(page, el);
+        crate::animation_events::layout_flush(page, doc);
+        page.dom.borrow().is_connected(el).unwrap_or(false)
+    });
+    // (Scrolled with behavior `auto`: the boxes' `scroll-behavior` decides.)
     match target {
         Some(el) => {
-            let moved = page.layout.borrow_mut().scroll_into_view_aligned_script_targets(
-                &page.dom.borrow(),
-                el,
-                ScrollAlign::Start,
-                ScrollAlign::Nearest,
-            );
-            fire_scroll_targets(page, moved);
+            perform_scroll(page, ScrollBehavior::Auto, &[], |dom, layout| {
+                layout
+                    .scroll_into_view_aligned_script_targets(dom, el, ScrollAlign::Start, ScrollAlign::Nearest)
+                    .iter()
+                    .map(scroll_target_node)
+                    .collect()
+            });
+            // HTML: then "run the focusing steps for target, with the Document's viewport as the
+            // fallback target": a focusable target takes focus (focus events fire), else the
+            // viewport does, which leaves the document without a focused element (WPT
+            // focus-changes-after-scroll-to-fragment).
+            let focusable = {
+                let layout = page.layout();
+                let dom = page.dom.borrow();
+                crate::input::is_focusable_area(&layout, &dom, el)
+            };
+            if focusable {
+                crate::input::focus_element(page, el);
+            } else {
+                let focused = page.dom.borrow().focused(doc).ok().flatten();
+                if let Some(focused) = focused {
+                    crate::input::blur_element(page, focused);
+                }
+            }
         }
         None if fragment.is_empty() || decoded.eq_ignore_ascii_case("top") => {
-            let moved = page.layout.borrow_mut().window_scroll_to(&page.dom.borrow(), Some(0), Some(0));
-            if moved {
-                fire_scroll(page, None);
-            }
+            perform_scroll(page, ScrollBehavior::Auto, &[None], |dom, layout| {
+                layout.window_scroll_to(dom, Some(0), Some(0)).then_some(None).into_iter().collect()
+            });
         }
         None => {}
     }
 }
 
+/// HTML "ancestor revealing algorithm" on `node`: walking up the flat tree (a shadow root's
+/// host stands for the root), the `hidden=until-found` elements and the closed `<details>`
+/// whose content holds the walk are collected first, innermost first; then each closed
+/// `<details>` opens, and each `hidden=until-found` element gets a bubbling `beforematch` and
+/// loses its `hidden` attribute. The run stops at an element no longer connected, a `<details>`
+/// already open, or an element whose `hidden` left the until-found state before its turn
+/// (WPT html/editing/the-hidden-attribute).
+pub fn reveal_ancestors(page: &Rc<PageDom>, node: NodeId) {
+    use markup5ever::local_name;
+    enum Reveal {
+        Details(NodeId),
+        UntilFound(NodeId),
+    }
+    fn until_found(dom: &pyro_dom::Dom, id: NodeId) -> bool {
+        dom.element(id)
+            .is_ok_and(|e| e.is_html() && e.attr("hidden").is_some_and(|v| v.eq_ignore_ascii_case("until-found")))
+    }
+    // `child` is in the content slot of `parent`, a closed `<details>`: any child but its
+    // first `<summary>`.
+    fn in_closed_details(dom: &pyro_dom::Dom, child: NodeId, parent: NodeId) -> bool {
+        let Ok(p) = dom.element(parent) else { return false };
+        if !p.is_html() || p.name.local != local_name!("details") || p.attr_local(&local_name!("open")).is_some() {
+            return false;
+        }
+        let is_summary =
+            |id: &NodeId| dom.element(*id).is_ok_and(|c| c.is_html() && c.name.local == local_name!("summary"));
+        dom.children(parent).ok().and_then(|mut c| c.find(is_summary)) != Some(child)
+    }
+    let reveal = {
+        let dom = page.dom.borrow();
+        let mut reveal = Vec::new();
+        let mut current = node;
+        while let Some(parent) = dom.parent(current).ok().flatten() {
+            if until_found(&dom, current) {
+                reveal.push(Reveal::UntilFound(current));
+            }
+            if in_closed_details(&dom, current, parent) {
+                reveal.push(Reveal::Details(parent));
+            }
+            current = dom.fragment_host(parent).ok().flatten().unwrap_or(parent);
+        }
+        reveal
+    };
+    for step in reveal {
+        match step {
+            Reveal::Details(details) => {
+                let mut dom = page.dom.borrow_mut();
+                if !dom.is_connected(details).unwrap_or(false)
+                    || dom.get_attribute(details, "open").ok().flatten().is_some()
+                {
+                    return;
+                }
+                let _ = dom.set_attribute(details, "open", "");
+            }
+            Reveal::UntilFound(el) => {
+                {
+                    let dom = page.dom.borrow();
+                    if !dom.is_connected(el).unwrap_or(false) || !until_found(&dom, el) {
+                        return;
+                    }
+                }
+                crate::input::fire_simple(page, el, "beforematch", true, false);
+                let _ = page.dom.borrow_mut().remove_attribute(el, "hidden");
+            }
+        }
+    }
+}
+
 fn fire_scroll_targets(page: &Rc<PageDom>, moved: Vec<pyro_dom::layout::ScrollTarget>) {
     for target in moved {
-        fire_scroll(
-            page,
-            match target {
-                pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
-                pyro_dom::layout::ScrollTarget::Viewport => None,
-            },
-        );
+        fire_scroll(page, scroll_target_node(&target));
     }
 }
 
@@ -520,21 +894,6 @@ pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
     let page = n.page();
     let v = page.layout().check_visibility(&page.dom.borrow(), n.id, opts);
     Ok(s.boolean(v))
-}
-
-fn scroll_args(a: &Args<'_>) -> JsResult<(Option<f64>, Option<f64>)> {
-    if let Some(o) = a.get(0).as_object() {
-        let l = o.get_atom("left")?;
-        let t = o.get_atom("top")?;
-        Ok((
-            (!l.is_undefined()).then(|| to_scroll_number(l)).transpose()?,
-            (!t.is_undefined()).then(|| to_scroll_number(t)).transpose()?,
-        ))
-    } else if a.len() >= 2 {
-        Ok((Some(to_scroll_number(a.get(0))?), Some(to_scroll_number(a.get(1))?)))
-    } else {
-        Ok((None, None))
-    }
 }
 
 /// pyro: the effective `zoom` of the element `el` (1 without a style): its scroll offsets are
@@ -565,32 +924,36 @@ fn scrolls_viewport(page: &PageDom, el: NodeId) -> bool {
     scrolling.ok().flatten() == Some(el)
 }
 
-pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) -> JsResult<Value<'s>> {
-    let (l, t) = scroll_args(&a)?;
+/// `Element.scroll()`, `scrollTo()` (`operation`) and `scrollBy()` (`by`): returns a scroll
+/// promise ([`scroll_promise`]).
+pub(crate) fn scroll_to<'s>(
+    s: &Scope<'s>,
+    n: &NodeData,
+    a: Args<'s>,
+    operation: &str,
+    by: bool,
+) -> JsResult<Value<'s>> {
+    let (l, t, behavior) = scroll_options(&a, operation, "Element", to_scroll_number)?;
     let page = n.page();
     let viewport = scrolls_viewport(page, n.id);
     let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
     let (css_l, css_t) = (l, t);
     let (l, t) = (l.map(|v| round_scroll_offset(v * zoom)), t.map(|v| round_scroll_offset(v * zoom)));
-    let moved = {
-        let dom = page.dom.borrow();
-        let mut layout = page.layout.borrow_mut();
+    let target = (!viewport).then_some(n.id);
+    let waiter = perform_scroll(page, behavior, &[target], |dom, layout| {
         let moved = match (viewport, by) {
-            (true, true) => layout.window_scroll_by(&dom, l, t),
-            (true, false) => layout.window_scroll_to(&dom, l, t),
-            (false, true) => layout.element_scroll_by(&dom, n.id, l, t),
-            (false, false) => layout.element_scroll_to(&dom, n.id, l, t),
+            (true, true) => layout.window_scroll_by(dom, l, t),
+            (true, false) => layout.window_scroll_to(dom, l, t),
+            (false, true) => layout.element_scroll_by(dom, n.id, l, t),
+            (false, false) => layout.element_scroll_to(dom, n.id, l, t),
         };
         // pyro: what script asked for reads back (a zoomed element's fractional offset).
         if !viewport && !by {
             layout.note_css_scroll(n.id, css_l, css_t, zoom);
         }
-        moved
-    };
-    if moved {
-        fire_scroll(page, (!viewport).then_some(n.id));
-    }
-    Ok(s.undefined())
+        moved.then_some(target).into_iter().collect()
+    });
+    scroll_promise(s, page, waiter)
 }
 
 pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult<Value<'s>> {
@@ -615,24 +978,21 @@ pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) 
     let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
     let css = value;
     let value = round_scroll_offset(value * zoom);
-    let moved = {
-        let dom = page.dom.borrow();
-        let mut layout = page.layout.borrow_mut();
+    let target = (!viewport).then_some(n.id);
+    // (Behavior `auto`: smooth under the box's `scroll-behavior: smooth`.)
+    perform_scroll(page, ScrollBehavior::Auto, &[target], |dom, layout| {
         let moved = match (viewport, top) {
-            (true, true) => layout.window_scroll_to(&dom, None, Some(value)),
-            (true, false) => layout.window_scroll_to(&dom, Some(value), None),
-            (false, true) => layout.set_scroll_top(&dom, n.id, value),
-            (false, false) => layout.set_scroll_left(&dom, n.id, value),
+            (true, true) => layout.window_scroll_to(dom, None, Some(value)),
+            (true, false) => layout.window_scroll_to(dom, Some(value), None),
+            (false, true) => layout.set_scroll_top(dom, n.id, value),
+            (false, false) => layout.set_scroll_left(dom, n.id, value),
         };
         if !viewport {
             let (x, y) = if top { (None, Some(css)) } else { (Some(css), None) };
             layout.note_css_scroll(n.id, x, y, zoom);
         }
-        moved
-    };
-    if moved {
-        fire_scroll(page, (!viewport).then_some(n.id));
-    }
+        moved.then_some(target).into_iter().collect()
+    });
     Ok(())
 }
 
@@ -669,11 +1029,15 @@ pub(crate) fn inner_text<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>>
 }
 
 pub(crate) fn set_inner_text(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
-    let text = if crate::trusted_types::is_html_script(n.page(), n.id) {
-        crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement innerText", true)?
-    } else {
-        null_to_empty(v)?
-    };
+    if crate::trusted_types::is_html_script(n.page(), n.id) {
+        let text =
+            crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement innerText", true)?;
+        // Trusted Types: the script is trusted with this text ([[ScriptText]]).
+        let mut dom = n.page().dom.borrow_mut();
+        dom.set_script_text(n.id, &text);
+        return dom.set_inner_text(n.id, &text).js();
+    }
+    let text = null_to_empty(v)?;
     n.page().dom.borrow_mut().set_inner_text(n.id, &text).js()
 }
 
@@ -687,6 +1051,12 @@ pub fn hit_test(page: &PageDom, x: f64, y: f64) -> Option<NodeId> {
     page.layout().element_from_point(&page.dom.borrow(), x, y)
 }
 
+/// [`hit_test`] without image maps: the element whose box holds the point
+/// (a usemap image, not its `area`).
+pub fn hit_test_box(page: &PageDom, x: f64, y: f64) -> Option<NodeId> {
+    page.layout().box_from_point(&page.dom.borrow(), x, y)
+}
+
 pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(2, "Document.elementFromPoint")?;
     let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
@@ -696,7 +1066,14 @@ pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -
     }
     // Retargeted against the document: a hit inside a shadow tree is its
     // outermost host (CDP's `hit_test` stays un-retargeted, as Chrome's).
-    let hit = hit_test(page, x, y).and_then(|h| page.dom.borrow().retarget_node(h, n.id));
+    let hit = if page.dom.borrow().drawable_canvas_seen() {
+        // HTML-in-Canvas: the first of the hits a drawable canvas's drawn elements adjust.
+        let hits = page.layout().elements_from_point(&page.dom.borrow(), x, y);
+        crate::html_in_canvas::adjust_hits(page, x, y, hits).into_iter().next()
+    } else {
+        hit_test(page, x, y)
+    };
+    let hit = hit.and_then(|h| page.dom.borrow().retarget_node(h, n.id));
     opt_node(s, page, hit)
 }
 
@@ -740,6 +1117,8 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
     let page = n.page();
     let mut ids =
         if n.id == page.document() { page.layout().elements_from_point(&page.dom.borrow(), x, y) } else { Vec::new() };
+    // HTML-in-Canvas: a drawable canvas's drawn elements, where they were drawn.
+    let mut ids = crate::html_in_canvas::adjust_hits(page, x, y, std::mem::take(&mut ids));
     {
         // Retarget each hit against the document, dropping the repeats a
         // shadow tree's nodes collapse to (its host, once).
@@ -769,18 +1148,37 @@ pub struct ComputedData {
 }
 
 impl ComputedData {
+    fn rendered_document(&self) -> Option<Rc<PageDom>> {
+        let home = &self.el.page;
+        let document = home.dom.borrow().owner_document(self.el.id).ok().flatten()?;
+        let page = if home.document() == document {
+            home.clone()
+        } else {
+            home.hooks()?.frame_tree().into_iter().find(|other| {
+                other.document() == document && Rc::ptr_eq(&other.dom, &home.dom)
+            })?
+        };
+        let mut frame = page.clone();
+        while frame.is_nested_frame() {
+            let crate::page::FrameContainer::Frame(parent, owner) = frame.container() else { return None };
+            parent.layout().client_rect(&parent.dom.borrow(), owner)?;
+            frame = parent;
+        }
+        Some(page)
+    }
+
     /// The computed value of `name` for the element or its pseudo-element.
     fn value(&self, name: &str) -> String {
         use pyro_dom::stylo::PseudoArg;
-        let page = &self.el.page;
+        let Some(page) = self.rendered_document() else { return String::new() };
         match &self.pseudo {
             PseudoArg::Element => {
-                crate::animation_events::observe(page, self.el.id);
+                crate::animation_events::observe(&page, self.el.id);
                 page.layout().computed_style_value(&page.dom.borrow(), self.el.id, name)
             }
             PseudoArg::Pseudo(pseudo) => {
                 // A style flush too: the pseudo-element's transitions start at it.
-                crate::animation_events::observe(page, self.el.id);
+                crate::animation_events::observe(&page, self.el.id);
                 page.layout().computed_pseudo_style_value(&page.dom.borrow(), self.el.id, pseudo, name)
             }
             PseudoArg::Invalid => String::new(),
@@ -802,12 +1200,38 @@ fn computed_string<'s>(s: &Scope<'s>, value: &str) -> Value<'s> {
 
 /// A computed style's CSS properties, one getter each: Chrome's names
 /// ([`crate::computed_properties`]), then its `epub*` aliases. Each entry is
-/// the property whose value the getter reads.
+/// the property whose value the getter reads. The engine's longhands Chrome
+/// lacks (`line-clamp`, `mask-border-*`, `font-width`, ...) are not among them:
+/// feature detection (`'lineClamp' in style`) must not find them.
 fn computed_property_names() -> &'static [&'static str] {
     static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
     NAMES.get_or_init(|| {
-        let names = crate::computed_properties::COMPUTED_PROPERTIES.iter().copied();
-        names.chain(crate::computed_properties::EPUB_ALIASES.iter().map(|&(_, property)| property)).collect()
+        let mut names = crate::computed_properties::COMPUTED_PROPERTIES.to_vec();
+        names.extend(crate::computed_properties::EPUB_ALIASES.iter().map(|&(_, property)| property));
+        names
+    })
+}
+
+/// Whether `name` (lowercase) is one of Chrome's computed properties.
+fn chrome_computed_property(name: &str) -> bool {
+    crate::computed_properties::COMPUTED_PROPERTIES.binary_search(&name).is_ok()
+}
+
+/// The engine's longhands a computed style lists (its indexed properties): those
+/// Chrome has, under Chrome's name where the engine's is a newer one
+/// (`font-width` is `font-stretch`), so every listed name also reads by name.
+fn listed_longhands() -> &'static [&'static str] {
+    const CHROME_NAMES: [(&str, &str); 1] = [("font-width", "font-stretch")];
+    static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let mut names: Vec<&'static str> = pyro_dom::stylo::longhand_names()
+            .iter()
+            .map(|&name| CHROME_NAMES.iter().find(|&&(engine, _)| engine == name).map_or(name, |&(_, chrome)| chrome))
+            .filter(|name| chrome_computed_property(name))
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
     })
 }
 
@@ -831,11 +1255,11 @@ macro_rules! property_getters {
 }
 
 /// Room for the property list; the class definition asserts that it fits.
-const MAX_PROPERTIES: usize = 768;
+const MAX_PROPERTIES: usize = 832;
 /// The getters by property index, in blocks of 16.
 static PROPERTY_GETTERS: [[ComputedGetter; 16]; MAX_PROPERTIES / 16] = property_getters!(
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47
+    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
 );
 
 /// The attribute names of each entry of [`computed_property_names`], each
@@ -865,7 +1289,9 @@ fn property_attribute_names() -> &'static [Vec<(&'static str, bool)>] {
             out
         };
         let leak = |n: String| -> &'static str { Box::leak(n.into_boxed_str()) };
-        let mut all: Vec<Vec<(&'static str, bool)>> = crate::computed_properties::COMPUTED_PROPERTIES
+        let properties = computed_property_names();
+        let ordinary = properties.len() - crate::computed_properties::EPUB_ALIASES.len();
+        let mut all: Vec<Vec<(&'static str, bool)>> = properties[..ordinary]
             .iter()
             .map(|&name| {
                 let mut names = Vec::with_capacity(3);
@@ -965,17 +1391,32 @@ impl JsClass for ComputedStyle {
         });
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
+            // A property only the engine has (`line-clamp`, `mask-border`) is no property here,
+            // as in Chrome: "".
+            if !name.starts_with("--") {
+                let lower = if name.bytes().any(|b| b.is_ascii_uppercase()) {
+                    std::borrow::Cow::Owned(name.to_ascii_lowercase())
+                } else {
+                    std::borrow::Cow::Borrowed(name.as_str())
+                };
+                if !chrome_computed_property(&lower) && pyro_dom::stylo::is_property(&lower) {
+                    return Ok(s.string(""));
+                }
+            }
             Ok(computed_string(s, &c.value(&name)))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
         // The longhands, as indexed properties; an element without computed
         // style (not rendered) lists nothing, as in Chrome.
         def.method("item", 1, |s, c, a| {
-            let names = computed_names(c);
-            Ok(s.string(names.get(to_u32(a.get(0))? as usize).copied().unwrap_or("")))
+            Ok(computed_item(s, c, to_u32(a.get(0))? as usize).unwrap_or_else(|| s.string("")))
         });
-        def.getter("length", |s, c| Ok(s.number(computed_names(c).len() as f64)));
-        def.indexed(|s, c, i| Ok(computed_names(c).get(i as usize).map(|name| s.string(name))));
+        def.getter("length", |s, c| {
+            let names = computed_names(c);
+            let count = if names.is_empty() { 0 } else { names.len() + computed_custom_names(c).len() };
+            Ok(s.number(count as f64))
+        });
+        def.indexed(|s, c, i| Ok(computed_item(s, c, i as usize)));
         def.indexed_iterator();
         def.getter("cssText", |s, _c| Ok(s.string("")));
         def.getter("parentRule", |s, _c| Ok(s.null()));
@@ -996,16 +1437,30 @@ impl JsClass for ComputedStyle {
 }
 
 /// The property names a computed style lists.
+fn computed_custom_names(c: &ComputedData) -> Vec<String> {
+    let Some(page) = c.rendered_document() else { return Vec::new() };
+    let dom = page.dom.borrow();
+    let names = page.layout().style().computed_custom_names(&dom, c.el.id, &c.pseudo);
+    names
+}
+
+fn computed_item<'s>(scope: &Scope<'s>, computed: &ComputedData, index: usize) -> Option<Value<'s>> {
+    let names = computed_names(computed);
+    if let Some(name) = names.get(index) { return Some(scope.string(name)); }
+    if names.is_empty() { return None; }
+    computed_custom_names(computed).get(index - names.len()).map(|name| scope.string(name))
+}
+
 fn computed_names(c: &ComputedData) -> &'static [&'static str] {
     if c.pseudo == pyro_dom::stylo::PseudoArg::Invalid {
         return &[];
     }
-    let page = &c.el.page;
+    let Some(page) = c.rendered_document() else { return &[] };
     let dom = page.dom.borrow();
     if page.layout().computed_style_value(&dom, c.el.id, "display").is_empty() {
         return &[];
     }
-    pyro_dom::stylo::longhand_names()
+    listed_longhands()
 }
 
 /// `window.getComputedStyle(el, pseudoElt)`.
@@ -1028,18 +1483,18 @@ pub fn get_computed_style<'s>(
 /// `change` only on the lists it flipped.
 pub struct MediaQueryEntry {
     pub(crate) target: pyro_dom::events::TargetKey,
-    pub(crate) query: String,
+    pub(crate) query: Rc<pyro_dom::cssom::MediaQueryList>,
+    pub(crate) media: String,
     pub(crate) last: std::cell::Cell<bool>,
 }
 
 /// `MediaQueryList`: an EventTarget whose `change` fires when the embedder's
-/// viewport or media emulation flips `matches`. `matchMedia` returns one
-/// object per realm and query text, kept alive with the realm (as a Window
-/// [SameObject]) so a listener added without keeping a reference still runs,
-/// as in Chromium, where a list with listeners is not collected.
+/// viewport or media emulation flips `matches`. Each call creates a fresh
+/// object, kept alive while it has change listeners.
 pub struct MqlData {
     target: crate::target::EventTargetData,
-    query: String,
+    query: Rc<pyro_dom::cssom::MediaQueryList>,
+    media: String,
 }
 
 impl Drop for MqlData {
@@ -1058,8 +1513,8 @@ impl JsClass for MediaQueryList {
     type Parent = crate::target::EventTarget;
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|d: &MqlData| &d.target);
-        def.getter("media", |s, m| Ok(s.string(&m.query)));
-        def.getter("matches", |s, m| Ok(s.boolean(m.target.page.layout().style().match_media(&m.query))));
+        def.getter("media", |s, m| Ok(s.string(&m.media)));
+        def.getter("matches", |s, m| Ok(s.boolean(m.target.page.layout().style().matches_media_list(&m.query))));
         // Legacy aliases of addEventListener/removeEventListener('change').
         def.method("addListener", 1, |s, m, a| mql_listener(s, m, "addEventListener", a.get(0)));
         def.method("removeListener", 1, |s, m, a| mql_listener(s, m, "removeEventListener", a.get(0)));
@@ -1081,43 +1536,33 @@ fn mql_listener<'s>(s: &Scope<'s>, m: &MqlData, method: &str, listener: Value<'s
     Ok(s.undefined())
 }
 
-fn media_query_identity(page: &PageDom, query: &str) -> pyro_js::IdentityKey {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = rustc_hash::FxHasher::default();
-    query.hash(&mut hasher);
-    pyro_js::IdentityKey(page.id() | (1 << 54), hasher.finish())
-}
-
 /// `window.matchMedia(query)`.
 pub fn match_media<'s>(s: &Scope<'s>, page: &Rc<PageDom>, query: String) -> JsResult<Object<'s>> {
-    let key = media_query_identity(page, &query);
-    let value = crate::window::same_object(s, page, key, || {
-        let target = crate::target::EventTargetData::new(page);
-        let last = page.layout().style().match_media(&query);
-        page.media_queries.borrow_mut().push(MediaQueryEntry {
-            target: target.key,
-            query: query.clone(),
-            last: std::cell::Cell::new(last),
-        });
-        s.wrap::<MediaQueryList>(MqlData { target, query: query.clone() }, Some(key))
-    })?;
-    Ok(value.as_object().expect("a MediaQueryList wrapper"))
+    let target = crate::target::EventTargetData::new(page);
+    let key = target.wrapper_identity();
+    let query = Rc::new(pyro_dom::cssom::MediaQueryList::parse(&query));
+    let media = query.media();
+    let last = page.layout().style().matches_media_list(&query);
+    page.media_queries.borrow_mut().push(MediaQueryEntry {
+        target: target.key,
+        query: query.clone(),
+        media: media.clone(),
+        last: std::cell::Cell::new(last),
+    });
+    s.wrap::<MediaQueryList>(MqlData { target, query, media }, key)
 }
 
-/// This realm's `MediaQueryList` owning target `key`, if it is one.
-pub(crate) fn media_query_object<'s>(
-    s: &Scope<'s>,
-    page: &PageDom,
-    key: pyro_dom::events::TargetKey,
-) -> Option<Object<'s>> {
-    let query = page.media_queries.borrow().iter().find(|e| e.target == key).map(|e| e.query.clone())?;
-    let object = s.lookup_identity(media_query_identity(page, &query))?;
-    let owns = s.unwrap::<MediaQueryList>(object.value()).map(|d| d.target.key);
-    (owns == Some(key)).then_some(object)
+pub(crate) fn sync_media_listener(s: &Scope<'_>, object: Object<'_>) {
+    let Some(list) = s.unwrap::<MediaQueryList>(object.value()) else { return };
+    let target = &list.target;
+    if target.page.dom.borrow().has_listener_for(target.key, "change") {
+        crate::target::pin_target(s, &target.page, target.key, object);
+    } else {
+        crate::target::unpin_target(s, &target.page, target.key);
+    }
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
-    engine.register::<DomRect>();
     engine.register::<ComputedStyle>();
     engine.register::<MediaQueryList>();
 }

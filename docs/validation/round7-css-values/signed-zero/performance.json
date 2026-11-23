@@ -1,0 +1,58 @@
+{
+  "ordinary": {
+    "numeric-base": {
+      "wallMedianMs": 18.0916665000002,
+      "cpuMeanMs": 17.0,
+      "samples": 20,
+      "writesPerSample": 6000
+    },
+    "numeric-final": {
+      "wallMedianMs": 11.208375499999875,
+      "cpuMeanMs": 10.5,
+      "samples": 20,
+      "writesPerSample": 6000
+    }
+  },
+  "functional": {
+    "numeric-base": {
+      "wallMedianMs": 23.069333500000255,
+      "cpuMeanMs": 22.5,
+      "samples": 20,
+      "writesPerSample": 6000
+    },
+    "numeric-final": {
+      "wallMedianMs": 11.106312499999717,
+      "cpuMeanMs": 11.5,
+      "samples": 20,
+      "writesPerSample": 6000
+    }
+  },
+  "rotating": {
+    "numeric-base": {
+      "wallMedianMs": 38.03960450000005,
+      "cpuMeanMs": 38.0,
+      "samples": 20,
+      "writesPerSample": 6000
+    },
+    "numeric-final": {
+      "wallMedianMs": 31.09597900000017,
+      "cpuMeanMs": 32.0,
+      "samples": 20,
+      "writesPerSample": 6000
+    }
+  },
+  "signed": {
+    "numeric-base": {
+      "wallMedianMs": 19.69631249999975,
+      "cpuMeanMs": 20.0,
+      "samples": 20,
+      "writesPerSample": 6000
+    },
+    "numeric-final": {
+      "wallMedianMs": 11.468707999999879,
+      "cpuMeanMs": 12.5,
+      "samples": 20,
+      "writesPerSample": 6000
+    }
+  }
+}

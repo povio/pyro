@@ -1,0 +1,7 @@
+# Studio QA: discrete transitions to intrinsic calculations
+
+One Studio run of development source `c236cca7ecbf3b5bfff868dabd7c0372a783e67f` on WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`. The downloaded archive matched SHA-256 `bae135b90829f01bc15d2b7a0a4b5a89e323ede0132d09bfa632c5d9067420a6`, and the extracted executable matched `76822926c4487f6be61a1e2ccb52796138c9e9b046f1d0ff97b3da658db2cee6`. All internal checksums passed. The native regression log is from the MacBook builder, not a Studio replay.
+
+All 13 harnesses completed OK with zero restarts and zero watchdog kills. All nine saved arms and signed Chrome 158 have identical 3,303 occurrence keys. Relative to parent `3fcadfa64`, 24 failures became signed-matched passes. Six each recovered for width auto → calc-size(fit-content,size), width max-content → calc-size(stretch,size), height stretch → calc-size(auto,size), and height max-content → calc-size(stretch,size). All 3,279 other statuses stayed unchanged, including later discrete samples and CSS/WAAPI animation controls. One page is all-pass. Cumulative gains vs original: 344, zero losses. Candidate: 3,009 pass and 294 fail. Chrome passes 293 of those failures and fails one.
+
+`python3 compare.py` reproduces `comparison.json`, including each changed name, within-name ordinal, and signed reference status. `SHA256SUMS` covers the original uncompressed build artifacts. No parent or Chrome replay.

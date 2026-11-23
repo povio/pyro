@@ -1,0 +1,31 @@
+{
+  "values": {
+    "available": "function",
+    "load": "load",
+    "before": [
+      2,
+      "hidden",
+      2,
+      1
+    ],
+    "detached": [
+      2,
+      "hidden",
+      2,
+      0
+    ],
+    "reattached": [
+      2,
+      "hidden",
+      2,
+      1
+    ],
+    "same": [
+      true,
+      true
+    ]
+  },
+  "requests": [
+    "/a.vtt"
+  ]
+}

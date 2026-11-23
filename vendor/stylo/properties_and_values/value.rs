@@ -215,6 +215,9 @@ pub struct Value<Component> {
     /// Flag indicating whether this value is tainted by an attr().
     #[css(skip)]
     pub attr_tainted: bool,
+    /// Whether computing this value consulted a viewport-relative length.
+    #[css(skip)]
+    pub(crate) viewport_dependent: bool,
 }
 
 impl<Component: PartialEq> PartialEq for Value<Component> {
@@ -230,7 +233,8 @@ impl<Component: Animate> Animate for Value<Component> {
         Ok(Value {
             v,
             url_data: self.url_data.clone(),
-            attr_tainted: self.attr_tainted,
+            attr_tainted: self.attr_tainted || other.attr_tainted,
+            viewport_dependent: self.viewport_dependent || other.viewport_dependent,
         })
     }
 }
@@ -242,6 +246,7 @@ impl<Component> Value<Component> {
             v,
             url_data,
             attr_tainted: Default::default(),
+            viewport_dependent: false,
         }
     }
 
@@ -254,6 +259,7 @@ impl<Component> Value<Component> {
             v,
             url_data,
             attr_tainted,
+            viewport_dependent: false,
         }
     }
 }
@@ -337,7 +343,9 @@ impl SpecifiedValue {
             return Err(());
         };
 
-        Ok(value.to_computed_value(context))
+        let (mut computed, used) = context.track_viewport_use(|| value.to_computed_value(context));
+        computed.viewport_dependent |= used;
+        Ok(computed)
     }
 
     /// Parse and validate a registered custom property value according to its syntax descriptor,
@@ -367,8 +375,17 @@ impl SpecifiedValue {
             property_id,
         );
 
+        Self::parse_with_context(&context, input, syntax)
+    }
+
+    pub(crate) fn parse_with_context(
+        context: &ParserContext,
+        input: &mut CSSParser,
+        syntax: &Descriptor,
+    ) -> Result<Self, StyleParseError> {
+        let url_data = context.url_data;
         if syntax.is_universal() {
-            let parsed = ComputedPropertyValue::parse(&context, input)?;
+            let parsed = ComputedPropertyValue::parse(context, input)?;
             return Ok(Self::new(
                 ValueInner::Universal(Arc::new(parsed)),
                 url_data.clone(),
@@ -379,7 +396,7 @@ impl SpecifiedValue {
         let mut multiplier = None;
         {
             let mut parser = Parser::new(syntax, &mut values, &mut multiplier);
-            parser.parse(&context, input)?;
+            parser.parse(context, input)?;
         }
         let v = if let Some(multiplier) = multiplier {
             ValueInner::List(ComponentList {
@@ -394,6 +411,15 @@ impl SpecifiedValue {
 }
 
 impl ComputedValue {
+    /// The matched computed components, retaining list boundaries and the syntax branch.
+    pub fn components(&self) -> Option<&[ComputedValueComponent]> {
+        match &self.v {
+            ValueInner::Component(value) => Some(std::slice::from_ref(value)),
+            ValueInner::List(list) => Some(&list.components),
+            ValueInner::Universal(_) => None,
+        }
+    }
+
     /// Uncomputes the value so that it can go back into the cascade.
     pub fn to_declared_value(&self) -> properties::CustomDeclarationValue {
         if let ValueInner::Universal(ref var) = self.v {
@@ -559,9 +585,15 @@ impl<'a> Parser<'a> {
             DataType::Resolution => {
                 SpecifiedValueComponent::Resolution(specified::Resolution::parse(context, input)?)
             },
-            DataType::TransformFunction => SpecifiedValueComponent::TransformFunction(
-                specified::Transform::parse(context, input)?,
-            ),
+            DataType::TransformFunction => {
+                let transform = specified::Transform::parse(context, input)?;
+                if transform.0.is_empty()
+                    || (component.multiplier() != Some(Multiplier::Space) && transform.0.len() != 1)
+                {
+                    return Err(StyleParseError::custom(StyleParseErrorKind::UnspecifiedError));
+                }
+                SpecifiedValueComponent::TransformFunction(transform)
+            },
             DataType::CustomIdent => {
                 let name = CustomIdent::parse(input, &[])?;
                 SpecifiedValueComponent::CustomIdent(name)
@@ -632,7 +664,7 @@ impl<'a> Parser<'a> {
 }
 
 /// An animated value for custom property.
-#[derive(Clone, Debug, MallocSizeOf, PartialEq)]
+#[derive(Clone, Debug, MallocSizeOf)]
 pub struct CustomAnimatedValue {
     /// The name of the custom property.
     pub(crate) name: crate::custom_properties::Name,
@@ -641,12 +673,30 @@ pub struct CustomAnimatedValue {
     pub(crate) value: Option<ComputedValue>,
 }
 
+impl PartialEq for CustomAnimatedValue {
+    fn eq(&self, other: &Self) -> bool {
+        // The sampled value goes back into the cascade. A change in its taint alone
+        // can change the validity of declarations that substitute it.
+        self.name == other.name
+            && self.value == other.value
+            && self.value.as_ref().map(|v| v.attr_tainted) == other.value.as_ref().map(|v| v.attr_tainted)
+    }
+}
+
 impl Animate for CustomAnimatedValue {
     fn animate(&self, other: &Self, procedure: Procedure) -> Result<Self, ()> {
         if self.name != other.name {
             return Err(());
         }
         let value = self.value.animate(&other.value, procedure)?;
+        if let Procedure::Interpolate { progress } = procedure {
+            if progress == 0.0 {
+                return Ok(self.clone());
+            }
+            if progress == 1.0 {
+                return Ok(other.clone());
+            }
+        }
         Ok(Self {
             name: self.name.clone(),
             value,

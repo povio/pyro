@@ -277,6 +277,7 @@ impl OwnName {
 
 /// Builder passed to [`JsClass::define`].
 pub struct ClassDef<C: JsClass> {
+    global_accessors: Vec<(&'static str, MemberCall, Option<MemberCall>)>,
     pub(crate) methods: Vec<MethodSpec>,
     pub(crate) statics: Vec<MethodSpec>,
     pub(crate) accessors: Vec<AccessorSpec>,
@@ -299,6 +300,8 @@ pub struct ClassDef<C: JsClass> {
     pub(crate) own_value: Option<NamedFn>,
     pub(crate) hooks: PropertyHooks,
     pub(crate) exposed: bool,
+    /// See [`ClassDef::immutable_prototype`].
+    pub(crate) immutable_prototype: bool,
     pub(crate) indexed_iterable: bool,
     pub(crate) indexed_iterator: bool,
     pub(crate) upcast: Option<UpcastFn>,
@@ -358,6 +361,7 @@ fn assert_zst<F>() {
 impl<C: JsClass> ClassDef<C> {
     fn new() -> Self {
         ClassDef {
+            global_accessors: Vec::new(),
             methods: Vec::new(),
             statics: Vec::new(),
             accessors: Vec::new(),
@@ -372,6 +376,7 @@ impl<C: JsClass> ClassDef<C> {
             own_value: None,
             hooks: PropertyHooks::default(),
             exposed: true,
+            immutable_prototype: false,
             indexed_iterable: false,
             indexed_iterator: false,
             upcast: None,
@@ -417,6 +422,22 @@ impl<C: JsClass> ClassDef<C> {
             call: MemberCall { invoke: method_invoke::<C>, f: f as *const () },
             pure: Some(method_invoke_h::<C>),
         });
+        self
+    }
+
+    pub fn global_getter(&mut self, name: &'static str, getter: GetterFn<C>) -> &mut Self {
+        self.global_accessors.push((name, MemberCall { invoke: getter_invoke::<C>, f: getter as *const () }, None));
+        self
+    }
+
+    /// A read-write attribute of a [Global] interface, installed on the
+    /// global object without also adding it to the interface prototype.
+    pub fn global_accessor(&mut self, name: &'static str, getter: GetterFn<C>, setter: SetterFn<C>) -> &mut Self {
+        self.global_accessors.push((
+            name,
+            MemberCall { invoke: getter_invoke::<C>, f: getter as *const () },
+            Some(MemberCall { invoke: setter_invoke::<C>, f: setter as *const () }),
+        ));
         self
     }
 
@@ -943,6 +964,15 @@ impl<C: JsClass> ClassDef<C> {
         self.exposed = false;
         self
     }
+
+    /// The wrappers keep their prototype and stay extensible, as HTML's `Location` and the
+    /// cross-origin `Window` and `Location` objects do: `Object.setPrototypeOf` to another
+    /// prototype and `Object.preventExtensions` throw (patched JavaScriptCore, patch 0043;
+    /// without it nothing changes). [`crate::Object::set_prototype`] still sets it.
+    pub fn immutable_prototype(&mut self) -> &mut Self {
+        self.immutable_prototype = true;
+        self
+    }
 }
 
 pub(crate) struct ClassInfo {
@@ -984,6 +1014,7 @@ pub(crate) struct Brand {
 
 /// `ClassDef` without the marker type parameter.
 pub(crate) struct ClassDefErased {
+    pub global_accessors: Vec<(&'static str, MemberCall, Option<MemberCall>)>,
     pub methods: Vec<MethodSpec>,
     pub statics: Vec<MethodSpec>,
     pub accessors: Vec<AccessorSpec>,
@@ -1029,6 +1060,7 @@ struct RootClasses {
     base: sys::JSClassRef,
     closure: sys::JSClassRef,
     member: sys::JSClassRef,
+    immutable_proto: sys::JSClassRef,
 }
 
 // SAFETY: JSC classes, which any thread may use.
@@ -1056,7 +1088,13 @@ fn root_classes() -> &'static RootClasses {
         mdef.callAsFunction = Some(member_call);
         mdef.finalize = Some(member_finalize);
         let member = unsafe { sys::JSClassCreate(&mdef) };
-        RootClasses { base, closure, member }
+        let mut idef = sys::JSClassDefinition::EMPTY;
+        idef.className = c"Object".as_ptr();
+        idef.attributes = sys::kJSClassAttributeNoAutomaticPrototype
+            | sys::kJSClassAttributeImmortal
+            | sys::kJSClassAttributeImmutablePrototype;
+        let immutable_proto = unsafe { sys::JSClassCreate(&idef) };
+        RootClasses { base, closure, member, immutable_proto }
     })
 }
 
@@ -1075,6 +1113,9 @@ pub(crate) struct ClassRegistry {
     /// callable objects whose private data is a `MemberCall`. Not a `base`
     /// subclass: their private pointer is not a `Header`.
     pub member: sys::JSClassRef,
+    /// Ordinary objects (no callbacks, so cacheable) whose prototype script cannot change
+    /// (patch 0043): the interface prototype objects of a [Global] interface's chain.
+    pub immutable_proto: sys::JSClassRef,
     /// `classes` as the table `installInterfaces` takes (helpers.js),
     /// appended to as each registers, so every realm creation passes it as
     /// is: the names, newline-separated (no class name contains one), and
@@ -1095,7 +1136,7 @@ pub(crate) const SPEC_STRIDE: usize = 3;
 
 impl ClassRegistry {
     pub fn new() -> ClassRegistry {
-        let &RootClasses { base, closure, member } = root_classes();
+        let &RootClasses { base, closure, member, immutable_proto } = root_classes();
         ClassRegistry {
             classes: Vec::new(),
             by_type: rustc_hash::FxHashMap::default(),
@@ -1103,6 +1144,7 @@ impl ClassRegistry {
             base,
             closure,
             member,
+            immutable_proto,
             spec_names: String::new(),
             spec_data: Vec::new(),
         }
@@ -1227,6 +1269,9 @@ fn shared_class<C: JsClass>(parent: Option<&'static ClassDefErased>) -> &'static
         debug_assert!(!def.hooks.override_builtins && def.hooks.indexed.is_none(), "announced names need named(false)");
         jsdef.attributes |= sys::kJSClassAttributeImpureNamedProperties;
     }
+    if def.immutable_prototype {
+        jsdef.attributes |= sys::kJSClassAttributeImmutablePrototype;
+    }
     jsdef.parentClass = root_classes().base;
     if has_named_hooks || (def.hooks.indexed.is_some() && indexed_callbacks.is_none()) {
         jsdef.getProperty = Some(get_property_hook);
@@ -1265,6 +1310,7 @@ fn shared_class<C: JsClass>(parent: Option<&'static ClassDefErased>) -> &'static
         callback_interface: def.callback_interface,
         instance_class,
         def: ClassDefErased {
+            global_accessors: def.global_accessors,
             methods: def.methods,
             statics: def.statics,
             accessors: def.accessors,
@@ -2991,6 +3037,44 @@ unsafe extern "C" fn set_property_hook(
     }
 }
 
+/// Whether WebIDL's [[Delete]] of a legacy platform object fails for `name`:
+/// a supported index, or a named property the visibility algorithm shows
+/// (supported, no own property of that name, and no prototype member unless
+/// `[LegacyOverrideBuiltIns]`) when the class has no named property deleter.
+unsafe fn refused_delete(
+    scope: &Scope<'_>,
+    hc: &HookCtx,
+    object: sys::JSObjectRef,
+    name: sys::JSStringRef,
+    units: &[u16],
+) -> JsResult<bool> {
+    unsafe {
+        let supported = |scope: &Scope<'_>| -> JsResult<bool> {
+            if let (Some(idx), Some(f)) = (array_index(units), hc.indexed) {
+                return Ok(f(scope, hc.header, idx)?.is_some());
+            }
+            let Some(f) = hc.named else { return Ok(false) };
+            if hc.named_delete.is_some() || (!hc.override_builtins && on_prototype_chain(scope.ctx, object, name)) {
+                return Ok(false);
+            }
+            Ok(f(scope, hc.header, units)?.is_some())
+        };
+        let supported = match hc.foreign_realm(scope) {
+            Some(realm) => match in_receiver_realm(realm, supported) {
+                // A closed realm's collection has no members to protect: the
+                // ordinary [[Delete]] runs, as it did before.
+                Err(JsError::ContextDestroyed) => false,
+                result => result?,
+            },
+            None => supported(scope)?,
+        };
+        // An own property (an expando set before the name became supported)
+        // shadows a named property: the ordinary [[Delete]] decides.
+        let index = array_index(units).is_some() && hc.indexed.is_some();
+        Ok(supported && (index || !has_ordinary_property(scope, object, name)))
+    }
+}
+
 unsafe extern "C" fn delete_property_hook(
     ctx: sys::JSContextRef,
     object: sys::JSObjectRef,
@@ -3003,6 +3087,24 @@ unsafe extern "C" fn delete_property_hook(
     unsafe {
         guard_in(ctx, wrapper_realm(object), exc, false, |scope| {
             let Some(hc) = hook_ctx(scope, object) else { return Ok(false) };
+            let units = utf16_of(name);
+
+            // WebIDL [[Delete]] of a legacy platform object: false for a
+            // supported index, and for a visible named property when there is
+            // no deleter (a TypeError in strict mode code, as for a
+            // non-configurable property). Needs patch 0042; without it the
+            // ordinary [[Delete]] runs and succeeds.
+            if hc.legacy {
+                if let Some(refuse) = sys::spi::get().refuse_delete_property {
+                    if refused_delete(scope, &hc, object, name, units)? {
+                        refuse(ctx);
+                        return Ok(false);
+                    }
+                    if hc.indexed.is_some() && array_index(units).is_some() {
+                        return Ok(false);
+                    }
+                }
+            }
             let Some(f) = hc.named_delete else { return Ok(false) };
 
             // The named property visibility algorithm: a name the prototype
@@ -3010,7 +3112,6 @@ unsafe extern "C" fn delete_property_hook(
             if !hc.override_builtins && on_prototype_chain(ctx, object, name) {
                 return Ok(false);
             }
-            let units = utf16_of(name);
             if let Some(realm) = hc.foreign_realm(scope) {
                 return in_receiver_realm(realm, |s| f(s, hc.header, units));
             }

@@ -1,0 +1,33 @@
+{
+  "source": "dc68a019e825ce87722224476307c94869c8e025",
+  "url": "html/semantics/forms/textfieldselection/selection-readonly-keyboard.tentative.html",
+  "status": "complete",
+  "harnessStatus": 0,
+  "subtests": [
+    {
+      "name": "Arrow keys modify caret position in readonly input",
+      "status": "Pass",
+      "msg": ""
+    },
+    {
+      "name": "Shift+Arrow keys modify selection range in readonly input",
+      "status": "Pass",
+      "msg": ""
+    },
+    {
+      "name": "Arrow keys and Shift+Arrow keys modify selection in readonly textarea",
+      "status": "Pass",
+      "msg": ""
+    },
+    {
+      "name": "Typing and Backspace do not modify value in readonly input",
+      "status": "Pass",
+      "msg": ""
+    },
+    {
+      "name": "Typing and Backspace do not modify value in readonly textarea",
+      "status": "Pass",
+      "msg": ""
+    }
+  ]
+}

@@ -116,6 +116,69 @@ fn import_maps_map_bare_specifiers() {
     assert!(errors[0].contains("Invalid import map"), "{log:?}");
 }
 
+const INLINE_MODULE_BASE_PAGE: &str = r#"<!doctype html><html><head>
+<base href="/one/#auth">
+<script type="importmap">{"imports":{"x":"/x-top.js"},"scopes":{"/one/#auth":{"x":"/x-frag.js"},"/marked.js#inline-module-authored":{"x":"/x-ext.js"}}}</script>
+<script type="module">import { v } from 'x'; console.log('p1', import.meta.url, v)</script>
+<script type="module">
+console.log('p2', import.meta.url, import.meta.resolve('x'));
+document.querySelector('base').href = '/two/#kept';
+for (const id of ['d1', 'd2']) {
+  const s = document.createElement('script');
+  s.type = 'module';
+  s.textContent = `console.log('${id}', import.meta.url, import.meta.resolve('./r.js'), import.meta.resolve('x'))`;
+  document.head.append(s);
+}
+</script>
+<script type="module" src="/marked.js#inline-module-authored"></script>
+</head><body></body></html>"#;
+
+/// An inline module script's `import.meta.url` and the referrer its
+/// specifiers resolve against are the document base URL when it was
+/// prepared, authored fragment and all (an exact import map scope matches
+/// it); each inline script runs under its own identity; a fetched module
+/// whose URL merely looks like an inline identity keeps its URL.
+#[test]
+fn inline_module_scripts_resolve_against_their_base_url() {
+    if unsafe { pyro_js::sys::modules::pyro_jsc_import_maps_available() } != 1 {
+        eprintln!("import maps need the patched JavaScriptCore; skipping");
+        return;
+    }
+    let mut thread = crate::browser_thread().unwrap();
+    let rec = Rc::new(Recorder::default());
+    thread.browser.set_observer(Some(rec.clone()));
+    thread.browser.set_engine_hooks(Some(rec.clone()));
+    let loader = Rc::new(StaticLoader::default());
+    for (path, body) in [
+        ("/", INLINE_MODULE_BASE_PAGE),
+        ("/x-top.js", "export const v = 'top';"),
+        ("/x-frag.js", "export const v = 'frag';"),
+        ("/x-ext.js", "export const v = 'ext';"),
+        // StaticLoader matches the request URL as given, fragment included.
+        ("/marked.js#inline-module-authored", "import { v } from 'x'; console.log('ext', import.meta.url, v)"),
+    ] {
+        let mime = if path == "/" { "text/html" } else { "text/javascript" };
+        loader.insert(&format!("http://site.test{path}"), mime, body, Duration::ZERO);
+    }
+    thread.browser.set_loader(Some(loader.clone()));
+    let page = thread.browser.create_page().unwrap();
+    rec.log.borrow_mut().clear();
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    run(&mut thread, &rec);
+    let log = rec.log.borrow();
+    for line in [
+        "p1 http://site.test/one/#auth frag",
+        "p2 http://site.test/one/#auth http://site.test/x-frag.js",
+        "d1 http://site.test/two/#kept http://site.test/two/r.js http://site.test/x-top.js",
+        "d2 http://site.test/two/#kept http://site.test/two/r.js http://site.test/x-top.js",
+        "ext http://site.test/marked.js#inline-module-authored ext",
+    ] {
+        assert!(log.iter().any(|l| l == line), "missing {line:?} in {log:?}");
+    }
+    let errors: Vec<_> = log.iter().filter(|l| l.starts_with("exception")).collect();
+    assert!(errors.is_empty(), "{log:?}");
+}
+
 const TYPED_MODULES_PAGE: &str = r#"<!doctype html><html><head>
 <script type="module">
 import data from './data.json' with { type: 'json' };
@@ -181,9 +244,10 @@ fn json_and_css_module_scripts_load_with_import_attributes() {
         "not thenable true true",
         "typed 5 true 1 p { color: rgb(0, 128, 0); } rgb(0, 128, 0)",
         // Untyped JSON and CSS, a JSON request answered with text/plain or
-        // JavaScript, a CSS one answered with JSON, a 404 and the "text" type
-        // are TypeErrors; invalid JSON is a SyntaxError.
-        "outcomes TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,SyntaxError,ok",
+        // JavaScript, a CSS one answered with JSON and a 404 are TypeErrors; the
+        // "text" type loads (text modules, 83c44d5e8, as Chrome); invalid JSON is
+        // a SyntaxError.
+        "outcomes TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,ok,SyntaxError,ok",
         "same sheet true",
     ] {
         assert!(log.iter().any(|l| l == line), "missing {line:?} in {log:?}");

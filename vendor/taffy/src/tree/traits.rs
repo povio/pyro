@@ -196,6 +196,11 @@ pub trait LayoutPartialTree: TraversePartialTree {
         0.0
     }
 
+    /// Resolve a calc-size expression with independent size and percentage bases.
+    fn resolve_size_calculation(&self, val: *const (), size: f32, _percent: f32) -> f32 {
+        self.resolve_calc_value(val, size)
+    }
+
     /// Set the node's unrounded layout
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout);
 
@@ -381,6 +386,9 @@ pub trait LayoutFlexboxContainer: LayoutPartialTree {
     type FlexboxItemStyle<'a>: FlexboxItemStyle
     where
         Self: 'a;
+
+    /// Observe the already laid-out lines. The default never consumes the iterator.
+    fn record_flex_item_positions(&mut self, _owner: NodeId, _items: impl Iterator<Item = (NodeId, usize, usize)>) {}
 
     /// Get the container's styles
     fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_>;

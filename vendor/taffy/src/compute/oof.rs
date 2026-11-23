@@ -135,6 +135,11 @@ impl OofAlignment {
 struct OofAxis {
     /// The size of the containing block in this axis
     cb_size: f32,
+    /// The original containing block in this axis (before a `position-area` cell replaced it),
+    /// relative to the start of `cb_size`'s area. The default overflow limit of an overflowing box
+    /// is the union of its IMCB and this line (<https://www.w3.org/TR/css-align-3/#auto-safety-position>).
+    /// Without `position-area` it is `0..cb_size`.
+    overflow_limit: Line<f32>,
     /// The box's resolved inset properties (`None` = `auto`)
     inset: Line<Option<f32>>,
     /// The box's resolved margins (`None` = `auto`)
@@ -310,9 +315,12 @@ impl OofAxis {
                             align_in_line(imcb, margin_box_size, edge)
                         } else {
                             // The overflow limit rect is the bounding rect of the IMCB and the
-                            // containing block, extended to infinity in the scrollable direction
+                            // original containing block (not a `position-area` cell), extended to infinity in the scrollable direction
                             // of a scroll container
-                            let mut limit = Line { start: imcb.start.min(0.0), end: f32_max(imcb.end, self.cb_size) };
+                            let mut limit = Line {
+                                start: imcb.start.min(self.overflow_limit.start),
+                                end: f32_max(imcb.end, self.overflow_limit.end),
+                            };
                             if self.is_scroll_axis {
                                 if self.reversed {
                                     limit.start = f32::NEG_INFINITY;
@@ -585,7 +593,14 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
     };
     let anchor_area = anchor_container.and_then(|container| tree.oof_anchor_area(candidate.node, container, area_size, area_offset, trial));
     let anchor_center = anchor_container.map(|container| tree.oof_anchor_center(candidate.node, container));
+    // The containing block before a `position-area` cell replaces it bounds the default overflow
+    // limit (css-align-3 § auto-safety-position; Chrome)
+    let (original_size, original_offset) = (area_size, area_offset);
     let (area_size, area_offset) = anchor_area.map_or((area_size, area_offset), |(size, offset, _)| (size, offset));
+    let overflow_limit = |original_offset: f32, original_size: f32, cell_offset: f32| {
+        let start = original_offset - cell_offset;
+        Line { start, end: start + original_size }
+    };
     let area_width = area_size.width;
     let area_height = area_size.height;
 
@@ -658,6 +673,16 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
         child_style.justify_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, true);
     let align_self =
         child_style.align_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, false);
+    let area_insets = |start: Option<f32>, end: Option<f32>, alignment: AlignSelf| {
+        if anchor_area.is_some() && (alignment != AlignSelf::NORMAL || start.is_some() == end.is_some()) {
+            (Some(start.unwrap_or(0.0)), Some(end.unwrap_or(0.0)))
+        } else {
+            (start, end)
+        }
+    };
+    let (left, right) = area_insets(left, right, justify_self);
+    let (top, bottom) = area_insets(top, bottom, align_self);
+    if anchor_area.is_some() { margin = margin.map(|value| Some(value.unwrap_or(0.0))); }
     let justify_self = anchor_area.filter(|_| justify_self == AlignSelf::NORMAL).map_or(justify_self, |area| area.2.x);
     let align_self = anchor_area.filter(|_| align_self == AlignSelf::NORMAL).map_or(align_self, |area| area.2.y);
     let overflow = child_style.overflow();
@@ -690,6 +715,7 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
 
     let horizontal = OofAxis {
         cb_size: area_width,
+        overflow_limit: overflow_limit(original_offset.x, original_size.width, area_offset.x),
         inset: Line { start: left, end: right },
         margin: Line { start: margin.left, end: margin.right },
         static_position: static_position.x,
@@ -701,6 +727,7 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
     };
     let vertical = OofAxis {
         cb_size: area_height,
+        overflow_limit: overflow_limit(original_offset.y, original_size.height, area_offset.y),
         inset: Line { start: top, end: bottom },
         margin: Line { start: margin.top, end: margin.bottom },
         static_position: static_position.y,
@@ -961,6 +988,10 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
     };
     before_layout(tree, &layout_input);
     let mut layout_output = tree.compute_child_layout(candidate.node, layout_input);
+    let final_size = Size {
+        width: if size_style.width.is_stretch() { layout_output.size.width } else { final_size.width },
+        height: if size_style.height.is_stretch() { layout_output.size.height } else { final_size.height },
+    };
 
     // Resolve auto margins <https://www.w3.org/TR/css-position-3/#abspos-margins>
     let horizontal_margin = horizontal.resolve_margins(final_size.width);
@@ -1175,7 +1206,7 @@ pub(crate) fn perform_oof_layout(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_static_offset;
+    use super::{resolve_static_offset, OofAlignment, OofAxis};
     use crate::geometry::{Line, Point, Rect, Size};
     use crate::style::AlignmentSafety;
     use crate::tree::{AxisStaticAlign, AxisStaticEdge, AxisStaticPosition};
@@ -1236,6 +1267,38 @@ mod tests {
     fn unsafe_alignment_never_falls_back() {
         let sp_x = sp(AREA, AxisStaticEdge::End, AlignmentSafety::Unsafe, AxisStaticEdge::Start);
         assert_eq!(resolve_x(sp_x, 120.0, NO_MARGIN), -10.0);
+    }
+
+    /// A 200-tall box with zero insets in a 150-tall `position-area` cell
+    fn cell_axis(alignment: OofAlignment, overflow_limit: Line<f32>) -> OofAxis {
+        OofAxis {
+            cb_size: 150.0,
+            overflow_limit,
+            inset: Line { start: Some(0.0), end: Some(0.0) },
+            margin: Line { start: Some(0.0), end: Some(0.0) },
+            static_position: AxisStaticPosition::from_edge(0.0, AxisStaticEdge::Start),
+            alignment,
+            safety: AlignmentSafety::Default,
+            is_inline: false,
+            reversed: false,
+            is_scroll_axis: false,
+        }
+    }
+
+    #[test]
+    fn default_overflow_limit_includes_original_containing_block() {
+        const ZERO: Line<f32> = Line { start: 0.0, end: 0.0 };
+        // Cell 250..400 of a 0..400 containing block (WPT css-anchor-position
+        // `last-successful-basic`, flip-block): start alignment shifts up to stay inside the
+        // containing block, not the cell
+        let bottom_cell = cell_axis(OofAlignment::Start, Line { start: -250.0, end: 150.0 });
+        assert_eq!(bottom_cell.position(200.0, ZERO), -50.0);
+        // Cell 0..150 of the same containing block, end-aligned: clamped at its start
+        let top_cell = cell_axis(OofAlignment::End, Line { start: 0.0, end: 400.0 });
+        assert_eq!(top_cell.position(200.0, ZERO), 0.0);
+        // Without position-area the limit is the containing block itself: start-aligned
+        let no_area = cell_axis(OofAlignment::Start, Line { start: 0.0, end: 150.0 });
+        assert_eq!(no_area.position(200.0, ZERO), 0.0);
     }
 
     #[test]

@@ -6,6 +6,11 @@ use pyro_runtime::TaskSource;
 use pyro_webapi::event::{EventCore, EventInterface};
 
 impl Page {
+    /// Native window dimensions used when a CDP device metrics override is cleared.
+    pub fn native_viewport(&self) -> &Viewport {
+        &self.native_viewport
+    }
+
     /// Persistent metrics, including media/input preferences. Clone and update
     /// selected fields when changing metrics without resetting other emulation.
     pub fn viewport(&self) -> &Viewport {

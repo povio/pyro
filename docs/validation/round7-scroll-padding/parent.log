@@ -1,0 +1,2 @@
+wptserve on http://web-platform.test:54917 (log /var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-MHgHvn/serve.log)
+parent: done 4 pages in 0.2 s (CPU: browser 0.1 s, runner 1.6 s, server 0.0 s), restarts 0, event loop lag p50 2 ms p99 2 ms

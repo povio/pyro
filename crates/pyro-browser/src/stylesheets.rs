@@ -252,7 +252,9 @@ impl Browser {
             return;
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
-        let request = FetchRequest {
+        let mut request = FetchRequest {
+            csp: None,
+            required_csp: None,
             parser_priority: blocker.is_some(),
             credentials: None,
             post: None,
@@ -268,7 +270,9 @@ impl Browser {
             module: None,
             part: None,
         };
-        let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
+        // CSP `style-src-elem`, with the link's nonce.
+        let Some(finish) = self.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
+        let cancel = self.fetch_document_resource(page, &resource_loader, request, finish);
         if let Some(mut sheet) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.stylesheets.entries.get_mut(&node)))
         {
             sheet.cancel = cancel;
@@ -295,6 +299,7 @@ impl Browser {
             cancel.disarm();
         }
         sheet.pending = false;
+        let parser_inserted = sheet.parser_inserted;
         let environment = link_environment(bindings, node);
         let quirks = bindings.dom.borrow().is_quirks_mode(bindings.document());
         let sheet_url = result.as_ref().map(|r| r.url.clone()).unwrap_or_default();
@@ -337,6 +342,14 @@ impl Browser {
         bindings.unblock_rendering(node);
         if !imports.is_empty() && bindings.dom.borrow_mut().add_ref(node).is_ok() {
             let hold = Rc::new(ResourceNode { dom: bindings.dom.clone(), node });
+            // HTML: the `@import`s are the sheet's critical subresources, so a parser-inserted
+            // link of matching media keeps blocking the parser's scripts until they are loaded
+            // (WPT the-script-element/execution-timing/106-import.html, 150-import.html).
+            let script_blocking = parser_inserted && {
+                let dom = bindings.dom.borrow();
+                let media = dom.get_attribute(node, "media").ok().flatten().unwrap_or("");
+                media.is_empty() || pyro_dom::media::matches(media, &bindings.viewport())
+            };
             let generation = {
                 let Some(mut doc) = self.doc_mut(page) else { return };
                 let sheets = &mut doc.stylesheets;
@@ -350,7 +363,7 @@ impl Browser {
                         pending: 0,
                         started: 0,
                         failed: false,
-                        script_blocking: false,
+                        script_blocking,
                         cancels: Vec::new(),
                         link: true,
                     },
@@ -483,6 +496,12 @@ impl Browser {
             }
         }
         let Some((urls, script_blocking, blocker)) = processing else { return false };
+        // pyro: CSP (`style-src-elem`, its nonce and text): a blocked style block has no sheet,
+        // imports nothing and blocks nothing; its element gets `error` (as Chrome).
+        if !pyro_webapi::csp::style_element_allowed(&bindings, node) {
+            self.queue_style_event(page, loader, &bindings, node, false);
+            return true;
+        }
         if urls.is_empty() {
             self.queue_style_event(page, loader, &bindings, node, true);
             return true;
@@ -605,6 +624,8 @@ impl Browser {
         let referrer = referrer.to_owned();
 
         let request = FetchRequest {
+            csp: None,
+            required_csp: None,
             parser_priority: self.stylesheets_block_scripts(page),
             credentials: None,
             post: None,

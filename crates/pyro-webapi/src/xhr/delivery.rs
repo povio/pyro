@@ -188,6 +188,8 @@ fn pump(page_id: u64, id: RequestId) {
         xhr.sent.set(false);
         xhr.ready.set(4);
         xhr.clear_timer(&scope);
+        // What the request's CSP guard found on its way (report-only redirects).
+        crate::csp::report_guard(&page, xhr.csp.take().as_ref(), None);
         let finished = page.xhr_state.jobs.borrow_mut().remove(&id);
         drop(finished);
         xhr.fire("readystatechange", false, bytes);

@@ -114,7 +114,9 @@ fn email_message(value: &str) -> String {
     }
 }
 
+/// `setCustomValidity(error)`: HTML normalizes the message's newlines (CRLF and CR become LF).
 pub(crate) fn set_custom(page: &PageDom, id: NodeId, msg: String) {
+    let msg = if msg.contains('\r') { msg.replace("\r\n", "\n").replace('\r', "\n") } else { msg };
     let _ = page.dom.borrow_mut().set_custom_validity(id, &msg);
 }
 
@@ -148,10 +150,7 @@ pub(crate) fn check(page: &Rc<PageDom>, id: NodeId, report: bool) -> bool {
 pub(crate) fn check_form(page: &Rc<PageDom>, form: NodeId, report: bool) -> bool {
     let controls: Vec<NodeId> = {
         let dom = page.dom.borrow();
-        let Ok(root) = dom.root_node(form, false) else { return true };
-        dom.descendants(root)
-            .map(|d| d.filter(|&n| dom.form_owner(n).ok().flatten() == Some(form)).collect())
-            .unwrap_or_default()
+        dom.owned_form_elements(form).unwrap_or_default()
     };
     let mut ok = true;
     let mut first_unhandled = None;

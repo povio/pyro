@@ -1,0 +1,68 @@
+candidate-prompt-1795356946105.json [
+  {
+    label: 'closed2',
+    ms: 1947,
+    state: 'closed',
+    time: 1.0613333333333332,
+    json: {
+      underrunDuration: 0,
+      underrunEvents: 0,
+      totalDuration: 1.056,
+      averageLatency: 0,
+      minimumLatency: 0,
+      maximumLatency: 0
+    },
+    fieldsMatch: true,
+    freshJSON: true
+  },
+  {
+    label: 'closedReset',
+    ms: 1947.1000000238419,
+    state: 'closed',
+    time: 1.0613333333333332,
+    json: {
+      underrunDuration: 0,
+      underrunEvents: 0,
+      totalDuration: 1.056,
+      averageLatency: 0,
+      minimumLatency: 0,
+      maximumLatency: 0
+    },
+    fieldsMatch: true,
+    freshJSON: true
+  }
+]
+candidate-granted-1795356950466.json [
+  {
+    label: 'closed2',
+    ms: 1943.0999999642372,
+    state: 'closed',
+    time: 1.0613333333333332,
+    json: {
+      underrunDuration: 0,
+      underrunEvents: 0,
+      totalDuration: 1.056,
+      averageLatency: 0,
+      minimumLatency: 0,
+      maximumLatency: 0
+    },
+    fieldsMatch: true,
+    freshJSON: true
+  },
+  {
+    label: 'closedReset',
+    ms: 1943.2999999523163,
+    state: 'closed',
+    time: 1.0613333333333332,
+    json: {
+      underrunDuration: 0,
+      underrunEvents: 0,
+      totalDuration: 1.056,
+      averageLatency: 0,
+      minimumLatency: 0,
+      maximumLatency: 0
+    },
+    fieldsMatch: true,
+    freshJSON: true
+  }
+]

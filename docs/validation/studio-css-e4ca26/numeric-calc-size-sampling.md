@@ -1,0 +1,5 @@
+# Numeric calc-size transition readback
+
+Parent `7616c0dd4`, LP 0.0.17 with JSC `0e0dd7038a7a-6f4649e395e0`, Studio Chrome stable 158.0.8127.37 and WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`. Candidate `numericbasis` retains the containing-block reference (including whether it is indefinite) and layout limits for horizontal-writing-mode numeric calc-size samples. Unlike intrinsic bases, this needs no new layout probe. For example, interpolating 20px to 60px at 75% calls for 50px, not the 60px endpoint.
+
+The 281-URL sizing focus gained 40 height and 16 width assertions. The same 56 gains, all Chrome passes, were the only named changes on the 8,082 main URLs. No strict pages changed; the candidate passed 5,656 pages and 180,873 names. Chrome-only: 1,569 pages and 7,981 names; LP-only: 275 and 5,891. The 41-URL supplement stayed at 27 pages / 577 names vs Chrome's 35 / 619. Neither cohort changed observed names or per-URL harness statuses. The 39 withheld URLs are not scored. Exact sets are in the `numericbasis` artifacts.

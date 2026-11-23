@@ -292,6 +292,8 @@ pub struct StylesheetHandler {
     pub policy: Option<String>,
     /// pyro: the document's sheet policies, which this sheet's goes into.
     pub policies: SheetPolicies,
+    /// pyro: the document's quirks mode for its sheets (`BaseDocument::sheet_quirks_mode`).
+    pub quirks_mode: QuirksMode,
 }
 
 impl NetHandler for ResourceHandler<StylesheetHandler> {
@@ -341,9 +343,10 @@ impl ResourceHandler<StylesheetHandler> {
                 client: self.data.client.clone(),
                 inline: None,
                 policies: self.data.policies.clone(),
+                quirks_mode: self.data.quirks_mode,
             }),
             None, // error_reporter
-            QuirksMode::NoQuirks,
+            self.data.quirks_mode,
         );
 
         self.respond(
@@ -388,6 +391,9 @@ pub(crate) struct StylesheetLoader {
     pub(crate) inline: Option<InlineUrls>,
     /// pyro: the document's sheet policies (`SheetPolicies`).
     pub(crate) policies: SheetPolicies,
+    /// pyro: the document's quirks mode for its sheets, imported ones too
+    /// (`BaseDocument::sheet_quirks_mode`).
+    pub(crate) quirks_mode: QuirksMode,
 }
 impl ServoStylesheetLoader for StylesheetLoader {
     fn request_stylesheet(
@@ -502,7 +508,7 @@ impl ResourceHandler<NestedStylesheetHandler> {
             self.data.lock.clone(),
             Some(&self.data.loader),
             None, // error_reporter
-            QuirksMode::NoQuirks,
+            self.data.loader.quirks_mode,
         ));
 
         // Fetch @font-face fonts
@@ -692,29 +698,26 @@ pub(crate) fn fetch_font_face_rules<'a>(
                 // style) rather than whatever metadata the TTF reports.
                 // Rules are read in order within a sheet; sheets in the order they load.
                 static RULE_ORDER: AtomicU64 = AtomicU64::new(1);
+                let weight = descriptor.font_weight.as_ref().and_then(|range| range.explicit());
+                let width = descriptor.font_width.as_ref().and_then(|range| range.explicit());
+                let style = descriptor.font_style.as_ref().and_then(|range| range.explicit());
                 let overrides = FontFaceOverrides {
                     family_name: Some(family.name.to_string()),
                     // pyro: a reversed range (`900 100`) is the same range.
-                    weight: descriptor.font_weight.as_ref().and_then(|range| {
+                    weight: weight.and_then(|range| {
                         let (a, b) = (range.0.compute()?.value(), range.1.compute()?.value());
                         Some(a.min(b))
                     }),
-                    weight_range: descriptor
-                        .font_weight
-                        .as_ref()
+                    weight_range: weight
                         .and_then(|range| Some((range.0.compute()?.value(), range.1.compute()?.value()))),
-                    width_range: descriptor
-                        .font_width
-                        .as_ref()
+                    width_range: width
                         .and_then(|range| range.compute())
                         .map(|range| (range.0.0.to_float(), range.1.0.to_float())),
-                    width: descriptor
-                        .font_width
-                        .as_ref()
+                    width: width
                         .and_then(|range| range.compute())
                         .map(|range| range.0.0.to_float().min(range.1.0.to_float())),
-                    style: descriptor.font_style.as_ref().map(stylo_to_fontique_style),
-                    slant_range: descriptor.font_style.as_ref().and_then(|style| match style {
+                    style: style.map(stylo_to_fontique_style),
+                    slant_range: style.and_then(|style| match style {
                         FontStyleRange::Italic => None,
                         FontStyleRange::Oblique(min, max) => {
                             Some((min.degrees().unwrap_or(0.0), max.degrees().unwrap_or(0.0)))
@@ -974,13 +977,28 @@ impl NetHandler for ResourceHandler<ImageHandler> {
         let mut result = self.data.parse(&resolved_url, bytes);
         // pyro: an opaque response's pixels stay as its EXIF orientation turned them: as
         // orientation 1, which `image-orientation: none` has nothing to undo of.
-        // pyro: the tainting the provider reports with the response (the stored value's), never
-        // inferred from the final URL.
-        let _ = &final_url;
+        // pyro: the tainting the provider reports with the response (the stored value's) decides
+        // the orientation, never inferred from the final URL.
         let opaque = self.data.options.cors.is_none() && tainted;
         if opaque {
             if let Ok(Resource::Image(_, _, _, _, orientation)) = &mut result {
                 *orientation = 1;
+            }
+        }
+        // pyro: HTML-in-Canvas privacy: an opaque response is noted with its pixels; so is one,
+        // fetched without CORS, whose final URL is of another origin than its request's (for a
+        // provider that reports no tainting).
+        let redirected = self.data.options.cors.is_none()
+            && match (Url::parse(&resolved_url), Url::parse(&final_url)) {
+                (Ok(request), Ok(response)) => request.origin() != response.origin(),
+                _ => false,
+            };
+        if opaque || redirected {
+            match &result {
+                Ok(Resource::Image(_, _, _, pixels, _)) => note_opaque_image(image_key(pixels)),
+                #[cfg(feature = "svg")]
+                Ok(Resource::Svg(_, svg)) => note_opaque_image(svg_image_key(svg)),
+                _ => {}
             }
         }
         // pyro: an image fetched with CORS (or other options) answers under its key.
@@ -990,6 +1008,35 @@ impl NetHandler for ResourceHandler<ImageHandler> {
 }
 
 pub use pyro_raster::decode_jpeg;
+
+/// pyro: the images whose response was opaque (a no-cors response tainted by another origin, a
+/// redirect through one included), by [`image_key`]/[`svg_image_key`]: HTML-in-Canvas privacy
+/// (blitz-paint `Privacy`) leaves them out of what a page can read back from a canvas.
+static OPAQUE_IMAGES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// pyro: the key of a decoded raster image's pixels (its `Blob` id, kept by every clone).
+pub fn image_key(pixels: &linebender_resource_handle::Blob<u8>) -> u64 {
+    pixels.id()
+}
+
+/// pyro: the key of a parsed SVG image (its tree's address while it lives; a later image at a
+/// reused address only reads as opaque, and is left out).
+#[cfg(feature = "svg")]
+pub fn svg_image_key(svg: &crate::node::SvgImageData) -> u64 {
+    std::sync::Arc::as_ptr(&svg.tree) as usize as u64
+}
+
+/// pyro: whether the image with `key` came from an opaque response ([`OPAQUE_IMAGES`]).
+pub fn is_opaque_image(key: u64) -> bool {
+    OPAQUE_IMAGES.lock().is_ok_and(|set| set.contains(&key))
+}
+
+fn note_opaque_image(key: u64) {
+    if let Ok(mut set) = OPAQUE_IMAGES.lock() {
+        set.insert(key);
+    }
+}
 
 impl ImageHandler {
     fn parse(&self, url: &str, bytes: Bytes) -> Result<Resource, String> {

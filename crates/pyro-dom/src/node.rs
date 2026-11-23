@@ -52,8 +52,34 @@ pub enum DocumentKind {
     Xml,
 }
 
+/// Registry associated with an element, shadow root, or document. Default
+/// identifies the node document's global registry, including after adoption.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum RegistryAssociation {
+    Default,
+    Null,
+    Scoped(u64),
+}
+
+impl RegistryAssociation {
+    pub(crate) fn effective_global(self) -> Self {
+        if self == Self::Default { Self::Default } else { Self::Null }
+    }
+}
+
+/// Definition used to construct a custom element. Unlike the node's registry
+/// association this remains fixed when its owner document changes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CustomDefinitionOwner {
+    pub page: u64,
+    pub realm: u64,
+    pub registry: RegistryAssociation,
+}
+
 #[derive(Debug)]
 pub struct DocumentData {
+    pub(crate) has_global_registry: bool,
+    pub(crate) preferred_sheet_name: Option<Box<str>>,
     pub raster_budget: pyro_raster::PageRasters,
     pub kind: DocumentKind,
     pub quirks: QuirksMode,
@@ -115,6 +141,9 @@ pub struct DocumentData {
     pub(crate) focus_visible: bool,
     /// HTML `document.designMode` is "on": the whole document is editable.
     pub(crate) design_mode: bool,
+    /// The editing commands' CSS styling flag and default single-line container.
+    pub style_with_css: bool,
+    pub default_paragraph_separator: &'static str,
     /// The document element (first element child), its first HTML `head`
     /// child and its first HTML `body` or `frameset` child; NIL for none.
     /// Kept by `tree_linked`/`tree_unlinking`, which every link and unlink
@@ -134,15 +163,92 @@ pub struct DocumentData {
     /// iframe of `frame-sizing: content-height` showing it takes its content's height (css-sizing-4
     /// responsive iframes; `Dom::is_responsively_embedded`).
     pub(crate) responsive_embedded: bool,
+    /// The `content` of that `<meta>` (its `allow-origins=` list: the embedders that may take the
+    /// document's size; `Dom::responsive_embedding_policy`).
+    pub(crate) responsive_embedding_policy: Option<Box<str>>,
     /// The language its response's `Content-Language` header gave
     /// (`Dom::set_content_language`): the last fallback of `:lang()`.
     pub(crate) content_language: Option<Box<str>>,
+    /// HTML's pragma-set default language: the last `<meta http-equiv="content-language">`
+    /// processed (inserted into the document); removing that element keeps it.
+    pub(crate) pragma_language: Option<Box<str>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PiData {
     pub target: Box<str>,
     pub data: String,
+}
+
+/// Parse ProcessingInstruction pseudo-attributes for both DOM access and HTML content patching.
+pub fn parse_pi_attributes(data: &str) -> Option<Vec<(String, String)>> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut rest = data.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    while !rest.is_empty() {
+        let end = rest.find(|c: char| c.is_ascii_whitespace() || matches!(c, '=' | '>' | '/'))?;
+        let (name, tail) = rest.split_at(end);
+        if name.is_empty() {
+            return None;
+        }
+        let tail = tail.trim_start_matches(|c: char| c.is_ascii_whitespace()).strip_prefix('=')?;
+        let tail = tail.trim_start_matches(|c: char| c.is_ascii_whitespace());
+        let quote = tail.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+        let close = tail[1..].find(quote)? + 1;
+        let value = decode_char_refs(&tail[1..close]);
+        if !out.iter().any(|(k, _)| k == name) {
+            out.push((name.to_owned(), value));
+        }
+        rest = &tail[close + 1..];
+        if !rest.is_empty() && !rest.starts_with(|c: char| c.is_ascii_whitespace()) {
+            return None;
+        }
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    }
+    Some(out)
+}
+
+/// Decodes the character references an attribute serialization writes (`&amp;`, `&quot;`,
+/// `&lt;`, `&gt;`, `&nbsp;`, `&apos;`, numeric ones); others stay as written.
+fn decode_char_refs(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let Some(semi) = rest.find(';').filter(|&j| j <= 10) else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let entity = &rest[1..semi];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "quot" => Some('"'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "nbsp" => Some('\u{a0}'),
+            "apos" => Some('\''),
+            _ => entity
+                .strip_prefix("#x")
+                .or_else(|| entity.strip_prefix("#X"))
+                .map(|h| u32::from_str_radix(h, 16))
+                .or_else(|| entity.strip_prefix('#').map(|d| d.parse::<u32>()))
+                .and_then(|r| r.ok())
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 #[derive(Debug)]
@@ -202,6 +308,8 @@ pub struct FragmentData {
     pub(crate) shadow: Option<ShadowRootMode>,
     /// `shadow_flags` of a shadow root.
     pub(crate) flags: u8,
+    /// The ID designated by this shadow root, including an explicitly empty ID.
+    pub(crate) reference_target: Option<LocalName>,
     /// A shadow root's elements by id and labels by `for`, made when the
     /// first enters it.
     pub(crate) ids: Option<Box<crate::tree_scope::ScopeIndex>>,
@@ -209,7 +317,7 @@ pub struct FragmentData {
 
 impl FragmentData {
     pub(crate) fn new(host: u32, shadow: Option<ShadowRootMode>, flags: u8) -> Self {
-        FragmentData { host, shadow, flags, ids: None }
+        FragmentData { host, shadow, flags, reference_target: None, ids: None }
     }
 }
 
@@ -230,6 +338,7 @@ pub mod shadow_flags {
     /// A user-agent shadow root (an SVG `<use>` instance): not rendered (the
     /// renderer resolves `<use>` itself) and not reachable from script.
     pub const USER_AGENT: u8 = 64;
+    pub const KEEP_REGISTRY_NULL: u8 = 128;
 }
 
 /// Mutable form-control state that is not reflected in attributes.
@@ -250,6 +359,9 @@ pub struct ControlState {
     pub(crate) selection_direction: Option<(bool, (u32, u32))>,
     /// Value changed by user editing (enables tooLong/tooShort).
     pub user_edited: bool,
+    /// The user edited the value since the control got focus (or since its
+    /// last `change`): only then does blurring it fire `change`.
+    pub edited_since_focus: bool,
     /// HTML "user validity": the user committed a change, or a submission
     /// validated the form (`:user-valid` / `:user-invalid`); reset clears it.
     pub user_validity: bool,
@@ -257,23 +369,54 @@ pub struct ControlState {
     pub custom_validity: Option<String>,
     /// `<option>` selectedness when explicitly set.
     pub selected: Option<bool>,
+    /// `<option>`: `selected` was set without the dirtiness (the `Option()`
+    /// constructor), so a change of the `selected` attribute still sets the
+    /// selectedness (`selected` back to `None`).
+    pub(crate) selected_clean: bool,
     /// `<select>`: script deselected every option (`selectedIndex = -1`) of
     /// this list of options, so none is selected by default until an option
     /// is inserted, removed or selected.
     pub(crate) no_selection: Option<Box<[u32]>>,
+    /// `<select>`: the option its selectedcontent elements were last filled
+    /// from (`Some(NIL)`: emptied; `None`: never filled), so an update that
+    /// leaves the selected option as it was mutates nothing.
+    pub(crate) selectedcontent_option: Option<u32>,
+    /// `<output>`: its "default value override" (`None`: its default value is its descendant
+    /// text content; set while script has set `value`).
+    pub(crate) output_default_override: Option<String>,
 }
 
 /// Atoms of ids and class names: Stylo's, which the cascade and both
 /// selector engines compare (one `u64` per comparison).
 pub type Atom = style::Atom;
 
+#[derive(Debug, PartialEq)]
+pub(crate) struct InlineStyleBacking {
+    pub semantic: Option<String>,
+    pub typed: Option<crate::stylo::declarations::TypedStyleValues>,
+}
+
 #[derive(Debug)]
 pub struct ElementData {
+    /// HTML tree builder learns the intended parent after allocating a token.
+    pub(crate) parser_needs_registry: bool,
+    pub(crate) link_explicitly_enabled: bool,
+    /// HTML script "force async": true for a script element created by
+    /// script (`createElement`, cloning), false for one a parser created.
+    /// Meaningless for other elements.
+    pub(crate) script_force_async: bool,
+    /// A `<script>` the document's parser created: the source line of its start tag's end (its
+    /// inline text's first line, 1-based); 0 for any other element or script.
+    pub(crate) script_start_line: u32,
     pub name: QualName,
     /// Read freely; written only through the methods that keep `id` and
     /// `classes` in step (`set_attrs`, `push_attr`, `remove_attr`,
     /// `replace_attr_value`, `rename_attr`).
     pub attrs: Vec<Attr>,
+    /// Internal CSS input only when CSSOM serialization discarded a parsed numeric sign.
+    pub(crate) semantic_style: Option<std::sync::Arc<InlineStyleBacking>>,
+    /// CSSOM already checked whether the current style text needs a separate parser input.
+    pub(crate) checked_style_backing: bool,
     /// The `id` attribute (no namespace) as an atom, parsed when written.
     id: Option<Atom>,
     /// The `class` attribute (no namespace) split on ASCII whitespace,
@@ -320,8 +463,14 @@ pub mod element_flags {
 impl ElementData {
     pub fn new(name: QualName) -> Self {
         ElementData {
+            parser_needs_registry: false,
+            link_explicitly_enabled: false,
+            script_force_async: true,
+            script_start_line: 0,
             name,
             attrs: Vec::new(),
+            semantic_style: None,
+            checked_style_backing: false,
             id: None,
             classes: Box::default(),
             template_contents: NIL,
@@ -332,6 +481,14 @@ impl ElementData {
             is_value: None,
         }
     }
+    /// DOM defines both uncustomized elements and successfully upgraded elements.
+    /// Only HTML elements are eligible for the undefined custom element state.
+    pub(crate) fn is_defined(&self) -> bool {
+        self.flags & element_flags::CUSTOM_DEFINED != 0
+            || !self.is_html()
+            || (self.is_value.is_none() && !crate::dom::is_valid_custom_element_name(&self.name.local))
+    }
+
     /// Whether a custom element definition named `name` may be this element's: an autonomous one
     /// of its local name, or a customized built-in one of its is value.
     pub fn may_be_defined_as(&self, name: &LocalName) -> bool {
@@ -349,6 +506,16 @@ impl ElementData {
     pub fn is_html(&self) -> bool {
         self.name.ns == markup5ever::ns!(html)
     }
+    /// Override for the style parser. DOM attribute access and selector matching use `attrs`.
+    pub fn semantic_inline_style(&self) -> Option<&str> { self.semantic_style.as_ref().and_then(|s| s.semantic.as_deref()) }
+    /// Specified representations assigned as Typed OM objects rather than parsed CSS strings.
+    pub fn typed_style_values(&self) -> Option<&crate::stylo::declarations::TypedStyleValues> {
+        self.semantic_style.as_ref()?.typed.as_ref()
+    }
+    pub fn checked_inline_style_backing(&self) -> Option<bool> {
+        self.checked_style_backing.then(|| self.semantic_inline_style().is_some())
+    }
+
     /// The attribute in no namespace named `local` (a dynamic name; see
     /// [`ElementData::attr_local`] for a constant one).
     pub fn attr(&self, local: &str) -> Option<&str> {
@@ -414,6 +581,13 @@ impl ElementData {
     }
     /// Replaces every attribute (element creation, cloning).
     pub(crate) fn set_attrs(&mut self, attrs: Vec<Attr>) {
+        if self.checked_style_backing {
+            let next = attrs.iter().find(|a| a.name.local == local_name!("style") && a.name.ns == markup5ever::ns!());
+            if self.attr_local(&local_name!("style")) != next.map(|a| &*a.value) {
+                self.semantic_style = None;
+                self.checked_style_backing = false;
+            }
+        }
         self.attrs = attrs;
         self.refresh(&local_name!("id"));
         self.refresh(&local_name!("class"));
@@ -421,10 +595,12 @@ impl ElementData {
     /// The attributes with their parsed atoms, for [`ElementData::set_attr_state`]
     /// (cloning: nothing is parsed again).
     pub(crate) fn attr_state(&self) -> AttrState {
-        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone())
+        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone(), self.semantic_style.clone(), self.checked_style_backing)
     }
     pub(crate) fn set_attr_state(&mut self, state: AttrState) {
-        let AttrState(attrs, id, classes) = state;
+        let AttrState(attrs, id, classes, semantic_style, checked_style_backing) = state;
+        self.checked_style_backing = checked_style_backing;
+        self.semantic_style = semantic_style;
         self.attrs = attrs;
         self.id = id;
         self.classes = classes;
@@ -479,7 +655,7 @@ impl ElementData {
 }
 
 /// An element's attributes with their parsed id and classes.
-pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>);
+pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>, Option<std::sync::Arc<InlineStyleBacking>>, bool);
 
 /// Whether an attribute of this name feeds `ElementData::id` or `classes`.
 #[inline]

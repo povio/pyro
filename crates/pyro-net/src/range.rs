@@ -27,20 +27,27 @@ fn digits(bytes: &[u8], at: usize) -> (Option<u64>, usize) {
 /// `blob` scheme fetch asks: `None` is failure (no range unit, no `=`, no `-`,
 /// a second range, a start past the end, anything else trailing).
 pub fn parse_single_range(value: &[u8]) -> Option<SingleRange> {
-    if value.len() < 5 || !value[..5].eq_ignore_ascii_case(b"bytes") {
+    parse_single_range_with(value, true)
+}
+
+/// Fetch "parse a single range header value" with `allow_whitespace` (false
+/// for the CORS safelist). The range unit is `bytes`, case-sensitively.
+pub fn parse_single_range_with(value: &[u8], allow_whitespace: bool) -> Option<SingleRange> {
+    let ws = |bytes: &[u8], at: usize| if allow_whitespace { skip_whitespace(bytes, at) } else { at };
+    if !value.starts_with(b"bytes") {
         return None;
     }
-    let mut at = skip_whitespace(value, 5);
+    let mut at = ws(value, 5);
     if value.get(at) != Some(&b'=') {
         return None;
     }
-    at = skip_whitespace(value, at + 1);
+    at = ws(value, at + 1);
     let (start, next) = digits(value, at);
-    at = skip_whitespace(value, next);
+    at = ws(value, next);
     if value.get(at) != Some(&b'-') {
         return None;
     }
-    at = skip_whitespace(value, at + 1);
+    at = ws(value, at + 1);
     let (end, next) = digits(value, at);
     if next != value.len() {
         return None;
@@ -77,7 +84,9 @@ mod tests {
         assert_eq!(parse_single_range(b"bytes=5 - 10"), Some((Some(5), Some(10))));
         assert_eq!(parse_single_range(b"bytes=-\t 5"), Some((None, Some(5))));
         assert_eq!(parse_single_range(b"bytes \t =\t 6-"), Some((Some(6), None)));
-        assert_eq!(parse_single_range(b"BYTES=0-0"), Some((Some(0), Some(0))));
+        assert_eq!(parse_single_range(b"BYTES=0-0"), None, "the unit is case-sensitive");
+        assert_eq!(parse_single_range_with(b"bytes=0-5", false), Some((Some(0), Some(5))));
+        assert_eq!(parse_single_range_with(b"bytes= 0-5", false), None);
         assert_eq!(parse_single_range(b"bytes=4-100000000000"), Some((Some(4), Some(100_000_000_000))));
         for bad in [
             &b""[..],

@@ -1,0 +1,860 @@
+[
+  {
+    "suite": "exact",
+    "fixture": {
+      "value": "000000fff",
+      "css": false,
+      "shape": "forward"
+    },
+    "signed": {
+      "html": "foo<font color=\"#000fff\">bar</font>baz",
+      "value": "rgb(0, 15, 255)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "foobarbaz",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "exact",
+    "fixture": {
+      "value": "000000fff",
+      "css": true,
+      "shape": "forward"
+    },
+    "signed": {
+      "html": "foo<span style=\"color: rgb(0, 15, 255);\">bar</span>baz",
+      "value": "rgb(0, 15, 255)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "foobarbaz",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "currentColor",
+      "css": false,
+      "shape": "font"
+    },
+    "signed": {
+      "html": "<font color=\"rgba(0, 0, 0, 0)\">foo</font>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "inherit",
+      "css": false,
+      "shape": "font"
+    },
+    "signed": {
+      "html": "<font color=\"rgba(0, 0, 0, 0)\">foo</font>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "initial",
+      "css": false,
+      "shape": "font"
+    },
+    "signed": {
+      "html": "<font color=\"rgba(0, 0, 0, 0)\">foo</font>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "currentColor",
+      "css": false,
+      "shape": "span"
+    },
+    "signed": {
+      "html": "<font color=\"rgba(0, 0, 0, 0)\">foo</font>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "inherit",
+      "css": false,
+      "shape": "span"
+    },
+    "signed": {
+      "html": "<font color=\"rgba(0, 0, 0, 0)\">foo</font>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "initial",
+      "css": false,
+      "shape": "span"
+    },
+    "signed": {
+      "html": "<font color=\"rgba(0, 0, 0, 0)\">foo</font>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "currentColor",
+      "css": false,
+      "shape": "styled"
+    },
+    "signed": {
+      "html": "<span style=\"font-style: italic;\"><font color=\"rgba(0, 0, 0, 0)\">foo</font></span>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red;font-style:italic\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "inherit",
+      "css": false,
+      "shape": "styled"
+    },
+    "signed": {
+      "html": "<span style=\"font-style: italic;\"><font color=\"rgba(0, 0, 0, 0)\">foo</font></span>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red;font-style:italic\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "initial",
+      "css": false,
+      "shape": "styled"
+    },
+    "signed": {
+      "html": "<span style=\"font-style: italic;\"><font color=\"rgba(0, 0, 0, 0)\">foo</font></span>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red;font-style:italic\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "currentColor",
+      "css": false,
+      "shape": "mixed"
+    },
+    "signed": {
+      "html": "<font color=\"rgba(0, 0, 0, 0)\">foobar</font>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font><span style=\"color:blue\">bar</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "inherit",
+      "css": false,
+      "shape": "mixed"
+    },
+    "signed": {
+      "html": "<font color=\"rgba(0, 0, 0, 0)\">foobar</font>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font><span style=\"color:blue\">bar</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "initial",
+      "css": false,
+      "shape": "mixed"
+    },
+    "signed": {
+      "html": "<font color=\"rgba(0, 0, 0, 0)\">foobar</font>",
+      "value": "rgb(186, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font><span style=\"color:blue\">bar</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "currentColor",
+      "css": true,
+      "shape": "font"
+    },
+    "signed": {
+      "html": "<span style=\"color: currentcolor;\">foo</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "inherit",
+      "css": true,
+      "shape": "font"
+    },
+    "signed": {
+      "html": "<span style=\"color: inherit;\">foo</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "initial",
+      "css": true,
+      "shape": "font"
+    },
+    "signed": {
+      "html": "<span style=\"color: initial;\">foo</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "currentColor",
+      "css": true,
+      "shape": "span"
+    },
+    "signed": {
+      "html": "<span style=\"color: currentcolor;\">foo</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "inherit",
+      "css": true,
+      "shape": "span"
+    },
+    "signed": {
+      "html": "<span style=\"color: inherit;\">foo</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "initial",
+      "css": true,
+      "shape": "span"
+    },
+    "signed": {
+      "html": "<span style=\"color: initial;\">foo</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "currentColor",
+      "css": true,
+      "shape": "styled"
+    },
+    "signed": {
+      "html": "<span style=\"font-style: italic; color: currentcolor;\">foo</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red;font-style:italic\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "inherit",
+      "css": true,
+      "shape": "styled"
+    },
+    "signed": {
+      "html": "<span style=\"font-style: italic; color: inherit;\">foo</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red;font-style:italic\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "initial",
+      "css": true,
+      "shape": "styled"
+    },
+    "signed": {
+      "html": "<span style=\"font-style: italic; color: initial;\">foo</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<span style=\"color:red;font-style:italic\">foo</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "currentColor",
+      "css": true,
+      "shape": "mixed"
+    },
+    "signed": {
+      "html": "<span style=\"color: currentcolor;\">foobar</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font><span style=\"color:blue\">bar</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "inherit",
+      "css": true,
+      "shape": "mixed"
+    },
+    "signed": {
+      "html": "<span style=\"color: inherit;\">foobar</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font><span style=\"color:blue\">bar</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  },
+  {
+    "suite": "keywords",
+    "fixture": {
+      "value": "initial",
+      "css": true,
+      "shape": "mixed"
+    },
+    "signed": {
+      "html": "<span style=\"color: initial;\">foobar</span>",
+      "value": "rgb(0, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "candidate": {
+      "html": "<font color=\"red\">foo</font><span style=\"color:blue\">bar</span>",
+      "value": "rgb(255, 0, 0)",
+      "events": [
+        [
+          "input",
+          "",
+          null
+        ]
+      ]
+    },
+    "signedReturn": true,
+    "candidateReturn": true,
+    "candidateRevision": "8d85f4a72"
+  }
+]

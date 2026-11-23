@@ -264,7 +264,9 @@ fn filelist_semantics_are_unchanged() {
                     l[0].size, l[1].size].join('|');
         })()"#,
     );
-    assert_eq!(out, "2|a.txt|b.csv|true|true|true|true|a.txt+b.csv|2|a.txt,b.csv|true|true|true|true|2|3|2");
+    // input.files and dt.files return the same FileList while the selection stays
+    // (WPT html/semantics/forms/the-input-element/files.html).
+    assert_eq!(out, "2|a.txt|b.csv|true|true|true|true|a.txt+b.csv|2|a.txt,b.csv|true|true|false|false|2|3|2");
     // input.files = list round trip, and replacing it with a smaller list
     assert_eq!(
         eval(

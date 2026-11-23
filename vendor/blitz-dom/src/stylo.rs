@@ -205,6 +205,8 @@ impl crate::document::BaseDocument {
                 std::mem::take(traverser.nodes_needing_style_image_flush.get_mut().unwrap());
             self.sticky_nodes
                 .extend(std::mem::take(traverser.sticky_nodes.get_mut().unwrap()));
+            self.cis_auto
+                .extend(std::mem::take(traverser.cis_auto_nodes.get_mut().unwrap()));
             style_changes = std::mem::take(traverser.style_changes.get_mut().unwrap());
             // Sticky: set once an element is styled with a generated
             // `::before` / `::after`, never cleared.
@@ -220,6 +222,9 @@ impl crate::document::BaseDocument {
             }
             if traverser.scroll_snap_styles.into_inner() {
                 self.scroll_snap_styles = true;
+            }
+            if traverser.scroll_initial_target_styles.into_inner() {
+                self.scroll_initial_target_styles = true;
             }
             if traverser.column_span_styles.into_inner() {
                 self.column_span_styles = true;
@@ -252,6 +257,9 @@ impl crate::document::BaseDocument {
             self.sticky_nodes
                 .retain(|id| nodes.get(*id).is_some_and(|node| is_sticky(node)));
         }
+        // pyro: restyled elements that lost `contain-intrinsic-size: auto` forget their remembered
+        // size in that axis now (`BaseDocument::retain_contain_intrinsic_auto`).
+        self.retain_contain_intrinsic_auto();
         self.pending_style_image_nodes
             .extend(nodes_needing_style_image_flush);
         if !style_changes.is_empty() {
@@ -301,6 +309,133 @@ impl crate::document::BaseDocument {
         self.stylist.rule_tree().maybe_gc();
         drop(sets);
         if !changed_rules.is_empty() { self.invalidate_anchor_rule_users(changed_rules); }
+    }
+
+    /// Recompute font-relative values using the current transition samples, leaving the
+    /// stored after-change style in place for transition creation and retargeting.
+    pub fn sampled_font_style(
+        &self, id: NodeId, pseudo: Option<&PseudoElement>,
+        size: Option<&ComputedValues>, line_height: Option<&ComputedValues>,
+    ) -> Option<Arc<ComputedValues>> {
+        use style::computed_value_flags::ComputedValueFlags;
+        use style::context::CascadeInputs;
+        use style::properties::{FirstLineReparenting, LonghandId};
+        use style::values::computed::{LineHeight, NonNegativeLength, ToComputedValue};
+        let node = self.get_node(id)?;
+        let primary = |n: &Node| n.primary_styles().map(|s| (*s).clone()).or_else(|| self.resolve_undisplayed_style(n.id));
+        let base = match pseudo {
+            Some(p) => self.pseudo_element_style(id, p, false)?,
+            None => primary(node)?,
+        };
+        if !base.flags.contains(ComputedValueFlags::USES_FONT_OR_WM_RELATIVE_UNITS) { return None }
+        let parent_node = if pseudo.is_some() { Some(node) } else { TElement::inheritance_parent(&node) };
+        let parent = parent_node.and_then(primary);
+        let mut layout_parent_node = parent_node;
+        let mut layout_parent = parent.clone();
+        while layout_parent.as_ref().is_some_and(|s| s.is_display_contents()) {
+            layout_parent_node = layout_parent_node.and_then(|n| TElement::inheritance_parent(&n));
+            layout_parent = layout_parent_node.and_then(primary);
+        }
+
+        let _scope = LayoutThreadScope::enter();
+        let guard = self.guard.read();
+        let guards = StylesheetGuards::same(&guard);
+        let level = CascadeLevel::new(CascadeOrigin::Transitions);
+        let mut block = base.rules().self_and_ancestors().find(|r| r.cascade_level() == level)
+            .and_then(|r| r.style_source()).map(|s| s.read(&guard).clone()).unwrap_or_default();
+        if let Some(s) = size {
+            let mut context = style::values::resolved::Context {
+                style: s, for_property: style::properties::PropertyId::NonCustom(LonghandId::FontSize.into()), current_longhand: None,
+            };
+            block.push(s.computed_or_resolved_declaration(LonghandId::FontSize, Some(&mut context)), Importance::Normal);
+        }
+        if let Some(s) = line_height {
+            // Preserve unitless line-height and unzoom absolute lengths before cascading them again.
+            let value = match s.slow_clone_line_height() {
+                LineHeight::Length(l) => LineHeight::Length(NonNegativeLength::new(s.effective_zoom.unzoom(l.0.px()))),
+                value => value,
+            };
+            block.push(PropertyDeclaration::LineHeight(ToComputedValue::from_computed_value(&value)), Importance::Normal);
+        }
+        let block = Arc::new(self.guard.wrap(block));
+        let mut inputs = CascadeInputs::new_from_style(&base);
+        for path in [&mut inputs.rules, &mut inputs.visited_rules].into_iter().flatten() {
+            if let Some(new_path) = self.stylist.rule_tree().update_rule_at_level(
+                level, LayerOrder::root(), Some(block.borrow_arc()), path, &guards, &mut false,
+            ) {
+                *path = new_path;
+            }
+        }
+        Some(self.stylist.cascade_style_and_visited(
+            Some(node), pseudo, &inputs, &guards, parent.as_deref(), layout_parent.as_deref(),
+            FirstLineReparenting::No, &Default::default(), None, &mut Default::default(), &mut Default::default(),
+        ))
+    }
+
+    /// A read-only cascade without a single-rule embedder stylesheet. The normal
+    /// document retains that rule (Pyro uses it to suppress native animation scheduling).
+    pub fn style_without_override(
+        &self,
+        id: NodeId,
+        pseudo: Option<&PseudoElement>,
+        sheet: &crate::UserAgentStylesheet,
+    ) -> Option<Arc<ComputedValues>> {
+        use style::computed_value_flags::ComputedValueFlags;
+        use style::context::CascadeInputs;
+        use style::properties::FirstLineReparenting;
+        use style::stylesheets::CssRule;
+
+        let sheet = &sheet.sheet().0;
+        let sheet_guard = sheet.shared_lock.read();
+        let contents = sheet.contents.read_with(&sheet_guard);
+        let [CssRule::Style(rule)] = contents.rules.read_with(&sheet_guard).0.as_slice() else { return None };
+        let ignored = &rule.read_with(&sheet_guard).block;
+        let primary = |node: &Node| node.primary_styles().map(|s| (*s).clone())
+            .or_else(|| self.resolve_undisplayed_style(node.id));
+        let cascade = |node: &Node, pseudo: Option<&PseudoElement>, base: &ComputedValues, parent: Option<&ComputedValues>| {
+            let _scope = LayoutThreadScope::enter();
+            let guard = self.guard.read();
+            let guards = StylesheetGuards::same(&guard);
+            let mut inputs = CascadeInputs::new_from_style(base);
+            for path in [&mut inputs.rules, &mut inputs.visited_rules].into_iter().flatten() {
+                let rules: Vec<_> = path.self_and_ancestors().filter_map(|n| {
+                    let source = n.style_source()?;
+                    (!Arc::ptr_eq(source.get(), ignored)).then(|| (source.borrow(), n.cascade_priority()))
+                }).collect();
+                *path = self.stylist.rule_tree().insert_ordered_rules(rules.into_iter().rev());
+            }
+            self.stylist.cascade_style_and_visited(
+                Some(node), pseudo, &inputs, &guards, parent, parent, FirstLineReparenting::No,
+                &Default::default(), None, &mut Default::default(), &mut Default::default(),
+            )
+        };
+
+        let mut node = self.get_node(id)?;
+        let mut pseudo = pseudo;
+        let mut base = match pseudo {
+            Some(p) => self.pseudo_element_style(id, p, false)?,
+            None => primary(node)?,
+        };
+        let mut children = Vec::new();
+        // Timing longhands are reset properties. Reconstruct a parent's author timing
+        // only when an explicit inherit (possibly from substitution) was used.
+        let mut result = loop {
+            let parent = if pseudo.is_some() { Some(node) } else { TElement::inheritance_parent(&node) };
+            let parent_style = parent.and_then(primary);
+            let style = cascade(node, pseudo, &base, parent_style.as_deref());
+            if !style.flags.contains(ComputedValueFlags::INHERITS_RESET_STYLE) {
+                break style;
+            }
+            let (Some(p), Some(p_style)) = (parent, parent_style) else { break style };
+            children.push((node, pseudo, base));
+            node = p;
+            pseudo = None;
+            base = p_style;
+        };
+        while let Some((child, pseudo, base)) = children.pop() {
+            result = cascade(child, pseudo, &base, Some(&result));
+        }
+        Some(result)
     }
 
     /// Compute the style of an element which the regular style traversal
@@ -383,6 +518,12 @@ impl crate::document::BaseDocument {
             Some((primary, eager))
         });
         if generated_only {
+            if *pseudo == PseudoElement::Marker {
+                let (primary, _) = stored?;
+                if !primary.get_box().display.is_list_item() { return None; }
+                let _scope = LayoutThreadScope::enter();
+                return crate::layout::list::marker_pseudo_style(self, node_id, &primary);
+            }
             return stored.and_then(|(_, eager)| eager);
         }
         let (primary, eager) = match stored {
@@ -458,7 +599,8 @@ impl crate::document::BaseDocument {
             };
             // pyro: `::highlight(<name>)` rules share one map; the name must match.
             let wanted = pseudo.clone();
-            let matches = move |pe: &PseudoElement| wanted.matches_transition_selector(pe);
+            let matches = move |pe: &PseudoElement| wanted.matches_transition_selector(pe)
+                || (wanted.is_highlight() && *pe == PseudoElement::Highlight(style::selector_parser::ANY_HIGHLIGHT));
             let lazy = self.stylist.lazily_compute_pseudo_element_style(
                 &guards,
                 node,
@@ -468,6 +610,11 @@ impl crate::document::BaseDocument {
                 false,
                 (pseudo.is_highlight() || pseudo.transition_argument().is_some()).then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
             );
+            if *pseudo == PseudoElement::Marker {
+                if let Some(style) = self.animated_marker_style(node, &primary, lazy.as_ref()) {
+                    return Some(style);
+                }
+            }
             if lazy.is_some() {
                 return lazy;
             }
@@ -572,7 +719,8 @@ impl<'a> TDocument for BlitzNode<'a> {
     }
 
     fn quirks_mode(&self) -> QuirksMode {
-        QuirksMode::NoQuirks
+        // pyro: the document's mode, as its stylist matches with (`BaseDocument::new`).
+        if self.tree().quirks_mode { QuirksMode::Quirks } else { QuirksMode::NoQuirks }
     }
 
     fn shared_lock(&self) -> &SharedRwLock {
@@ -844,7 +992,7 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::Focus => self.element_state().contains(ElementState::FOCUS),
             NonTSPseudoClass::FocusWithin => self.element_state().contains(ElementState::FOCUS_WITHIN),
             NonTSPseudoClass::FocusVisible => self.element_state().contains(ElementState::FOCUSRING),
-            NonTSPseudoClass::Fullscreen => false,
+            NonTSPseudoClass::Fullscreen => self.element_state().contains(ElementState::FULLSCREEN),
             NonTSPseudoClass::Hover => self.element_state().contains(ElementState::HOVER),
             NonTSPseudoClass::Indeterminate => {
                 self.element_state().contains(ElementState::INDETERMINATE)
@@ -944,6 +1092,11 @@ impl selectors::Element for BlitzNode<'_> {
             // pyro: a dialog in the top layer (modal, or kept there for its `overlay` transition):
             // the state pyro-dom gives it (Chromium's `:-internal-dialog-in-top-layer`).
             NonTSPseudoClass::MozTopmostModal => self.element_state().contains(ElementState::TOPMOST_MODAL),
+            // pyro: an element whose element-scoped view transition is active (the state pyro-dom
+            // gives it).
+            NonTSPseudoClass::PyroActiveViewTransitionScope => {
+                self.element_state().contains(ElementState::ACTIVE_VIEW_TRANSITION)
+            }
         }
     }
 
@@ -1025,6 +1178,10 @@ impl selectors::Element for BlitzNode<'_> {
             .unwrap_or(false)
     }
 
+    fn has_class_prefix(&self, prefix: &AtomIdent, quirks: bool) -> bool {
+        self.element_data().is_some_and(|data| data.classes.iter().any(|class| selectors::attr::matches_class_prefix(class, &prefix.0, quirks)))
+    }
+
     fn has_class(
         &self,
         search_name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
@@ -1055,7 +1212,14 @@ impl selectors::Element for BlitzNode<'_> {
     }
 
     fn is_empty(&self) -> bool {
-        self.dom_children().next().is_none()
+        // pyro: children that are comments or empty text (an empty CDATA section, a script's
+        // `createTextNode('')`) leave it empty (Selectors 4 § 14.2, as Chrome; WPT
+        // css/selectors/old-tests `css3-modsel-153`, `-d1b`).
+        self.dom_children().all(|child| match &child.data {
+            NodeData::Text(text) => text.content.is_empty(),
+            NodeData::Comment { .. } => true,
+            _ => false,
+        })
     }
 
     fn is_root(&self) -> bool {
@@ -1121,6 +1285,15 @@ impl<'a> TElement for BlitzNode<'a> {
         self
     }
 
+    fn original_sibling_position(&self) -> Option<style::values::computed::TreeCountingResult> {
+        self.assigned_slot_id()?;
+        let value = self.element_data()?.attrs.state(crate::shadow::LIGHT_INDEX_ATTR)?;
+        let (index, count) = value.split_once('/')?;
+        let index = index.parse::<u32>().ok()?.checked_add(1)?;
+        let count = count.parse().ok()?;
+        Some(style::values::computed::TreeCountingResult::new(index, count))
+    }
+
     // pyro: styles inherit through the flat tree (a slot's assigned nodes from the slot, a shadow
     // tree's first level from the host), which `parent_element` leaves for the node trees
     // (`crate::shadow`).
@@ -1159,6 +1332,10 @@ impl<'a> TElement for BlitzNode<'a> {
 
     fn is_svg_element(&self) -> bool {
         self.element_data().is_some_and(|data| data.name.ns == markup5ever::ns!(svg))
+    }
+
+    fn style_attribute_source(&self) -> Option<&str> {
+        self.element_data()?.inline_declarations()
     }
 
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
@@ -1502,11 +1679,37 @@ impl<'a> TElement for BlitzNode<'a> {
         self.tree().anchor_query_choices.lock().unwrap().entry(self.id).or_default().clone()
     }
 
+    /// pyro: the containing block the last layout placed this out-of-flow box in. Queries are
+    /// answered after that layout (`resolve::refresh_anchored_query_choices`), and the
+    /// containing block is an ancestor, so its style is complete by now.
+    fn query_anchored_containing_block_writing_mode(&self) -> Option<style::logical_geometry::WritingMode> {
+        let id = self.oof_containing_block.get()?;
+        let node = self.tree().get(id)?;
+        node.primary_styles().map(|style| style.writing_mode)
+    }
+
+    /// pyro: the edges recorded at the last layout (none until one ran): a change after a layout
+    /// restyles the container's subtree (`resolve::refresh_scroll_state_queries`).
+    fn query_scrollable_edges(&self) -> style::stylesheets::container_rule::ScrollableEdges {
+        *self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default()
+    }
+
     fn query_container_size(
         &self,
         display: &style::values::specified::Display,
     ) -> euclid::default::Size2D<Option<app_units::Au>> {
-        if !self.flags.is_in_document() || display.is_none() || display.is_contents() || display.is_inline_flow() {
+        // pyro: nor a table or an internal table box, to which size containment does not apply
+        // (CSS Contain 2 § 3.1): the query finds the container but no size, and container units
+        // resolve against the next one out (WPT css-conditional container-queries
+        // `ineligible-containment`, `container-units-ineligible-container`).
+        use style::values::specified::box_::{DisplayInside, DisplayOutside};
+        if !self.flags.is_in_document()
+            || display.is_none()
+            || display.is_contents()
+            || display.is_inline_flow()
+            || display.inside() == DisplayInside::Table
+            || display.outside() == DisplayOutside::InternalTable
+        {
             return Default::default();
         }
         // Stylo can call while holding this element's mutable style data for
@@ -1826,6 +2029,34 @@ impl Node {
             }
         }
 
+        /// pyro: `value` parsed as the CSS `property`'s value, as an author would write it (no
+        /// unitless lengths): its declarations, or none when it does not parse.
+        fn parse_css_declaration(property: &str, value: &str) -> Vec<PropertyDeclaration> {
+            use style::properties::{PropertyId, SourcePropertyDeclaration, parse_one_declaration_into};
+            use style::stylesheets::{CssRuleType, Origin};
+            use style_traits::ParsingMode;
+
+            let Ok(property) = PropertyId::parse_enabled_for_all_content(property) else {
+                return Vec::new();
+            };
+            let mut declarations = SourcePropertyDeclaration::default();
+            let parsed = parse_one_declaration_into(
+                &mut declarations,
+                property,
+                value,
+                Origin::Author,
+                &crate::url::DocumentUrl::default().url_extra_data(),
+                None,
+                ParsingMode::DEFAULT,
+                style::context::QuirksMode::NoQuirks,
+                CssRuleType::Style,
+            );
+            match parsed {
+                Ok(()) => declarations.drain().declarations.collect(),
+                Err(_) => Vec::new(),
+            }
+        }
+
         // `<input type=image>` is the only input type that is replaced
         // content, and it is the only one that takes the embedded-content
         // presentational attributes. The type attribute is matched ASCII
@@ -1834,6 +2065,72 @@ impl Node {
             && elem.attrs().iter().any(|attr| {
                 attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
             });
+
+        // pyro: an `<mspace>`'s width, height and depth attributes (`mathml_space`).
+        for declaration in crate::mathml_space::hints(elem) {
+            push_style(declaration);
+        }
+
+        // pyro: MathML Core § 2.1.3: `displaystyle="true"` or `"false"` (ASCII case-insensitive)
+        // on any MathML element sets its `math-style` to `normal` or `compact`, a presentational
+        // hint as in Chromium (over every UA rule, `math[display=block]` and `mfrac > *`
+        // included); any other value is ignored.
+        if elem.name.ns == ns!(mathml)
+            && let Some(value) = elem.attr(local_name!("displaystyle"))
+        {
+            let math_style = if value.eq_ignore_ascii_case("true") {
+                Some("normal")
+            } else if value.eq_ignore_ascii_case("false") {
+                Some("compact")
+            } else {
+                None
+            };
+            for declaration in math_style.map(|v| parse_css_declaration("math-style", v)).unwrap_or_default() {
+                push_style(declaration);
+            }
+        }
+
+        // pyro: HTML § 15.4.1 "maps to the aspect-ratio property (using dimension rules)": an
+        // img, video or image input whose width and height both parse as dimension values that
+        // are not percentages has `aspect-ratio: auto w / h`, a ratio its natural one replaces
+        // once known. A canvas maps its own (integer) width and height the same way.
+        if elem.name.ns == ns!(html)
+            && (*tag == local_name!("img")
+                || *tag == local_name!("video")
+                || *tag == local_name!("canvas")
+                || is_image_input)
+        {
+            let dimension = |name: LocalName| -> Option<f32> {
+                let value = elem.attr(name)?;
+                if *tag == local_name!("canvas") {
+                    return style::servo::attr::parse_unsigned_integer(value.chars()).ok().map(|n| n as f32);
+                }
+                match style::servo::attr::parse_length(value) {
+                    style::servo::attr::LengthOrPercentageOrAuto::Length(length) => Some(length.to_f32_px()),
+                    _ => None,
+                }
+            };
+            if let (Some(w), Some(h)) = (dimension(local_name!("width")), dimension(local_name!("height"))) {
+                use style::values::generics::position::{GenericAspectRatio, PreferredRatio};
+                use style::values::generics::ratio::Ratio;
+                use style::values::specified::NonNegativeNumber;
+                push_style(PropertyDeclaration::AspectRatio(Box::new(GenericAspectRatio {
+                    auto: true,
+                    ratio: PreferredRatio::Ratio(Ratio(NonNegativeNumber::new(w), NonNegativeNumber::new(h))),
+                })));
+            }
+        }
+
+        // pyro: HTML § 15.3.2 (quirks mode): `form { margin-block-end: 1em; }`. Pyro's UA sheet
+        // is one sheet for every document, so the quirks-mode rule is a hint of the element's
+        // (author-overridable, as the UA rule is).
+        if *tag == local_name!("form") && elem.name.ns == ns!(html) && self.tree().quirks_mode {
+            use style::values::generics::length::GenericMargin;
+            use style::values::specified::{LengthPercentage, NoCalcLength};
+            push_style(PropertyDeclaration::MarginBlockEnd(GenericMargin::LengthPercentage(
+                LengthPercentage::Length(NoCalcLength::from_em(1.0)),
+            )));
+        }
 
         // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
         let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
@@ -1846,19 +2143,31 @@ impl Node {
             // SVG presentation attributes enter the author cascade with zero
             // specificity. This also resolves custom properties and currentColor
             // before SVG serialization, text measurement, and getComputedStyle.
-            // Geometry attributes have their own mapping below.
+            // Geometry attributes have their own mapping below. Every SVG element
+            // takes them, unknown ones and those the property does not apply to
+            // included (SVG 2 § 6.6; WPT svg/styling/presentation-attributes-*).
+            // pyro: not `filter` and `mask` on an `<svg>`: an outermost one's are
+            // usvg's (its attributes are written out as they are), and as box effects
+            // blitz-paint would apply them a second time. A hint cannot depend on the
+            // parent: hints are cached until the element's attributes change.
             if elem.name.ns == ns!(svg)
                 && attr.name.ns == ns!()
-                && matches!(&**name,
-                    "clip-path" | "transform-origin" | "overflow"
+                && (matches!(&**name,
+                    "clip-path" | "transform-origin" | "overflow" | "pointer-events"
                     | "fill" | "fill-opacity" | "fill-rule"
                     | "stroke" | "stroke-width" | "stroke-opacity" | "stroke-linecap"
                     | "stroke-linejoin" | "stroke-miterlimit" | "stroke-dasharray" | "stroke-dashoffset"
                     | "opacity" | "color" | "visibility" | "display"
                     | "font-family" | "font-size" | "font-weight" | "font-style" | "font-stretch"
+                    | "font-variant"
                     | "letter-spacing" | "word-spacing" | "text-anchor" | "text-decoration"
                     | "dominant-baseline" | "alignment-baseline" | "baseline-shift"
-                    | "paint-order" | "vector-effect" | "shape-rendering" | "text-rendering")
+                    | "paint-order" | "vector-effect" | "shape-rendering" | "text-rendering"
+                    | "clip-rule" | "color-interpolation" | "color-interpolation-filters" | "cursor"
+                    | "direction" | "unicode-bidi" | "writing-mode" | "text-overflow" | "image-rendering"
+                    | "flood-color" | "flood-opacity" | "lighting-color" | "stop-color" | "stop-opacity"
+                    | "marker-start" | "marker-mid" | "marker-end" | "mask-type")
+                    || (matches!(&**name, "filter" | "mask") && *tag != local_name!("svg")))
             {
                 for declaration in parse_svg_presentation_attr(&**name, value) {
                     push_style(declaration);
@@ -1910,15 +2219,88 @@ impl Node {
 
             if *name == local_name!("align") {
                 use style::values::specified::TextAlign;
+                // The HTML rendering rules for divs, table row groups, rows and
+                // cells also accept "middle" and "justify", case-insensitively.
+                let html_alignment = elem.name.ns == ns!(html)
+                    && matches!(*tag, local_name!("div") | local_name!("thead")
+                        | local_name!("tbody") | local_name!("tfoot") | local_name!("tr")
+                        | local_name!("td") | local_name!("th"));
                 let keyword = match value {
                     "left" => Some(StyloTextAlign::MozLeft),
                     "right" => Some(StyloTextAlign::MozRight),
                     "center" => Some(StyloTextAlign::MozCenter),
+                    s if html_alignment && s.eq_ignore_ascii_case("left") => Some(StyloTextAlign::MozLeft),
+                    s if html_alignment && s.eq_ignore_ascii_case("right") => Some(StyloTextAlign::MozRight),
+                    s if html_alignment && (s.eq_ignore_ascii_case("center") || s.eq_ignore_ascii_case("middle")) => {
+                        Some(StyloTextAlign::MozCenter)
+                    }
+                    s if html_alignment && s.eq_ignore_ascii_case("justify") => Some(StyloTextAlign::Justify),
                     _ => None,
                 };
 
                 if let Some(keyword) = keyword {
                     push_style(PropertyDeclaration::TextAlign(TextAlign::Keyword(keyword)));
+                }
+            }
+
+            // pyro: `align` on embedded content and images (HTML § 15.4.3) maps "top",
+            // "absmiddle", "abscenter" and "absbottom", ASCII case-insensitively, to
+            // `vertical-align` (top, middle, bottom), pushed as its three longhands.
+            if *name == local_name!("align")
+                && elem.name.ns == ns!(html)
+                && (matches!(
+                    *tag,
+                    local_name!("img") | local_name!("iframe") | local_name!("embed") | local_name!("object")
+                ) || is_image_input)
+            {
+                use style::values::generics::box_::BaselineShiftKeyword;
+                use style::values::specified::{AlignmentBaseline, BaselineShift, BaselineSource};
+                let longhands = if value.eq_ignore_ascii_case("top") {
+                    Some((AlignmentBaseline::Baseline, BaselineShift::Keyword(BaselineShiftKeyword::Top)))
+                } else if value.eq_ignore_ascii_case("absmiddle") || value.eq_ignore_ascii_case("abscenter") {
+                    Some((AlignmentBaseline::VerticalAlignMiddle, BaselineShift::zero()))
+                } else if value.eq_ignore_ascii_case("absbottom") {
+                    Some((AlignmentBaseline::Baseline, BaselineShift::Keyword(BaselineShiftKeyword::Bottom)))
+                } else {
+                    None
+                };
+                if let Some((alignment_baseline, baseline_shift)) = longhands {
+                    push_style(PropertyDeclaration::BaselineSource(BaselineSource::Auto));
+                    push_style(PropertyDeclaration::AlignmentBaseline(alignment_baseline));
+                    push_style(PropertyDeclaration::BaselineShift(baseline_shift));
+                }
+            }
+
+            // pyro: `type` on `ol`, `ul` and `li` maps to `list-style-type` (HTML § 15.3.8):
+            // "1", "a", "A", "i" and "I" (`ol`, `li`) case-sensitively; "none", "disc",
+            // "circle" and "square" (`ul`, `li`) ASCII case-insensitively.
+            if *name == local_name!("type")
+                && elem.name.ns == ns!(html)
+                && matches!(*tag, local_name!("ol") | local_name!("ul") | local_name!("li"))
+            {
+                let numbered = *tag != local_name!("ul");
+                let bulleted = *tag != local_name!("ol");
+                let named = match value {
+                    "1" if numbered => Some("decimal"),
+                    "a" if numbered => Some("lower-alpha"),
+                    "A" if numbered => Some("upper-alpha"),
+                    "i" if numbered => Some("lower-roman"),
+                    "I" if numbered => Some("upper-roman"),
+                    v if bulleted && v.eq_ignore_ascii_case("none") => Some("none"),
+                    v if bulleted && v.eq_ignore_ascii_case("disc") => Some("disc"),
+                    v if bulleted && v.eq_ignore_ascii_case("circle") => Some("circle"),
+                    v if bulleted && v.eq_ignore_ascii_case("square") => Some("square"),
+                    _ => None,
+                };
+                if let Some(named) = named {
+                    use style::counter_style::CounterStyle;
+                    use style::values::specified::ListStyleType;
+                    let value = if named == "none" {
+                        ListStyleType::none()
+                    } else {
+                        ListStyleType(CounterStyle::Name(style::values::CustomIdent(style::Atom::from(named))))
+                    };
+                    push_style(PropertyDeclaration::ListStyleType(value));
                 }
             }
 
@@ -2092,6 +2474,21 @@ impl Node {
                 }
             }
 
+            // pyro: HTML § 15.4.1: an iframe whose `frameborder` parses (rules for parsing
+            // integers) to zero, or not at all, has no border width. Its style stays the UA
+            // sheet's `inset`.
+            if *tag == local_name!("iframe")
+                && &**name == "frameborder"
+                && style::servo::attr::parse_integer(value.chars()).map_or(true, |n| n == 0)
+            {
+                use style::values::specified::BorderSideWidth;
+                let width = BorderSideWidth::from_px(0.0);
+                push_style(PropertyDeclaration::BorderTopWidth(width.clone()));
+                push_style(PropertyDeclaration::BorderRightWidth(width.clone()));
+                push_style(PropertyDeclaration::BorderBottomWidth(width.clone()));
+                push_style(PropertyDeclaration::BorderLeftWidth(width));
+            }
+
             // `body` carries four legacy margin attributes, as pixel lengths:
             // marginwidth and marginheight set both sides of an axis, and
             // leftmargin and topmargin set one side each.
@@ -2145,7 +2542,8 @@ impl Node {
 
             // pyro: `<body text>` colours the document's text (HTML rendering, "phrasing
             // content"), a legacy colour value (named colours included).
-            if *name == local_name!("text") && *tag == local_name!("body") {
+            if elem.name.ns == ns!(html) && ((*name == local_name!("text") && *tag == local_name!("body"))
+                || (*name == local_name!("color") && *tag == local_name!("font"))) {
                 use style::values::specified::{Color, ColorPropertyValue};
                 if let Ok(color) = style::servo::attr::parse_legacy_color(value) {
                     push_style(PropertyDeclaration::Color(ColorPropertyValue(Color::from_absolute_color(color))));
@@ -2161,7 +2559,31 @@ impl Node {
                 }
             }
 
-            if *name == local_name!("hidden") {
+            // pyro: HTML rendering ("tables", "the page"): the `background` attribute of body,
+            // table, thead, tbody, tfoot, tr, td and th maps to `background-image`, its value a URL
+            // parsed relative to the document (an absolute URL in the declaration, so its base is moot).
+            if &**name == "background"
+                && attr.name.ns == ns!()
+                && elem.name.ns == ns!(html)
+                && matches!(&**tag, "body" | "table" | "thead" | "tbody" | "tfoot" | "tr" | "td" | "th")
+            {
+                let trimmed = value.trim_matches(|c: char| c.is_ascii_whitespace());
+                let resolved = (!trimmed.is_empty())
+                    .then(|| url::Url::parse(&self.tree().base_url).ok()?.join(trimmed).ok())
+                    .flatten();
+                if let Some(url) = resolved {
+                    let mut css = String::from("url(");
+                    let _ = cssparser::serialize_string(url.as_str(), &mut css);
+                    css.push(')');
+                    for decl in parse_svg_presentation_attr("background-image", &css) {
+                        push_style(decl);
+                    }
+                }
+            }
+
+            // pyro: not an `embed`, which HTML keeps inline at 0x0 when hidden (the UA sheet's
+            // `embed[hidden]`; WPT html/rendering hidden-elements).
+            if *name == local_name!("hidden") && *tag != local_name!("embed") {
                 use style::values::specified::Display;
                 push_style(PropertyDeclaration::Display(Display::None));
             }
@@ -2169,6 +2591,24 @@ impl Node {
 
         if let Some(lang) = lang {
             push_style(PropertyDeclaration::XLang(XLang(Atom::from(lang))));
+        }
+
+        // pyro: an `<mo>` in a row is spaced by its inline-start and inline-end margins
+        // (`mathml_operator`).
+        if let Some(spacing) = crate::mathml_operator::spacing(self, elem) {
+            use crate::mathml_operator::Side;
+            let em = |n: u8| format!("{}em", n as f64 / 18.0);
+            for (property, side) in [("margin-inline-start", spacing.start), ("margin-inline-end", spacing.end)] {
+                let declarations = match side {
+                    Side::Eighteenths(n) => parse_css_declaration(property, &em(n)),
+                    Side::Explicit(value, n) => Some(parse_css_declaration(property, &value))
+                        .filter(|d| !d.is_empty())
+                        .unwrap_or_else(|| parse_css_declaration(property, &em(n))),
+                };
+                for declaration in declarations {
+                    push_style(declaration);
+                }
+            }
         }
 
         // A table's `cellpadding` attribute maps to the padding of its cells (not
@@ -2238,6 +2678,9 @@ pub struct RecalcStyle<'a> {
     /// pyro: elements styled `position: sticky` in this traversal
     /// (`BaseDocument::sticky_nodes`).
     sticky_nodes: Mutex<Vec<NodeId>>,
+    /// pyro: elements styled with `contain-intrinsic-size: auto` in an axis (or
+    /// `content-visibility: auto`) in this traversal (`BaseDocument::cis_auto`).
+    cis_auto_nodes: Mutex<Vec<NodeId>>,
     /// pyro: the elements whose primary style this traversal replaced, with the old
     /// and new style, when `track_style_changes` (`BaseDocument::style_changes`).
     style_changes: Mutex<Vec<crate::StyleChange>>,
@@ -2263,6 +2706,9 @@ pub struct RecalcStyle<'a> {
     column_span_styles: std::sync::atomic::AtomicBool,
     /// pyro: an element was styled with a `scroll-snap-type` (`BaseDocument::scroll_snap_styles`).
     scroll_snap_styles: std::sync::atomic::AtomicBool,
+    /// pyro: an element was styled `scroll-initial-target: nearest`
+    /// (`BaseDocument::scroll_initial_target_styles`).
+    scroll_initial_target_styles: std::sync::atomic::AtomicBool,
     /// pyro: the document evaluates counters and quotes: restyles note whether they changed
     /// any (`counters_changed`).
     track_counters: bool,
@@ -2276,6 +2722,7 @@ impl<'a> RecalcStyle<'a> {
             nodes_needing_style_image_flush: Mutex::new(Vec::new()),
             generated_before_after: std::sync::atomic::AtomicBool::new(false),
             sticky_nodes: Mutex::new(Vec::new()),
+            cis_auto_nodes: Mutex::new(Vec::new()),
             style_changes: Mutex::new(Vec::new()),
             track_style_changes: false,
             first_letter_styles: std::sync::atomic::AtomicBool::new(false),
@@ -2288,6 +2735,7 @@ impl<'a> RecalcStyle<'a> {
             text_box_trim_styles: std::sync::atomic::AtomicBool::new(false),
             column_span_styles: std::sync::atomic::AtomicBool::new(false),
             scroll_snap_styles: std::sync::atomic::AtomicBool::new(false),
+            scroll_initial_target_styles: std::sync::atomic::AtomicBool::new(false),
             track_counters: false,
             counters_changed: std::sync::atomic::AtomicBool::new(false),
         }
@@ -2376,7 +2824,7 @@ impl crate::BaseDocument {
         ) -> RelativeSelectorInvalidator<'dom, 'dom, BlitzNode<'dom>> {
             RelativeSelectorInvalidator {
                 element,
-                quirks_mode: QuirksMode::NoQuirks,
+                quirks_mode: if element.tree().quirks_mode { QuirksMode::Quirks } else { QuirksMode::NoQuirks },
                 snapshots: None,
                 invalidated: relative_selector_invalidated_at,
                 sibling_traversal_map,
@@ -2446,7 +2894,7 @@ impl crate::BaseDocument {
         let _layout_thread_scope = LayoutThreadScope::enter();
         let invalidator = RelativeSelectorInvalidator {
             element: node,
-            quirks_mode: QuirksMode::NoQuirks,
+            quirks_mode: self.stylist.quirks_mode(),
             snapshots: None,
             invalidated: relative_selector_invalidated_at,
             sibling_traversal_map: SiblingTraversalMap::default(),
@@ -2649,6 +3097,9 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 if style.get_box().scroll_snap_type != style::values::computed::ScrollSnapType::none() {
                     self.scroll_snap_styles.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
+                if style.get_box().slow_clone_scroll_initial_target() != style::values::computed::ScrollInitialTarget::None {
+                    self.scroll_initial_target_styles.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
                 // pyro: list items number their markers with the `list-item` counter
                 // (`layout::counters`).
                 if style.get_box().display.is_list_item() {
@@ -2660,6 +3111,13 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                 style.clone_position() == style::computed_values::position::T::Sticky
             }) {
                 self.sticky_nodes.lock().unwrap().push(el.id);
+            }
+
+            if data.styles.get_primary().is_some_and(|style| {
+                let (width, height) = crate::resolve::contain_intrinsic_auto(style);
+                width || height
+            }) {
+                self.cis_auto_nodes.lock().unwrap().push(el.id);
             }
 
             if el.element_data().is_some_and(|element| element.marker_style.is_some()) {
@@ -3714,5 +4172,102 @@ mod box_generating_pseudo_tests {
         drop(m);
         d.doc.resolve(0.0);
         assert_eq!(boxes(&d.doc, ids[1]), (false, true), "the last child again");
+    }
+}
+
+/// pyro: a quirks-mode document's author sheets parse with the unitless length quirk (Quirks
+/// Mode §3.6) on the properties that allow it; a no-quirks document's, its style attributes and
+/// the shorthands Quirks Mode excludes do not.
+#[cfg(test)]
+mod unitless_length_quirk_tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+    use style::values::computed::CSSPixelLength;
+
+    /// `<style>{css}</style>` and `<div id=t style={inline}>` in a document of the given mode,
+    /// resolved; the div's computed width, border-top-width, outline-width and letter-spacing
+    /// in px (`None`: `auto`).
+    fn widths(quirks: bool, css: &str, inline: &str) -> (Option<f32>, f32, f32, f32) {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            quirks_mode: quirks,
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![]);
+        let head = m.create_element(qual_name!("head"), vec![]);
+        let style = m.create_element(qual_name!("style"), vec![]);
+        let text = m.create_text_node(css);
+        m.append_children(style, &[text]);
+        m.append_children(head, &[style]);
+        let body = m.create_element(qual_name!("body"), vec![]);
+        let mut attrs = vec![Attribute { name: qual_name!("id"), value: "t".into() }];
+        if !inline.is_empty() {
+            attrs.push(Attribute { name: qual_name!("style"), value: inline.into() });
+        }
+        let div = m.create_element(qual_name!("div"), attrs);
+        m.append_children(body, &[div]);
+        m.append_children(html, &[head, body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        let s = doc.nodes[div].primary_styles().unwrap();
+        let width = match &s.get_position().width {
+            style::values::generics::length::GenericSize::LengthPercentage(lp) => {
+                Some(lp.0.to_length().unwrap().px())
+            }
+            _ => None,
+        };
+        let px = |l: CSSPixelLength| l.px();
+        (
+            width,
+            px(s.get_border().border_top_width.0.into()),
+            px(s.get_outline().outline_width.0.into()),
+            s.get_inherited_text().letter_spacing.0.to_length().unwrap().px(),
+        )
+    }
+
+    const SHEET: &str = "#t { width: 12; letter-spacing: +3; border: solid 7; outline: solid 5; \
+                         outline-width: 6 }";
+
+    #[test]
+    fn quirks_sheet_takes_unitless_lengths() {
+        let (width, border, outline, spacing) = widths(true, SHEET, "");
+        assert_eq!(width, Some(12.0), "width: 12");
+        assert_eq!(spacing, 3.0, "letter-spacing: +3");
+        // `border` and `outline` (and `outline-width`) are not on the quirk's list: medium.
+        assert_eq!(border, 3.0, "border: solid 7");
+        assert_eq!(outline, 3.0, "outline: solid 5; outline-width: 6");
+    }
+
+    #[test]
+    fn no_quirks_sheet_rejects_unitless_lengths() {
+        // The same text as the quirks test, parsed first or second: a quirks document's sheet
+        // is not shared with this one.
+        let _ = widths(true, SHEET, "");
+        let (width, border, _, spacing) = widths(false, SHEET, "");
+        assert_eq!(width, None);
+        assert_eq!(spacing, 0.0);
+        assert_eq!(border, 3.0);
+        let (width, ..) = widths(true, SHEET, "");
+        assert_eq!(width, Some(12.0), "and the no-quirks sheet is not given to a quirks document");
+    }
+
+    #[test]
+    fn quirks_sheet_keeps_zero_and_units() {
+        let (width, ..) = widths(true, "#t { width: 0 }", "");
+        assert_eq!(width, Some(0.0));
+        let (width, ..) = widths(true, "#t { width: 4px; width: calc(1) }", "");
+        assert_eq!(width, Some(4.0), "calc(1) is not a quirky length");
+        let (width, ..) = widths(true, "#t { width: 4px; width: +/**/1 }", "");
+        assert_eq!(width, Some(4.0), "a comment between sign and number is not one either");
+    }
+
+    #[test]
+    fn style_attribute_stays_no_quirks() {
+        // As pyro's CSSOM parses `element.style`: the two agree.
+        let (width, ..) = widths(true, "", "width: 12");
+        assert_eq!(width, None);
     }
 }

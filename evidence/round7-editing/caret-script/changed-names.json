@@ -1,0 +1,1100 @@
+[
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"subscript\",\"\"],[\"delete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"subscript\",\"\"],[\"delete\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"subscript\",\"\"],[\"formatblock\",\"<div>\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"subscript\",\"\"],[\"formatblock\",\"<div>\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"subscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?1001-2000",
+  "[[\"subscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"forwarddelete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"forwarddelete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"forwarddelete\",\"\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"forwarddelete\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"indent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"indent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"indent\",\"\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"indent\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"inserthorizontalrule\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"inserthorizontalrule\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"inserthtml\",\"ab<b>c</b>d\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"inserthtml\",\"ab<b>c</b>d\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertimage\",\"/img/lion.svg\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertimage\",\"/img/lion.svg\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertlinebreak\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertlinebreak\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertlinebreak\",\"\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertlinebreak\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertorderedlist\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertorderedlist\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertparagraph\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertparagraph\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertparagraph\",\"\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertparagraph\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertunorderedlist\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"insertunorderedlist\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"justifycenter\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"justifycenter\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"justifyfull\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"justifyfull\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"justifyleft\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"justifyleft\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"justifyleft\",\"\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"justifyleft\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"justifyright\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"justifyright\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"outdent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"outdent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"outdent\",\"\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"subscript\",\"\"],[\"outdent\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"delete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"delete\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"formatblock\",\"<div>\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"formatblock\",\"<div>\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"forwarddelete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"forwarddelete\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"forwarddelete\",\"\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"forwarddelete\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"indent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"indent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"indent\",\"\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"indent\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"inserthorizontalrule\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"inserthorizontalrule\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"inserthtml\",\"ab<b>c</b>d\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"inserthtml\",\"ab<b>c</b>d\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertimage\",\"/img/lion.svg\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertimage\",\"/img/lion.svg\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertlinebreak\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertlinebreak\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertlinebreak\",\"\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertlinebreak\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertorderedlist\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertorderedlist\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertparagraph\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertparagraph\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertparagraph\",\"\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertparagraph\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertunorderedlist\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?2001-3000",
+  "[[\"superscript\",\"\"],[\"insertunorderedlist\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"justifycenter\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"justifycenter\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"justifyfull\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"justifyfull\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"justifyleft\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"justifyleft\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"justifyleft\",\"\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"justifyleft\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"justifyright\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"justifyright\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"outdent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"outdent\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"outdent\",\"\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?3001-4000",
+  "[[\"superscript\",\"\"],[\"outdent\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?7001-8000",
+  "[[\"subscript\",\"\"],[\"superscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?7001-8000",
+  "[[\"subscript\",\"\"],[\"superscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?7001-8000",
+  "[[\"subscript\",\"\"],[\"superscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?7001-8000",
+  "[[\"superscript\",\"\"],[\"subscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?7001-8000",
+  "[[\"superscript\",\"\"],[\"subscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?7001-8000",
+  "[[\"superscript\",\"\"],[\"subscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?8001-9000",
+  "[[\"fontsize\",\"2\"],[\"subscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?8001-9000",
+  "[[\"fontsize\",\"2\"],[\"subscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?8001-9000",
+  "[[\"fontsize\",\"3\"],[\"subscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?8001-9000",
+  "[[\"fontsize\",\"3\"],[\"subscript\",\"\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?8001-9000",
+  "[[\"subscript\",\"\"],[\"fontsize\",\"2\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?8001-9000",
+  "[[\"subscript\",\"\"],[\"fontsize\",\"2\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?8001-9000",
+  "[[\"subscript\",\"\"],[\"fontsize\",\"3\"],[\"inserttext\",\"a\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/multitest.html?8001-9000",
+  "[[\"subscript\",\"\"],[\"fontsize\",\"3\"],[\"inserttext\",\"a\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/subscript.html",
+  "[[\"subscript\",\"\"]] \"<b>foo[]bar</b>\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/subscript.html",
+  "[[\"subscript\",\"\"]] \"<b>foo[]bar</b>\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/subscript.html",
+  "[[\"subscript\",\"\"]] \"<i>foo[]bar</i>\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/subscript.html",
+  "[[\"subscript\",\"\"]] \"<i>foo[]bar</i>\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/subscript.html",
+  "[[\"subscript\",\"\"]] \"<span>foo</span>{}<span>bar</span>\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/subscript.html",
+  "[[\"subscript\",\"\"]] \"<span>foo</span>{}<span>bar</span>\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/subscript.html",
+  "[[\"subscript\",\"\"]] \"foo[]bar\" queryCommandState(\"subscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/subscript.html",
+  "[[\"subscript\",\"\"]] \"foo[]bar\": execCommand(\"subscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/superscript.html",
+  "[[\"superscript\",\"\"]] \"<b>foo[]bar</b>\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/superscript.html",
+  "[[\"superscript\",\"\"]] \"<b>foo[]bar</b>\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/superscript.html",
+  "[[\"superscript\",\"\"]] \"<i>foo[]bar</i>\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/superscript.html",
+  "[[\"superscript\",\"\"]] \"<i>foo[]bar</i>\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/superscript.html",
+  "[[\"superscript\",\"\"]] \"<span>foo</span>{}<span>bar</span>\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/superscript.html",
+  "[[\"superscript\",\"\"]] \"<span>foo</span>{}<span>bar</span>\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/superscript.html",
+  "[[\"superscript\",\"\"]] \"foo[]bar\" queryCommandState(\"superscript\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/superscript.html",
+  "[[\"superscript\",\"\"]] \"foo[]bar\": execCommand(\"superscript\", false, \"\") return value",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ]
+]

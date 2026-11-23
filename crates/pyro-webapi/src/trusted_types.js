@@ -16,7 +16,7 @@
   // [[Data]] of each Trusted* object, by kind.
   const data = new WeakMap();
   function makeTrusted(Ctor, value) {
-    const object = Reflect.construct(Ctor, [ILLEGAL], Ctor);
+    const object = Ctor === TrustedHTML ? native.makeValue('html', Ctor.prototype, value) : new Ctor(ILLEGAL);
     data.set(object, { kind: Ctor, value });
     return object;
   }
@@ -28,7 +28,7 @@
   function trustedClass(name) {
     const Ctor = {
       [name]: class {
-        constructor(token) { if (token !== ILLEGAL) throw illegal(); }
+        constructor(token = undefined) { if (token !== ILLEGAL) throw illegal(); }
         toString() { return dataOf(Ctor, this, 'toString'); }
         toJSON() { return dataOf(Ctor, this, 'toJSON'); }
       },
@@ -53,15 +53,38 @@
     });
   }
 
+  // The interface has no public attributes. Its internal slots are captured
+  // when a policy returns, independently of later edits to that dictionary.
+  class TrustedHTMLParserOptions {
+    constructor() { throw illegal(); }
+  }
+  defineProperty(TrustedHTMLParserOptions.prototype, Symbol.toStringTag, { value: 'TrustedHTMLParserOptions', configurable: true });
+
+  function parserDictionary(options) {
+    if (options === null || options === undefined) return { runScripts: false };
+    if (typeof options !== 'object' && typeof options !== 'function') throw new TypeError('Expected HTML parser options');
+    const runScripts = !!options.runScripts;
+    if (options.sanitizer !== undefined) throw new TypeError('HTML sanitizer options are unsupported');
+    return { runScripts };
+  }
+
   // Each policy: its name and options.
   const policies = new WeakMap();
   const TrustedTypePolicy = class TrustedTypePolicy {
-    constructor(token) { if (token !== ILLEGAL) throw illegal(); }
+    constructor() { throw illegal(); }
     get name() { return policyOf(this, 'name').name; }
     createHTML(input, ...args) { return create(policyOf(this, 'createHTML'), TrustedHTML, 'createHTML', input, args); }
     createScript(input, ...args) { return create(policyOf(this, 'createScript'), TrustedScript, 'createScript', input, args); }
     createScriptURL(input, ...args) { return create(policyOf(this, 'createScriptURL'), TrustedScriptURL, 'createScriptURL', input, args); }
   };
+  if (native.windowRealm) {
+    defineProperty(TrustedTypePolicy.prototype, 'createParserOptions', {
+      value: function createParserOptions(options = {}, ...args) {
+        return native.createParserOptions(this, options, args);
+      },
+      writable: true, configurable: true, enumerable: true,
+    });
+  }
   defineProperty(TrustedTypePolicy.prototype, Symbol.toStringTag, { value: 'TrustedTypePolicy', configurable: true });
   function policyOf(self, what) {
     const p = policies.get(self);
@@ -84,12 +107,12 @@
 
   // TrustedTypePolicyOptions: callbacks read once, at creation.
   function options(value) {
-    if (value === undefined || value === null) return {};
+    if (value === undefined || value === null) return { __proto__: null };
     if (typeof value !== 'object' && typeof value !== 'function') {
       throw new TypeError("Failed to execute 'createPolicy' on 'TrustedTypePolicyFactory': The provided value is not of type 'TrustedTypePolicyOptions'.");
     }
-    const out = {};
-    for (const key of ['createHTML', 'createScript', 'createScriptURL']) {
+    const out = { __proto__: null };
+    for (const key of ['createHTML', 'createParserOptions', 'createScript', 'createScriptURL']) {
       const fn = value[key];
       if (fn !== undefined && fn !== null && typeof fn !== 'function') {
         throw new TypeError(`Failed to execute 'createPolicy' on 'TrustedTypePolicyFactory': The '${key}' property is not a function.`);
@@ -101,23 +124,36 @@
 
   const created = [];
   let defaultPolicy = null;
+  let defaultParserCallback;
   let emptyHTML = null;
   let emptyScript = null;
   const TrustedTypePolicyFactory = class TrustedTypePolicyFactory {
-    constructor(token) { if (token !== ILLEGAL) throw illegal(); }
+    constructor(token = undefined) { if (token !== ILLEGAL) throw illegal(); }
     createPolicy(policyName, policyOptions) {
       self_(this, 'createPolicy');
       if (arguments.length < 1) throw new TypeError("Failed to execute 'createPolicy' on 'TrustedTypePolicyFactory': 1 argument required, but only 0 present.");
       const name = String_(policyName);
+      const callbacks = options(policyOptions);
       // CSP "Should Trusted Type policy creation be blocked by Content Security Policy?"
       const blocked = policyCreationBlocked(name, created.includes(name));
       if (blocked) {
         throw new TypeError(`Failed to execute 'createPolicy' on 'TrustedTypePolicyFactory': Policy "${name}" disallowed.`);
       }
-      const policy = Reflect.construct(TrustedTypePolicy, [ILLEGAL], TrustedTypePolicy);
-      policies.set(policy, { name, options: options(policyOptions) });
+      const callback = callbacks.createParserOptions;
+      const createOptions = (options, args) => {
+        const input = parserDictionary(options);
+        if (callback === undefined) throw new TypeError('This policy does not define createParserOptions');
+        const result = callback(input, ...args);
+        if (result === null || result === undefined) throw new TypeError('Expected parser options from policy');
+        return result;
+      };
+      const policy = native.makeValue('policy', TrustedTypePolicy.prototype, createOptions, TrustedHTMLParserOptions.prototype);
+      policies.set(policy, { name, options: callbacks });
       created.push(name);
-      if (name === 'default') defaultPolicy = policy;
+      if (name === 'default') {
+        defaultPolicy = policy;
+        defaultParserCallback = callback;
+      }
       return policy;
     }
     isHTML(value) { self_(this, 'isHTML'); return data.get(value)?.kind === TrustedHTML; }
@@ -212,10 +248,23 @@
       originalPolicy: policy.text, sample: String_(sample),
       disposition: policy.reportOnly ? 'report' : 'enforce', statusCode: 0,
     };
-    apply(setTimeoutFn, global, [() => target.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', init)), 0]);
+    // Where the violating operation ran (the page script on the stack now), none without one.
+    const location = native.sourceLocation();
+    if (location !== null) {
+      init.sourceFile = location[0];
+      init.lineNumber = location[1];
+      init.columnNumber = location[2];
+    }
+    // The event, then (same task) the policy's report-uri / report-to delivery.
+    apply(setTimeoutFn, global, [() => {
+      target.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', init));
+      native.deliverReport(policy.text, policy.reportOnly, policy.meta, directive, blockedURI, init.sample,
+        init.documentURI, init.referrer);
+    }, 0]);
   }
   function cspPolicies() {
-    return native.policies().map(([text, reportOnly]) => ({ text, reportOnly, directives: directivesOf(text) }));
+    return native.policies().map(([text, reportOnly, meta]) =>
+      ({ text, reportOnly, meta, directives: directivesOf(text) }));
   }
   function directivesOf(text) {
     const out = new Map();
@@ -245,7 +294,28 @@
   }
 
   const exports = {
-    TrustedHTML, TrustedScript, TrustedScriptURL, TrustedTypePolicy, TrustedTypePolicyFactory, SecurityPolicyViolationEvent,
+    TrustedHTML, TrustedScript, TrustedScriptURL, TrustedHTMLParserOptions, TrustedTypePolicy, TrustedTypePolicyFactory, SecurityPolicyViolationEvent,
+    // A violation of another directive (csp.rs, already in its own task): fired at `target` (a
+    // connected element), else the document, else the global (a worker).
+    dispatchViolation(target, init) {
+      const doc = typeof global.document === 'object' && global.document !== null ? global.document : null;
+      const at = target ?? doc ?? global;
+      const full = {
+        bubbles: true, composed: true,
+        documentURI: doc === null ? String_(global.location?.href ?? '') : String_(doc.URL ?? ''),
+        referrer: doc === null ? '' : String_(doc.referrer ?? ''),
+      };
+      for (const key of Object.keys(init)) full[key] = init[key];
+      at.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', full));
+    },
+    defaultParserOptions(runScripts, sink, hasSanitizer) {
+      const callback = defaultParserCallback;
+      if (callback === undefined) return undefined;
+      if (hasSanitizer) throw new TypeError('Sanitizer objects for policy callback input are unsupported');
+      const result = callback({ runScripts }, 'TrustedHTMLParserOptions', sink);
+      if (result === null || result === undefined) return null;
+      return result;
+    },
     // A sink violation ("Should sink type mismatch violation be blocked"): reported to each
     // policy with `require-trusted-types-for 'script'`; whether one of them is enforced.
     sinkViolation(sink, input) {
@@ -270,11 +340,17 @@
       const d = data.get(value);
       return d !== undefined && d.kind === TrustedScript ? d.value : null;
     },
+    // HostEnsureCanCompileStrings, as the hooks call it: Trusted Types first (when its policies
+    // ask for it), then CSP's 'unsafe-eval' (csp.rs, which reports its violation).
+    canCompile(kind, code, ...args) {
+      if (native.ttLevel() > 0 && !exports.ttCanCompile(kind, code, ...args)) return false;
+      return native.cspEval(String_(code));
+    },
     // Trusted Types' HostEnsureCanCompileStrings: whether `code` may compile, for `kind`
     // "Function" (with the constructor's arguments), "eval" or "indirect-eval". A Function
     // made of TrustedScripts only passes; else the default policy's createScript must give the
     // code back unchanged, or the violation is reported (and blocks under an enforced policy).
-    canCompile(kind, code, ...args) {
+    ttCanCompile(kind, code, ...args) {
       const sink = kind === 'Function' ? 'Function' : 'eval';
       if (kind === 'Function' && args.length > 0 && args.every((a) => {
         const d = data.get(a);

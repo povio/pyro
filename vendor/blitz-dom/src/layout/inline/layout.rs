@@ -224,6 +224,48 @@ struct PendingFloat {
 }
 
 impl LayoutPassState<'_> {
+    fn bounded_inline_inputs(&mut self, node_id: NodeId, outer: LayoutInput, margin: taffy::Rect<f32>, stretch_height: Option<f32>) -> LayoutInput {
+        let style = self.child_layout_style(&self.nodes[node_id]);
+        let replaced = style.flags.contains(StyleFlags::IS_REPLACED);
+        let mut inputs = inline_box_inputs(style.size().width, style.size().height, stretch_height.filter(|_| !replaced), margin, outer);
+        if replaced { return inputs; }
+        let min = taffy::BlockItemStyle::min_size_keyword(&style);
+        let max = taffy::BlockItemStyle::max_size_keyword(&style);
+        let mut cross_height = inputs.known_dimensions.height;
+        if cross_height.is_none() && (!min.width.is_auto() || !max.width.is_auto()) {
+            let padding = style.padding().resolve_or_zero(outer.parent_size.width, resolve_calc_value);
+            let border = style.border().resolve_or_zero(outer.parent_size.width, resolve_calc_value);
+            let inset = (padding + border).vertical_axis_sum();
+            let height = style.size().height.maybe_resolve(outer.parent_size.height, resolve_calc_value);
+            let lower = style.min_size().height.maybe_resolve(outer.parent_size.height, resolve_calc_value);
+            let upper = style.max_size().height.maybe_resolve(outer.parent_size.height, resolve_calc_value);
+            let adjustment = if style.box_sizing() == BoxSizing::ContentBox { inset } else { 0.0 };
+            cross_height = height.maybe_min(upper).maybe_max(lower).map(|value| (value + adjustment).max(inset));
+        }
+        drop(style);
+        let child = crate::taffy_node_id(node_id);
+        if !min.width.is_auto() || !max.width.is_auto() {
+            let measure = LayoutInput { run_mode: RunMode::ComputeSize, axis: RequestedAxis::Horizontal, ..inputs };
+            let preferred = self.compute_child_layout(child, measure).size.width;
+            let mut limit = |keyword: taffy::Dimension| {
+                if keyword.is_auto() || (keyword.is_stretch() && outer.available_space.width.into_option().is_none()) { return None; }
+                let constraint = LayoutInput { sizing_mode: SizingMode::ContentSize, available_space: outer.available_space, ..measure };
+                let mut bound = inline_box_inputs(keyword, taffy::Dimension::auto(), None, margin, constraint);
+                bound.known_dimensions.height = cross_height;
+                if !keyword.is_stretch() { bound.known_dimensions.width = None; }
+                Some(bound.known_dimensions.width.unwrap_or_else(|| self.compute_child_layout(child, bound).size.width))
+            };
+            inputs.known_dimensions.width = Some(preferred.maybe_min(limit(max.width)).maybe_max(limit(min.width)));
+        }
+        if let Some(height) = stretch_height && (min.height.is_stretch() || max.height.is_stretch()) {
+            let stretch = (height - margin.vertical_axis_sum()).max(0.0);
+            let measure = LayoutInput { run_mode: RunMode::ComputeSize, axis: RequestedAxis::Vertical, ..inputs };
+            let preferred = self.compute_child_layout(child, measure).size.height;
+            inputs.known_dimensions.height = Some(preferred.maybe_min(max.height.is_stretch().then_some(stretch)).maybe_max(min.height.is_stretch().then_some(stretch)));
+        }
+        inputs
+    }
+
     /// pyro: how many lines the line clamp of an ancestor of `node_id` (in its block formatting
     /// context) leaves to it: the clamp's count less the lines laid out before it; `None` without
     /// one (or one without a count, `line-clamp: auto`).
@@ -1230,10 +1272,9 @@ impl LayoutPassState<'_> {
                 && !style
                     .flags
                     .intersects(StyleFlags::IS_REPLACED | StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT);
-            let contain_layout = box_style.slow_clone_contain().contains(Contain::LAYOUT);
+            let contain_layout = box_style.used_containment().contains(Contain::LAYOUT);
             let exports_baseline = !(contain_layout
                 || (baseline_source == BaselineSource::Auto && is_block_axis_scroll_container));
-            let box_inputs = inline_box_inputs(style.size().width, style.size().height, stretch_height.filter(|_| !style.flags.contains(StyleFlags::IS_REPLACED)), margin, child_inputs);
             drop(style);
 
             if is_out_of_flow || is_floated {
@@ -1241,6 +1282,7 @@ impl LayoutPassState<'_> {
                 ibox.height = 0.0;
                 ibox.baseline = None;
             } else {
+                let box_inputs = self.bounded_inline_inputs(NodeId::from_u64(ibox.id), child_inputs, margin, stretch_height);
                 let mut output = self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
                 // Flex size-only layout omits its baseline. Atomic inline flex
                 // boxes need the content baseline even during line measurement;
@@ -2076,7 +2118,7 @@ impl LayoutPassState<'_> {
                                     continue;
                                 }
 
-                                let (direction, clear, margin) = {
+                                let (direction, clear, margin, sizing) = {
                                     let style = self.child_layout_style(&self.nodes[node_id]);
                                     // We can assume that the box is a float because we only set `break_on_box: true` for floats
                                     let direction = match style.float() {
@@ -2084,18 +2126,19 @@ impl LayoutPassState<'_> {
                                         Float::Right => taffy::FloatDirection::Right,
                                         Float::None => unreachable!(),
                                     };
-                                    (
-                                        direction,
-                                        style.clear(),
-                                        style
-                                            .margin()
-                                            .resolve_or_zero(inputs.parent_size, resolve_calc_value),
-                                    )
+                                    let container_width = width / scale;
+                                    let mut sizing = float_child_inputs;
+                                    sizing.parent_size.width = Some(container_width);
+                                    sizing.available_space.width = AvailableSpace::Definite(container_width);
+                                    let margin = style.margin().resolve_or_zero(sizing.parent_size, resolve_calc_value);
+                                    (direction, style.clear(), margin, sizing)
                                 };
+
+                                let box_inputs = self.bounded_inline_inputs(node_id, sizing, margin, stretch_height);
 
                                 let output = self.compute_child_layout(
                                     crate::taffy_node_id(node_id),
-                                    float_child_inputs,
+                                    box_inputs,
                                 );
                                 let float_width = (output.size.width + margin.left + margin.right) * scale;
                                 let float = PendingFloat {
@@ -2553,7 +2596,6 @@ impl LayoutPassState<'_> {
                             .bottom
                             .maybe_resolve(container_content_size.height, resolve_calc_value),
                     };
-                    let box_inputs = inline_box_inputs(style.size().width, style.size().height, stretch_height.filter(|_| !style.flags.contains(StyleFlags::IS_REPLACED)), margin, child_inputs);
                     drop(style);
 
                     if is_absolute {
@@ -2674,6 +2716,7 @@ impl LayoutPassState<'_> {
                         });
                     } else {
                         line_has_in_flow_content = true;
+                        let box_inputs = self.bounded_inline_inputs(NodeId::from_u64(ibox.id), child_inputs, margin, stretch_height);
                         // Re-measure the box to get its border-box size (this hits the layout
                         // cache). The size cannot be recovered from `ibox` dimensions as the
                         // space reserved in the line is clamped to be non-negative.

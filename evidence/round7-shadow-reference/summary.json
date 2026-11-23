@@ -1,0 +1,61 @@
+{
+  "scores": {
+    "baseFull": 4,
+    "candidateFull": 13,
+    "chrome158Full": 18,
+    "baseNamed": 6056,
+    "candidateNamed": 6254,
+    "chrome158Named": 5629,
+    "lost": 0,
+    "new": 90,
+    "missing": 0,
+    "chromeOnly": 62,
+    "lpOnly": 687,
+    "gained": 198
+  },
+  "gainsByPage": {
+    "html/semantics/forms/the-form-element/form-attribute-form-owner.html": 1,
+    "shadow-dom/reference-target/tentative/commandfor.html": 3,
+    "shadow-dom/reference-target/tentative/dom-mutation.html": 4,
+    "shadow-dom/reference-target/tentative/form.html": 8,
+    "shadow-dom/reference-target/tentative/gethtml-serialization.html": 3,
+    "shadow-dom/reference-target/tentative/label-descendant.html": 10,
+    "shadow-dom/reference-target/tentative/label-for.html": 9,
+    "shadow-dom/reference-target/tentative/label-lifetime.html": 1,
+    "shadow-dom/reference-target/tentative/popovertarget.html": 3,
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html": 30,
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html": 57,
+    "shadow-dom/reference-target/tentative/property-reflection.html": 58,
+    "shadow-dom/reference-target/tentative/reference-target-basics.html": 6,
+    "shadow-dom/reference-target/tentative/shadowrootreferencetarget-idl-reflection.html": 5
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 21,
+        "error": 1
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "03a53e1b807866db261606a87c5683a3d9e7540c02251efc37932515f068588c"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 21,
+        "error": 1
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "3bb7f918afcb78a08ef697c5292d156b604bfe004c0b1644a7b43777593af3ca"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 21,
+        "timeout": 1
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "59dc9e9f9628ad8ec33bafcbbbc3ef7af5c3cd0cf370aa84b79ff8723963117d"
+    }
+  }
+}

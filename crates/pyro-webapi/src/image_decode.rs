@@ -23,14 +23,32 @@ pub(crate) struct PendingDecode {
     source: String,
 }
 
+/// Whether `el` is an SVG `<image>` (`SVGImageElement.decode()`).
+fn is_svg_image(dom: &pyro_dom::Dom, el: NodeId) -> bool {
+    dom.element(el).is_ok_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg" && &*e.name.local == "image")
+}
+
+/// The attribute value the element's request is for: an `<img>`'s `src`, an SVG `<image>`'s
+/// `href`, else its `xlink:href`.
+pub(crate) fn source_attribute(dom: &pyro_dom::Dom, el: NodeId) -> Option<String> {
+    if is_svg_image(dom, el) {
+        return dom
+            .get_attribute(el, "href")
+            .ok()
+            .flatten()
+            .or_else(|| dom.get_attribute_ns(el, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten())
+            .map(str::to_owned);
+    }
+    dom.get_attribute(el, "src").ok().flatten().map(str::to_owned)
+}
+
 /// The source `<img>` loads: a `<picture>`'s matching `<source>` or its own
-/// `srcset`, else `src` (what the loader selects).
+/// `srcset`, else `src` (what the loader selects); an SVG `<image>`'s `href`.
 fn selected_source(page: &PageDom, el: NodeId) -> Option<String> {
     let viewport = page.viewport();
     let dom = page.dom.borrow();
-    dom.picture_source(el, &viewport)
-        .or_else(|| dom.get_attribute(el, "src").ok().flatten().map(str::to_owned))
-        .filter(|s| !s.trim().is_empty())
+    let picture = if is_svg_image(&dom, el) { None } else { dom.picture_source(el, &viewport) };
+    picture.or_else(|| source_attribute(&dom, el)).filter(|s| !s.trim().is_empty())
 }
 
 fn encoding_error<'s>(s: &Scope<'s>) -> Value<'s> {
@@ -46,7 +64,7 @@ pub(crate) fn decode<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsRes
         return Ok(promise);
     };
     // The current request already finished for this `src`.
-    let src = page.dom.borrow().get_attribute(el, "src").ok().flatten().unwrap_or("").to_owned();
+    let src = source_attribute(&page.dom.borrow(), el).unwrap_or_default();
     let done = page.images.borrow().get(&el).filter(|(loading, pending, _)| !pending && *loading == src).map(|e| e.2);
     match done {
         Some(true) => deferred.resolve(s, s.undefined())?,
@@ -105,6 +123,11 @@ impl PageDom {
                 }
             }
         }
+    }
+
+    /// Whether a `decode()` of `el` waits: the loader fetches a disconnected SVG `<image>` then.
+    pub fn has_pending_decode(&self, el: NodeId) -> bool {
+        self.image_decodes.borrow().contains_key(&el)
     }
 
     /// Whether `el` has an image request in flight: its wrappers stay kept

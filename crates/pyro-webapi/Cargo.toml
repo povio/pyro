@@ -18,8 +18,11 @@ test-hooks = []
 aes = "0.8"
 aes-kw = { version = "0.2", features = ["alloc"] }
 base64 = "0.23.1"
+# The same RFC 7932 decoder already linked by pyro-net.
+brotli-decompressor = "6.1.0"
 bytes = "1"
 cssparser = "0.38"
+data-url = "0.3.2"
 # RSA (crypto_subtle/rsa.rs): constant-time big integers, prime generation and the
 # PKCS #1 key structures; the `rsa` crate itself carries RUSTSEC-2023-0071.
 crypto-bigint = { version = "0.7.10", features = ["alloc", "rand_core", "zeroize"] }
@@ -30,6 +33,9 @@ encoding_rs = "0.8"
 flate2 = "1.1.10"
 getrandom = "0.3"
 ghash = "0.5"
+# The same compiled Unicode data and segmentation engine as parley_engine.
+icu_properties = { version = "2.3.0", default-features = false, features = ["compiled_data"] }
+icu_segmenter = { version = "2.3.0", default-features = false, features = ["compiled_data"] }
 hkdf = "0.12"
 hmac = "0.12"
 # Canvas path geometry (isPointInPath, Path2D SVG data); already in the tree via pyro-render/blitz.
@@ -54,13 +60,19 @@ percent-encoding = "2.3.2"
 pkcs1 = { version = "0.7.5", features = ["alloc", "pkcs8"] }
 pkcs8 = { version = "0.10", features = ["alloc"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+# The RFC 8439 implementation is already linked through rustls in pyro-net.
+ring = { version = "0.17.14", default-features = false, features = ["alloc"] }
 rustc-hash = "2"
 sha1 = { version = "0.10", features = ["oid"] }
 sha2 = { version = "0.10", features = ["oid"] }
+# Report bodies (CSP violation reports, the Reporting API).
+serde_json.workspace = true
 # FontFace data checks (font_loading.rs); both already in the tree via blitz-dom.
 skrifa = { version = "0.44", default-features = false, features = ["std"] }
 wuff = "0.2"
 url = "2"
+urlpattern = "0.6.0"
+regress = "0.12"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 [[test]]

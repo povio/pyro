@@ -1,0 +1,11 @@
+# Noncollapsed subscript and superscript selections
+
+Product source `df1c0bb23475638f490d5292aa3947cc22ba3b64` on parent `0368034de98d8a89d55bfb4f40edcf955d49e948`. Candidate executable SHA-256 `2191e3dc07d1ff4080c0a8a2a4cc8a16dd2e815a7282d5151b09528c6a67115a`. Build receipts identify both executables. The change isolates selected text across opposite or nested script formatting.
+
+Independent QA compared 44 pinned WPT pages with signed Chrome 158.0.8127.37. Among 33,316 matched rows, 43 gained and four lost a pass, with identical membership. All 40 targeted signed failures recovered and the remaining 18 historical rows kept their status. One additional wrap-selected-text assertion matched Chrome. Two nested-markup gains passed only the pinned expectations.
+
+All four losses concern a fully selected CSS subscript or superscript span toggled with the corresponding command, each with styleWithCSS enabled and disabled. The pinned before/after state is false → true. Parent returned true → true. Signed Chrome and candidate returned true → false. The before failures predate this change. The coordinator accepted all four after losses. Exact assertion diagnostics are in [query-states.json](query-states.json).
+
+Of 112 direct selections, both command states, selected text and direction matched Chrome after the first and repeated command in all cases. Inferred alignment from computed ancestor styles matched in 104 and 96 cases respectively. Complete glyph style vectors matched in 80 on both toggles, markup in 76 and 68, and endpoints in 92 and 96. Undo returned the expected result in all 112 and restored matching endpoints and alignment in all 112. Restored markup matched in 96, complete glyph vectors in 64 (also 64 before editing), and original node connectivity in zero. Independent comparisons found no loss of a previously matching direct field.
+
+The current native collapsed-script typing guard passed. Parent and candidate kept identical statuses on 10,092 command multitest rows and 13,060 static guard rows. Earlier collapsed-caret browser controls retain their original provenance in [the independent index](independent/collapsed-guard-provenance.json) and were not rerun. The independent head probe and saved owner comparator arms are included as compressed JSON.

@@ -1,0 +1,46 @@
+{
+  "scores": {
+    "baseFull": 10,
+    "candidateFull": 11,
+    "chrome158Full": 47,
+    "baseNamed": 213,
+    "candidateNamed": 252,
+    "chrome158Named": 539,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 287,
+    "lpOnly": 0,
+    "gained": 39
+  },
+  "gainsByPage": {
+    "html/semantics/scripting-1/the-template-element/template-for/template-for-html-setters.html": 7,
+    "html/semantics/scripting-1/the-template-element/template-for/template-for-multiple-cases.html": 32
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 50
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "c2bff02dff2ef06b82caa8f1dee7173710365d8c558a7f173475484140765c23"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 50
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "1524f5fb3921eb541b4e0cae7ac4a573786c241a710fc8b694da308be5990833"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 50
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "c8bb75c581c41711034d11a5d811367514219ac63c76b7ab94e5506f29d93d47"
+    }
+  }
+}

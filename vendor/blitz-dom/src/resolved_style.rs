@@ -50,20 +50,23 @@ fn resolve_inset<P>(val: &GenericInset<P, LengthPercentage>, basis: f32) -> Opti
     }
 }
 
-/// Serialize a transform matrix component rounded to 6 decimal places (as
-/// browsers do when serializing resolved transform matrices)
+/// Serialize a transform matrix component with six significant digits.
 fn format_matrix_component(v: f64) -> String {
-    let rounded = (v * 1e6).round() / 1e6;
-    // Avoid "-0"
-    let rounded = if rounded == 0.0 { 0.0 } else { rounded };
-    format!("{rounded}")
+    if v == 0.0 { return "0".into(); }
+    let rounded = format!("{v:.5e}");
+    let (mantissa, exponent) = rounded.split_once('e').unwrap_or((&rounded, "0"));
+    let exponent = exponent.parse::<i32>().unwrap_or(0);
+    if !(-6..21).contains(&exponent) {
+        return format!("{}e{exponent}", mantissa.trim_end_matches('0').trim_end_matches('.'));
+    }
+    rounded.parse::<f64>().unwrap_or(v).to_string()
 }
 
 /// Serialize a used transform matrix the way `getComputedStyle()` does
 /// (`matrix(...)` for 2D transforms, `matrix3d(...)` otherwise).
-fn format_matrix(m: &euclid::default::Transform3D<f64>, is_3d: bool) -> String {
+fn format_matrix(m: &euclid::default::Transform3D<f64>) -> String {
     let c = format_matrix_component;
-    if is_3d {
+    if !m.is_2d() {
         format!(
             "matrix3d({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
             c(m.m11),
@@ -347,8 +350,150 @@ impl BaseDocument {
 
     /// Resolve a sampled transform against the existing layout without mutating
     /// the document (used for CSS transition transform readback).
-    pub fn resolved_transform_value(&self, node_id: NodeId, style: &ComputedValues) -> String {
-        self.resolved_style_value_with_style(node_id, "transform", Some(style))
+    pub fn resolved_transform_value(&self, node_id: NodeId, property: &str, style: &ComputedValues) -> String {
+        self.resolved_style_value_with_style(node_id, property, Some(style))
+    }
+
+    pub fn sampled_calc_size(&self, node_id: NodeId, width: bool, sampled: &ComputedValues) -> Option<f32> {
+        use style::values::computed::Size;
+        let node = self.get_node(node_id)?;
+        let live = node.primary_styles()?;
+        if !live.writing_mode.is_horizontal() { return None; }
+        let (live, sampled) = (live.get_position(), sampled.get_position());
+        let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
+        let endpoint = sizes.0.prepared_size();
+        let size = sizes.1.prepared_size();
+        let keyword = |value: &Size| matches!(value, Size::Auto | Size::MinContent | Size::MaxContent | Size::FitContent | Size::Stretch);
+        let intrinsic_calculation = matches!(endpoint, Size::CalcSizeAuto(_) | Size::CalcSizeMinContent(_) | Size::CalcSizeMaxContent(_) | Size::CalcSizeFitContent(_) | Size::CalcSizeStretch(_));
+        if keyword(size) && endpoint != size && (keyword(endpoint) || intrinsic_calculation) {
+            let parent = node.layout_parent.get()?;
+            let layout = self.physical_unrounded_layout(parent);
+            let available = if width { layout.content_box_width() } else { layout.content_box_height() };
+            return self.sampled_basis_in_block_flow(node_id, width, Some(available), size);
+        }
+        let matching_keyword = matches!((endpoint, size),
+            (Size::Auto, Size::CalcSizeAuto(_)) | (Size::MinContent, Size::CalcSizeMinContent(_)) |
+            (Size::MaxContent, Size::CalcSizeMaxContent(_)) | (Size::FitContent, Size::CalcSizeFitContent(_)));
+        if matching_keyword || matches!(endpoint, Size::LengthPercentage(_)) {
+            use style::values::computed::MaxSize;
+            let (minimum, maximum) = if width { (&live.min_width, &live.max_width) } else { (&live.min_height, &live.max_height) };
+            if !minimum.is_auto() { return None; }
+            let ceiling = match maximum {
+                MaxSize::None => f32::INFINITY,
+                MaxSize::LengthPercentage(value) if matches!(size, Size::CalcSizeMaxContent(_)) => value.0.to_length()?.px(),
+                _ => return None,
+            };
+            let calculation = match size {
+                Size::CalcSizeAuto(value) | Size::CalcSizeFitContent(value) | Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value) | Size::CalcSizeStretch(value) => value,
+                _ => return None,
+            };
+            let parent = self.get_node(node.layout_parent.get()?)?;
+            let parent_style = parent.primary_styles()?;
+            let parent_position = parent_style.get_position();
+            let parent_size = if width { &parent_position.width } else { &parent_position.height };
+            let layout = self.physical_unrounded_layout(parent.id);
+            let percent = matches!(parent_size, Size::LengthPercentage(length) if length.0.to_length().is_some())
+                .then(|| if width { layout.content_box_width() } else { layout.content_box_height() });
+            let basis = self.sampled_basis_in_block_flow(node_id, width, percent, size)?;
+            let layout = self.physical_unrounded_layout(node_id);
+            let floor = if live.box_sizing != BoxSizing::BorderBox { 0.0 } else if width {
+                layout.padding.left + layout.padding.right + layout.border.left + layout.border.right
+            } else { layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom };
+            return Some(calculation.0.resolve_size_with_optional_basis(CSSPixelLength::new(basis), percent.map(CSSPixelLength::new))?.px().min(ceiling).max(floor));
+        }
+        let (mut basis, percent, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
+        let calculation = match (sizes.0.prepared_size(), sizes.1.prepared_size()) {
+            (Size::CalcSizeAny(_) | Size::CalcSizePercentage(_), Size::CalcSizeAny(value) | Size::CalcSizePercentage(value)) => value,
+            (Size::CalcSizeAny(_), Size::CalcSizeAuto(value) | Size::CalcSizeStretch(value) | Size::CalcSizeMinContent(value) | Size::CalcSizeMaxContent(value) | Size::CalcSizeFitContent(value)) => {
+                basis = self.sampled_basis_in_block_flow(node_id, width, percent, sizes.1.prepared_size());
+                value
+            }
+            (Size::CalcSizeFitContent(_), Size::CalcSizeFitContent(value)) if width && basis.is_none() => {
+                basis = self.sampled_basis_in_block_flow(node_id, true, percent, sizes.1.prepared_size());
+                value
+            }
+            (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
+            (Size::CalcSizeStretch(_), Size::CalcSizeStretch(value)) |
+            (Size::CalcSizeFitContent(_), Size::CalcSizeFitContent(value)) |
+            (Size::CalcSizeMinContent(_), Size::CalcSizeMinContent(value)) |
+            (Size::CalcSizeMaxContent(_), Size::CalcSizeMaxContent(value)) => value,
+            _ => return None,
+        };
+        let reference = if calculation.0.has_percentage() { basis? } else { 0.0 };
+        Some(calculation.0.resolve_size(CSSPixelLength::new(reference), CSSPixelLength::new(percent.unwrap_or_default())).px().min(max.unwrap_or(f32::INFINITY)).max(min))
+    }
+
+    fn sampled_basis_in_block_flow(&self, id: NodeId, width: bool, percent: Option<f32>, size: &style::values::computed::Size) -> Option<f32> {
+        use style::values::computed::{Margin, MaxSize, Overflow, Size};
+        let block = |values: &ComputedValues| {
+            let display = values.clone_display();
+            display.outside() == DisplayOutside::Block && display.inside() == DisplayInside::Flow
+                && values.clone_position() == Position::Static && !values.clone_float().is_floating()
+                && values.writing_mode.is_horizontal() && values.effective_zoom.value() == 1.0
+                && !values.get_column().is_multicol() && values.get_box().used_containment().is_empty()
+                && values.clone_overflow_x() == Overflow::Visible && values.clone_overflow_y() == Overflow::Visible
+        };
+        let node = self.get_node(id)?;
+        let parent = self.get_node(node.layout_parent.get()?)?;
+        let live = node.primary_styles()?;
+        let container = parent.primary_styles()?;
+        let position = live.get_position();
+        let element = node.element_data()?;
+        if !block(&live) || !block(&container) || crate::layout::replaced::is_replaced(element)
+            || matches!(element.name.local.as_ref(), "html" | "body" | "input" | "button" | "textarea" | "select" | "fieldset" | "legend" | "meter" | "progress")
+            || !matches!(position.aspect_ratio.ratio, PreferredRatio::None)
+        { return None; }
+        let fixed = |size: &Size| matches!(size, Size::LengthPercentage(value) if value.0.to_length().is_some());
+        let margin = |value: &Margin, reference: f32| match value {
+            Margin::LengthPercentage(value) => Some(value.resolve(CSSPixelLength::new(reference)).px()),
+            Margin::Auto => Some(0.0),
+            _ => None,
+        };
+        let layout = self.physical_unrounded_layout(id);
+        let border_box = position.box_sizing == BoxSizing::BorderBox;
+        if (width && matches!(size, Size::Auto | Size::CalcSizeAuto(_))) || matches!(size, Size::Stretch | Size::CalcSizeStretch(_)) {
+            let axis_is_definite = if width {
+                fixed(&container.get_position().width) && position.min_width.is_auto() && matches!(position.max_width, MaxSize::None)
+            } else {
+                fixed(&container.get_position().height) && position.min_height.is_auto() && matches!(position.max_height, MaxSize::None)
+            };
+            if !axis_is_definite { return None; }
+            let reference = percent?;
+            let margins = live.get_margin();
+            let (start, end, inset, margin_reference) = if width {
+                (&margins.margin_left, &margins.margin_right, layout.padding.left + layout.padding.right + layout.border.left + layout.border.right, reference)
+            } else {
+                (&margins.margin_top, &margins.margin_bottom, layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom, self.physical_unrounded_layout(parent.id).content_box_width())
+            };
+            let content = (reference - margin(start, margin_reference)? - margin(end, margin_reference)? - inset).max(0.0);
+            return Some(content + if border_box { inset } else { 0.0 });
+        }
+        if node.flags.is_inline_root() { return None; }
+        let children = node.layout_children.borrow();
+        let [child_id] = children.as_deref()? else { return None };
+        let child = self.get_node(*child_id)?;
+        let child_style = child.primary_styles()?;
+        let child_position = child_style.get_position();
+        let margins = child_style.get_margin();
+        let zero_margin = |value: &Margin| matches!(value, Margin::LengthPercentage(value) if !value.has_percentage() && value.resolve(CSSPixelLength::new(0.0)).px() == 0.0);
+        let allows_max = |maximum: &MaxSize| matches!(maximum, MaxSize::None) || matches!(size, Size::CalcSizeMaxContent(_)) && matches!(maximum, MaxSize::LengthPercentage(value) if value.0.to_length().is_some());
+        if !block(&child_style) || child_style.clone_clear() != style::computed_values::clear::T::None { return None; }
+        if width {
+            let padding = child_style.get_padding();
+            if !fixed(&child_position.width) || !position.min_width.is_auto() || !allows_max(&position.max_width)
+                || !child_position.min_width.is_auto() || !matches!(child_position.max_width, MaxSize::None)
+                || !zero_margin(&margins.margin_left) || !zero_margin(&margins.margin_right)
+                || padding.padding_left.0.has_percentage() || padding.padding_right.0.has_percentage()
+            { return None; }
+            let inset = layout.padding.left + layout.padding.right + layout.border.left + layout.border.right;
+            return Some(self.physical_unrounded_layout(*child_id).size.width + if border_box { inset } else { 0.0 });
+        }
+        if !position.min_height.is_auto() || !allows_max(&position.max_height)
+            || !fixed(&child_position.height) || !child_position.min_height.is_auto() || !matches!(child_position.max_height, MaxSize::None)
+            || !zero_margin(&margins.margin_top) || !zero_margin(&margins.margin_bottom)
+        { return None; }
+        let inset = layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
+        Some(self.physical_unrounded_layout(*child_id).size.height + if border_box { inset } else { 0.0 })
     }
 
     fn resolved_style_value_with_style(
@@ -512,7 +657,7 @@ impl BaseDocument {
             "width" | "height" if has_layout_box => {
                 // Used value: the layout size interpreted according to `box-sizing`
                 // (border-box size for `border-box`, content-box size for `content-box`)
-                let layout = node.unrounded_layout();
+                let layout = self.physical_unrounded_layout(node_id);
                 let border_box = styles.get_position().box_sizing == BoxSizing::BorderBox;
                 let size = if property_name == "width" {
                     if border_box {
@@ -728,14 +873,21 @@ impl BaseDocument {
                     let reference_box = euclid::Rect::new(
                         euclid::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
                         euclid::Size2D::new(
-                            CSSPixelLength::new(layout.size.width),
-                            CSSPixelLength::new(layout.size.height),
+                            CSSPixelLength::new(layout.size.width / zoom),
+                            CSSPixelLength::new(layout.size.height / zoom),
                         ),
                     );
-                    if let Ok((matrix, is_3d)) =
+                    use resolved::ToResolvedValue;
+                    let longhand = style::properties::LonghandId::Transform;
+                    let transform = transform.clone().to_resolved_value(&resolved::Context {
+                        style: styles,
+                        for_property: PropertyId::NonCustom(longhand.into()),
+                        current_longhand: Some(longhand),
+                    });
+                    if let Ok((matrix, _)) =
                         transform.to_transform_3d_matrix_f64(Some(&reference_box))
                     {
-                        return format_matrix(&matrix, is_3d);
+                        return format_matrix(&matrix);
                     }
                 }
             }

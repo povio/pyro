@@ -550,13 +550,8 @@ fn shape_transform(
             rounded_rect_path(rect, [r(&round.top_left), r(&round.top_right), r(&round.bottom_right), r(&round.bottom_left)])
         }
         GenericBasicShape::Polygon(poly) => {
-            let mut path = kurbo::BezPath::new();
-            for (i, c) in poly.coordinates.iter().enumerate() {
-                let p = kurbo::Point::new(area.x0 + lp(&c.0, w), area.y0 + lp(&c.1, h));
-                if i == 0 { path.move_to(p) } else { path.line_to(p) }
-            }
-            path.close_path();
-            path
+            crate::shape_path::polygon_path(poly.coordinates.iter().map(|coord|
+                kurbo::Point::new(area.x0 + lp(&coord.0, w), area.y0 + lp(&coord.1, h))), lp(&poly.round.0, 0.0))
         }
         GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Shape(shape)) => {
             let agnostic = w.hypot(h) / std::f64::consts::SQRT_2;

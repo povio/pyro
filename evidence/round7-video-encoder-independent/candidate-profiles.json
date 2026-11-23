@@ -1,0 +1,45 @@
+{
+  "available": "function",
+  "avc1.42001e": {
+    "supported": true,
+    "type": "key",
+    "codec": "avc1.42001e",
+    "identity": [
+      1,
+      66,
+      192,
+      30
+    ]
+  },
+  "avc1.4d001e": {
+    "supported": true,
+    "type": "key",
+    "codec": "avc1.4d001e",
+    "identity": [
+      1,
+      77,
+      76,
+      30
+    ]
+  },
+  "avc1.64001e": {
+    "supported": true,
+    "type": "key",
+    "codec": "avc1.64001e",
+    "identity": [
+      1,
+      100,
+      12,
+      30
+    ]
+  },
+  "avc1.64003e": {
+    "supported": false
+  },
+  "vp8": {
+    "supported": false
+  },
+  "av01.0.04M.08": {
+    "supported": false
+  }
+}

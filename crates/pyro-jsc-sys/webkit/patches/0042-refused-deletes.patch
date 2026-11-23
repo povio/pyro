@@ -1,0 +1,100 @@
+Pyro patch 0042: a deleteProperty callback can refuse the delete.
+
+A C API class's deleteProperty callback could only claim a delete (true) or let the ordinary
+[[Delete]] run (false), which succeeds for a property the object does not really have. WebIDL's
+[[Delete]] of a legacy platform object returns false for a supported indexed property and for a
+visible named property without a deleter, so `delete collection[0]` is false in sloppy mode code
+and a TypeError in strict mode code. JSObjectRefuseDeleteProperty (API/JSForkPrivate.h), called
+from inside the callback before it returns false, makes JSCallbackObject::deleteProperty return
+false instead of running the ordinary [[Delete]]. The answer is a per-thread flag, saved before
+each callback and restored after it, so a nested delete in script the callback runs neither
+leaks its answer into the outer delete nor clears the outer one's.
+
+diff --git a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+index a8d80d1..472f0aa 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
++++ b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+@@ -42,6 +42,9 @@
+ 
+ namespace JSC {
+ 
++// Pyro patch 0042 (JSFork.cpp): set by JSObjectRefuseDeleteProperty during a deleteProperty callback.
++bool& callbackDeletePropertyRefused();
++
+ inline PreferredPrimitiveType toPreferredPrimitiveType(JSGlobalObject*, JSValue);
+ 
+ template <class Parent>
+@@ -566,12 +569,22 @@ bool JSCallbackObject<Parent>::deleteProperty(JSCell* cell, JSGlobalObject* glob
+                     propertyNameRef = OpaqueJSString::tryCreate(name);
+                 JSValueRef exception = nullptr;
+                 bool result;
++                // Saved and restored, not cleared: script that runs inside the callback after it
++                // refused (a nested delete on another callback object) must not lose the answer.
++                bool& refused = callbackDeletePropertyRefused();
++                bool outerRefused = std::exchange(refused, false);
+                 {
+                     JSLock::APICallbackScope callbackScope(globalObject);
+                     result = deleteProperty(ctx, thisRef, propertyNameRef.get(), &exception);
+                 }
++                // Pyro: the callback refused the delete (JSObjectRefuseDeleteProperty), as
++                // WebIDL's [[Delete]] of a legacy platform object does for a supported index or a
++                // visible named property without a deleter: false, so strict mode code throws.
++                bool wasRefused = std::exchange(refused, outerRefused);
+                 if (exception)
+                     throwException(globalObject, scope, toJS(globalObject, exception));
++                if (wasRefused && !exception && !result)
++                    return false;
+                 if (result || exception)
+                     return true;
+             }
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index 2d911cf..cef51ac 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -165,6 +165,22 @@ bool JSObjectSetCustomAccessor(JSContextRef ctx, JSObjectRef object, JSStringRef
+     return jsObject->putDirectCustomAccessor(vm, name, accessor, attrs);
+ }
+ 
++namespace JSC {
++
++// Pyro patch 0042: per thread, as a deleteProperty callback runs on the thread that holds the VM's lock.
++bool& callbackDeletePropertyRefused()
++{
++    static thread_local bool refused { false };
++    return refused;
++}
++
++} // namespace JSC
++
++void JSObjectRefuseDeleteProperty(JSContextRef)
++{
++    JSC::callbackDeletePropertyRefused() = true;
++}
++
+ // Pyro: JSObjectSetCustomAccessor as a custom value (PropertyAttribute::CustomValue): the getter
+ // makes the property's value, which Object.getOwnPropertyDescriptor reports as a data property
+ // ({value, writable, enumerable, configurable}), as a WebIDL interface object on the global is.
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index 58a6de4..afd6b30 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -307,6 +307,19 @@ enum {
+ typedef void (*JSPromiseRejectionTrackerCallback)(JSContextRef ctx, JSObjectRef promise, JSValueRef reason, int operation);
+ JS_EXPORT bool JSGlobalContextSetPromiseRejectionTracker(JSGlobalContextRef ctx, JSPromiseRejectionTrackerCallback callback, unsigned operations);
+ 
++/*!
++@function
++@abstract Pyro: refuses the property deletion a class's deleteProperty callback is answering.
++@param ctx The execution context of the callback.
++@discussion Called from inside a JSObjectDeletePropertyCallback that then returns false: the delete
++ neither runs the ordinary [[Delete]] nor succeeds, so the delete operator returns false in sloppy
++ mode code and throws a TypeError in strict mode code (Reflect.deleteProperty returns false), as
++ for a non-configurable property. WebIDL legacy platform objects need this for a supported
++ indexed property and a visible named property without a deleter. Ignored when the callback
++ returns true or throws.
++*/
++JS_EXPORT void JSObjectRefuseDeleteProperty(JSContextRef ctx);
++
+ #ifdef __cplusplus
+ }
+ #endif

@@ -15,6 +15,7 @@ use crate::{
     util::{dom_string, WrapperRef},
 };
 use bytes::Bytes;
+use data_url::mime::Mime;
 use pyro_js::{Deferred, JsError, JsResult, Persistent, RealmId, Scope, Value, WeakRealm};
 use pyro_net::http::{header, HeaderName, HeaderValue, Method};
 use pyro_net::{
@@ -34,10 +35,18 @@ pub struct FetchLimits {
 impl Default for FetchLimits {
     fn default() -> Self {
         Self {
-            max_requests: 64,
-            max_body_bytes: 16 * 1024 * 1024,
-            max_total_body_bytes: 64 * 1024 * 1024,
-            max_body_chunks: 8192,
+            // Chrome throws for no number of pending requests; 64 failed pages that
+            // start one per encoding label (encoding/single-byte-decoder.any.html).
+            max_requests: 1024,
+            // Chrome caps no response body; one is as large as pyro-net
+            // takes (`NetConfig::max_body`, 256 MiB): fetch/content-encoding's
+            // big-*-body pages decode to 27 MB.
+            max_body_bytes: 256 * 1024 * 1024,
+            // Room for one largest body and its clone (counted twice).
+            max_total_body_bytes: 512 * 1024 * 1024,
+            // A largest body in 4 KiB network chunks (a `Bytes` handle each,
+            // 2 MiB of handles).
+            max_body_chunks: 65_536,
         }
     }
 }
@@ -58,6 +67,8 @@ pub(crate) struct FetchState {
     context: RefCell<RequestContext>,
     jobs: RefCell<FxHashMap<RequestId, Rc<Job>>>,
     bodies: RefCell<FxHashMap<RequestId, Weak<Body>>>,
+    /// The document's `fetchLater` requests not yet sent.
+    pub(crate) deferred: crate::fetch_later::DeferredFetches,
 }
 impl Default for FetchState {
     fn default() -> Self {
@@ -68,6 +79,7 @@ impl Default for FetchState {
             context: RefCell::new(RequestContext::default()),
             jobs: RefCell::new(FxHashMap::default()),
             bodies: RefCell::new(FxHashMap::default()),
+            deferred: Default::default(),
         }
     }
 }
@@ -129,6 +141,8 @@ struct Job {
     /// arrived and matched (SRI), then delivered.
     integrity: Option<crate::integrity::Integrity>,
     held_head: RefCell<Option<ResponseHead>>,
+    /// The request's CSP guard: what its redirect checks found is reported as it progresses.
+    csp: Option<Arc<pyro_net::csp::RequestCsp>>,
 }
 
 /// Fetch's keepalive quota: the body bytes of a document's keepalive
@@ -163,6 +177,7 @@ struct Reader {
     realm: WeakRealm,
     promise: Deferred,
     kind: ReadKind,
+    headers: Option<headers::HeadersData>,
 }
 #[derive(Clone, Copy)]
 pub(crate) enum ReadKind {
@@ -175,6 +190,53 @@ pub(crate) enum ReadKind {
     /// The body's pieces as they are, in a `cache_storage::StoredBody`: what
     /// `cache.put` keeps, without a copy.
     Chunks,
+}
+/// Package fully read bytes using the consuming Request or Response's own
+/// current headers. Clones can share body bytes but have separate header lists.
+pub(crate) fn package_body<'s>(
+    s: &Scope<'s>,
+    kind: ReadKind,
+    bytes: Vec<u8>,
+    headers: Option<&headers::HeadersData>,
+) -> JsResult<Value<'s>> {
+    match kind {
+        ReadKind::Blob => {
+            // Fetch "package data" gives the Blob the serialized extracted MIME type; Chrome
+            // gives it the raw Content-Type value, lowercased (FormData/URLSearchParams bodies'
+            // `boundary=` spacing and `UTF-8` stay as written). Chrome's: WPT
+            // fetch/api/response/response-consume.html passes in Chrome 158, whose
+            // fetch/content-type/response.window.html fails the rows that want the extraction.
+            let mime = headers.and_then(headers::HeadersData::content_type_lowercase).unwrap_or_default();
+            Ok(s.wrap::<crate::file::Blob>(
+                crate::file::BlobData { bytes: Bytes::from(bytes), mime, file: None },
+                None,
+            )?
+            .value())
+        }
+        ReadKind::FormData => match headers.and_then(headers::HeadersData::mime_type) {
+            Some(m) if m.matches("application", "x-www-form-urlencoded") => {
+                crate::form_data::from_urlencoded(s, &bytes)
+            }
+            Some(m) if m.matches("multipart", "form-data") => {
+                let boundary = m
+                    .get_parameter("boundary")
+                    .ok_or_else(|| JsError::Type("Multipart body has no boundary".into()))?;
+                crate::form_data::from_multipart(s, &bytes, boundary)
+            }
+            _ => Err(JsError::Type("Cannot parse this MIME type as FormData".into())),
+        },
+        _ => unreachable!("only Blob and FormData consume MIME metadata"),
+    }
+}
+/// A native body read's `{value, done}`, with no prototype: resolving the
+/// read's promise with it cannot find a `then` that script put on
+/// `Object.prototype` (the body stream's chunks stay the body's bytes).
+fn read_result<'s>(s: &Scope<'s>, value: Value<'s>, done: bool) -> JsResult<Value<'s>> {
+    let result = s.object();
+    result.set_prototype(s.null());
+    result.set_atom("value", value)?;
+    result.set_atom("done", s.boolean(done))?;
+    Ok(result.value())
 }
 pub(crate) struct Body {
     wire: Arc<Mutex<Wire>>,
@@ -246,6 +308,13 @@ impl PageDom {
         *self.referrer.referrer.borrow_mut() = value.unwrap_or_default();
         self.set_referrer_policy_header(header);
     }
+    /// An initial about:blank document takes its creator's URL verbatim and
+    /// snapshots the creator's referrer policy before any script can access it.
+    pub fn inherit_initial_referrer(&self, creator: &PageDom) {
+        *self.referrer.referrer.borrow_mut() = creator.document_url();
+        self.set_referrer_policy_header(Some(creator.referrer_policy()));
+    }
+
     /// Sets `document.referrer` to the `Referer` the navigation request's
     /// last hop sent (empty: none) and the document response's
     /// `Referrer-Policy` header.
@@ -272,6 +341,22 @@ impl PageDom {
     pub(crate) fn document_url_parsed(&self) -> Option<pyro_net::Url> {
         self.dom.borrow().document_url_parsed(self.document()).ok().flatten().cloned()
     }
+    /// Determine a client referrer from the document, before the network layer
+    /// applies its referrer policy. An iframe srcdoc document uses the URL
+    /// of the first enclosing document that is not itself srcdoc.
+    pub fn client_referrer(&self) -> Option<pyro_net::Url> {
+        if self.has_opaque_origin() {
+            return None;
+        }
+        let url = self.document_url_parsed()?;
+        if url.scheme() == "about" && url.path() == "srcdoc" {
+            return match self.container() {
+                crate::page::FrameContainer::Frame(parent, _) => parent.client_referrer(),
+                _ => None,
+            };
+        }
+        Some(url)
+    }
     pub(crate) fn document_url(&self) -> String {
         self.dom.borrow().document_data(self.document()).map(|d| d.url.to_string()).unwrap_or_default()
     }
@@ -281,7 +366,7 @@ impl PageDom {
     }
 }
 
-fn option<'s>(s: &Scope<'s>, init: Value<'s>, key: &str) -> JsResult<Value<'s>> {
+pub(crate) fn option<'s>(s: &Scope<'s>, init: Value<'s>, key: &str) -> JsResult<Value<'s>> {
     match init.as_object() {
         Some(o) => o.get(key),
         None if init.is_null() || init.is_undefined() => Ok(s.undefined()),
@@ -332,25 +417,98 @@ pub(crate) fn forbidden_request_header(name: &str, value: &str) -> bool {
     if !matches!(name, "x-http-method-override" | "x-http-method" | "x-method-override") {
         return false;
     }
-    // "Get, decode, and split": commas inside a quoted string do not split.
+    split_header_values(value)
+        .any(|method| ["CONNECT", "TRACE", "TRACK"].iter().any(|m| method.eq_ignore_ascii_case(m)))
+}
+
+/// Fetch "get, decode, and split": preserve commas and escaped characters
+/// in HTTP quoted strings, trimming HTTP tab/space around each value.
+fn split_header_values(value: &str) -> impl Iterator<Item = &str> {
     let mut quoted = false;
-    let mut start = 0;
-    let mut parts = Vec::new();
-    for (i, ch) in value.char_indices() {
-        match ch {
-            '"' => quoted = !quoted,
-            ',' if !quoted => {
-                parts.push(&value[start..i]);
-                start = i + 1;
+    let mut escaped = false;
+    value
+        .split(move |ch| {
+            if escaped {
+                escaped = false;
+            } else if quoted && ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                quoted = !quoted;
+            } else if ch == ',' && !quoted {
+                return true;
             }
-            _ => {}
+            false
+        })
+        .map(|part| part.trim_matches([' ', '\t']))
+}
+
+/// MIME Sniffing "parse a MIME type". Use data-url for essence parsing and
+/// serialization. Collect the complete parameter value before validating it:
+/// a quoted string may span semicolons and have ignored text after its quote.
+fn parse_body_mime(value: &str) -> Option<Mime> {
+    let (essence, mut rest) = value.trim_matches([' ', '\t', '\r', '\n']).split_once(';').unwrap_or((value, ""));
+    let mut mime: Mime = essence.parse().ok()?;
+    while !rest.is_empty() {
+        rest = rest.trim_start_matches([' ', '\t', '\r', '\n']);
+        let Some(end) = rest.find(['=', ';']) else { break };
+        let name = &rest[..end];
+        let separator = rest.as_bytes()[end];
+        rest = &rest[end + 1..];
+        if separator == b';' {
+            continue;
+        }
+        let value = if let Some(quoted) = rest.strip_prefix('"') {
+            let mut output = String::new();
+            let mut chars = quoted.chars();
+            while let Some(ch) = chars.next() {
+                match ch {
+                    '"' => break,
+                    '\\' => output.push(chars.next().unwrap_or('\\')),
+                    _ => output.push(ch),
+                }
+            }
+            rest = chars.as_str().split_once(';').map_or("", |(_, tail)| tail);
+            output
+        } else {
+            let (value, tail) = rest.split_once(';').unwrap_or((rest, ""));
+            rest = tail;
+            let value = value.trim_end_matches([' ', '\t', '\r', '\n']);
+            if value.is_empty() {
+                continue;
+            }
+            value.to_owned()
+        };
+        if !value.chars().all(|ch| matches!(ch, '\t' | ' '..='~' | '\u{80}'..='\u{ff}')) {
+            continue;
+        }
+        let Ok(name) = headers::validate_name(name.to_owned()) else { continue };
+        if mime.get_parameter(name.as_str()).is_none() {
+            mime.parameters.push((name, value));
         }
     }
-    parts.push(&value[start..]);
-    parts.iter().any(|part| {
-        let method = part.trim_matches(|c| c == ' ' || c == '\t');
-        ["CONNECT", "TRACE", "TRACK"].iter().any(|m| method.eq_ignore_ascii_case(m))
-    })
+    Some(mime)
+}
+
+pub(crate) fn extract_mime(value: &str) -> Option<Mime> {
+    let mut result: Option<Mime> = None;
+    let mut charset: Option<String> = None;
+    for value in split_header_values(value) {
+        let Some(mut mime) = parse_body_mime(value) else { continue };
+        if mime.matches("*", "*") {
+            continue;
+        }
+        if result.as_ref().is_some_and(|prev| prev.matches(&mime.type_, &mime.subtype)) {
+            if mime.get_parameter("charset").is_none() {
+                if let Some(inherited) = &charset {
+                    mime.parameters.push(("charset".into(), inherited.clone()));
+                }
+            }
+        } else {
+            charset = mime.get_parameter("charset").map(str::to_owned);
+        }
+        result = Some(mime);
+    }
+    result
 }
 /// Gives a `blob:` request the object its URL names, from this document's
 /// blob URL store (the network client cannot see it); a URL the store does
@@ -362,17 +520,20 @@ pub(crate) fn attach_blob(page: &PageDom, request: &mut Request) {
     }
 }
 /// What a fetch does beyond its `pyro_net::Request`.
-struct FetchExtras {
+pub(crate) struct FetchExtras {
     integrity: Option<crate::integrity::Integrity>,
     /// Keepalive: the reserved body bytes, held until the request ends.
     keepalive: Option<KeepaliveGuard>,
 }
 
-fn parse_request<'s>(
+/// `deferred`: for `fetchLater` (Fetch "queue a deferred fetch"), whose request may not have a
+/// ReadableStream body (from `init` or a Request input) and takes no keepalive quota of its own.
+pub(crate) fn parse_request<'s>(
     s: &Scope<'s>,
     page: &PageDom,
     input: Value<'s>,
     init: Value<'s>,
+    deferred: bool,
 ) -> JsResult<(Request, Option<Persistent>, FetchExtras)> {
     // A Request input: its fields, overridden by `init`.
     let request_input = s.unwrap::<crate::request::Request>(input);
@@ -446,6 +607,10 @@ fn parse_request<'s>(
         "manual" => RedirectMode::Manual,
         _ => return Err(JsError::Type("Invalid fetch redirect mode".into())),
     };
+    // RequestInit `priority` is a RequestPriority enum; fetch has no use for it.
+    if !matches!(string_option(s, init, "priority", "auto")?.as_str(), "high" | "low" | "auto") {
+        return Err(JsError::Type("Invalid fetch priority".into()));
+    }
     if request.mode == RequestMode::NoCors && !matches!(request.method, Method::GET | Method::HEAD | Method::POST) {
         return Err(JsError::Type("Invalid no-cors method".into()));
     }
@@ -469,6 +634,13 @@ fn parse_request<'s>(
         request.headers.append(key, value);
     }
     let body = option(s, init, "body")?;
+    if deferred {
+        let init_stream = !body.is_undefined() && !body.is_null() && crate::streams::is_stream(s, body)?;
+        let input_stream = body.is_undefined() && request_input.as_ref().is_some_and(|r| r.script_stream.get());
+        if init_stream || input_stream {
+            return Err(JsError::Type("fetchLater: a ReadableStream request body cannot be deferred.".into()));
+        }
+    }
     let input_body = match (&request_input, body.is_undefined()) {
         (Some(r), true) => r.take_body()?.map(|bytes| (bytes, r.body.mime.borrow().clone())),
         _ => None,
@@ -511,7 +683,7 @@ fn parse_request<'s>(
     };
     request.referrer = match referrer.as_str() {
         "no-referrer" => None,
-        "client" => page.document_url_parsed(),
+        "client" => page.client_referrer(),
         url => pyro_net::Url::parse(url).ok(),
     };
     let policy = match option(s, init, "referrerPolicy")? {
@@ -542,7 +714,7 @@ fn parse_request<'s>(
         v if v.is_undefined() => request_input.as_ref().is_some_and(|r| r.keepalive),
         v => v.to_bool(),
     };
-    let keepalive = if keepalive {
+    let keepalive = if keepalive && !deferred {
         let len = request.body.as_ref().map_or(0, Bytes::len);
         Some(
             reserve_keepalive(&page.fetch_state.keepalive_bytes, len)
@@ -586,6 +758,18 @@ fn parse_request<'s>(
     Ok((request, signal, extras))
 }
 
+/// Body mixin `textStream()` once the body is known usable: `body` (the
+/// object's body stream, or null) piped through a UTF-8 TextDecoderStream.
+/// A null body gives a fresh empty stream on each call and stays unused.
+pub(crate) fn text_stream<'s>(s: &Scope<'s>, body: Value<'s>) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    if body.is_null() {
+        let empty = crate::encoding::uint8_array(s, &[])?;
+        return crate::streams::helper(s, &page, "textFromBytes", &[empty]);
+    }
+    crate::streams::helper(s, &page, "textFromStream", &[body])
+}
+
 /// Fetch "extract a body" for the supported BodyInit types: FormData
 /// (multipart/form-data with a generated boundary), Blob, URLSearchParams,
 /// BufferSource, else ToString. Returns (bytes, Content-Type or "" when the
@@ -621,8 +805,14 @@ pub(crate) fn send_beacon(s: &Scope<'_>, page: &Rc<PageDom>, url: pyro_net::Url,
         extract_body(s, data)?
     };
     let Some(net) = page.net.borrow().clone() else { return Ok(false) };
+    // CSP `connect-src`: a blocked beacon is never sent (no request is made; its violation is
+    // reported), and the call still returns true, as the queued beacon's fetch would fail
+    // later in Chrome.
+    let check = pyro_net::csp::CspRequest::new(url.clone(), pyro_net::csp::RequestDest::Empty);
+    let Ok(csp) = crate::csp::check_request(page, check, None) else { return Ok(true) };
     let Some(guard) = reserve_keepalive(&page.fetch_state.keepalive_bytes, body.len()) else { return Ok(false) };
     let mut request = Request::get(url, Destination::Beacon);
+    request.csp = csp;
     request.method = Method::POST;
     request.credentials = Credentials::Include;
     request.mode = RequestMode::NoCors;
@@ -638,7 +828,7 @@ pub(crate) fn send_beacon(s: &Scope<'_>, page: &Rc<PageDom>, url: pyro_net::Url,
     request.origin = Some(s.realm().origin().unwrap_or_else(|| {
         document_url.as_ref().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|| "null".into())
     }));
-    request.referrer = document_url;
+    request.referrer = page.client_referrer();
     request.referrer_policy = page.referrer_policy();
     let context = page.request_context();
     request.frame_id = context.frame_id;
@@ -656,134 +846,268 @@ pub(crate) fn send_beacon(s: &Scope<'_>, page: &Rc<PageDom>, url: pyro_net::Url,
     Ok(true)
 }
 
-pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
-    let function = s.function("fetch", |s, _this, args| {
-        let deferred = s.deferred()?;
-        let promise = deferred.promise.get(s);
-        match crate::streams::fetch_stream_body(s, args.get(0), args.get(1)) {
-            Ok(Some(sent)) => {
-                deferred.resolve(s, sent)?;
-                return Ok(promise);
-            }
-            Ok(None) => {}
-            Err(error) => {
-                deferred.reject(s, error.to_value(s))?;
-                return Ok(promise);
+/// HTML hyperlink auditing: a `PING` POST to each of a followed `<a>` or
+/// `<area>`'s `ping` URLs. It holds nothing up and, like a beacon, is not one
+/// of the document's fetches. `document` is the link's document URL,
+/// `target` the URL followed, `policy` the link's referrer policy.
+pub(crate) fn send_pings(
+    page: &Rc<PageDom>,
+    pings: Vec<pyro_net::Url>,
+    document: Option<pyro_net::Url>,
+    target: &str,
+    policy: pyro_net::ReferrerPolicy,
+) {
+    use pyro_net::ReferrerPolicy as P;
+    let Some(net) = page.net.borrow().clone() else { return };
+    let context = page.request_context();
+    let document_origin = document.as_ref().map(|u| u.origin()).filter(|o| o.is_tuple());
+    let encrypted = document.as_ref().is_some_and(|u| u.scheme() == "https");
+    for url in pings {
+        let Some(guard) = reserve_keepalive(&page.fetch_state.keepalive_bytes, 4) else { return };
+        let same_origin = document_origin.as_ref().is_some_and(|o| *o == url.origin());
+        let downgrade = encrypted && url.scheme() == "http";
+        let mut request = Request::get(url, Destination::Beacon);
+        request.method = Method::POST;
+        request.credentials = Credentials::Include;
+        request.mode = RequestMode::NoCors;
+        request.headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/ping"));
+        if let Ok(v) = HeaderValue::from_str(target) {
+            request.headers.insert(HeaderName::from_static("ping-to"), v);
+        }
+        // Ping-From for a same-origin ping, or any from a document not
+        // fetched over an encrypted connection.
+        if same_origin || !encrypted {
+            if let Some(v) = document.as_ref().and_then(|u| HeaderValue::from_str(u.as_str()).ok()) {
+                request.headers.insert(HeaderName::from_static("ping-from"), v);
             }
         }
-        let result = (|| {
-            args.require(1, "fetch")?;
-            let page = page_of(s)?;
-            if page.is_disposed() {
-                return Err(JsError::ContextDestroyed);
+        request.body = Some(Bytes::from_static(b"PING"));
+        // Fetch "serializing a request origin" under the link's policy.
+        let null_origin = match policy {
+            P::NoReferrer => true,
+            P::SameOrigin => !same_origin,
+            P::NoReferrerWhenDowngrade | P::StrictOrigin | P::StrictOriginWhenCrossOrigin => downgrade,
+            P::Origin | P::OriginWhenCrossOrigin | P::UnsafeUrl => false,
+        };
+        request.origin = Some(match (&document_origin, null_origin) {
+            (Some(origin), false) => origin.ascii_serialization(),
+            _ => "null".into(),
+        });
+        // The request's referrer is no-referrer: Ping-From names the document.
+        request.referrer = None;
+        request.referrer_policy = P::NoReferrer;
+        request.frame_id = context.frame_id.clone();
+        request.loader_id = context.loader_id.clone();
+        page.apply_request_defaults(&mut request);
+        let mut guard = Some(guard);
+        net.fetch(
+            request,
+            Box::new(move |event| {
+                if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+                    guard.take();
+                }
+            }),
+        );
+    }
+}
+
+pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
+    let function = s.function("fetch", |s, _this, args| fetch_call(s, &args, None, None))?;
+    // WebIDL `fetch(input, optional init)`: length 1.
+    function.set_atom("length", s.number(1.0))?;
+    s.global().set_atom("fetch", function.value())
+}
+
+/// The fetch streams.js `fetchBuffered` makes once it has settled a stream body (its
+/// `natives.fetchSettled`, not reachable from page script): `fromStream` says whether the
+/// body is the stream's bytes. It never takes the stream path again.
+pub(crate) fn settled_fetch_function<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+    let function = s.function("fetch", |s, _this, args| {
+        let from_stream = args.get(2).to_bool();
+        fetch_call(s, &args, Some(from_stream), None)
+    })?;
+    Ok(function.value())
+}
+
+/// A native `fetch` for the engine's own script that makes requests for `dest` (a paint
+/// worklet's module, a FontFace source), which CSP checks as that destination: what its natives
+/// expose instead of the global `fetch`. Page script can never reach it.
+pub(crate) fn internal_fetch<'s>(s: &Scope<'s>, dest: pyro_net::csp::RequestDest) -> JsResult<pyro_js::Object<'s>> {
+    s.function("fetch", move |s, _this, args| fetch_call(s, &args, None, Some(dest)))
+}
+
+/// `fetch(input, init)`; `settled`: a call from `fetchBuffered` (see [`settled_fetch_function`]);
+/// `csp_dest`: the destination of an engine-internal request ([`internal_fetch`]), `None` for
+/// page script's.
+fn fetch_call<'s>(
+    s: &Scope<'s>,
+    args: &pyro_js::Args<'s>,
+    settled: Option<bool>,
+    csp_dest: Option<pyro_net::csp::RequestDest>,
+) -> JsResult<Value<'s>> {
+    let deferred = s.deferred()?;
+    let promise = deferred.promise.get(s);
+    let streamed = if settled.is_some() {
+        Ok(None)
+    } else {
+        crate::streams::fetch_stream_body(s, args.get(0), args.get(1))
+    };
+    match streamed {
+        Ok(Some(sent)) => {
+            deferred.resolve(s, sent)?;
+            return Ok(promise);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            deferred.reject(s, error.to_value(s))?;
+            return Ok(promise);
+        }
+    }
+    let result = (|| {
+        args.require(1, "fetch")?;
+        let page = page_of(s)?;
+        if page.is_disposed() {
+            return Err(JsError::ContextDestroyed);
+        }
+        let (mut request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1), false)?;
+        request.body_from_stream = request.body.is_some() && settled == Some(true);
+        // Init conversion can execute script, including embedder teardown.
+        if page.is_disposed() {
+            return Err(JsError::ContextDestroyed);
+        }
+        // CSP `connect-src` (a request the engine makes through `fetch` for another destination
+        // is checked as one: a worklet's module, `script-src-elem`; a FontFace's source,
+        // `font-src`); blocked, a network error.
+        let dest = csp_dest.unwrap_or(pyro_net::csp::RequestDest::Empty);
+        let check = pyro_net::csp::CspRequest::new(request.url.clone(), dest);
+        request.csp = crate::csp::check_request(&page, check, None)
+            .map_err(|_| JsError::Type("Failed to fetch".into()))?;
+        if let Some(signal) = &signal {
+            let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
+            if signal.aborted() {
+                return Err(JsError::thrown(Persistent::new(s, signal.reason(s))));
             }
-            let (request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1))?;
-            // Init conversion can execute script, including embedder teardown.
-            if page.is_disposed() {
-                return Err(JsError::ContextDestroyed);
-            }
+        }
+        let limits = page.fetch_state.limits.get();
+        if page.fetch_state.jobs.borrow().len() >= limits.max_requests {
+            return Err(JsError::Type("Too many pending fetches".into()));
+        }
+        let net =
+            page.net.borrow().clone().ok_or_else(|| JsError::Type("Page networking is not installed".into()))?;
+        let poster =
+            page.remote_poster().ok_or_else(|| JsError::Type("Browser task poster is not installed".into()))?;
+        Ok((page, request, signal, extras, limits, net, poster))
+    })();
+    match result {
+        Err(error) => deferred.reject(s, error.to_value(s))?,
+        Ok((page, mut request, signal, extras, limits, net, poster)) => {
+            page.apply_request_defaults(&mut request);
+            attach_blob(&page, &mut request);
+            request.max_body = Some(limits.max_body_bytes);
+            let id = net.next_request_id();
+            let wire = Arc::new(Mutex::new(Wire {
+                frontier: NetworkDelivery::default(),
+                head: None,
+                chunks: Vec::new(),
+                bytes: 0,
+                terminal: None,
+                closed: false,
+                scheduled: false,
+                null_body: request.method == Method::HEAD,
+                streaming: false,
+                budget: page.fetch_state.budget.clone(),
+            }));
+            let body = Rc::new(Body {
+                wire: wire.clone(),
+                visible_terminal: RefCell::new(None),
+                page: Rc::downgrade(&page),
+                id,
+                realm_id: s.realm_id(),
+                readers: RefCell::new(Vec::new()),
+                stream_reads: RefCell::new(Vec::new()),
+                stream_open: Cell::new(false),
+                stream_cursor: Cell::new(0),
+                consumers: Cell::new(0),
+                abort_registration: RefCell::new(None),
+                abort_signal: RefCell::new(None),
+                aborted: Cell::new(false),
+                disposed: Cell::new(false),
+                keepalive: extras.keepalive.is_some(),
+                mime: RefCell::new(String::new()),
+            });
+            page.fetch_state.bodies.borrow_mut().insert(id, Rc::downgrade(&body));
             if let Some(signal) = &signal {
                 let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
-                if signal.aborted() {
-                    return Err(JsError::thrown(Persistent::new(s, signal.reason(s))));
-                }
-            }
-            let limits = page.fetch_state.limits.get();
-            if page.fetch_state.jobs.borrow().len() >= limits.max_requests {
-                return Err(JsError::Type("Too many pending fetches".into()));
-            }
-            let net =
-                page.net.borrow().clone().ok_or_else(|| JsError::Type("Page networking is not installed".into()))?;
-            let poster =
-                page.remote_poster().ok_or_else(|| JsError::Type("Browser task poster is not installed".into()))?;
-            Ok((page, request, signal, extras, limits, net, poster))
-        })();
-        match result {
-            Err(error) => deferred.reject(s, error.to_value(s))?,
-            Ok((page, mut request, signal, extras, limits, net, poster)) => {
-                page.apply_request_defaults(&mut request);
-                attach_blob(&page, &mut request);
-                request.max_body = Some(limits.max_body_bytes);
-                let id = net.next_request_id();
-                let wire = Arc::new(Mutex::new(Wire {
-                    frontier: NetworkDelivery::default(),
-                    head: None,
-                    chunks: Vec::new(),
-                    bytes: 0,
-                    terminal: None,
-                    closed: false,
-                    scheduled: false,
-                    null_body: request.method == Method::HEAD,
-                    streaming: false,
-                    budget: page.fetch_state.budget.clone(),
-                }));
-                let body = Rc::new(Body {
-                    wire: wire.clone(),
-                    visible_terminal: RefCell::new(None),
-                    page: Rc::downgrade(&page),
-                    id,
-                    realm_id: s.realm_id(),
-                    readers: RefCell::new(Vec::new()),
-                    stream_reads: RefCell::new(Vec::new()),
-                    stream_open: Cell::new(false),
-                    stream_cursor: Cell::new(0),
-                    consumers: Cell::new(0),
-                    abort_registration: RefCell::new(None),
-                    abort_signal: RefCell::new(None),
-                    aborted: Cell::new(false),
-                    disposed: Cell::new(false),
-                    keepalive: extras.keepalive.is_some(),
-                    mime: RefCell::new(String::new()),
-                });
-                page.fetch_state.bodies.borrow_mut().insert(id, Rc::downgrade(&body));
-                if let Some(signal) = &signal {
-                    let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
-                    *body.abort_signal.borrow_mut() = Some(signal.wrapper.clone());
-                    let weak = Rc::downgrade(&body);
-                    *body.abort_registration.borrow_mut() = signal.register_native(Box::new(move |_| {
-                        if let Some(body) = weak.upgrade() {
-                            body.abort();
-                        }
-                    }));
-                }
-                let job = Rc::new(Job {
-                    realm: s.realm().downgrade(),
-                    realm_id: s.realm_id(),
-                    promise: RefCell::new(Some(deferred)),
-                    signal,
-                    credentials: request.credentials,
-                    body,
-                    integrity: extras.integrity,
-                    held_head: RefCell::new(None),
-                });
-                if job.integrity.is_some() {
-                    // Nothing is delivered before the whole body is checked.
-                    job.body.wire.lock().unwrap().streaming = false;
-                }
-                page.fetch_state.jobs.borrow_mut().insert(id, job);
-                let page_id = page.id();
-                PAGES.with(|pages| pages.borrow_mut().insert(page_id, Rc::downgrade(&page)));
-                let mut keepalive = extras.keepalive;
-                let sink: pyro_net::ResponseSink = Box::new(move |event| {
-                    if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
-                        keepalive.take();
+                *body.abort_signal.borrow_mut() = Some(signal.wrapper.clone());
+                let weak = Rc::downgrade(&body);
+                *body.abort_registration.borrow_mut() = signal.register_native(Box::new(move |_| {
+                    if let Some(body) = weak.upgrade() {
+                        body.abort();
                     }
-                    receive(&wire, page_id, id, &poster, limits, event)
-                });
-                let sink = crate::resource_timing::timed_sink_carried(
-                    &page,
-                    crate::resource_timing::Initiator::Fetch,
-                    &request.url,
-                    sink,
-                );
-                // A controlled page's request goes to its service worker
-                // first; any other is one flag test away from the network.
-                crate::service_worker::route(&page, &net, id, request, sink);
+                }));
             }
+            let job = Rc::new(Job {
+                realm: s.realm().downgrade(),
+                realm_id: s.realm_id(),
+                promise: RefCell::new(Some(deferred)),
+                signal,
+                credentials: request.credentials,
+                body,
+                integrity: extras.integrity,
+                held_head: RefCell::new(None),
+                csp: request.csp.clone(),
+            });
+            if job.integrity.is_some() {
+                // Nothing is delivered before the whole body is checked.
+                job.body.wire.lock().unwrap().streaming = false;
+            }
+            page.fetch_state.jobs.borrow_mut().insert(id, job);
+            let page_id = page.id();
+            PAGES.with(|pages| pages.borrow_mut().insert(page_id, Rc::downgrade(&page)));
+            let mut keepalive = extras.keepalive;
+            let sink: pyro_net::ResponseSink = Box::new(move |event| {
+                if matches!(event, ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+                    keepalive.take();
+                }
+                receive(&wire, page_id, id, &poster, limits, event)
+            });
+            let sink = crate::resource_timing::timed_sink_carried(
+                &page,
+                crate::resource_timing::Initiator::Fetch,
+                &request.url,
+                sink,
+            );
+            // A controlled page's request goes to its service worker
+            // first; any other is one flag test away from the network.
+            crate::service_worker::route(&page, &net, id, request, sink);
         }
-        Ok(promise)
+    }
+    Ok(promise)
+}
+
+/// WebAssembly.compileStreaming and instantiateStreaming on the realm's `WebAssembly` namespace
+/// (install.js `wasmStreaming`, given as `factory`), with [`crate::response::read_for_wasm`] as
+/// the step that takes a Response's bytes, and the realm's CSP gate on WebAssembly compilation:
+/// `cspWasm` ([`crate::csp::wasm_allowed`]) and the step that arms the gate, kept for
+/// [`crate::csp::sync_wasm_gate`] (armed now when the policies are already known).
+pub(crate) fn install_wasm_streaming(s: &Scope<'_>, factory: Value<'_>) -> JsResult<()> {
+    let read = s.function("readWasmResponse", |s, _, a| crate::response::read_for_wasm(s, a.get(0), a.get(1)))?;
+    let allowed = s.function("cspWasm", |s, _, _| {
+        let allowed = crate::target::page_of(s).map_or(true, |page| crate::csp::wasm_allowed(&page));
+        Ok(s.boolean(allowed))
     })?;
-    s.global().set_atom("fetch", function.value())
+    let factory = factory.as_object().ok_or_else(|| JsError::Type("install.js wasmStreaming".into()))?;
+    let arm = factory.call(None, &[read.value(), allowed.value()])?;
+    // Kept on the realm's module holder (its navigator): the global is a JSAPIGlobalObject,
+    // which takes no hidden properties.
+    if arm.as_object().is_some() {
+        if let Ok(page) = crate::target::page_of(s) {
+            let holder = crate::worker_scope::module_holder(s, &page)?;
+            s.set_hidden(holder, crate::csp::WASM_GATE, arm)?;
+            crate::csp::sync_wasm_gate(s, &page);
+        }
+    }
+    Ok(())
 }
 
 fn receive(
@@ -904,6 +1228,7 @@ fn pump(page_id: u64, id: RequestId) {
     }
     *job.body.visible_terminal.borrow_mut() = terminal.clone();
     page.network_delivery(id, frontier);
+    crate::csp::report_guard(&page, job.csp.as_ref(), None);
     if page.is_disposed() || job.body.disposed.get() || job.body.aborted.get() {
         return;
     }
@@ -997,20 +1322,7 @@ fn fail_integrity(s: &Scope<'_>, page: &PageDom, job: &Job, id: RequestId) {
 }
 
 impl Body {
-    /// A complete in-memory body for script-constructed Responses
-    /// (`new Response(body)`, `Response.json`, `Response.error`). `None` is a
-    /// null body. Not tied to a page, request or network budget.
-    /// Fetch "get the MIME type" of a body: its container's current
-    /// `Content-Type` (headers may have changed since the body was made);
-    /// ASCII-lowercased for a Blob's type (`lower`), kept as written for
-    /// formData() (a multipart boundary is case-sensitive).
-    pub(crate) fn refresh_mime(&self, pairs: &[(String, String)], lower: bool) {
-        let values: Vec<&str> =
-            pairs.iter().filter(|(n, _)| n.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.as_str()).collect();
-        let value = values.join(", ");
-        *self.mime.borrow_mut() = if lower { value.to_ascii_lowercase() } else { value };
-    }
-
+    /// A complete in-memory body for script-constructed Requests and Responses.
     pub(crate) fn constructed(s: &Scope<'_>, bytes: Option<Bytes>, mime: String) -> Rc<Body> {
         Body::constructed_chunks(s, bytes.map(|b| vec![b]), mime)
     }
@@ -1119,7 +1431,13 @@ impl Body {
             error.map(|e| JsError::Type(e.to_string().into()).to_value(s))
         }
     }
-    pub(crate) fn read<'s>(&self, s: &Scope<'s>, kind: ReadKind, already_used: bool) -> JsResult<Value<'s>> {
+    pub(crate) fn read<'s>(
+        self: &Rc<Self>,
+        s: &Scope<'s>,
+        kind: ReadKind,
+        already_used: bool,
+        headers: Option<headers::HeadersData>,
+    ) -> JsResult<Value<'s>> {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
         let ready = self.is_null() || self.visible_terminal.borrow().is_some();
@@ -1128,17 +1446,31 @@ impl Body {
         } else if let Some(error) = self.error(s) {
             deferred.reject(s, error)?;
             self.release_consumer();
+        } else if ready && !self.is_null() && matches!(kind, ReadKind::Blob | ReadKind::FormData) {
+            // Even an already-buffered stream finishes through a fetch task.
+            // Read the container's MIME metadata when packaging its bytes.
+            let body = self.clone();
+            let realm = s.realm().downgrade();
+            page_of(s)?.post_task(Box::new(move || {
+                if let Some(realm) = realm.upgrade() {
+                    if let Ok(scope) = realm.scope() {
+                        body.settle(&scope, deferred, kind, headers.as_ref());
+                        return;
+                    }
+                }
+                body.release_consumer();
+            }));
         } else if ready {
-            self.settle(s, deferred, kind);
+            self.settle(s, deferred, kind, headers.as_ref());
         } else if self.readers.borrow().len() >= 1024 {
             deferred.reject(s, JsError::Type("Too many pending body readers".into()).to_value(s))?;
             self.release_consumer();
         } else {
-            self.readers.borrow_mut().push(Reader { realm: s.realm().downgrade(), promise: deferred, kind });
+            self.readers.borrow_mut().push(Reader { realm: s.realm().downgrade(), promise: deferred, kind, headers });
         }
         Ok(promise)
     }
-    fn settle(&self, s: &Scope<'_>, deferred: Deferred, kind: ReadKind) {
+    fn settle(&self, s: &Scope<'_>, deferred: Deferred, kind: ReadKind, headers: Option<&headers::HeadersData>) {
         if let Some(error) = self.error(s) {
             let _ = deferred.reject(s, error);
             self.release_consumer();
@@ -1177,34 +1509,7 @@ impl Body {
             }
             ReadKind::ArrayBuffer => crate::encoding::array_buffer(s, &bytes),
             ReadKind::Bytes => crate::encoding::uint8_array(s, &bytes),
-            ReadKind::Blob => s
-                .wrap::<crate::file::Blob>(
-                    crate::file::BlobData { bytes: Bytes::from(bytes), mime: self.mime.borrow().clone(), file: None },
-                    None,
-                )
-                .map(|o| o.value()),
-            ReadKind::FormData => {
-                let mime = self.mime.borrow();
-                let essence = mime.split(';').next().unwrap_or("").trim();
-                if essence.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
-                    crate::form_data::from_urlencoded(s, &bytes)
-                } else if essence.eq_ignore_ascii_case("multipart/form-data") {
-                    let boundary = mime
-                        .split(';')
-                        .skip(1)
-                        .filter_map(|p| p.trim().split_once('='))
-                        .find(|(k, _)| k.trim().eq_ignore_ascii_case("boundary"))
-                        .map(|(_, v)| v.trim().trim_matches('"').to_owned());
-                    match boundary {
-                        Some(b) => crate::form_data::from_multipart(s, &bytes, &b),
-                        None => {
-                            Err(JsError::Type("Cannot parse a 'multipart/form-data' body without a boundary".into()))
-                        }
-                    }
-                } else {
-                    Err(JsError::Type(format!("Cannot parse a '{essence}' body as FormData").into()))
-                }
-            }
+            ReadKind::Blob | ReadKind::FormData => package_body(s, kind, bytes, headers),
         };
         match result {
             Ok(value) => {
@@ -1221,7 +1526,7 @@ impl Body {
         for reader in readers {
             if let Some(realm) = reader.realm.upgrade() {
                 if let Ok(s) = realm.scope() {
-                    self.settle(&s, reader.promise, reader.kind);
+                    self.settle(&s, reader.promise, reader.kind, reader.headers.as_ref());
                     continue;
                 }
             }
@@ -1296,10 +1601,7 @@ impl Body {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
         if !self.stream_open.get() {
-            let result = s.object();
-            result.set_atom("value", s.undefined())?;
-            result.set_atom("done", s.boolean(true))?;
-            deferred.resolve(s, result.value())?;
+            deferred.resolve(s, read_result(s, s.undefined(), true)?)?;
             return Ok(promise);
         }
         self.stream_reads.borrow_mut().push((s.realm().downgrade(), deferred));
@@ -1357,18 +1659,13 @@ impl Body {
             }
             let settled = (|| -> JsResult<()> {
                 if let Some(bytes) = chunk.filter(|_| error.is_none()) {
-                    let result = s.object();
-                    result.set_atom("value", crate::encoding::uint8_array(&s, &bytes)?)?;
-                    result.set_atom("done", s.boolean(false))?;
-                    deferred.resolve(&s, result.value())?;
+                    let value = crate::encoding::uint8_array(&s, &bytes)?;
+                    deferred.resolve(&s, read_result(&s, value, false)?)?;
                 } else if let Some(error) = error {
                     deferred.reject(&s, error)?;
                     self.close_stream();
                 } else {
-                    let result = s.object();
-                    result.set_atom("value", s.undefined())?;
-                    result.set_atom("done", s.boolean(true))?;
-                    deferred.resolve(&s, result.value())?;
+                    deferred.resolve(&s, read_result(&s, s.undefined(), true)?)?;
                     self.close_stream();
                 }
                 Ok(())
@@ -1377,6 +1674,19 @@ impl Body {
                 self.close_stream();
             }
         }
+    }
+    /// One body stream was canceled: the transfer stops unless another
+    /// consumer (a clone of the Response) still reads the whole body, which
+    /// keeps the bytes; this stream just closes, its pending reads dropped
+    /// (the canceled stream ignores them) and its cursor reset.
+    pub(crate) fn cancel_consumer_stream(&self) {
+        if self.consumers.get() > 1 {
+            drop(self.stream_reads.take());
+            self.stream_cursor.set(0);
+            self.close_stream();
+            return;
+        }
+        self.cancel_stream();
     }
     /// `ReadableStream.cancel()` / reader `cancel()`: stops the request,
     /// drops buffered bytes and finishes pending reads as done.
@@ -1419,6 +1729,8 @@ pub(crate) fn cancel_realm(page: &PageDom, realm: RealmId) {
     }
 }
 pub(crate) fn dispose(page: &PageDom) {
+    // A discarded document sends its deferred fetches (Fetch "process deferred fetches").
+    crate::fetch_later::flush(page);
     crate::event_source::dispose(page);
     PAGES.with(|pages| pages.borrow_mut().remove(&page.id()));
     let bodies: Vec<_> = page.fetch_state.bodies.borrow().values().filter_map(Weak::upgrade).collect();

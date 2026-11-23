@@ -4,7 +4,7 @@ use ::url::quirks;
 use std::rc::Rc;
 
 use pyro_dom::events::TargetKey;
-use pyro_dom::forms::InputType;
+use pyro_dom::forms::{parse_html_int, InputType};
 use pyro_dom::{Dom, NodeId};
 use pyro_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
@@ -237,6 +237,26 @@ macro_rules! reflect_action {
     };
 }
 
+/// `getSVGDocument()` of an iframe, embed or object: the element's content
+/// document when it is an SVG document (`image/svg+xml`), else null; null for
+/// a cross-origin document, which the content document already is.
+fn svg_document<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+    let document = match n.page().frame_document_value(s, n.id)? {
+        Some(document) => document,
+        None => node_value(s, n.page(), n.page().frame_document(n.id))?,
+    };
+    // The document's content type from the DOM: a script-overridden `contentType` property
+    // does not decide it.
+    let svg = s.unwrap::<crate::node::Node>(document).is_some_and(|d| {
+        d.page().dom.borrow().document_data(d.id).is_ok_and(|data| &*data.content_type == "image/svg+xml")
+    });
+    if svg {
+        Ok(document)
+    } else {
+        Ok(s.null())
+    }
+}
+
 macro_rules! simple_class {
     ($name:ident, $js:literal, $parent:ty) => {
         simple_class!($name, $js, $parent, |_def| {});
@@ -449,6 +469,8 @@ const LINK_AS: EnumAttr = EnumAttr {
     missing: "",
     invalid: "",
 };
+/// HTML-in-Canvas `canvas.content`: whether the children are fallback content or drawable.
+const CANVAS_CONTENT: EnumAttr = EnumAttr { keywords: &["fallback", "drawable"], missing: "fallback", invalid: "fallback" };
 const TRACK_KIND: EnumAttr = EnumAttr {
     keywords: &["subtitles", "captions", "descriptions", "chapters", "metadata"],
     missing: "subtitles",
@@ -464,23 +486,6 @@ const MAX_REFLECTED_INT: i64 = i32::MAX as i64;
 
 fn skip_html_whitespace(input: &str) -> &str {
     input.trim_start_matches([' ', '\t', '\n', '\x0c', '\r'])
-}
-
-/// HTML "rules for parsing integers". Saturates: callers range-check against
-/// values far inside `i64`.
-fn parse_html_int(input: &str) -> Option<i64> {
-    let bytes = skip_html_whitespace(input).as_bytes();
-    let (negative, digits) = match bytes.first()? {
-        b'-' => (true, &bytes[1..]),
-        b'+' => (false, &bytes[1..]),
-        _ => (false, bytes),
-    };
-    let len = digits.iter().take_while(|c| c.is_ascii_digit()).count();
-    if len == 0 {
-        return None;
-    }
-    let value = digits[..len].iter().fold(0i64, |v, d| v.saturating_mul(10).saturating_add((d - b'0') as i64));
-    Some(if negative { -value } else { value })
 }
 
 /// HTML "rules for parsing floating-point number values"; trailing garbage is
@@ -515,6 +520,15 @@ fn parse_html_float(input: &str) -> Option<f64> {
 
 fn parsed_attr<T>(n: &NodeData, attr: &str, parse: fn(&str) -> Option<T>) -> JsResult<Option<T>> {
     Ok(n.page().dom.borrow().get_attribute(n.id, attr).js()?.and_then(parse))
+}
+
+fn img_position(n: &NodeData) -> (i32, i32) {
+    let page = n.page();
+    if !page.dom.borrow().is_connected(n.id).unwrap_or(false) {
+        return (0, 0);
+    }
+    crate::animation_events::layout_flush(page, n.id);
+    page.layout().image_position(&page.dom.borrow(), n.id)
 }
 
 /// An integer attribute in `min..=2147483647`, else `default`.
@@ -738,6 +752,11 @@ pub enum ElClass {
     Directory,
     Param,
     Track,
+    Geolocation,
+    Install,
+    UserMedia,
+    Camera,
+    Microphone,
     Unknown,
     Generic,
     Svg,
@@ -750,6 +769,8 @@ pub enum ElClass {
     SvgTextPath,
     SvgA,
     SvgRoot,
+    SvgSymbol,
+    SvgView,
     SvgClipPath,
     SvgMask,
     SvgPattern,
@@ -757,6 +778,10 @@ pub enum ElClass {
     SvgRadialGradient,
     SvgFilter,
     SvgMarker,
+    SvgStop,
+    SvgPath,
+    SvgPolyline,
+    SvgPolygon,
     SvgRect,
     SvgCircle,
     SvgEllipse,
@@ -795,13 +820,19 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
     if e.namespace() == &markup5ever::ns!(svg) {
         return match &*e.name.local {
             "svg" => ElClass::SvgRoot,
+            "symbol" => ElClass::SvgSymbol,
+            "view" => ElClass::SvgView,
             "a" => ElClass::SvgA,
             // SVGGraphicsElement interfaces (SVG 2).
+            "stop" => ElClass::SvgStop,
+            "path" => ElClass::SvgPath,
+            "polyline" => ElClass::SvgPolyline,
+            "polygon" => ElClass::SvgPolygon,
             "rect" => ElClass::SvgRect,
             "circle" => ElClass::SvgCircle,
             "ellipse" => ElClass::SvgEllipse,
             "line" => ElClass::SvgLine,
-            "g" | "polyline" | "polygon" | "path" | "switch" | "defs" => ElClass::SvgGraphics,
+            "g" | "switch" | "defs" => ElClass::SvgGraphics,
             "image" => ElClass::SvgImage,
             "foreignObject" => ElClass::SvgForeignObject,
             "use" => ElClass::SvgUse,
@@ -848,6 +879,13 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
     }
     if !e.is_html() {
         return ElClass::Other;
+    }
+    if e.flags & pyro_dom::node::element_flags::CUSTOM_FAILED != 0
+        && e.is_value.is_none() && dom.custom_definition_owner(id).is_ok_and(|owner| owner.is_none())
+    {
+        // The failed fallback created by synchronous autonomous construction
+        // never received a definition. A failed upgrade keeps its own class.
+        return ElClass::Unknown;
     }
     html_class_for_local(&e.name.local)
 }
@@ -924,6 +962,12 @@ pub fn html_class_for_local(local: &str) -> ElClass {
         "dir" => Directory,
         "param" => Param,
         "track" => Track,
+        // Permission elements (WICG PEPC, tentative).
+        "geolocation" => Geolocation,
+        "install" => Install,
+        "usermedia" => UserMedia,
+        "camera" => Camera,
+        "microphone" => Microphone,
         "applet" | "bgsound" | "blink" | "isindex" | "keygen" | "multicol" | "nextid" | "spacer" => Unknown,
         "abbr" | "address" | "article" | "aside" | "b" | "bdi" | "bdo" | "cite" | "code" | "dd" | "dfn" | "dt"
         | "em" | "figcaption" | "figure" | "footer" | "header" | "hgroup" | "i" | "kbd" | "main" | "mark" | "nav"
@@ -1006,6 +1050,11 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         Directory => s.wrap::<HtmlDirectoryElement>(d, k),
         Param => s.wrap::<HtmlParamElement>(d, k),
         Track => s.wrap::<HtmlTrackElement>(d, k),
+        Geolocation => s.wrap::<HtmlGeolocationElement>(d, k),
+        Install => s.wrap::<HtmlInstallElement>(d, k),
+        UserMedia => s.wrap::<HtmlUserMediaElement>(d, k),
+        Camera => s.wrap::<HtmlCameraElement>(d, k),
+        Microphone => s.wrap::<HtmlMicrophoneElement>(d, k),
         Unknown => s.wrap::<HtmlUnknownElement>(d, k),
         Generic => s.wrap::<HtmlElement>(d, k),
         Svg => s.wrap::<SvgElement>(d, k),
@@ -1018,6 +1067,8 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgTextPath => s.wrap::<SvgTextPathElement>(d, k),
         SvgA => s.wrap::<SvgAElement>(d, k),
         SvgRoot => s.wrap::<SvgSvgElement>(d, k),
+        SvgSymbol => s.wrap::<SvgSymbolElement>(d, k),
+        SvgView => s.wrap::<SvgViewElement>(d, k),
         SvgClipPath => s.wrap::<SvgClipPathElement>(d, k),
         SvgMask => s.wrap::<SvgMaskElement>(d, k),
         SvgPattern => s.wrap::<SvgPatternElement>(d, k),
@@ -1025,6 +1076,10 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgRadialGradient => s.wrap::<SvgRadialGradientElement>(d, k),
         SvgFilter => s.wrap::<SvgFilterElement>(d, k),
         SvgMarker => s.wrap::<SvgMarkerElement>(d, k),
+        SvgStop => s.wrap::<SvgStopElement>(d, k),
+        SvgPath => s.wrap::<SvgPathElement>(d, k),
+        SvgPolyline => s.wrap::<SvgPolylineElement>(d, k),
+        SvgPolygon => s.wrap::<SvgPolygonElement>(d, k),
         SvgRect => s.wrap::<SvgRectElement>(d, k),
         SvgCircle => s.wrap::<SvgCircleElement>(d, k),
         SvgEllipse => s.wrap::<SvgEllipseElement>(d, k),
@@ -1132,6 +1187,11 @@ pub fn interface_name(class: ElClass) -> &'static str {
         Directory => HtmlDirectoryElement::NAME,
         Param => HtmlParamElement::NAME,
         Track => HtmlTrackElement::NAME,
+        Geolocation => HtmlGeolocationElement::NAME,
+        Install => HtmlInstallElement::NAME,
+        UserMedia => HtmlUserMediaElement::NAME,
+        Camera => HtmlCameraElement::NAME,
+        Microphone => HtmlMicrophoneElement::NAME,
         Unknown => HtmlUnknownElement::NAME,
         Generic => HtmlElement::NAME,
         Svg => SvgElement::NAME,
@@ -1144,6 +1204,8 @@ pub fn interface_name(class: ElClass) -> &'static str {
         SvgTextPath => SvgTextPathElement::NAME,
         SvgA => SvgAElement::NAME,
         SvgRoot => SvgSvgElement::NAME,
+        SvgSymbol => SvgSymbolElement::NAME,
+        SvgView => SvgViewElement::NAME,
         SvgClipPath => SvgClipPathElement::NAME,
         SvgMask => SvgMaskElement::NAME,
         SvgPattern => SvgPatternElement::NAME,
@@ -1151,6 +1213,10 @@ pub fn interface_name(class: ElClass) -> &'static str {
         SvgRadialGradient => SvgRadialGradientElement::NAME,
         SvgFilter => SvgFilterElement::NAME,
         SvgMarker => SvgMarkerElement::NAME,
+        SvgStop => SvgStopElement::NAME,
+        SvgPath => SvgPathElement::NAME,
+        SvgPolyline => SvgPolylineElement::NAME,
+        SvgPolygon => SvgPolygonElement::NAME,
         SvgRect => SvgRectElement::NAME,
         SvgCircle => SvgCircleElement::NAME,
         SvgEllipse => SvgEllipseElement::NAME,
@@ -1275,6 +1341,11 @@ pub(crate) fn wrap_new_html_element<'s>(
         Directory => crate::node::wrap_new_node::<HtmlDirectoryElement>(s, page, el, new_target),
         Param => crate::node::wrap_new_node::<HtmlParamElement>(s, page, el, new_target),
         Track => crate::node::wrap_new_node::<HtmlTrackElement>(s, page, el, new_target),
+        Geolocation => crate::node::wrap_new_node::<HtmlGeolocationElement>(s, page, el, new_target),
+        Install => crate::node::wrap_new_node::<HtmlInstallElement>(s, page, el, new_target),
+        UserMedia => crate::node::wrap_new_node::<HtmlUserMediaElement>(s, page, el, new_target),
+        Camera => crate::node::wrap_new_node::<HtmlCameraElement>(s, page, el, new_target),
+        Microphone => crate::node::wrap_new_node::<HtmlMicrophoneElement>(s, page, el, new_target),
         Unknown => crate::node::wrap_new_node::<HtmlUnknownElement>(s, page, el, new_target),
         Generic => crate::node::wrap_new_node::<HtmlElement>(s, page, el, new_target),
         Svg => crate::node::wrap_new_node::<SvgElement>(s, page, el, new_target),
@@ -1287,6 +1358,8 @@ pub(crate) fn wrap_new_html_element<'s>(
         SvgTextPath => crate::node::wrap_new_node::<SvgTextPathElement>(s, page, el, new_target),
         SvgA => crate::node::wrap_new_node::<SvgAElement>(s, page, el, new_target),
         SvgRoot => crate::node::wrap_new_node::<SvgSvgElement>(s, page, el, new_target),
+        SvgSymbol => crate::node::wrap_new_node::<SvgSymbolElement>(s, page, el, new_target),
+        SvgView => crate::node::wrap_new_node::<SvgViewElement>(s, page, el, new_target),
         SvgClipPath => crate::node::wrap_new_node::<SvgClipPathElement>(s, page, el, new_target),
         SvgMask => crate::node::wrap_new_node::<SvgMaskElement>(s, page, el, new_target),
         SvgPattern => crate::node::wrap_new_node::<SvgPatternElement>(s, page, el, new_target),
@@ -1294,6 +1367,10 @@ pub(crate) fn wrap_new_html_element<'s>(
         SvgRadialGradient => crate::node::wrap_new_node::<SvgRadialGradientElement>(s, page, el, new_target),
         SvgFilter => crate::node::wrap_new_node::<SvgFilterElement>(s, page, el, new_target),
         SvgMarker => crate::node::wrap_new_node::<SvgMarkerElement>(s, page, el, new_target),
+        SvgStop => crate::node::wrap_new_node::<SvgStopElement>(s, page, el, new_target),
+        SvgPath => crate::node::wrap_new_node::<SvgPathElement>(s, page, el, new_target),
+        SvgPolyline => crate::node::wrap_new_node::<SvgPolylineElement>(s, page, el, new_target),
+        SvgPolygon => crate::node::wrap_new_node::<SvgPolygonElement>(s, page, el, new_target),
         SvgRect => crate::node::wrap_new_node::<SvgRectElement>(s, page, el, new_target),
         SvgCircle => crate::node::wrap_new_node::<SvgCircleElement>(s, page, el, new_target),
         SvgEllipse => crate::node::wrap_new_node::<SvgEllipseElement>(s, page, el, new_target),
@@ -1333,12 +1410,14 @@ pub(crate) fn wrap_new_html_element<'s>(
 pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     def.method("getBoundingClientRect", 0, |s, n, _a| crate::layout_api::bounding_rect(s, n));
     def.method("getClientRects", 0, |s, n, _a| crate::layout_api::client_rects(s, n));
-    def.method("scrollIntoView", 0, |s, n, a| crate::layout_api::scroll_into_view(s, n, a));
+    // The scroll methods return promises (Chrome's `Promise<ScrollResult>`): a bad argument
+    // rejects.
+    def.promise_method("scrollIntoView", 0, |s, n, a| crate::layout_api::scroll_into_view(s, n, a));
     def.method("scrollIntoViewIfNeeded", 0, |s, n, a| crate::layout_api::scroll_into_view_if_needed(s, n, a));
     def.method("checkVisibility", 0, |s, n, a| crate::layout_api::check_visibility(s, n, a));
-    def.method("scroll", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, false));
-    def.method("scrollTo", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, false));
-    def.method("scrollBy", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, true));
+    def.promise_method("scroll", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, "scroll", false));
+    def.promise_method("scrollTo", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, "scrollTo", false));
+    def.promise_method("scrollBy", 0, |s, n, a| crate::layout_api::scroll_to(s, n, a, "scrollBy", true));
     def.accessor(
         "scrollTop",
         |s, n| crate::layout_api::scroll_get(s, n, true),
@@ -1675,8 +1754,10 @@ impl JsClass for HtmlElement {
                             value = "false";
                             break;
                         }
-                        Some(v) if v.is_empty() || v.eq_ignore_ascii_case("true") => break,
-                        _ => el = dom.parent_element(e).js()?,
+                        // "true", "" and an invalid value are the true state (Chromium); only a
+                        // missing attribute inherits (WPT writingsuggestions "... to an invalid value").
+                        Some(_) => break,
+                        None => el = dom.parent_element(e).js()?,
                     }
                 }
                 Ok(s.string(value))
@@ -1687,28 +1768,39 @@ impl JsClass for HtmlElement {
             },
         );
         reflect_bool!(def, "inert", "inert");
-        reflect_bool!(def, "autofocus", "autofocus");
-        reflect_str!(def, "popover", "popover");
         def.accessor(
-            "tabIndex",
+            "popover",
             |s, n| {
                 let dom = n.page().dom.borrow();
-                let explicit = dom
-                    .get_attribute(n.id, "tabindex")
-                    .js()?
-                    .and_then(parse_html_int)
-                    .filter(|v| (i32::MIN as i64..=MAX_REFLECTED_INT).contains(v));
-                let default = if dom.is_focusable(n.id).unwrap_or(false) { 0 } else { -1 };
-                Ok(s.number(explicit.unwrap_or(default) as f64))
+                Ok(dom.get_attribute(n.id, "popover").js()?.map_or(s.null(), |value| {
+                    s.string(pyro_dom::PopoverType::from_value(value).keyword())
+                }))
             },
-            |_s, n, v| {
-                let arg0 = to_i32(v)?;
-                n.page().dom.borrow_mut().set_attribute(n.id, "tabindex", &arg0.to_string()).js()
+            |_s, n, value| {
+                if value.is_nullish() {
+                    n.page().dom.borrow_mut().remove_attribute(n.id, "popover").js()?;
+                    return Ok(());
+                }
+                set_attr(n, "popover", &dom_string(value)?)
             },
         );
+        define_focus_attributes(def);
         def.accessor(
             "draggable",
-            |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute(n.id, "draggable").js()? == Some("true"))),
+            // HTML: true and false are ASCII case-insensitive keywords; otherwise
+            // (the auto state) img elements and a elements with an href are draggable.
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                let draggable = match dom.get_attribute(n.id, "draggable").js()? {
+                    Some(v) if v.eq_ignore_ascii_case("true") => true,
+                    Some(v) if v.eq_ignore_ascii_case("false") => false,
+                    _ => {
+                        is_html(&dom, n.id, &["img"])
+                            || (is_html(&dom, n.id, &["a"]) && dom.get_attribute(n.id, "href").js()?.is_some())
+                    }
+                };
+                Ok(s.boolean(draggable))
+            },
             |_s, n, v| {
                 n.page()
                     .dom
@@ -1717,9 +1809,35 @@ impl JsClass for HtmlElement {
                     .js()
             },
         );
+        // HTML "autocapitalization": the own autocapitalization hint (the attribute's state,
+        // else an inheriting form control's form owner's), "" for the default state.
+        def.accessor(
+            "autocapitalize",
+            |s, n| Ok(s.string(autocapitalize_hint(&n.page().dom.borrow(), n.id))),
+            |_s, n, v| set_attr(n, "autocapitalize", &dom_string(v)?),
+        );
+        // HTML "autocorrection": the used autocorrection state, as a boolean.
+        def.accessor(
+            "autocorrect",
+            |s, n| Ok(s.boolean(autocorrect_on(&n.page().dom.borrow(), n.id))),
+            |_s, n, v| set_attr(n, "autocorrect", if v.to_bool() { "on" } else { "off" }),
+        );
         def.accessor(
             "spellcheck",
-            |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute(n.id, "spellcheck").js()? != Some("false"))),
+            |s, n| {
+                // HTML "checking enabled": the nearest inclusive ancestor whose `spellcheck` is a
+                // keyword (ASCII case-insensitive: "" or "true", "false") decides; else true.
+                let dom = n.page().dom.borrow();
+                let mut cur = Some(n.id);
+                while let Some(c) = cur {
+                    match dom.get_attribute(c, "spellcheck").ok().flatten() {
+                        Some(v) if v.is_empty() || v.eq_ignore_ascii_case("true") => return Ok(s.boolean(true)),
+                        Some(v) if v.eq_ignore_ascii_case("false") => return Ok(s.boolean(false)),
+                        _ => cur = dom.parent_element(c).js()?,
+                    }
+                }
+                Ok(s.boolean(true))
+            },
             |_s, n, v| {
                 n.page()
                     .dom
@@ -1729,10 +1847,19 @@ impl JsClass for HtmlElement {
             },
         );
         def.accessor(
+            "translate",
+            |s, n| Ok(s.boolean(translation_enabled(&n.page().dom.borrow(), n.id))),
+            |_s, n, v| {
+                n.page().dom.borrow_mut().set_attribute(n.id, "translate", if v.to_bool() { "yes" } else { "no" }).js()
+            },
+        );
+        def.accessor(
             "contentEditable",
             |s, n| {
                 let dom = n.page().dom.borrow();
-                Ok(s.string(match dom.get_attribute(n.id, "contenteditable").js()? {
+                // The keywords are ASCII case-insensitive ("TRUE" is "true").
+                let value = dom.get_attribute(n.id, "contenteditable").js()?.map(str::to_ascii_lowercase);
+                Ok(s.string(match value.as_deref() {
                     Some("" | "true") => "true",
                     Some("false") => "false",
                     Some("plaintext-only") => "plaintext-only",
@@ -1761,7 +1888,7 @@ impl JsClass for HtmlElement {
             let dom = n.page().dom.borrow();
             let mut cur = Some(n.id);
             while let Some(c) = cur {
-                match dom.get_attribute(c, "contenteditable").ok().flatten() {
+                match dom.get_attribute(c, "contenteditable").ok().flatten().map(str::to_ascii_lowercase).as_deref() {
                     Some("" | "true" | "plaintext-only") => return Ok(s.boolean(true)),
                     Some("false") => return Ok(s.boolean(false)),
                     _ => cur = dom.parent_element(c).js()?,
@@ -1795,13 +1922,15 @@ impl JsClass for HtmlElement {
             Ok(s.undefined())
         });
         def.method("attachInternals", 0, |s, n, _a| crate::internals::attach(s, n.page(), n.id));
+        // The popover methods act for the document the element is in now: a popover moved into
+        // another frame's document (sharing this DOM) is that page's.
         def.method("showPopover", 0, |s, n, a| {
             let source = crate::popover::source_option(s, a.get(0))?;
-            crate::popover::show_popover(n.page(), n.id, true, source)?;
+            crate::popover::show_popover(&popover_page(n), n.id, true, source)?;
             Ok(s.undefined())
         });
         def.method("hidePopover", 0, |s, n, _a| {
-            crate::popover::hide_popover(n.page(), n.id, true, true, true, None)?;
+            crate::popover::hide_popover(&popover_page(n), n.id, true, true, true, None)?;
             Ok(s.undefined())
         });
         def.method("togglePopover", 0, |s, n, a| {
@@ -1816,7 +1945,7 @@ impl JsClass for HtmlElement {
                     None => (Some(v.to_bool()), None),
                 },
             };
-            let page = n.page();
+            let page = &popover_page(n);
             let showing = page.dom.borrow().is_popover_showing(n.id);
             match force {
                 // Already in the wanted state: only the validity errors.
@@ -1826,7 +1955,8 @@ impl JsClass for HtmlElement {
                 _ if showing => crate::popover::hide_popover(page, n.id, true, true, true, source)?,
                 _ => crate::popover::show_popover(page, n.id, true, source)?,
             }
-            Ok(s.boolean(page.dom.borrow().is_popover_showing(n.id)))
+            let now_showing = page.dom.borrow().is_popover_showing(n.id);
+            Ok(s.boolean(now_showing))
         });
     }
 }
@@ -1848,7 +1978,8 @@ simple_class!(HtmlBodyElement, "HTMLBodyElement", HtmlElement, |def| {
 simple_class!(HtmlTitleElement, "HTMLTitleElement", HtmlElement, |def| {
     def.accessor(
         "text",
-        |s, n| Ok(s.string(&n.page().dom.borrow().text_content(n.id).js()?.unwrap_or_default())),
+        // HTML: the element's child text content (its Text children only).
+        |s, n| Ok(s.string(&n.page().dom.borrow().child_text_content(n.id))),
         |_s, n, v| {
             let arg0 = dom_string(v)?;
             n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
@@ -1918,13 +2049,16 @@ simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
     def.accessor(
         "async",
         |s, n| {
-            let dom = n.page().dom.borrow();
-            let info = dom.script_info(n.id).js()?;
-            // Non-parser scripts are async unless explicitly set otherwise.
-            Ok(s.boolean(info.async_ || !info.parser_inserted && !dom.has_attribute(n.id, "async").js()? && false))
+            // HTML: true when the element is force async (created by script,
+            // never given `async = false`) or has an `async` attribute.
+            let info = n.page().dom.borrow().script_info(n.id).js()?;
+            Ok(s.boolean(info.force_async || info.async_))
         },
         |_s, n, v| {
-            n.page().dom.borrow_mut().toggle_attribute(n.id, "async", Some(v.to_bool())).js()?;
+            // The setter clears force async, then sets or removes the attribute.
+            let mut dom = n.page().dom.borrow_mut();
+            dom.set_script_force_async(n.id, false).js()?;
+            dom.toggle_attribute(n.id, "async", Some(v.to_bool())).js()?;
             Ok(())
         },
     );
@@ -1933,7 +2067,11 @@ simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
         |s, n| Ok(s.string(&n.page().dom.borrow().script_info(n.id).js()?.inline_text)),
         |s, n, v| {
             let arg0 = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement text", false)?;
-            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+            // Trusted Types: the script is trusted with this text ([[ScriptText]]), before
+            // the text change that may prepare it.
+            let mut dom = n.page().dom.borrow_mut();
+            dom.set_script_text(n.id, &arg0);
+            dom.set_text_content(n.id, &arg0).js()
         },
     );
     def.static_method("supports", 1, |s, a| {
@@ -1953,6 +2091,14 @@ simple_class!(HtmlHeadingElement, "HTMLHeadingElement", HtmlElement, |def| {
 });
 
 /// URL decomposition shared by `<a>` and `<area>` (HTMLHyperlinkElementUtils).
+pub(crate) fn hyperlink_url(dom: &Dom, n: &NodeData, svg: bool) -> JsResult<Option<pyro_net::Url>> {
+    let mut href = dom.get_attribute_ns(n.id, None, "href").js()?;
+    if svg && href.is_none() {
+        href = dom.get_attribute_ns(n.id, Some("http://www.w3.org/1999/xlink"), "href").js()?;
+    }
+    Ok(href.and_then(|h| pyro_net::Url::parse(&resolve_url(dom, n.id, h)).ok()))
+}
+
 fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     reflect_url!(def, "href", "href");
     reflect_str!(def, "target", "target");
@@ -1967,12 +2113,8 @@ fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         let dom = n.page().dom.borrow();
         Ok(s.string(&dom.get_attribute(n.id, "href").js()?.map(|h| resolve_url(&dom, n.id, h)).unwrap_or_default()))
     });
-    fn link_url(dom: &Dom, n: &NodeData) -> JsResult<Option<pyro_net::Url>> {
-        let href = dom.get_attribute(n.id, "href").js()?.map(|h| resolve_url(dom, n.id, h));
-        Ok(href.and_then(|h| pyro_net::Url::parse(&h).ok()))
-    }
     def.getter("origin", |s, n| {
-        let url = link_url(&n.page().dom.borrow(), n)?;
+        let url = hyperlink_url(&n.page().dom.borrow(), n, false)?;
         Ok(s.string(&url.map(|u| quirks::origin(&u)).unwrap_or_default()))
     });
     // A null URL reads as ":" for protocol and "" otherwise, and ignores writes.
@@ -1981,13 +2123,13 @@ fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             def.accessor(
                 $prop,
                 |s, n| {
-                    let url = link_url(&n.page().dom.borrow(), n)?;
+                    let url = hyperlink_url(&n.page().dom.borrow(), n, false)?;
                     Ok(s.string(url.as_ref().map_or($null, |u| quirks::$get(u))))
                 },
                 |_s, n, v| {
                     let value = dom_string(v)?;
                     let mut dom = n.page().dom.borrow_mut();
-                    let Some(mut url) = link_url(&dom, n)? else { return Ok(()) };
+                    let Some(mut url) = hyperlink_url(&dom, n, false)? else { return Ok(()) };
                     let _ = quirks::$set(&mut url, &value);
                     dom.set_attribute(n.id, "href", url.as_str()).js()
                 },
@@ -2005,7 +2147,32 @@ fn define_hyperlink<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     part!("password", password, set_password, "");
 }
 
+fn define_interest_invoker<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.accessor(
+        "interestForElement",
+        |s, n| {
+            let target = n.page().dom.borrow().interest_for_element(n.id).js()?;
+            node_value(s, n.page(), target)
+        },
+        |s, n, v| {
+            let target = if v.is_nullish() {
+                None
+            } else {
+                let element = s.unwrap::<Element>(v).ok_or_else(|| JsError::Type("Expected an Element".into()))?;
+                if !Rc::ptr_eq(&element.page().dom, &n.page().dom) {
+                    // Separate DOM stores cannot share a shadow-including ancestor.
+                    n.page().dom.borrow_mut().set_attribute_ns(n.id, None, "interestfor", "").js()?;
+                    return Ok(());
+                }
+                Some(element.id)
+            };
+            n.page().dom.borrow_mut().set_interest_for_element(n.id, target).js()
+        },
+    );
+}
+
 simple_class!(HtmlAnchorElement, "HTMLAnchorElement", HtmlElement, |def| {
+    define_interest_invoker(def);
     define_hyperlink(def);
     reflect_str!(def, "coords", "coords");
     reflect_str!(def, "charset", "charset");
@@ -2022,6 +2189,7 @@ simple_class!(HtmlAnchorElement, "HTMLAnchorElement", HtmlElement, |def| {
     );
 });
 simple_class!(HtmlAreaElement, "HTMLAreaElement", HtmlElement, |def| {
+    define_interest_invoker(def);
     define_hyperlink(def);
     reflect_str!(def, "alt", "alt");
     reflect_str!(def, "coords", "coords");
@@ -2053,6 +2221,8 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     reflect_enum!(def, "fetchPriority", "fetchpriority", FETCH_PRIORITY);
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_bool!(def, "isMap", "ismap");
+    def.getter("x", |s, n| Ok(s.number(f64::from(img_position(n).0))));
+    def.getter("y", |s, n| Ok(s.number(f64::from(img_position(n).1))));
     // HTML: the rendered width and height when the image is being rendered, else (as browsers
     // do) the content attribute when it parses, else the density-corrected natural size, else 0.
     def.accessor("width", |s, n| Ok(s.number(img_dimension(n, true)?)), |_s, n, v| set_ulong(n, "width", to_u32(v)?, 0));
@@ -2072,38 +2242,188 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     def.getter("naturalHeight", |s, n| Ok(s.number({ n.page().image_complete(n.id); n.page().dom.borrow() }.reported_natural_size(n.id).map_or(0.0, |(_, h)| h.trunc()))));
     def.getter("complete", |s, n| Ok(s.boolean(n.page().image_complete(n.id))));
     def.getter("currentSrc", |s, n| {
-        let viewport = n.page().viewport();
-        let dom = n.page().dom.borrow();
-        // The source the loader selected for the current request (a lazy image's `sizes=auto`
-        // needs its layout), else a `<picture>` parent's matching `<source>`.
-        // The loader's selection when `sizes=auto` took part (it needs the layout the image had
-        // when selected): a lazy image, or one whose `sizes` (or a `<picture>` `<source>`'s) says
-        // `auto`.
-        let lazy = dom.get_attribute(n.id, "loading").js()?.is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
-        let auto = |el: NodeId| {
-            dom.get_attribute(el, "sizes").ok().flatten().is_some_and(|s| s.split(',').next().is_some_and(|f| f.trim().eq_ignore_ascii_case("auto")))
-        };
-        let in_picture_auto = dom.parent(n.id).ok().flatten().is_some_and(|p| {
-            dom.element(p).is_ok_and(|e| &*e.name.local == "picture")
-                && dom.children(p).is_ok_and(|mut kids| kids.any(|k| dom.element(k).is_ok_and(|e| &*e.name.local == "source") && auto(k)))
-        });
-        let stored = if lazy || auto(n.id) || in_picture_auto { dom.image_source(n.id).map(str::to_owned) } else { None };
-        let picture = stored.or_else(|| dom.picture_source(n.id, &viewport));
-        let selected = picture.as_deref().or(dom.get_attribute(n.id, "src").js()?);
-        Ok(s.string(&selected.map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
+        // Between a relevant mutation and the microtask it queued, the current request is the
+        // one before the mutation (WPT update-the-image-data/current-request-microtask*.html).
+        // An image left with no source is cleared at once, as its update's synchronous steps do
+        // (WPT the-img-element/remove-attribute-src.html).
+        current_src_checkpoint(n.page(), s);
+        let live = live_current_src(n.page(), n.id)?;
+        if !live.is_empty() {
+            if let Some((_, frozen)) = n.page().current_src.borrow().frozen.get(&n.id) {
+                return Ok(s.string(frozen));
+            }
+        }
+        Ok(s.string(&live))
     });
     def.method("decode", 0, |s, n, _a| crate::image_decode::decode(s, n.page(), n.id));
 });
 
+/// `currentSrc` of `<img>` elements with a relevant mutation whose microtask has not run yet.
+#[derive(Default)]
+pub(crate) struct CurrentSrcState {
+    /// Per image: the generation of its last relevant mutation and the `currentSrc` it had
+    /// before the first of the pending ones.
+    pub(crate) frozen: rustc_hash::FxHashMap<NodeId, (u64, String)>,
+    /// The `currentSrc` each image's last update microtask found.
+    last: rustc_hash::FxHashMap<NodeId, String>,
+    generation: u64,
+}
+
+/// HTML "update the image data" for each relevant mutation of an `<img>` since the last call
+/// (`Dom::take_current_src_updates`): `currentSrc` keeps the current request's URL until the
+/// microtask the mutation queues runs, which takes the new one unless a later mutation of the
+/// same image queued another (that one then does).
+pub(crate) fn current_src_checkpoint(page: &Rc<PageDom>, s: &Scope<'_>) {
+    let updates = match page.dom.try_borrow_mut() {
+        Ok(mut dom) => dom.take_current_src_updates(),
+        Err(_) => return,
+    };
+    if updates.is_empty() {
+        return;
+    }
+    let mut queued = Vec::with_capacity(updates.len());
+    {
+        let mut state = page.current_src.borrow_mut();
+        for id in updates {
+            state.generation += 1;
+            let generation = state.generation;
+            let before = match state.frozen.get(&id) {
+                Some((_, before)) => before.clone(),
+                None => state.last.get(&id).cloned().unwrap_or_default(),
+            };
+            state.frozen.insert(id, (generation, before));
+            queued.push((id, generation));
+        }
+    }
+    for (id, generation) in queued {
+        let weak = Rc::downgrade(page);
+        let settle = move |_: &Scope<'_>, _: Value<'_>| {
+            let Some(page) = weak.upgrade() else { return };
+            let current = page.current_src.borrow().frozen.get(&id).map(|(g, _)| *g);
+            if current != Some(generation) {
+                return;
+            }
+            page.current_src.borrow_mut().frozen.remove(&id);
+            if let Ok(src) = live_current_src(&page, id) {
+                page.current_src.borrow_mut().last.insert(id, src);
+            }
+        };
+        if s.then(s.undefined(), settle, |_, _| {}).is_err() {
+            page.current_src.borrow_mut().frozen.remove(&id);
+        }
+    }
+}
+
+/// The URL of the source an `<img>` selects now, resolved: what its current request takes.
+fn live_current_src(page: &Rc<PageDom>, id: NodeId) -> JsResult<String> {
+    let viewport = page.viewport();
+    let dom = page.dom.borrow();
+    // The loader's selection when `sizes=auto` took part (it needs the layout the image had
+    // when selected): a lazy image, or one whose `sizes` (or a `<picture>` `<source>`'s) says
+    // `auto`. Else a `<picture>` parent's matching `<source>`, else `src`.
+    let lazy = dom.get_attribute(id, "loading").js()?.is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
+    let auto = |el: NodeId| {
+        dom.get_attribute(el, "sizes")
+            .ok()
+            .flatten()
+            .is_some_and(|s| s.split(',').next().is_some_and(|f| f.trim().eq_ignore_ascii_case("auto")))
+    };
+    let in_picture_auto = dom.parent(id).ok().flatten().is_some_and(|p| {
+        dom.element(p).is_ok_and(|e| &*e.name.local == "picture")
+            && dom
+                .children(p)
+                .is_ok_and(|mut kids| kids.any(|k| dom.element(k).is_ok_and(|e| &*e.name.local == "source") && auto(k)))
+    });
+    let stored = if lazy || auto(id) || in_picture_auto { dom.image_source(id).map(str::to_owned) } else { None };
+    let picture = stored.or_else(|| dom.picture_source(id, &viewport));
+    let selected = picture.as_deref().or(dom.get_attribute(id, "src").js()?);
+    // An empty selected source is no request: the current URL stays the empty string
+    // (not the document's URL it would resolve to).
+    Ok(selected.filter(|v| !v.is_empty()).map(|v| resolve_url(&dom, id, v)).unwrap_or_default())
+}
+
 // ----- forms --------------------------------------------------------------------
 
+/// The page whose document `n` is in now (`input::sibling_page_of`), else its wrapper's.
+fn popover_page(n: &NodeData) -> Rc<PageDom> {
+    crate::input::sibling_page_of(n.page(), n.id).unwrap_or_else(|| n.page().clone())
+}
+
+/// The elements that take an unset `autocapitalize`/`autocorrect` from their form owner (HTML
+/// "autocapitalize-and-autocorrect inheriting elements").
+const AUTOCAPITALIZE_INHERITING: &[&str] = &["button", "fieldset", "input", "output", "select", "textarea"];
+
+/// HTML "own autocapitalization hint" of `el` as its IDL keyword: the `autocapitalize`
+/// attribute's state ("off" and "none" are none, "on" and "sentences" sentences, "words",
+/// "characters", an invalid value sentences, a missing or empty one the default ""), else for an
+/// inheriting element with a form owner the form owner's.
+fn autocapitalize_hint(dom: &Dom, el: NodeId) -> &'static str {
+    let state = |value: Option<&str>| -> &'static str {
+        match value.map(str::to_ascii_lowercase).as_deref() {
+            None | Some("") => "",
+            Some("off" | "none") => "none",
+            Some("words") => "words",
+            Some("characters") => "characters",
+            Some(_) => "sentences",
+        }
+    };
+    let own = state(dom.get_attribute(el, "autocapitalize").ok().flatten());
+    if !own.is_empty() || !is_html(dom, el, AUTOCAPITALIZE_INHERITING) {
+        return own;
+    }
+    match dom.form_owner(el).ok().flatten() {
+        Some(form) => state(dom.get_attribute(form, "autocapitalize").ok().flatten()),
+        None => "",
+    }
+}
+
+/// HTML "used autocorrection state" of `el`: off for an input in the URL, E-mail or Password
+/// state; else the `autocorrect` attribute's state ("off" is off; "on", empty and invalid values
+/// are on), else for an inheriting element with a form owner the form owner's, else on.
+fn autocorrect_on(dom: &Dom, el: NodeId) -> bool {
+    if is_html(dom, el, &["input"])
+        && matches!(dom.input_type(el), Ok(InputType::Url | InputType::Email | InputType::Password))
+    {
+        return false;
+    }
+    let state = |value: Option<&str>| value.map(|v| !v.eq_ignore_ascii_case("off"));
+    if let Some(on) = state(dom.get_attribute(el, "autocorrect").ok().flatten()) {
+        return on;
+    }
+    if is_html(dom, el, AUTOCAPITALIZE_INHERITING) {
+        let form = dom.form_owner(el).ok().flatten();
+        if let Some(on) = form.and_then(|f| state(dom.get_attribute(f, "autocorrect").ok().flatten())) {
+            return on;
+        }
+    }
+    true
+}
+
+fn reflected_association(dom: &Dom, from: NodeId, target: Option<NodeId>) -> Option<NodeId> {
+    dom.retarget_node(target?, dom.root_node(from, false).ok()?)
+}
+
 fn form_value<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
-    let f = n.page().dom.borrow().form_owner(n.id).js()?;
+    let dom = n.page().dom.borrow();
+    let f = reflected_association(&dom, n.id, dom.form_owner(n.id).js()?);
+    drop(dom);
     node_value(s, n.page(), f)
 }
 
 fn define_labels<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    def.getter("labels", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::Labels)?.value()));
+    // HTML: a live NodeList of the element's labels; null for an input in the Hidden state,
+    // which is not labelable.
+    def.getter("labels", |s, n| {
+        let hidden = {
+            let dom = n.page().dom.borrow();
+            is_html(&dom, n.id, &["input"])
+                && dom.get_attribute(n.id, "type").js()?.is_some_and(|t| t.eq_ignore_ascii_case("hidden"))
+        };
+        if hidden {
+            return Ok(s.null());
+        }
+        Ok(collections::labels(s, n.page(), n.id)?.value())
+    });
 }
 
 fn define_validation<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
@@ -2128,13 +2448,35 @@ fn selection_state(n: &NodeData) -> Option<(u32, u32, Option<bool>)> {
 /// HTML "set the selection range": when the start, end or direction changed,
 /// queue an element task that fires `select` (bubbling, not cancelable).
 /// Setting the same range again fires nothing.
-fn queue_select_if_changed(n: &NodeData, before: Option<(u32, u32, Option<bool>)>) {
+fn queue_selection_events_if_changed(n: &NodeData, before: Option<(u32, u32, Option<bool>)>) {
     if selection_state(n) != before {
+        crate::editing::queue_control_selectionchange(n.page(), n.id);
         crate::input::queue_simple(n.page(), n.id, "select", true, false);
     }
 }
 
 fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.method("createValueRange", 2, |s, n, a| {
+        a.require(2, "createValueRange")?;
+        // Unlike the JSC C API's number conversion, the JS unsigned shift
+        // rejects BigInt even when an object's primitive conversion returns it.
+        const CONVERTER: &str = "lpValueRangeUnsignedLong";
+        let holder = crate::worker_scope::module_holder(s, n.page())?;
+        let convert = match s.get_hidden(holder, CONVERTER)?.and_then(|v| v.as_object()) {
+            Some(convert) => convert,
+            None => {
+                let convert = s.eval("(value => value >>> 0)", None, 1)?.as_object().expect("conversion function");
+                s.set_hidden(holder, CONVERTER, convert.value())?;
+                convert
+            }
+        };
+        let start = convert.call(None, &[a.get(0)])?.to_number()? as u32;
+        let end = convert.call(None, &[a.get(1)])?.to_number()? as u32;
+        let range = n.page().dom.borrow_mut().create_value_range(n.id, start, end).js()?;
+        let control = collections::NodeHold::new(n.page(), n.id)?;
+        range.hold_control(Box::new(move || drop(control)));
+        Ok(s.wrap::<crate::range::OpaqueRange>(range, None)?.value())
+    });
     def.accessor(
         "selectionStart",
         |s, n| {
@@ -2156,8 +2498,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_range(n.id, st, e.max(st)).js()?;
                 dom.set_selection_direction(n.id, direction).js()?;
             }
-            crate::editing::queue_control_selectionchange(n.page(), n.id);
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
             Ok(())
         },
     );
@@ -2182,8 +2523,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_range(n.id, st, end).js()?;
                 dom.set_selection_direction(n.id, direction).js()?;
             }
-            crate::editing::queue_control_selectionchange(n.page(), n.id);
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
             Ok(())
         },
     );
@@ -2206,7 +2546,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             let direction = selection_direction(&dom_string(v)?);
             let before = selection_state(n);
             n.page().dom.borrow_mut().set_selection_direction(n.id, direction).js()?;
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
             Ok(())
         },
     );
@@ -2223,15 +2563,16 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             dom.set_selection_range(n.id, arg0, arg1).js()?;
             dom.set_selection_direction(n.id, direction).js()?;
         }
-        crate::editing::queue_control_selectionchange(n.page(), n.id);
-        queue_select_if_changed(n, before);
+        queue_selection_events_if_changed(n, before);
         Ok(s.undefined())
     });
     def.method("select", 0, |s, n, _a| {
         // select() also applies to number inputs, though the selection API
         // does not: Chromium selects their whole value, so the next edit
         // (Playwright fill: select(), then Input.insertText) replaces it.
-        let number = n.page().dom.borrow().input_type(n.id).is_ok_and(|t| t == InputType::Number);
+        // Email too (select() applies to it; the selection attributes do not).
+        let number =
+            n.page().dom.borrow().input_type(n.id).is_ok_and(|t| matches!(t, InputType::Number | InputType::Email));
         if has_selection(n) || number {
             let before = selection_state(n);
             let mut dom = n.page().dom.borrow_mut();
@@ -2247,8 +2588,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 let mut dom = page.dom.borrow_mut();
                 dom.set_selection_range(n.id, 0, len).js()?;
             }
-            crate::editing::queue_control_selectionchange(n.page(), n.id);
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
         }
         Ok(s.undefined())
     });
@@ -2291,8 +2631,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         }
         let before = selection_state(n);
         n.page().dom.borrow_mut().set_range_text(n.id, &text, start, end, mode).js()?;
-        crate::editing::queue_control_selectionchange(n.page(), n.id);
-        queue_select_if_changed(n, before);
+        queue_selection_events_if_changed(n, before);
         Ok(s.undefined())
     });
 }
@@ -2329,7 +2668,11 @@ fn has_selection(n: &NodeData) -> bool {
     let dom = n.page().dom.borrow();
     match dom.element(n.id) {
         Ok(e) if &*e.name.local == "textarea" => true,
-        Ok(e) if &*e.name.local == "input" => dom.input_type(n.id).map(|t| t.is_textual()).unwrap_or(false),
+        // HTML: the selection APIs apply to text, search, URL, telephone and password inputs, not
+        // to email (whose value need not be what is shown).
+        Ok(e) if &*e.name.local == "input" => {
+            dom.input_type(n.id).map(|t| t.is_textual() && t != InputType::Email).unwrap_or(false)
+        }
         _ => false,
     }
 }
@@ -2386,7 +2729,7 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
             page.dom.borrow_mut().set_value(n.id, &arg0).js()?;
             // `value = ''` on a file input empties its selected files too.
             if page.dom.borrow().input_type(n.id).js()? == InputType::File {
-                page.files.borrow_mut().remove(&n.id);
+                page.clear_input_files(n.id);
             }
             Ok(())
         },
@@ -2401,7 +2744,7 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     );
     def.accessor(
         "checked",
-        |s, n| Ok(s.boolean(n.page().dom.borrow().checked(n.id).js()?)),
+        |s, n| Ok(s.boolean(n.page().dom.borrow().checked_idl(n.id).js()?)),
         |_s, n, v| n.page().dom.borrow_mut().set_checked(n.id, v.to_bool()).js(),
     );
     reflect_bool!(def, "defaultChecked", "checked");
@@ -2453,18 +2796,18 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     def.accessor("files", crate::file::input_files, crate::file::set_input_files);
     def.getter("list", |s, n| {
         let dom = n.page().dom.borrow();
-        let id = dom.get_attribute(n.id, "list").js()?.map(str::to_owned);
-        let doc = dom.node_document(n.id).js()?;
-        let target = match id {
-            Some(id) => dom.get_element_by_id(doc, &id).js()?,
-            None => None,
-        };
+        let root = dom.root_node(n.id, false).js()?;
+        let target = dom.get_attribute(n.id, "list").js()?
+            .and_then(|id| dom.get_element_by_id(root, id).ok().flatten())
+            .and_then(|host| dom.resolve_reference_target(host).ok().flatten())
+            .filter(|&element| is_html(&dom, element, &["datalist"]))
+            .and_then(|element| dom.retarget_node(element, root));
         drop(dom);
         node_value(s, n.page(), target)
     });
     def.method("stepUp", 0, |s, n, a| step(s, n, a, true));
     def.method("stepDown", 0, |s, n, a| step(s, n, a, false));
-    def.method("showPicker", 0, |s, _n, _a| Ok(s.undefined()));
+    def.method("showPicker", 0, |s, n, _a| crate::show_picker::input(s, n));
 });
 
 /// `stepUp(n)` / `stepDown(n)`.
@@ -2502,10 +2845,15 @@ simple_class!(HtmlTextAreaElement, "HTMLTextAreaElement", HtmlElement, |def| {
     );
     def.accessor(
         "defaultValue",
-        |s, n| Ok(s.string(&n.page().dom.borrow().text_content(n.id).js()?.unwrap_or_default())),
+        |s, n| Ok(s.string(&n.page().dom.borrow().child_text_content(n.id))),
         |_s, n, v| {
-            let arg0 = dom_string(v)?;
-            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+            let value = dom_string(v)?;
+            let mut dom = n.page().dom.borrow_mut();
+            // HTML specifies string replace all, including for an equal value:
+            // the old Text child is replaced and children-changed steps run.
+            let doc = dom.node_document(n.id).js()?;
+            let child = if value.is_empty() { None } else { Some(dom.create_text(doc, &value).js()?) };
+            dom.replace_all(n.id, child).js()
         },
     );
     def.getter("textLength", |s, n| {
@@ -2534,7 +2882,11 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
     def.getter("selectedOptions", |s, n| {
         Ok(collections::collection(s, n.page(), n.id, CollectionKind::SelectedOptions)?.value())
     });
-    def.getter("length", |s, n| Ok(s.number(n.page().dom.borrow().select_options(n.id).js()?.len() as f64)));
+    def.accessor(
+        "length",
+        |s, n| Ok(s.number(n.page().dom.borrow().select_options(n.id).js()?.len() as f64)),
+        |_s, n, v| collections::options_set_length(n.page(), n.id, v),
+    );
     def.accessor(
         "selectedIndex",
         |s, n| Ok(s.number(n.page().dom.borrow().selected_index(n.id).js()? as f64)),
@@ -2567,6 +2919,10 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
     });
     def.pure_method("namedItem", 1, |s, n, a| {
         let name = dom_string(a.get(0))?;
+        // HTMLCollection's namedItem: the empty string names nothing.
+        if name.is_empty() {
+            return Ok(s.null());
+        }
         let dom = n.page().dom.borrow();
         let found = dom.select_options(n.id).js()?.into_iter().find(|&o| {
             dom.element(o).is_ok_and(|e| e.id() == Some(name.as_str()) || e.attr("name") == Some(name.as_str()))
@@ -2591,7 +2947,7 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
         }
         Ok(s.undefined())
     });
-    def.method("showPicker", 0, |s, _n, _a| Ok(s.undefined()));
+    def.method("showPicker", 0, |s, n, _a| crate::show_picker::select(s, n));
 });
 
 simple_class!(HtmlOptionElement, "HTMLOptionElement", HtmlElement, |def| {
@@ -2614,31 +2970,23 @@ simple_class!(HtmlOptionElement, "HTMLOptionElement", HtmlElement, |def| {
             if default_selected {
                 dom.set_attribute(el, "selected", "").js()?;
             }
-            // The constructor sets the selectedness, not the dirtiness. When
-            // the selectedness is what the attribute gives, the option stays
-            // clean and keeps following `defaultSelected`; an explicit state
-            // is only needed when the two differ (which pyro-dom can only
-            // record as dirty).
+            // The constructor sets the selectedness, not the dirtiness: the
+            // option keeps following its `selected` attribute.
             if selected != default_selected {
-                dom.set_option_selected(el, selected).js()?;
+                dom.set_option_selectedness_clean(el, selected).js()?;
             }
         }
         crate::node::wrap_new_node::<Self>(s, &page, el, new_target)
     });
     reflect_bool!(def, "disabled", "disabled");
     reflect_bool!(def, "defaultSelected", "selected");
+    // The form of the option's nearest ancestor select (HTML), else null.
     def.getter("form", |s, n| {
         let dom = n.page().dom.borrow();
-        let mut p = dom.parent(n.id).js()?;
-        while let Some(x) = p {
-            if dom.element(x).is_ok_and(|e| &*e.name.local == "select") {
-                let f = dom.form_owner(x).js()?;
-                drop(dom);
-                return node_value(s, n.page(), f);
-            }
-            p = dom.parent(x).js()?;
-        }
-        Ok(s.null())
+        let Some(select) = dom.option_nearest_select(n.id).js()? else { return Ok(s.null()) };
+        let f = reflected_association(&dom, n.id, dom.form_owner(select).js()?);
+        drop(dom);
+        node_value(s, n.page(), f)
     });
     def.accessor(
         "value",
@@ -2695,6 +3043,7 @@ simple_class!(HtmlOptGroupElement, "HTMLOptGroupElement", HtmlElement, |def| {
 });
 
 simple_class!(HtmlButtonElement, "HTMLButtonElement", HtmlElement, |def| {
+    define_interest_invoker(def);
     define_labels(def);
     define_validation(def);
     reflect_str!(def, "name", "name");
@@ -2787,14 +3136,18 @@ simple_class!(HtmlLabelElement, "HTMLLabelElement", HtmlElement, |def| {
         let c = labeled_control(&n.page().dom.borrow(), n.id);
         match c {
             Some(c) => {
-                let f = n.page().dom.borrow().form_owner(c).js()?;
+                let dom = n.page().dom.borrow();
+                let f = reflected_association(&dom, n.id, dom.form_owner(c).js()?);
+                drop(dom);
                 node_value(s, n.page(), f)
             }
             None => Ok(s.null()),
         }
     });
     def.getter("control", |s, n| {
-        let c = labeled_control(&n.page().dom.borrow(), n.id);
+        let dom = n.page().dom.borrow();
+        let c = reflected_association(&dom, n.id, labeled_control(&dom, n.id));
+        drop(dom);
         node_value(s, n.page(), c)
     });
 });
@@ -2822,6 +3175,17 @@ simple_class!(HtmlFieldSetElement, "HTMLFieldSetElement", HtmlElement, |def| {
     );
 });
 simple_class!(HtmlLegendElement, "HTMLLegendElement", HtmlElement, |def| {
+    def.getter("form", |s, n| {
+        let dom = n.page().dom.borrow();
+        let fieldset = dom.parent(n.id).js()?.filter(|&parent| is_html(&dom, parent, &["fieldset"]));
+        let owner = match fieldset {
+            Some(fieldset) => dom.form_owner(fieldset).js()?,
+            None => None,
+        };
+        let form = reflected_association(&dom, n.id, owner);
+        drop(dom);
+        node_value(s, n.page(), form)
+    });
     reflect_str!(def, "align", "align");
 });
 simple_class!(HtmlUListElement, "HTMLUListElement", HtmlElement, |def| {
@@ -2913,6 +3277,39 @@ fn table_ensure_child<'s>(s: &Scope<'s>, n: &NodeData, tag: &str) -> JsResult<Va
     Ok(wrap_node(s, n.page(), el)?.value())
 }
 
+/// The `caption` / `tHead` / `tFoot` setters. A value that is not an `HTMLTableCaptionElement`
+/// (caption) or `HTMLTableSectionElement` (thead, tfoot) is a TypeError, a section of another
+/// kind a "HierarchyRequestError". Otherwise the table's first `tag` child is removed and the new
+/// value inserted where HTML puts it (a caption first, a thead before the first child element
+/// that is neither a caption nor a colgroup, a tfoot at the end); the insertion's exception
+/// propagates.
+fn table_set_child(s: &Scope<'_>, n: &NodeData, v: Value<'_>, tag: &str) -> JsResult<()> {
+    let interface = if tag == "caption" { "HTMLTableCaptionElement" } else { "HTMLTableSectionElement" };
+    let type_error = || JsError::type_error(format!("The provided value is not of type '{interface}'."));
+    let new = if v.is_nullish() { None } else { Some(crate::node::node_arg(s, v, "set").map_err(|_| type_error())?) };
+    let mut dom = n.page().dom.borrow_mut();
+    if let Some(el) = new {
+        let kinds: &[&str] = if tag == "caption" { &["caption"] } else { &["thead", "tbody", "tfoot"] };
+        if !is_html(&dom, el, kinds) {
+            return Err(type_error());
+        }
+        if !is_html(&dom, el, &[tag]) {
+            return Err(JsError::dom("HierarchyRequestError", format!("The provided element is not a {tag} element.")));
+        }
+    }
+    let old = dom.element_children(n.id).js()?.find(|&c| is_html(&dom, c, &[tag]));
+    if let Some(old) = old {
+        dom.remove_node(old).js()?;
+    }
+    let Some(el) = new else { return Ok(()) };
+    let before = match tag {
+        "caption" => dom.first_child(n.id).js()?,
+        "thead" => dom.element_children(n.id).js()?.find(|&c| !is_html(&dom, c, &["caption", "colgroup"])),
+        _ => None,
+    };
+    dom.insert_before(n.id, el, before).js().map(|_| ())
+}
+
 /// `deleteCaption()` / `deleteTHead()` / `deleteTFoot()`.
 fn table_delete_child(n: &NodeData, tag: &str) -> JsResult<()> {
     let mut dom = n.page().dom.borrow_mut();
@@ -2977,9 +3374,9 @@ fn insert_member<'s>(
 simple_class!(HtmlTableElement, "HTMLTableElement", HtmlElement, |def| {
     def.getter("rows", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::TableRows)?.value()));
     def.getter("tBodies", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::TableBodies)?.value()));
-    def.getter("tHead", |s, n| table_section(s, n, "thead"));
-    def.getter("tFoot", |s, n| table_section(s, n, "tfoot"));
-    def.getter("caption", |s, n| table_section(s, n, "caption"));
+    def.accessor("tHead", |s, n| table_section(s, n, "thead"), |s, n, v| table_set_child(s, n, v, "thead"));
+    def.accessor("tFoot", |s, n| table_section(s, n, "tfoot"), |s, n, v| table_set_child(s, n, v, "tfoot"));
+    def.accessor("caption", |s, n| table_section(s, n, "caption"), |s, n, v| table_set_child(s, n, v, "caption"));
     def.method("createCaption", 0, |s, n, _a| table_ensure_child(s, n, "caption"));
     def.method("deleteCaption", 0, |s, n, _a| table_delete_child(n, "caption").map(|()| s.undefined()));
     def.method("createTHead", 0, |s, n, _a| table_ensure_child(s, n, "thead"));
@@ -3084,8 +3481,17 @@ simple_class!(HtmlTableRowElement, "HTMLTableRowElement", HtmlElement, |def| {
     });
     def.getter("sectionRowIndex", |s, n| {
         let dom = n.page().dom.borrow();
+        // HTML: the index in the parent's `rows` when the parent is a table or a table
+        // section, else -1.
         let Some(p) = dom.parent(n.id).js()? else { return Ok(s.number(-1.0)) };
-        let rows = table_collection(&dom, p, &CollectionKind::SectionRows);
+        let kind = if is_html(&dom, p, &["table"]) {
+            CollectionKind::TableRows
+        } else if is_html(&dom, p, &["thead", "tbody", "tfoot"]) {
+            CollectionKind::SectionRows
+        } else {
+            return Ok(s.number(-1.0));
+        };
+        let rows = table_collection(&dom, p, &kind);
         Ok(s.number(rows.iter().position(|&r| r == n.id).map_or(-1.0, |i| i as f64)))
     });
 });
@@ -3127,6 +3533,8 @@ simple_class!(HtmlIFrameElement, "HTMLIFrameElement", HtmlElement, |def| {
     reflect_str!(def, "srcdoc", "srcdoc");
     reflect_str!(def, "name", "name");
     reflect_str!(def, "allow", "allow");
+    // CSP Embedded Enforcement: the policy the frame's documents must accept.
+    reflect_str!(def, "csp", "csp");
     reflect_str!(def, "width", "width");
     reflect_str!(def, "height", "height");
     reflect_enum!(def, "loading", "loading", LOADING);
@@ -3146,6 +3554,7 @@ simple_class!(HtmlIFrameElement, "HTMLIFrameElement", HtmlElement, |def| {
         let doc = n.page().frame_document(n.id);
         node_value(s, n.page(), doc)
     });
+    def.method("getSVGDocument", 0, |s, n, _a| svg_document(s, n));
     def.getter("contentWindow", |s, n| {
         // Child browsing contexts are owned by pyro-browser; the hook returns
         // the child window proxy when one exists.
@@ -3160,6 +3569,8 @@ simple_class!(HtmlTemplateElement, "HTMLTemplateElement", HtmlElement, |def| {
         let c = n.page().dom.borrow().template_contents(n.id).js()?;
         node_value(s, n.page(), c)
     });
+    // Declarative partial updates: `htmlFor` reflects `for`.
+    reflect_str!(def, "htmlFor", "for");
     def.accessor(
         "shadowRootMode",
         |s, n| {
@@ -3190,9 +3601,23 @@ simple_class!(HtmlTemplateElement, "HTMLTemplateElement", HtmlElement, |def| {
             n.page().dom.borrow_mut().set_attribute(n.id, "shadowrootslotassignment", &value).js()
         },
     );
+    def.accessor(
+        "shadowRootReferenceTarget",
+        |s, n| Ok(n.page().dom.borrow().get_attribute(n.id, "shadowrootreferencetarget").js()?.map_or(s.null(), |v| s.string(v))),
+        |_s, n, v| {
+            if v.is_null() || v.is_undefined() {
+                n.page().dom.borrow_mut().remove_attribute(n.id, "shadowrootreferencetarget").js()?;
+                Ok(())
+            } else {
+                let target = dom_string(v)?;
+                n.page().dom.borrow_mut().set_attribute(n.id, "shadowrootreferencetarget", &target).js()
+            }
+        },
+    );
     reflect_bool!(def, "shadowRootDelegatesFocus", "shadowrootdelegatesfocus");
     reflect_bool!(def, "shadowRootClonable", "shadowrootclonable");
     reflect_bool!(def, "shadowRootSerializable", "shadowrootserializable");
+    reflect_str!(def, "shadowRootCustomElementRegistry", "shadowrootcustomelementregistry");
 });
 
 fn slot_assigned<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, elements_only: bool) -> JsResult<Value<'s>> {
@@ -3232,6 +3657,43 @@ simple_class!(HtmlSlotElement, "HTMLSlotElement", HtmlElement, |def| {
     });
 });
 simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
+    // HTML-in-Canvas: a paint event in the next frame, and its handler.
+    def.method("requestPaint", 0, |s, n, _a| {
+        crate::html_in_canvas::request_paint(n.page(), n.id);
+        Ok(s.undefined())
+    });
+    def.method("captureElementImage", 1, |s, n, a| {
+        a.require(1, "HTMLCanvasElement.captureElementImage")?;
+        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        crate::html_in_canvas::capture(s, n.page(), n.id, element)
+    });
+    def.method("getElementImageDefaultSize", 1, |s, n, a| {
+        a.require(1, "HTMLCanvasElement.getElementImageDefaultSize")?;
+        crate::html_in_canvas::default_size(s, n.page(), n.id, a.get(0))
+    });
+    def.method("getElementTransform", 1, |s, n, a| {
+        a.require(1, "HTMLCanvasElement.getElementTransform")?;
+        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        crate::html_in_canvas::get_transform(s, n.page(), n.id, element)
+    });
+    def.method("updateElementGeometry", 2, |s, n, a| {
+        a.require(1, "HTMLCanvasElement.updateElementGeometry")?;
+        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        crate::html_in_canvas::update_geometry(s, n.page(), n.id, element, a.get(1))?;
+        Ok(s.undefined())
+    });
+    def.method("clearElementGeometry", 1, |s, n, a| {
+        a.require(1, "HTMLCanvasElement.clearElementGeometry")?;
+        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        crate::html_in_canvas::clear_geometry(n.page(), n.id, element)?;
+        Ok(s.undefined())
+    });
+    reflect_enum!(def, "content", "content", CANVAS_CONTENT);
+    def.accessor(
+        "onpaint",
+        |s, n| crate::target::event_handler(s, &n.target, "paint"),
+        |s, n, v| crate::target::set_event_handler(s, &n.target, "paint", v),
+    );
     // Setting either dimension clears the bitmap and resets the context.
     def.accessor(
         "width",
@@ -3253,7 +3715,7 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
     // other context types are unsupported (null).
     def.method("getContext", 1, |s, n, a| {
         let kind = arg_string(&a, 0, "HTMLCanvasElement.getContext")?;
-        crate::canvas::get_context(s, n.page(), n.id, &kind)
+        crate::canvas::get_context(s, n.page(), n.id, &kind, a.get(1))
     });
     def.method("toDataURL", 0, |s, n, a| crate::canvas::to_data_url(s, n.page(), n.id, a));
     def.method("toBlob", 1, |s, n, a| crate::canvas::to_blob(s, n.page(), n.id, a));
@@ -3357,6 +3819,16 @@ simple_class!(HtmlProgressElement, "HTMLProgressElement", HtmlElement, |def| {
         |s, n, v| set_double(s, n, "value", v, false),
     );
     reflect_positive_double!(def, "max", "max", 1.0);
+    // HTML: -1 for an indeterminate progress bar (no value attribute), else the current value
+    // divided by the maximum.
+    def.getter("position", |s, n| {
+        if n.page().dom.borrow().get_attribute(n.id, "value").js()?.is_none() {
+            return Ok(s.number(-1.0));
+        }
+        let max = parsed_attr(n, "max", parse_html_float)?.filter(|&m| m > 0.0).unwrap_or(1.0);
+        let value = parsed_attr(n, "value", parse_html_float)?.unwrap_or(0.0).clamp(0.0, max);
+        Ok(s.number(value / max))
+    });
 });
 simple_class!(HtmlMeterElement, "HTMLMeterElement", HtmlElement, |def| {
     define_labels(def);
@@ -3378,15 +3850,25 @@ simple_class!(HtmlMeterElement, "HTMLMeterElement", HtmlElement, |def| {
 });
 simple_class!(HtmlOutputElement, "HTMLOutputElement", HtmlElement, |def| {
     define_labels(def);
+    define_validation(def);
     reflect_str!(def, "name", "name");
     reflect_tokens!(def, "htmlFor", "for");
     def.getter("form", form_value);
+    def.getter("type", |s, _n| Ok(s.string("output")));
+    def.accessor(
+        "defaultValue",
+        |s, n| Ok(s.string(&n.page().dom.borrow().output_default_value(n.id).js()?)),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_output_default_value(n.id, &arg0).js()
+        },
+    );
     def.accessor(
         "value",
         |s, n| Ok(s.string(&n.page().dom.borrow().text_content(n.id).js()?.unwrap_or_default())),
         |_s, n, v| {
             let arg0 = dom_string(v)?;
-            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+            n.page().dom.borrow_mut().set_output_value(n.id, &arg0).js()
         },
     );
 });
@@ -3428,6 +3910,8 @@ simple_class!(HtmlBaseElement, "HTMLBaseElement", HtmlElement, |def| {
     reflect_str!(def, "target", "target");
 });
 simple_class!(HtmlObjectElement, "HTMLObjectElement", HtmlElement, |def| {
+    define_validation(def);
+    def.getter("form", form_value);
     reflect_url!(def, "data", "data");
     reflect_str!(def, "type", "type");
     reflect_str!(def, "name", "name");
@@ -3444,6 +3928,7 @@ simple_class!(HtmlObjectElement, "HTMLObjectElement", HtmlElement, |def| {
     reflect_url!(def, "codeBase", "codebase");
     reflect_str!(def, "codeType", "codetype");
     reflect_str_nn!(def, "border", "border");
+    def.method("getSVGDocument", 0, |s, n, _a| svg_document(s, n));
     // An object showing a document has a child navigable, as an iframe does (null otherwise).
     def.getter("contentDocument", |s, n| {
         if let Some(document) = n.page().frame_document_value(s, n.id)? {
@@ -3464,6 +3949,7 @@ simple_class!(HtmlEmbedElement, "HTMLEmbedElement", HtmlElement, |def| {
     reflect_str!(def, "height", "height");
     reflect_str!(def, "align", "align");
     reflect_str!(def, "name", "name");
+    def.method("getSVGDocument", 0, |s, n, _a| svg_document(s, n));
 });
 simple_class!(HtmlMapElement, "HTMLMapElement", HtmlElement, |def| {
     reflect_str!(def, "name", "name");
@@ -3481,6 +3967,22 @@ simple_class!(HtmlMarqueeElement, "HTMLMarqueeElement", HtmlElement, |def| {
     reflect_enum!(def, "direction", "direction", MARQUEE_DIRECTION);
     reflect_str!(def, "height", "height");
     reflect_ulong!(def, "hspace", "hspace", 0);
+    // HTML: a valid integer greater than 0, else -1 (loop forever); setting accepts -1 or more
+    // than 0.
+    def.accessor(
+        "loop",
+        |s, n| {
+            let v = parsed_attr(n, "loop", parse_html_int)?.filter(|&v| v > 0);
+            Ok(s.number(v.map_or(-1.0, |v| v as f64)))
+        },
+        |_s, n, v| {
+            let x = to_i32(v)?;
+            if x != -1 && x <= 0 {
+                return Err(index_size_error("loop"));
+            }
+            set_attr(n, "loop", &x.to_string())
+        },
+    );
     reflect_ulong!(def, "scrollAmount", "scrollamount", 6);
     reflect_ulong!(def, "scrollDelay", "scrolldelay", 85);
     reflect_bool!(def, "trueSpeed", "truespeed");
@@ -3529,6 +4031,11 @@ simple_class!(HtmlParamElement, "HTMLParamElement", HtmlElement, |def| {
     reflect_str!(def, "valueType", "valuetype");
 });
 simple_class!(HtmlTrackElement, "HTMLTrackElement", HtmlElement, |def| {
+    def.getter("track", |s, n| crate::text_tracks::element_helper(s, n, "elementTrack", &[]));
+    def.getter("readyState", |s, n| Ok(s.number(f64::from(crate::media::track_ready_state(n.page(), n.id)))));
+    for (name, value) in [("NONE", 0.), ("LOADING", 1.), ("LOADED", 2.), ("ERROR", 3.)] {
+        def.constant(name, value);
+    }
     reflect_enum!(def, "kind", "kind", TRACK_KIND);
     reflect_url!(def, "src", "src");
     reflect_str!(def, "srclang", "srclang");
@@ -3536,12 +4043,163 @@ simple_class!(HtmlTrackElement, "HTMLTrackElement", HtmlElement, |def| {
     reflect_bool!(def, "default", "default");
 });
 
+// Permission elements (WICG "Page Embedded Permission Control", tentative): `<geolocation>`,
+// `<install>`, `<usermedia>`, `<camera>` and `<microphone>`. Pyro shows no permission prompt, so
+// an element is never valid, has no position, stream or track, and its permission reads
+// "prompt"; the interfaces, their reflected attributes and their event handlers are as Chrome
+// exposes them (WPT html/semantics/permission-element).
+
+/// The element's own event handler IDL attributes (`ontype`), in the element's handler slots
+/// (the content attributes are `handlers::is_handler_attribute`'s permission-element types).
+macro_rules! own_handlers {
+    ($def:expr, [$($ty:literal),* $(,)?]) => {
+        $(
+            $def.accessor(
+                concat!("on", $ty),
+                |s, n| crate::target::event_handler(s, &n.target, $ty),
+                |s, n, v| crate::target::set_event_handler(s, &n.target, $ty, v),
+            );
+        )*
+    };
+}
+
+/// `setConstraints(optional dictionary constraints = {})`: the dictionary converts (undefined,
+/// null or an object); no stream is requested before the element is activated.
+fn set_constraints<'s>(s: &Scope<'s>, a: &Args<'s>, interface: &str) -> JsResult<Value<'s>> {
+    let arg = a.get(0);
+    if !arg.is_nullish() && !arg.is_object() {
+        return Err(JsError::Type(
+            format!("Failed to execute 'setConstraints' on '{interface}': The provided value is not of type 'MediaTrackConstraintSet'.").into(),
+        ));
+    }
+    Ok(s.undefined())
+}
+
+/// Why a permission element is invalid, as far as Pyro tells: "style_invalid" when a connected
+/// one has an ancestor with a mask (`mask-image`: its look could be disguised, Chromium's
+/// "locking the PEPC style"), else "" (it is never valid either way: no registration).
+fn permission_invalid_reason(page: &PageDom, el: NodeId) -> &'static str {
+    let layout = page.layout();
+    let dom = page.dom.borrow();
+    if !dom.is_connected(el).unwrap_or(false) {
+        return "";
+    }
+    let mut ancestor = dom.parent_element(el).ok().flatten();
+    while let Some(a) = ancestor {
+        let mask = layout.computed_style_value(&dom, a, "mask-image");
+        if !mask.is_empty() && mask != "none" {
+            return "style_invalid";
+        }
+        ancestor = dom.parent_element(a).ok().flatten();
+    }
+    ""
+}
+
+/// A permission element became connected (`IframeChange::PermissionElement`): in a task, once
+/// its style is known, an element invalid for its style says so with `validationstatuschange`
+/// (WPT html/semantics/permission-element parent-mask, parent-image-mask).
+pub(crate) fn permission_element_connected(page: &Rc<PageDom>, el: NodeId) {
+    let p = page.clone();
+    page.post_task(Box::new(move || {
+        if permission_invalid_reason(&p, el) == "style_invalid" {
+            crate::input::fire_simple(&p, el, "validationstatuschange", false, false);
+        }
+    }));
+}
+
+/// InPagePermissionMixin: never valid (no registration), the permission "prompt".
+fn define_in_page_permission<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("isValid", |s, _n| Ok(s.boolean(false)));
+    def.getter("invalidReason", |s, n| Ok(s.string(permission_invalid_reason(n.page(), n.id))));
+    def.getter("initialPermissionStatus", |s, _n| Ok(s.string("prompt")));
+    def.getter("permissionStatus", |s, _n| Ok(s.string("prompt")));
+    own_handlers!(def, ["promptaction", "promptdismiss", "validationstatuschange"]);
+}
+
+simple_class!(HtmlGeolocationElement, "HTMLGeolocationElement", HtmlElement, |def| {
+    def.getter("position", |s, _n| Ok(s.null()));
+    def.getter("error", |s, _n| Ok(s.null()));
+    reflect_bool!(def, "autolocate", "autolocate");
+    reflect_bool!(def, "watch", "watch");
+    own_handlers!(def, ["location"]);
+    define_in_page_permission(def);
+});
+simple_class!(HtmlInstallElement, "HTMLInstallElement", HtmlElement, |def| {
+    reflect_url!(def, "manifest", "manifest");
+    reflect_url!(def, "manifestId", "manifestid");
+    def.getter("isValid", |s, _n| Ok(s.boolean(false)));
+    def.getter("invalidReason", |s, n| Ok(s.string(permission_invalid_reason(n.page(), n.id))));
+    own_handlers!(def, ["validationstatuschange"]);
+});
+simple_class!(HtmlUserMediaElement, "HTMLUserMediaElement", HtmlElement, |def| {
+    own_handlers!(def, ["stream", "cancel", "error"]);
+    def.getter("stream", |s, _n| Ok(s.null()));
+    def.getter("error", |s, _n| Ok(s.null()));
+    def.method("setConstraints", 0, |s, _n, a| set_constraints(s, &a, "HTMLUserMediaElement"));
+});
+simple_class!(HtmlCameraElement, "HTMLCameraElement", HtmlElement, |def| {
+    def.getter("track", |s, _n| Ok(s.null()));
+    def.getter("error", |s, _n| Ok(s.null()));
+    def.method("setConstraints", 0, |s, _n, a| set_constraints(s, &a, "HTMLCameraElement"));
+    own_handlers!(def, ["track", "error", "cancel"]);
+});
+simple_class!(HtmlMicrophoneElement, "HTMLMicrophoneElement", HtmlElement, |def| {
+    def.getter("track", |s, _n| Ok(s.null()));
+    def.getter("error", |s, _n| Ok(s.null()));
+    def.method("setConstraints", 0, |s, _n, a| set_constraints(s, &a, "HTMLMicrophoneElement"));
+    own_handlers!(def, ["track", "error", "cancel"]);
+});
+
+/// HTMLOrSVGOrMathMLElement reflects both focus attributes in no namespace,
+/// and the scoped focusgroup ones: `[SameObject, PutForwards=value]
+/// readonly attribute DOMTokenList focusGroup` (`focusgroup`) and the
+/// boolean `focusGroupStart` (`focusgroupstart`), as WPT
+/// html/interaction/focus/focusgroup/tentative/idl-reflection.html tests.
+fn define_focus_attributes<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    reflect_tokens!(def, "focusGroup", "focusgroup");
+    def.accessor(
+        "focusGroupStart",
+        |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute_ns(n.id, None, "focusgroupstart").js()?.is_some())),
+        |_s, n, value| {
+            if value.to_bool() {
+                // In no namespace, as the getter reads it.
+                n.page().dom.borrow_mut().set_attribute_ns(n.id, None, "focusgroupstart", "").js()
+            } else {
+                n.page().dom.borrow_mut().remove_attribute_ns(n.id, None, "focusgroupstart").js().map(|_| ())
+            }
+        },
+    );
+    def.accessor(
+        "autofocus",
+        |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute_ns(n.id, None, "autofocus").js()?.is_some())),
+        |_s, n, value| {
+            let mut dom = n.page().dom.borrow_mut();
+            if value.to_bool() {
+                dom.set_attribute_local(n.id, &markup5ever::local_name!("autofocus"), "").js()
+            } else {
+                dom.remove_attribute_ns(n.id, None, "autofocus").js().map(|_| ())
+            }
+        },
+    );
+    def.accessor(
+        "tabIndex",
+        |s, n| Ok(s.number(n.page().dom.borrow().tab_index(n.id).js()? as f64)),
+        |_s, n, value| {
+            let index = to_i32(value)?;
+            n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("tabindex"), &index.to_string()).js()
+        },
+    );
+}
+
 pub struct SvgElement;
 impl JsClass for SvgElement {
     const NAME: &'static str = "SVGElement";
     type Data = NodeData;
     type Parent = Element;
     fn define(def: &mut ClassDef<Self>) {
+        def.getter("className", |s, n| {
+            Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &SVG_CLASS)?.value())
+        });
         crate::handlers::define_global(def);
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]
@@ -3568,17 +4226,7 @@ impl JsClass for SvgElement {
             crate::input::blur_element(n.page(), n.id);
             Ok(s.undefined())
         });
-        def.getter("tabIndex", |s, n| {
-            Ok(s.number(
-                n.page()
-                    .dom
-                    .borrow()
-                    .get_attribute(n.id, "tabindex")
-                    .js()?
-                    .and_then(|v| v.parse::<i32>().ok())
-                    .unwrap_or(-1) as f64,
-            ))
-        });
+        define_focus_attributes(def);
     }
 }
 /// MathML Core `MathMLElement`: an element in the MathML namespace, with
@@ -3598,6 +4246,7 @@ impl JsClass for MathMlElement {
             let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
             crate::typed_om::attribute_style_map(s, n.page(), el)
         });
+        define_focus_attributes(def);
         def.method("focus", 0, focus_element);
         def.method("blur", 0, |s, n, _a| {
             crate::input::blur_element(n.page(), n.id);
@@ -3606,6 +4255,9 @@ impl JsClass for MathMlElement {
     }
 }
 simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
+    use pyro_dom::svg_string_list::StringListAttribute;
+    def.getter("requiredExtensions", |s, n| collections::svg_string_list(s, n, StringListAttribute::RequiredExtensions));
+    def.getter("systemLanguage", |s, n| collections::svg_string_list(s, n, StringListAttribute::SystemLanguage));
     // pyro: `transform` (SVG 2 `SVGAnimatedTransformList`, the attribute's list).
     def.getter("transform", |s, n| Ok(collections::animated_transform_list(s, n.page(), n.id, "transform")?.value()));
     // No rasterizer, but geometry is attribute-defined: the user-space box
@@ -3614,10 +4266,18 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
         let page = n.page();
         let dom = page.dom.borrow();
         let layout = page.layout();
-        crate::layout_api::rect_value(s, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
+        crate::canvas::rect_value(s, page, false, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
     });
 });
+fn svg_aspect_ratio<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("preserveAspectRatio", |s, n| collections::animated_aspect(s, n));
+}
+
+simple_class!(SvgSymbolElement, "SVGSymbolElement", SvgGraphicsElement, svg_aspect_ratio);
+simple_class!(SvgViewElement, "SVGViewElement", SvgElement, svg_aspect_ratio);
 simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
+    svg_aspect_ratio(def);
+    def.method("createSVGPoint", 0, |s, _, _| collections::detached_point(s, 0.0, 0.0));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
@@ -3644,13 +4304,17 @@ simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
         Ok(s.undefined())
     });
     def.method("animationsPaused", 0, |s, n, _a| Ok(s.boolean(crate::smil::paused(n.page()))));
+    def.method("createSVGNumber", 0, |s, _n, _a| {
+        collections::number_value(s, pyro_dom::svg_point_list::NumberItem::detached(0.0))
+    });
+    def.method("createSVGAngle", 0, |s, _n, _a| Ok(collections::create_svg_angle(s)?.value()));
     def.method("createSVGLength", 0, |s, n, _a| {
         Ok(collections::create_svg_length(s, n.id)?.value())
     });
     // pyro: the user agent's pan and zoom (SVG 2 `currentTranslate`, `currentScale`), which the
     // renderer applies to the `<svg>`'s content (pyro-dom `SVG_PAN_ATTR`).
     def.getter("currentTranslate", |s, n| {
-        Ok(s.wrap::<collections::SvgCurrentTranslate>(collections::NodeHold::new(n.page(), n.id)?, None)?.value())
+        Ok(s.wrap::<collections::SvgPoint>(collections::SvgPointData::Translate(collections::NodeHold::new(n.page(), n.id)?), None)?.value())
     });
     def.accessor(
         "currentScale",
@@ -3707,12 +4371,52 @@ static LEN_402: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: 
 static LEN_405: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "x2", initial: "0", dir: collections::SvgLengthDir::Width, slot: 405 };
 static LEN_408: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "y2", initial: "0", dir: collections::SvgLengthDir::Height, slot: 408 };
 
-simple_class!(SvgGeometryElement, "SVGGeometryElement", SvgGraphicsElement);
+fn svg_href<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("href", |s, n| {
+        Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &SVG_HREF)?.value())
+    });
+}
+
+static SVG_CLASS: collections::SvgAttr = collections::SvgAttr { attrs: &["class"], part: collections::SvgPart::Whole, initial: 0.0, slot: 420 };
+static LINK_TARGET: collections::SvgAttr = collections::SvgAttr { attrs: &["target"], part: collections::SvgPart::Whole, initial: 0.0, slot: 431 };
+static PATH_LENGTH: collections::SvgAttr = collections::SvgAttr { attrs: &["pathLength"], part: collections::SvgPart::Whole, initial: 0.0, slot: 421 };
+static STOP_OFFSET: collections::SvgAttr = collections::SvgAttr { attrs: &["offset"], part: collections::SvgPart::NumberOrPercentage, initial: 0.0, slot: 422 };
+
+simple_class!(SvgGeometryElement, "SVGGeometryElement", SvgGraphicsElement, |def| {
+    def.method("getTotalLength", 0, |s, n, _| {
+        Ok(s.number(pyro_dom::svg_geometry::total_length(&n.page().dom.borrow(), &n.page().layout(), n.id) as f32 as f64))
+    });
+    def.method("getPointAtLength", 1, |s, n, args| {
+        args.require(1, "SVGGeometryElement.getPointAtLength")?;
+        let distance = args.get(0).to_number()? as f32;
+        if !distance.is_finite() {
+            return Err(JsError::Type("The distance must be a finite float.".into()));
+        }
+        let point = pyro_dom::svg_geometry::point_at_length(&n.page().dom.borrow(), &n.page().layout(), n.id, f64::from(distance))
+            .ok_or_else(|| JsError::dom("InvalidStateError", "The element has no path to measure."))?;
+        collections::detached_point(s, point.x, point.y)
+    });
+    def.getter("pathLength", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &PATH_LENGTH)?.value()));
+});
+simple_class!(SvgPathElement, "SVGPathElement", SvgGeometryElement);
+fn svg_animated_points<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("points", |s, n| collections::point_list(s, n, false));
+    def.getter("animatedPoints", |s, n| collections::point_list(s, n, true));
+}
+simple_class!(SvgPolylineElement, "SVGPolylineElement", SvgGeometryElement, |def| { svg_animated_points(def); });
+simple_class!(SvgPolygonElement, "SVGPolygonElement", SvgGeometryElement, |def| { svg_animated_points(def); });
+simple_class!(SvgStopElement, "SVGStopElement", SvgElement, |def| {
+    def.getter("offset", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &STOP_OFFSET)?.value()));
+});
 // The graphics elements that are boxes (SVG 2 `image`, `foreignObject`, `use`): their geometry as
 // SVGAnimatedLengths. (The elements were plain SVGGraphicsElements.)
 static LEN_411: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "textLength", initial: "0", dir: collections::SvgLengthDir::Other, slot: 411 };
 static LEN_414: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "startOffset", initial: "0", dir: collections::SvgLengthDir::Other, slot: 414 };
 simple_class!(SvgImageElement, "SVGImageElement", SvgGraphicsElement, |def| {
+    svg_aspect_ratio(def);
+    svg_href(def);
+    // As HTMLImageElement's, for the request of its href (SVG 2 / HTML image decode).
+    def.method("decode", 0, |s, n, _a| crate::image_decode::decode(s, n.page(), n.id));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));
@@ -3725,25 +4429,52 @@ simple_class!(SvgForeignObjectElement, "SVGForeignObjectElement", SvgGraphicsEle
     def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_333)?.value()));
 });
 simple_class!(SvgUseElement, "SVGUseElement", SvgGraphicsElement, |def| {
+    svg_href(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));
     def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_333)?.value()));
 });
 // SVG 2 text content elements: `textLength` (and `startOffset` of a `textPath`) as
-// SVGAnimatedLengths. Not implemented yet: the text measuring methods, `lengthAdjust`, and the
+// SVGAnimatedLengths. Not implemented yet: the text measuring methods and the
 // `x`, `y`, `dx`, `dy` and `rotate` lists of the positioning elements.
+static LENGTH_ADJUST: collections::SvgEnum = collections::SvgEnum { attr: "lengthAdjust", keywords: &["spacing", "spacingAndGlyphs"], initial: 1, slot: 423 };
+static TEXT_METHOD: collections::SvgEnum = collections::SvgEnum { attr: "method", keywords: &["align", "stretch"], initial: 1, slot: 424 };
+static TEXT_SPACING: collections::SvgEnum = collections::SvgEnum { attr: "spacing", keywords: &["auto", "exact"], initial: 2, slot: 425 };
+static TEXT_SIDE: collections::SvgEnum = collections::SvgEnum { attr: "side", keywords: &["left", "right"], initial: 1, slot: 426 };
+static MARKER_ORIENT: collections::SvgEnum = collections::SvgEnum { attr: "orient", keywords: &["auto", "0", "auto-start-reverse"], initial: 2, slot: 427 };
+
+macro_rules! svg_enum {
+    ($def:expr, $prop:literal, $e:expr) => {
+        $def.getter($prop, |s, n| Ok(collections::animated_enumeration(s, n.page(), n.id, &$e)?.value()));
+    };
+}
+
 simple_class!(SvgTextContentElement, "SVGTextContentElement", SvgGraphicsElement, |def| {
     def.getter("textLength", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_411)?.value()));
+    svg_enum!(def, "lengthAdjust", LENGTH_ADJUST);
     def.constant("LENGTHADJUST_UNKNOWN", 0.0);
     def.constant("LENGTHADJUST_SPACING", 1.0);
     def.constant("LENGTHADJUST_SPACINGANDGLYPHS", 2.0);
 });
-simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement);
+simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement, |def| {
+    def.getter("x", |s, n| collections::animated_length_list(s, n, "x"));
+    def.getter("y", |s, n| collections::animated_length_list(s, n, "y"));
+    def.getter("dx", |s, n| collections::animated_length_list(s, n, "dx"));
+    def.getter("dy", |s, n| collections::animated_length_list(s, n, "dy"));
+    def.getter("rotate", |s, n| collections::animated_number_list(s, n, "rotate"));
+});
 simple_class!(SvgTextElement, "SVGTextElement", SvgTextPositioningElement);
 simple_class!(SvgTSpanElement, "SVGTSpanElement", SvgTextPositioningElement);
 simple_class!(SvgTextPathElement, "SVGTextPathElement", SvgTextContentElement, |def| {
+    svg_href(def);
     def.getter("startOffset", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_414)?.value()));
+    svg_enum!(def, "method", TEXT_METHOD);
+    svg_enum!(def, "spacing", TEXT_SPACING);
+    svg_enum!(def, "side", TEXT_SIDE);
+    def.constant("TEXTPATH_SIDETYPE_UNKNOWN", 0.0);
+    def.constant("TEXTPATH_SIDETYPE_LEFT", 1.0);
+    def.constant("TEXTPATH_SIDETYPE_RIGHT", 2.0);
     def.constant("TEXTPATH_METHODTYPE_UNKNOWN", 0.0);
     def.constant("TEXTPATH_METHODTYPE_ALIGN", 1.0);
     def.constant("TEXTPATH_METHODTYPE_STRETCH", 2.0);
@@ -3801,17 +4532,21 @@ static PRIMITIVE_UNITS: collections::SvgEnum =
 static MARKER_UNITS: collections::SvgEnum =
     collections::SvgEnum { attr: "markerUnits", keywords: &["userSpaceOnUse", "strokeWidth"], initial: 2, slot: 31 };
 
-macro_rules! svg_enum {
-    ($def:expr, $prop:literal, $e:expr) => {
-        $def.getter($prop, |s, n| Ok(collections::animated_enumeration(s, n.page(), n.id, &$e)?.value()));
-    };
-}
-
 /// The `SVGUnitTypes` constants, which the elements with units attributes include.
 fn unit_type_constants<C: JsClass>(def: &mut ClassDef<C>) {
     def.constant("SVG_UNIT_TYPE_UNKNOWN", 0.0);
     def.constant("SVG_UNIT_TYPE_USERSPACEONUSE", 1.0);
     def.constant("SVG_UNIT_TYPE_OBJECTBOUNDINGBOX", 2.0);
+}
+
+pub struct SvgUnitTypes;
+impl JsClass for SvgUnitTypes {
+    const NAME: &'static str = "SVGUnitTypes";
+    type Data = ();
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        unit_type_constants(def);
+    }
 }
 
 simple_class!(SvgClipPathElement, "SVGClipPathElement", SvgElement, |def| {
@@ -3828,6 +4563,8 @@ simple_class!(SvgMaskElement, "SVGMaskElement", SvgElement, |def| {
     svg_enum!(def, "maskContentUnits", MASK_CONTENT_UNITS);
 });
 simple_class!(SvgPatternElement, "SVGPatternElement", SvgElement, |def| {
+    svg_aspect_ratio(def);
+    svg_href(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));
@@ -3837,6 +4574,7 @@ simple_class!(SvgPatternElement, "SVGPatternElement", SvgElement, |def| {
     svg_enum!(def, "patternContentUnits", PATTERN_CONTENT_UNITS);
 });
 simple_class!(SvgGradientElement, "SVGGradientElement", SvgElement, |def| {
+    svg_href(def);
     unit_type_constants(def);
     def.constant("SVG_SPREADMETHOD_UNKNOWN", 0.0);
     def.constant("SVG_SPREADMETHOD_PAD", 1.0);
@@ -3869,6 +4607,7 @@ simple_class!(SvgFilterElement, "SVGFilterElement", SvgElement, |def| {
     svg_enum!(def, "primitiveUnits", PRIMITIVE_UNITS);
 });
 simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
+    svg_aspect_ratio(def);
     def.getter("refX", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_366)?.value()));
     def.getter("refY", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_369)?.value()));
     def.getter("markerWidth", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_372)?.value()));
@@ -3876,13 +4615,36 @@ simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
     def.constant("SVG_MARKERUNITS_UNKNOWN", 0.0);
     def.constant("SVG_MARKERUNITS_USERSPACEONUSE", 1.0);
     def.constant("SVG_MARKERUNITS_STROKEWIDTH", 2.0);
+    def.constant("SVG_MARKER_ORIENT_UNKNOWN", 0.0);
+    def.constant("SVG_MARKER_ORIENT_AUTO", 1.0);
+    def.constant("SVG_MARKER_ORIENT_ANGLE", 2.0);
+    def.constant("SVG_MARKER_ORIENT_AUTO_START_REVERSE", 3.0);
     svg_enum!(def, "markerUnits", MARKER_UNITS);
+    svg_enum!(def, "orientType", MARKER_ORIENT);
+    def.getter("orientAngle", |s, n| Ok(collections::animated_angle(s, n.page(), n.id)?.value()));
+    def.method("setOrientToAuto", 0, |s, n, _a| {
+        n.page().dom.borrow_mut().set_attribute_ns(n.id, None, "orient", "auto").js()?;
+        Ok(s.undefined())
+    });
+    def.method("setOrientToAngle", 1, |s, n, a| {
+        a.require(1, "SVGMarkerElement.setOrientToAngle")?;
+        let angle = collections::angle_string(s, a.get(0))?;
+        n.page().dom.borrow_mut().set_attribute_ns(n.id, None, "orient", &angle).js()?;
+        Ok(s.undefined())
+    });
+    def.accessor(
+        "orient",
+        |s, n| Ok(s.string(n.page().dom.borrow().get_attribute_ns(n.id, None, "orient").js()?.unwrap_or(""))),
+        |_s, n, v| {
+            let value = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute_ns(n.id, None, "orient", &value).js()
+        },
+    );
 });
 
 // SVG filter primitives (Filter Effects 1): their attributes as SVGAnimatedEnumeration, -String,
 // -Number, -Integer and -Boolean values (`collections`), following the specification's IDL.
-// Not implemented yet: the number lists (`values`, `tableValues`, `kernelMatrix`) and feImage's
-// `preserveAspectRatio`.
+// The number lists (`values`, `tableValues`, `kernelMatrix`) are not yet implemented.
 static FE_BLEND_MODE: collections::SvgEnum =
     collections::SvgEnum { attr: "mode", keywords: &["normal", "multiply", "screen", "darken", "lighten", "overlay", "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"], initial: 1, slot: 40 };
 static FE_COLOR_MATRIX_TYPE: collections::SvgEnum =
@@ -3946,7 +4708,7 @@ static FE_ATTR_137: collections::SvgAttr = collections::SvgAttr { attrs: &["stdD
 static FE_ATTR_138: collections::SvgAttr = collections::SvgAttr { attrs: &["stdDeviation"], part: collections::SvgPart::First, initial: 0.0, slot: 138 };
 static FE_ATTR_139: collections::SvgAttr = collections::SvgAttr { attrs: &["stdDeviation"], part: collections::SvgPart::Second, initial: 0.0, slot: 139 };
 static FE_ATTR_140: collections::SvgAttr = collections::SvgAttr { attrs: &["crossorigin"], part: collections::SvgPart::Whole, initial: 0.0, slot: 140 };
-static FE_ATTR_141: collections::SvgAttr = collections::SvgAttr { attrs: &["href", "xlink:href"], part: collections::SvgPart::Whole, initial: 0.0, slot: 141 };
+static SVG_HREF: collections::SvgAttr = collections::SvgAttr { attrs: &["href", "xlink:href"], part: collections::SvgPart::Whole, initial: 0.0, slot: 141 };
 static FE_ATTR_142: collections::SvgAttr = collections::SvgAttr { attrs: &["radius"], part: collections::SvgPart::First, initial: 0.0, slot: 142 };
 static FE_ATTR_143: collections::SvgAttr = collections::SvgAttr { attrs: &["radius"], part: collections::SvgPart::Second, initial: 0.0, slot: 143 };
 static FE_ATTR_144: collections::SvgAttr = collections::SvgAttr { attrs: &["dx"], part: collections::SvgPart::Whole, initial: 0.0, slot: 144 };
@@ -3984,6 +4746,7 @@ simple_class!(SvgFeBlendElement, "SVGFEBlendElement", SvgElement, |def| {
     def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 simple_class!(SvgFeColorMatrixElement, "SVGFEColorMatrixElement", SvgElement, |def| {
+    def.getter("values", |s, n| collections::animated_number_list(s, n, "values"));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
@@ -4006,6 +4769,7 @@ simple_class!(SvgFeComponentTransferElement, "SVGFEComponentTransferElement", Sv
     def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 simple_class!(SvgComponentTransferFunctionElement, "SVGComponentTransferFunctionElement", SvgElement, |def| {
+    def.getter("tableValues", |s, n| collections::animated_number_list(s, n, "tableValues"));
     def.constant("SVG_FECOMPONENTTRANSFER_TYPE_UNKNOWN", 0.0);
     def.constant("SVG_FECOMPONENTTRANSFER_TYPE_IDENTITY", 1.0);
     def.constant("SVG_FECOMPONENTTRANSFER_TYPE_TABLE", 2.0);
@@ -4045,6 +4809,7 @@ simple_class!(SvgFeCompositeElement, "SVGFECompositeElement", SvgElement, |def| 
     def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 simple_class!(SvgFeConvolveMatrixElement, "SVGFEConvolveMatrixElement", SvgElement, |def| {
+    def.getter("kernelMatrix", |s, n| collections::animated_number_list(s, n, "kernelMatrix"));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
@@ -4167,12 +4932,13 @@ simple_class!(SvgFeGaussianBlurElement, "SVGFEGaussianBlurElement", SvgElement, 
     });
 });
 simple_class!(SvgFeImageElement, "SVGFEImageElement", SvgElement, |def| {
+    svg_aspect_ratio(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
     def.getter("height", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_309)?.value()));
     def.getter("crossOrigin", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_140)?.value()));
-    def.getter("href", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_141)?.value()));
+    svg_href(def);
     def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 simple_class!(SvgFeMergeElement, "SVGFEMergeElement", SvgElement, |def| {
@@ -4252,6 +5018,11 @@ simple_class!(SvgFeTurbulenceElement, "SVGFETurbulenceElement", SvgElement, |def
 
 // SVG 2 `a`: the link attributes it shares with HTML's.
 simple_class!(SvgAElement, "SVGAElement", SvgGraphicsElement, |def| {
+    define_interest_invoker(def);
+    svg_href(def);
+    def.getter("target", |s, n| {
+        Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &LINK_TARGET)?.value())
+    });
     reflect_str!(def, "rel", "rel");
     reflect_tokens!(def, "relList", "rel");
     reflect_str!(def, "download", "download");
@@ -4278,7 +5049,7 @@ pub(crate) fn document_cookie(page: &PageDom, doc: NodeId) -> String {
     let (Some(net), Ok(url)) = (page.net.borrow().clone(), pyro_net::Url::parse(&url)) else { return String::new() };
     let jar = net.cookies().clone();
     let mut jar = jar.lock().unwrap();
-    jar.document_cookie(&url, pyro_net::cookies::now_secs())
+    jar.document_cookie_in(&url, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
 }
 
 pub(crate) fn set_document_cookie(page: &PageDom, doc: NodeId, value: &str) {
@@ -4289,7 +5060,7 @@ pub(crate) fn set_document_cookie(page: &PageDom, doc: NodeId, value: &str) {
     }
     let jar = net.cookies().clone();
     let mut jar = jar.lock().unwrap();
-    jar.set_from_header(&url, value, pyro_net::cookies::Access::Script, pyro_net::cookies::now_secs());
+    jar.set_from_header_in(&url, value, pyro_net::cookies::Access::Script, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context());
 }
 
 pub(crate) fn create_event<'s>(s: &Scope<'s>, page: &Rc<PageDom>, iface: &str) -> JsResult<Value<'s>> {
@@ -4363,9 +5134,10 @@ fn html_document(page: &PageDom, doc: NodeId) -> JsResult<()> {
 fn network_parser_active(page: &PageDom, doc: NodeId) -> bool {
     // An about:blank document (a new iframe's initial one, still "loading"
     // until its load task) has no network parser: it can be opened at once,
-    // as in Chrome.
+    // as in Chrome. Once the network parser stopped ("interactive": from
+    // DOMContentLoaded until load) the document can be opened too.
     !page.script_parser_active.get()
-        && page.ready_state(doc) != "complete"
+        && page.ready_state(doc) == "loading"
         && !page.dom.borrow().document_data(doc).is_ok_and(|d| &*d.url == "about:blank")
 }
 
@@ -4383,9 +5155,13 @@ fn writes_blocked(page: &PageDom, doc: NodeId) -> bool {
 pub(crate) fn document_open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = n.page();
     if a.len() >= 3 {
-        let open = s.global().get_atom("open")?;
-        let open = open.as_object().ok_or_else(|| JsError::Type("window.open is not a function".into()))?;
-        return open.call(None, &[a.get(0), a.get(1), a.get(2)]);
+        // HTML `document.open(url, name, features)`: the window open steps of the document's
+        // window (not whatever a page script put at `window.open`); InvalidAccessError for a
+        // document without one.
+        if n.id != page.document() || !page.is_fully_active() {
+            return Err(JsError::dom("InvalidAccessError", "The document has no window object."));
+        }
+        return crate::window::window_open(s, page, &a);
     }
     html_document(page, n.id)?;
     crate::custom::check_dynamic_markup(page, n.id)?;
@@ -4420,16 +5196,36 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
         let dom = page.dom.borrow();
         dom.descendants(doc).js()?.filter_map(|id| dom.node_key(id)).collect()
     };
-    keys.extend(page.window_target());
+    // An inactive document has no associated Window. Its creator's
+    // listeners belong to the displayed document.
+    if doc == page.document() {
+        keys.extend(page.window_target());
+    }
     {
         let mut dom = page.dom.borrow_mut();
         for key in keys {
             dom.erase_listeners(key);
         }
         dom.replace_all(doc, None).js()?;
+        // HTML document open steps: the document is in no-quirks mode until
+        // the written markup's doctype (or its absence) says otherwise.
+        dom.set_quirks_mode(doc, pyro_dom::QuirksMode::NoQuirks).js()?;
+    }
+    if doc == page.document() {
+        page.note_document_opened_for_iframe_load();
+    }
+    // HTML document open steps: a frame's document opened from another
+    // document's script takes the entry document's URL, without its fragment
+    // (the frame's history entry is replaced, `PageHooks::document_reopened`). Only a fully
+    // active one: a removed frame's document keeps its URL (WPT opening-the-input-stream/url).
+    if doc == page.document() && page.is_fully_active() {
+        if let Some(url) = entry_document_url(page, doc) {
+            page.dom.borrow_mut().set_document_url(doc, &url).js()?;
+        }
     }
     page.set_ready_state(doc, "loading");
-    let parser = pyro_dom::parse::DocumentParser::new(page.dom.clone(), doc, !page.scripting_disabled()).js()?;
+    let mut parser = pyro_dom::parse::DocumentParser::new(page.dom.clone(), doc, !page.scripting_disabled()).js()?;
+    parser.enable_template_patches();
     *page.script_parser.borrow_mut() = Some(parser);
     page.script_parser_active.set(true);
     page.script_parser_close.set(false);
@@ -4440,6 +5236,21 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
         hooks.document_reopened();
     }
     Ok(())
+}
+
+/// The URL (fragment removed) of the entry global object's document when it
+/// is not `doc` of `page`.
+fn entry_document_url(page: &Rc<PageDom>, doc: NodeId) -> Option<String> {
+    let realm = pyro_js::entry_realm()?;
+    let scope = realm.scope().ok()?;
+    let entry = crate::target::page_of(&scope).ok()?;
+    let entry_doc = entry.document();
+    if Rc::ptr_eq(&entry, page) && entry_doc == doc {
+        return None;
+    }
+    let dom = entry.dom.borrow();
+    let url = &dom.document_data(entry_doc).ok()?.url;
+    Some(url.split('#').next().unwrap_or_default().to_owned())
 }
 
 /// `document.write`/`writeln`.
@@ -4565,28 +5376,80 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
         return Ok(());
     }
     let info = {
-        let dom = page.dom.borrow();
+        let mut dom = page.dom.borrow_mut();
         let Ok(info) = dom.script_info(node) else { return Ok(()) };
         if info.already_started {
             return Ok(());
         }
+        // HTML "prepare the script element", as the loader's `prepare_script`: an element
+        // without source text, a disconnected one and a data block return before "already
+        // started" is set, and are no longer parser-inserted, so a later `src`, text or
+        // insertion prepares them like a script-created element
+        // (html/semantics/scripting-1/the-script-element/execution-timing/026.html).
+        if (info.src.is_none() && info.inline_text.is_empty())
+            || !dom.is_connected(node).unwrap_or(false)
+            || info.kind == ScriptKind::Data
+        {
+            let _ = dom.clear_parser_inserted(node);
+            // Prepare step 4: without an `async` attribute it is now force async.
+            if !info.async_ {
+                let _ = dom.set_script_force_async(node, true);
+            }
+            return Ok(());
+        }
         info
     };
+    // A document without a browsing context (createHTMLDocument, DOMParser) has scripting
+    // disabled: its scripts are already started and never run, even moved into a document
+    // that has one (html/semantics/scripting-1/the-script-element/execution-timing/120.html).
+    if crate::custom::document_page(page, doc).is_none() {
+        let _ = page.dom.borrow_mut().mark_script_started(node);
+        return Ok(());
+    }
     match info.kind {
         ScriptKind::Classic if !info.nomodule && info.src.is_none() => {}
         ScriptKind::Classic if !info.nomodule => {
             return queue_written_script(page, doc, node, !info.async_ && !info.defer, "external")
         }
         ScriptKind::Module => return queue_written_script(page, doc, node, false, "module"),
-        // nomodule classic scripts, import maps and data blocks do not run.
+        ScriptKind::ImportMap => {
+            let _ = page.dom.borrow_mut().mark_script_started(node);
+            register_written_import_map(page, doc, &info);
+            return Ok(());
+        }
+        // nomodule classic scripts do not run.
         _ => {
             let _ = page.dom.borrow_mut().mark_script_started(node);
             return Ok(());
         }
     }
     let _ = page.dom.borrow_mut().mark_script_started(node);
+    // CSP `script-src-elem` for an inline script (its nonce, a hash, 'unsafe-inline'): blocked,
+    // it does not run (no event).
+    let nonce = crate::csp::element_nonce(page, node);
+    if !crate::csp::inline_allowed(page, crate::csp::InlineKind::Script, &nonce, &info.inline_text, Some(node)) {
+        return Ok(());
+    }
     let url = page.dom.borrow().document_data(doc).map(|d| d.url.clone()).unwrap_or_default();
     eval_parser_script(page, doc, node, &info.inline_text, &url)
+}
+
+/// An import map in written markup, registered when the parser reaches it (as
+/// the loader's `add_import_map` does for network markup) against the document
+/// base URL then, so the module scripts after it resolve through it.
+fn register_written_import_map(page: &PageDom, doc: NodeId, info: &pyro_dom::script::ScriptInfo) {
+    let Some(realm) = page.main_world_realm() else { return };
+    let Ok(scope) = realm.scope() else { return };
+    if info.src.is_some() {
+        scope.console_warn("External import maps are not supported: <script type=\"importmap\"> ignored its src.");
+        return;
+    }
+    let base = page.dom.borrow().document_base_url(doc).map(str::to_owned).unwrap_or_default();
+    match scope.add_import_map(&info.inline_text, &base) {
+        Ok(warnings) => warnings.iter().for_each(|w| scope.console_warn(&format!("Import map: {w}"))),
+        Err(JsError::Unsupported(what)) => scope.console_warn(&format!("Ignored <script type=\"importmap\">: {what}")),
+        Err(e) => scope.report_exception(&e),
+    }
 }
 
 /// Hands a script in written markup to the loader, which marks it started. A
@@ -4613,7 +5476,7 @@ fn eval_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId, text: &str,
     let Some(realm) = page.main_world_realm() else { return Ok(()) };
     let scope = realm.scope()?;
     let outer_script = page.current_script();
-    page.set_current_script(Some(node));
+    page.set_executing_classic_script(node);
     page.script_nesting.set(page.script_nesting.get() + 1);
     with_parser(page, doc, |p| p.open_insertion_point());
     crate::trusted_types::sync_compile_strings(&scope, page);
@@ -4805,10 +5668,17 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<HtmlDirectoryElement>();
     engine.register::<HtmlParamElement>();
     engine.register::<HtmlTrackElement>();
+    engine.register::<HtmlGeolocationElement>();
+    engine.register::<HtmlInstallElement>();
+    engine.register::<HtmlUserMediaElement>();
+    engine.register::<HtmlCameraElement>();
+    engine.register::<HtmlMicrophoneElement>();
     engine.register::<SvgElement>();
     engine.register::<MathMlElement>();
     engine.register::<SvgGraphicsElement>();
     engine.register::<SvgSvgElement>();
+    engine.register::<SvgSymbolElement>();
+    engine.register::<SvgViewElement>();
     engine.register::<SvgAElement>();
     engine.register::<SvgClipPathElement>();
     engine.register::<SvgMaskElement>();
@@ -4817,6 +5687,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgLinearGradientElement>();
     engine.register::<SvgRadialGradientElement>();
     engine.register::<SvgFilterElement>();
+    engine.register::<SvgUnitTypes>();
     engine.register::<SvgMarkerElement>();
     engine.register::<SvgGeometryElement>();
     engine.register::<SvgImageElement>();
@@ -4827,6 +5698,10 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgTextElement>();
     engine.register::<SvgTSpanElement>();
     engine.register::<SvgTextPathElement>();
+    engine.register::<SvgStopElement>();
+    engine.register::<SvgPathElement>();
+    engine.register::<SvgPolylineElement>();
+    engine.register::<SvgPolygonElement>();
     engine.register::<SvgRectElement>();
     engine.register::<SvgCircleElement>();
     engine.register::<SvgEllipseElement>();
@@ -4863,16 +5738,31 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 // Option getters can call back into JS; convert before focus/DOM borrows.
 fn focus_element<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let value = a.get(0);
-    let prevent_scroll = if value.is_null() || value.is_undefined() {
-        false
+    let (prevent_scroll, focus_visible) = if value.is_null() || value.is_undefined() {
+        (false, None)
     } else {
-        value
-            .as_object()
-            .ok_or_else(|| JsError::Type("Focus options must be an object".into()))?
-            .get_atom("preventScroll")?
-            .to_bool()
+        let options = value.as_object().ok_or_else(|| JsError::Type("Focus options must be an object".into()))?;
+        let focus_visible = options.get_atom("focusVisible")?;
+        (options.get_atom("preventScroll")?.to_bool(), (!focus_visible.is_undefined()).then(|| focus_visible.to_bool()))
     };
-    crate::input::focus_element_with_options(n.page(), n.id, prevent_scroll);
+    // Chrome's `HTMLLabelElement::focus`: a label that is not a focusable area itself (no valid
+    // `tabindex`, not rendered, or inert) passes focus to its labeled control (WPT
+    // the-dialog-element/inert-label-focus: the control in a modal dialog takes it).
+    let target = {
+        let is_label = n.page().dom.borrow().element(n.id).is_ok_and(|e| e.is_html() && &*e.name.local == "label");
+        if is_label {
+            let layout = n.page().layout();
+            let dom = n.page().dom.borrow();
+            if crate::input::is_focusable_area(&layout, &dom, n.id) {
+                n.id
+            } else {
+                dom.labeled_control(n.id).ok().flatten().unwrap_or(n.id)
+            }
+        } else {
+            n.id
+        }
+    };
+    crate::input::focus_element_from_script(n.page(), target, prevent_scroll, focus_visible);
     Ok(s.undefined())
 }
 
@@ -4976,4 +5866,22 @@ mod canvas_dimension_tests {
         assert_eq!(canvas_dimension(Some("4294967296"), 300), 300);
         assert_eq!(canvas_dimension(None, 150), 150);
     }
+}
+
+/// HTML's translation mode: the nearest HTML element's `translate` (yes or
+/// empty: enabled, no: disabled, ASCII case-insensitive) up the parent
+/// elements; translate-enabled at the top. Non-HTML elements inherit.
+fn translation_enabled(dom: &pyro_dom::Dom, id: pyro_dom::NodeId) -> bool {
+    let mut current = Some(id);
+    while let Some(el) = current {
+        if dom.element(el).is_ok_and(|e| e.is_html()) {
+            match dom.get_attribute(el, "translate").ok().flatten() {
+                Some(v) if v.is_empty() || v.eq_ignore_ascii_case("yes") => return true,
+                Some(v) if v.eq_ignore_ascii_case("no") => return false,
+                _ => {}
+            }
+        }
+        current = dom.parent_element(el).ok().flatten();
+    }
+    true
 }

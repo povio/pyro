@@ -1,0 +1,15 @@
+# Continuing in a default paragraph after a heading
+
+The exact integrated parent a3e597178 differs from executable source 751267b4f only in 21 evidence files. The previous topic's immutable parent-equivalent candidate, signed WPT results and named guard receipts were available for reuse. The actual measured source, tree, executable digest and JSC digest are in the build receipts. The eight insertParagraph shards contain 7,195 matched occurrences on WPT a421f2fea5eb7f91e0db399e44b0fb0779ee1603.
+
+At an ordinary caret at the end of H1–H5, insertParagraph keeps the heading and starts the configured DIV or P. A terminal padding BR stays in the heading. Inline formatting at the end of the heading can carry onto the next line so subsequent typing retains its style. Remaining text, a formatted suffix or a locked child after the caret keeps the operation inside the heading. Signed Chrome 158.0.8127.37 continues H6 for ordinary heading-end carets.
+
+Across the eight shards the parent passed 6,949 occurrences, the corrected candidate 6,962, and signed Chrome 7,021. All 13 gains pass Chrome and match historical URL/name/occurrence triples. All 79 parent-only passes held and 138 signed-only failures on other behaviors remain. Both candidate revisions had identical WPT results. The 54 static, eight child-line and one void-paragraph guard pages retained all 13,060, 300 and 72 statuses respectively. The native paragraph/select boundary guard passed.
+
+The first candidate (6a5c4868f) applied the ordinary heading exit to H6. The first 64 probes contained IDs, and Chrome's duplication of the ID on cloned headings obscured the heading-tag difference in literal markup counts. An additional 96 controls without IDs tested H1 through H6 with both default separators. They exposed six lost parent matches for H6 end, empty and selected-content cases. The corrected candidate (91dc1b1d4) restored all six while preserving all named gains.
+
+In the 96 no-ID probes, exact split and typed markup improved from 30/96 to 84/96, and both endpoint paths and offsets from 84/96 to 96/96. All twelve remaining literal markup differences concern locked following content. In the ID-bearing cohort split and typed markup improved from 0/64 to 20/64, with both endpoints improving from 56/64 to 62/64. Original heading, original content and neighbor connectivity immediately after splitting matched in all 160 cases. No final measured post-edit field lost a parent match.
+
+Undo grouping differs on both Pyro builds. The first undo returns to the split markup in Pyro, while Chrome restores the starting markup. After the second undo, starting markup and both selection endpoints agree on all 160 cases; original node connectivity differs on all 160. The controls archive records the intermediate undo and the restored snapshots separately.
+
+Independent QA reran all eight WPT shards and the corrected 64- and 96-case probes. Its matched WPT ledger and recorded direct observations agree with the owner results.

@@ -34,7 +34,7 @@ use selectors::{Element, matching::QuirksMode};
 use smallvec::SmallVec;
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, Bound, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::str::FromStr;
@@ -87,6 +87,8 @@ pub(crate) fn init_stylo_prefs() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         style_config::set_pref!("layout.css.anchor-positioning.enabled", true);
+        // pyro: `container-type: scroll-state` and `@container scroll-state(scrollable)`.
+        style_config::set_pref!("layout.css.scroll-state.enabled", true);
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         // pyro: `offset-path: url()` to an SVG shape element (resolve.rs `motion_url_path`).
         style_config::set_pref!("layout.css.motion-path-url.enabled", true);
@@ -121,6 +123,7 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
         style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
         style_config::set_pref!("layout.css.progress-function.enabled", true);
+        style_config::set_pref!("layout.css.random.enabled", true);
         style_config::set_pref!("layout.css.font-variations.enabled", true);
         style_config::set_pref!("layout.css.text-indent-keywords.enabled", true);
         // pyro: `grid-template-rows/columns: subgrid` (Taffy lays subgrids out, css-grid-2 §9).
@@ -158,6 +161,11 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.motion-path.enabled", true);
         style_config::set_pref!("layout.css.overscroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scroll-driven-animations.enabled", true);
+        // pyro: `display` in `@keyframes` and Web Animations keyframes, and Stylo's `Animate for
+        // Display` (css-display-4 §2.1: the non-`none` value throughout, `none` only at its end).
+        // Without it a `@keyframes` rule animating only `display` has no steps, and keyframes to
+        // or from `none` flip halfway (WPT css-display `animations/display-interpolation{,-none}`).
+        style_config::set_pref!("layout.css.display-animations.enabled", true);
         style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
         style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
@@ -354,6 +362,19 @@ pub(crate) fn note_style_changes(
     }
 }
 
+/// pyro: the slots of [`BaseDocument::take_anchor_evals`]: `left`, `right`, `top`, `bottom`,
+/// `width`, `height`, `min-width`, `min-height`, `max-width`, `max-height`.
+pub const ANCHOR_USED_SLOTS: usize = 10;
+
+/// pyro: an element whose used `anchor()`/`anchor-size()` values changed, by slot
+/// ([`ANCHOR_USED_SLOTS`]; `None`: not an anchor value, or not resolved).
+#[derive(Clone, Debug)]
+pub struct AnchorEval {
+    pub node: NodeId,
+    pub before: [Option<f32>; ANCHOR_USED_SLOTS],
+    pub after: [Option<f32>; ANCHOR_USED_SLOTS],
+}
+
 /// pyro: an element whose primary style a style traversal replaced
 /// ([`BaseDocument::take_style_changes`]).
 #[derive(Clone)]
@@ -372,12 +393,14 @@ pub struct BaseDocument {
     // Config
     /// Base url for resolving linked resources (stylesheets, images, fonts, etc)
     pub(crate) url: DocumentUrl,
+    fragment_document: Option<DocumentUrl>,
     // Devtool settings. Currently used to render debug overlays
     pub(crate) devtool_settings: DevtoolSettings,
     // Viewport details such as the dimensions, HiDPI scale, and zoom factor,
     pub(crate) viewport: Viewport,
     /// CSS media type used to evaluate `@media` rules.
     pub(crate) media_type: MediaType,
+    pub(crate) media_environment: crate::MediaEnvironment,
     /// External `<use href>` targets, by href as written: the local id that
     /// replaces it and the definition (SVG source with that id). Added to
     /// each `<svg>` that refers to them when it is rendered.
@@ -542,6 +565,22 @@ pub struct BaseDocument {
     /// (`NodeFlags::CV_DETERMINED`), those a query forced to render (`CV_FORCED`), and the scroll
     /// position relevance was last determined at (`update_content_visibility`).
     pub(crate) cv_auto: HashSet<NodeId>,
+    /// pyro: the anchors each absolutely positioned box resolved at its last layout, with the
+    /// layout pass (`cv_layout_pass`) that laid it out (`BaseDocument::record_cv_anchor_use`).
+    pub(crate) cv_anchor_uses: RefCell<HashMap<NodeId, (u64, Vec<NodeId>)>>,
+    /// pyro: the layout passes run so far (`resolve_layout_in_flush`).
+    pub(crate) cv_layout_pass: std::cell::Cell<u64>,
+    /// pyro: the (anchor, positioned box) pairs of the last rendering frame
+    /// (`commit_cv_anchor_frame`): each anchor's ancestors below the positioned box's are relevant
+    /// to the user (`update_content_visibility`).
+    pub(crate) cv_anchor_frame: HashSet<(NodeId, NodeId)>,
+    /// pyro: the elements that may remember a size (CSS Sizing 4 § 5.1): styled with
+    /// `contain-intrinsic-size: auto` in an axis (or `content-visibility: auto`), or holding a
+    /// remembered size (`BaseDocument::record_remembered_sizes`).
+    pub(crate) cis_auto: HashSet<NodeId>,
+    pub(crate) remembered_size_work: std::cell::Cell<u64>,
+    /// pyro: sizes are to be remembered at the end of the next layout (`request_remembered_sizes`).
+    pub(crate) remembered_pending: bool,
     pub(crate) cv_forced: HashSet<NodeId>,
     pub(crate) cv_scroll: Option<(f64, f64)>,
     /// pyro: a resolve again for relevance a fresh transform changed is running.
@@ -684,6 +723,13 @@ pub struct BaseDocument {
     pub(crate) anchor_rendered_options: HashMap<NodeId, usize>,
     pub(crate) anchor_area_snapshots: RefCell<HashMap<NodeId, ((NodeId, NodeId, style::values::specified::position::PositionArea, Option<usize>), taffy::Point<f32>)>>,
     pub(crate) anchor_pending_options: HashSet<NodeId>,
+    /// pyro: the used px of each anchored element's `anchor()`/`anchor-size()` insets and sizes
+    /// as its last layout resolved them ([`ANCHOR_USED_SLOTS`]), and, for the ones whose values
+    /// changed since the last [`Self::take_anchor_evals`], their values as of that call: a CSS
+    /// transition's before-change and after-change values (Chrome computes `anchor()` to px
+    /// before it transitions).
+    pub(crate) anchor_used: RefCell<HashMap<NodeId, [Option<f32>; ANCHOR_USED_SLOTS]>>,
+    pub(crate) anchor_used_changed: RefCell<HashMap<NodeId, [Option<f32>; ANCHOR_USED_SLOTS]>>,
     /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
     /// `scroll-target-group: auto` (sticky).
     pub(crate) scroll_marker_groups: bool,
@@ -729,6 +775,9 @@ pub struct BaseDocument {
     /// pyro: an element was ever styled with a `scroll-snap-type` (snapping is looked for only
     /// then: `mandatory_snap_containers`).
     pub(crate) scroll_snap_styles: bool,
+    /// pyro: an element was ever styled `scroll-initial-target: nearest` (initial scroll targets
+    /// are looked for only then: `initial_scroll_targets`).
+    pub(crate) scroll_initial_target_styles: bool,
     /// pyro: the generated text of each element's `::after` and `::before` with counters and
     /// quotes evaluated (`layout::counters`), while `generated_counters`.
     pub(crate) generated_text: HashMap<NodeId, crate::layout::counters::GeneratedText>,
@@ -869,8 +918,7 @@ impl BaseDocument {
 
         let viewport = config.viewport.unwrap_or_default();
         let media_type = config.media_type.unwrap_or_else(MediaType::screen);
-        let device = make_device(&viewport, None, media_type.clone(), font_ctx.clone());
-        let stylist = Stylist::new(device, QuirksMode::NoQuirks);
+        let mut device = make_device(&viewport, None, media_type.clone(), config.media_environment, font_ctx.clone());
         let snapshots = SnapshotMap::new();
         let mut nodes = Box::new(NodeTree::new(config.raster_budget.clone()));
         nodes.xml_document = config.xml_document;
@@ -886,6 +934,12 @@ impl BaseDocument {
             .base_url
             .and_then(|url| DocumentUrl::from_str(&url).ok())
             .unwrap_or_default();
+        let fragment_document = config.document_url.and_then(|text| DocumentUrl::from_str(&text).ok());
+        device.set_document_url(fragment_document.as_ref().unwrap_or(&base_url).inline_url_data().clone());
+        // pyro: a quirks-mode document matches ID and class selectors ASCII case-insensitively
+        // (HTML "case-sensitivity of selectors"; WPT css/selectors/invalidation
+        // `quirks-mode-stylesheet-dynamic-add-001`).
+        let stylist = Stylist::new(device, if nodes.quirks_mode { QuirksMode::Quirks } else { QuirksMode::NoQuirks });
         nodes.base_url = without_fragment(base_url.as_str()).to_owned();
 
         let net_provider = config
@@ -917,6 +971,7 @@ impl BaseDocument {
             nodes_to_id,
             viewport,
             media_type,
+            media_environment: config.media_environment,
             svg_sprites: HashMap::new(),
             svg_images: Default::default(),
             pending_device_changes: DeviceChanges::empty(),
@@ -940,6 +995,7 @@ impl BaseDocument {
             inline_urls: std::sync::Arc::new(std::sync::Mutex::new(vec![base_url.inline_url_data().clone()])),
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
+            fragment_document,
             nodes_to_stylesheet: BTreeMap::new(),
             shadow_sheet_hosts: HashMap::new(),
             linked_page_css: BTreeMap::new(),
@@ -968,6 +1024,12 @@ impl BaseDocument {
             has_canvas: false,
             sub_document_nodes: HashSet::new(),
             cv_auto: HashSet::new(),
+            cv_anchor_uses: RefCell::new(HashMap::new()),
+            cv_layout_pass: std::cell::Cell::new(0),
+            cv_anchor_frame: HashSet::new(),
+            cis_auto: HashSet::new(),
+            remembered_size_work: std::cell::Cell::new(0),
+            remembered_pending: false,
             cv_forced: HashSet::new(),
             cv_scroll: None,
             cv_resolving: false,
@@ -1030,6 +1092,8 @@ impl BaseDocument {
             anchor_rendered_options: Default::default(),
             anchor_area_snapshots: Default::default(),
             anchor_pending_options: Default::default(),
+            anchor_used: Default::default(),
+            anchor_used_changed: Default::default(),
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
             transition_trees: None,
@@ -1048,6 +1112,7 @@ impl BaseDocument {
             text_box_trim_styles: false,
             column_span_styles: false,
             scroll_snap_styles: false,
+            scroll_initial_target_styles: false,
             generated_text: HashMap::new(),
             counters_dirty: true,
             marker_counters: false,
@@ -1150,6 +1215,7 @@ impl BaseDocument {
     /// Set base url for resolving linked resources (stylesheets, images, fonts, etc)
     pub fn set_base_url(&mut self, url: &str) {
         self.url = DocumentUrl::from(Url::parse(url).unwrap());
+        self.stylist.device_mut().set_document_url(self.fragment_document.as_ref().unwrap_or(&self.url).inline_url_data().clone());
         crate::net::adopt_inline(&self.inline_urls, self.url.inline_url_data());
         self.nodes.base_url = without_fragment(self.url.as_str()).to_owned();
     }
@@ -1511,6 +1577,8 @@ impl BaseDocument {
         self.anchor_transform_dirty.remove(&node_id);
         self.anchor_last_option.remove(&node_id);
         self.anchor_area_snapshots.get_mut().remove(&node_id);
+        self.anchor_used.get_mut().remove(&node_id);
+        self.anchor_used_changed.get_mut().remove(&node_id);
         self.anchor_rendered_options.remove(&node_id);
         self.anchor_pending_options.remove(&node_id);
         self.anchor_scroll_dirty.remove(&node_id);
@@ -2104,6 +2172,7 @@ impl BaseDocument {
                                         .filter(|_| marked)
                                         .map(str::to_owned),
                                     policies: self.sheet_policies.clone(),
+                                    quirks_mode: self.sheet_quirks_mode(),
                                 },
                             ),
                         );
@@ -2282,9 +2351,14 @@ impl BaseDocument {
         urls
     }
 
-    /// The document's base URL
+    /// Whether a resolved CSS URL refers to this document, ignoring its fragment.
+    pub fn is_document_url(&self, url: &Url) -> bool {
+        self.fragment_document.as_ref().unwrap_or(&self.url).is_same_document(url)
+    }
+
+    /// The document URL used to identify same-document resources.
     pub fn url(&self) -> &url::Url {
-        &self.url
+        self.fragment_document.as_ref().unwrap_or(&self.url)
     }
 
     /// pyro: `options` for a request this document makes, with this document's frame as the
@@ -2308,6 +2382,14 @@ impl BaseDocument {
     /// requests fail rather than go out as the page's), `None` in the page's document.
     pub(crate) fn request_client(&self) -> Option<String> {
         (self.subdocument_depth > 0).then(|| self.frame_client.clone().unwrap_or_default())
+    }
+
+    /// pyro: the quirks mode the document's author sheets (`<style>`, linked and imported) parse
+    /// in: a quirks-mode document's allow the unitless length quirk on the properties Quirks Mode
+    /// §3.6 lists, as Chromium's. Style attributes, CSSOM edits and the stylist's selector
+    /// matching stay in no-quirks mode, as pyro's CSSOM parses them.
+    pub(crate) fn sheet_quirks_mode(&self) -> QuirksMode {
+        if self.nodes.quirks_mode { QuirksMode::Quirks } else { QuirksMode::NoQuirks }
     }
 
     /// pyro: what a link's `href` resolves against, and the document's own URL (without a
@@ -2352,7 +2434,9 @@ impl BaseDocument {
         // bundle. Sheets are immutable here (pyro's CSSOM edits
         // the text and syncs it, not Blitz's rules).
         let css = css.as_ref();
-        let shared = origin == Origin::Author && !css.contains("@import");
+        // pyro: a quirks-mode document's sheets parse differently (`sheet_quirks_mode`), so they
+        // are neither taken from nor given to other documents.
+        let shared = origin == Origin::Author && !css.contains("@import") && !self.nodes.quirks_mode;
         if shared {
             if let Some(sheet) = crate::util::shared_sheet(css, self.url.as_str()) {
                 // A stylist holds a sheet once: another element of this
@@ -2387,6 +2471,7 @@ impl BaseDocument {
 
     /// pyro: [`Self::parse_stylesheet`] with the sheet's media list (`<style media>`).
     fn parse_stylesheet_with_media(&self, css: &str, origin: Origin, media: MediaList) -> Stylesheet {
+        let quirks_mode = if origin == Origin::Author { self.sheet_quirks_mode() } else { QuirksMode::NoQuirks };
         Stylesheet::from_str(
             css.as_ref(),
             self.url.url_extra_data(),
@@ -2403,9 +2488,10 @@ impl BaseDocument {
                 client: self.request_client(),
                 inline: Some(self.inline_urls.clone()),
                 policies: self.sheet_policies.clone(),
+                quirks_mode,
             }),
             None,
-            QuirksMode::NoQuirks,
+            quirks_mode,
             AllowImportRules::Yes,
         )
     }
@@ -2466,12 +2552,9 @@ impl BaseDocument {
         let element = &mut self.nodes[node_id].element_data_mut().unwrap();
         element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
 
-        // TODO: Nodes could potentially get reused so ordering by node_id might be wrong.
-        let insertion_point = self
-            .nodes_to_stylesheet
-            .range((Bound::Excluded(node_id), Bound::Unbounded))
-            .next()
-            .map(|(_, sheet)| sheet);
+        // A node slot can be reused after removal. The cascade follows the live
+        // owner elements' document order, including when a sheet is replaced.
+        let insertion_point = self.next_document_stylesheet(node_id);
 
         if let Some(insertion_point) = insertion_point {
             self.stylist.insert_stylesheet_before(
@@ -2483,6 +2566,50 @@ impl BaseDocument {
             self.stylist
                 .append_stylesheet(stylesheet, &self.guard.read())
         }
+    }
+
+    /// Reposition already loaded document sheets after their owners move. Remove the
+    /// whole moved group first so insertion always sees an ordered set of other sheets.
+    pub(crate) fn reposition_document_stylesheets(&mut self, owners: Vec<NodeId>) {
+        if owners.is_empty() { return; }
+        let guard = self.guard.read();
+        let mut moved = Vec::with_capacity(owners.len());
+        for owner in owners {
+            if let Some(sheet) = self.nodes_to_stylesheet.remove(&owner) {
+                self.stylist.remove_stylesheet(sheet.clone(), &guard);
+                moved.push((owner, sheet));
+            }
+        }
+        for (owner, sheet) in moved {
+            let next = self.next_document_stylesheet(owner).cloned();
+            self.nodes_to_stylesheet.insert(owner, sheet.clone());
+            if let Some(next) = next {
+                self.stylist.insert_stylesheet_before(sheet, next, &guard);
+            } else {
+                self.stylist.append_stylesheet(sheet, &guard);
+            }
+        }
+        self.stylesheet_generation += 1;
+    }
+
+    fn next_document_stylesheet(&self, owner: NodeId) -> Option<&DocumentStyleSheet> {
+        let node = &self.nodes[owner];
+        if let Some(parent) = node.parent {
+            // When all stylesheet owners are siblings, their order is the parent's
+            // child list. Avoid constructing two ancestor chains per comparison.
+            if self.nodes_to_stylesheet.keys().all(|id| self.nodes.get(*id).is_some_and(|n| n.parent == Some(parent))) {
+                let siblings = &self.nodes[parent].children;
+                if siblings.last() == Some(&owner) { return None; }
+                let index = node.child_index()?;
+                return siblings[index + 1..].iter().find_map(|id| self.nodes_to_stylesheet.get(id));
+            }
+        }
+        let root = node.owner_doc().id;
+        self.nodes_to_stylesheet.keys().copied()
+            .filter(|&id| id != owner && self.nodes.get(id).is_some_and(|n| n.owner_doc().id == root))
+            .filter(|&id| self.compare_document_order(owner, id).is_lt())
+            .min_by(|&a, &b| self.compare_document_order(a, b))
+            .and_then(|id| self.nodes_to_stylesheet.get(&id))
     }
 
     pub fn handle_messages(&mut self) {
@@ -2547,6 +2674,75 @@ impl BaseDocument {
     /// pyro: see [`Self::scroll_group_moves`].
     pub fn take_scroll_group_moves(&mut self) -> Vec<NodeId> {
         std::mem::take(&mut self.scroll_group_moves)
+    }
+
+    /// pyro: the elements whose used `anchor()`/`anchor-size()` values ([`ANCHOR_USED_SLOTS`])
+    /// changed since the last call, with their values then and now.
+    pub fn take_anchor_evals(&mut self) -> Vec<AnchorEval> {
+        let changed = std::mem::take(self.anchor_used_changed.get_mut());
+        let used = self.anchor_used.get_mut();
+        changed
+            .into_iter()
+            .filter_map(|(node, before)| {
+                let after = *used.get(&node)?;
+                (before != after).then_some(AnchorEval { node, before, after })
+            })
+            .collect()
+    }
+
+    /// pyro: the used px of `node`'s `anchor()`/`anchor-size()` values as its last layout
+    /// resolved them ([`ANCHOR_USED_SLOTS`]).
+    pub fn anchor_used(&self, node: NodeId) -> Option<[Option<f32>; ANCHOR_USED_SLOTS]> {
+        self.anchor_used.borrow().get(&node).copied()
+    }
+
+    /// pyro: records the used px of an anchored element's `anchor()`/`anchor-size()` value in
+    /// slot `slot` ([`ANCHOR_USED_SLOTS`]), as its layout resolved it.
+    pub(crate) fn record_anchor_used(&self, node: NodeId, slot: usize, px: f32) {
+        let mut used = self.anchor_used.borrow_mut();
+        let values = used.entry(node).or_insert([None; ANCHOR_USED_SLOTS]);
+        if values[slot] == Some(px) {
+            return;
+        }
+        self.anchor_used_changed.borrow_mut().entry(node).or_insert(*values);
+        values[slot] = Some(px);
+    }
+
+    /// pyro: drops the used `anchor()`/`anchor-size()` px recorded for `node`
+    /// ([`Self::record_anchor_used`]): the next ones it records start no transition from them.
+    pub(crate) fn forget_anchor_used(&self, node: NodeId) {
+        if self.anchor_used.borrow_mut().remove(&node).is_some() {
+            self.anchor_used_changed.borrow_mut().remove(&node);
+        }
+    }
+
+    /// pyro: after a layout, drops the used `anchor()`/`anchor-size()` px of the elements that have
+    /// no box now (gone, `display: none` or `contents`, or in a `display: none` subtree), so a box
+    /// that comes back does not transition from the px it had before it went away.
+    pub(crate) fn forget_boxless_anchor_used(&mut self) {
+        if self.anchor_used.get_mut().is_empty() {
+            return;
+        }
+        let nodes = &self.nodes;
+        let boxless = |id: NodeId| {
+            let Some(node) = nodes.get(id) else { return true };
+            if !node.has_boxes() {
+                return true;
+            }
+            let mut current = Some(node);
+            while let Some(n) = current {
+                if n.is_element() && n.primary_styles().is_none_or(|style| style.get_box().display.is_none()) {
+                    return true;
+                }
+                current = n.parent.and_then(|p| nodes.get(p));
+            }
+            false
+        };
+        let gone: Vec<NodeId> = self.anchor_used.get_mut().keys().copied().filter(|&id| boxless(id)).collect();
+        for id in gone {
+            self.anchor_used.get_mut().remove(&id);
+            self.anchor_used_changed.get_mut().remove(&id);
+        }
     }
 
     pub fn take_style_changes(&mut self) -> Vec<StyleChange> {
@@ -2843,7 +3039,23 @@ impl BaseDocument {
                 }
                 drop(global_font_ctx);
 
-                // TODO: see if we can only invalidate if resolved fonts may have changed
+                // Reshaping updates text advances. Font-relative values in computed
+                // styles (including pseudo-elements) also need the new metrics.
+                let device = self.stylist.device();
+                if device.used_root_font_metrics() {
+                    device.update_root_font_metrics();
+                }
+                if let Some(root) = self.try_root_element()
+                    && device.style_uses_font_metrics()
+                {
+                    let id = root.id;
+                    if let Some(style) = root.primary_styles() {
+                        let height = device.calc_line_height(style.get_font(), style.writing_mode, None);
+                        device.set_root_line_height(style.effective_zoom.unzoom(height.0.px()));
+                    }
+                    self.nodes[id].set_restyle_hint(RestyleHint::recascade_subtree());
+                    self.sampled_animations.invalidate_bases();
+                }
                 self.invalidate_inline_contexts();
             }
             Resource::None => {
@@ -3942,6 +4154,13 @@ impl BaseDocument {
         self.queue_device_changes(DeviceChanges::MEDIA_TYPE);
     }
 
+    pub fn set_media_environment(&mut self, environment: crate::MediaEnvironment) {
+        if self.media_environment != environment {
+            self.media_environment = environment;
+            self.queue_device_changes(DeviceChanges::MEDIA_TYPE);
+        }
+    }
+
     pub fn viewport(&self) -> &Viewport {
         &self.viewport
     }
@@ -4149,7 +4368,8 @@ impl BaseDocument {
             return;
         }
 
-        let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.font_ctx.clone());
+        let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.media_environment, self.font_ctx.clone());
+        device.set_document_url(self.fragment_document.as_ref().unwrap_or(&self.url).inline_url_data().clone());
         device.set_page_color_scheme(self.page_color_scheme);
         device.set_viewport_unit_inset(self.viewport_unit_inset);
         self.set_stylist_device(device);
@@ -4200,6 +4420,13 @@ impl BaseDocument {
         drop(root_styles);
 
         let old_device = self.stylist.device();
+        let style_uses_media_conditions = old_device.style_uses_media_conditions();
+        if style_uses_media_conditions {
+            device.note_style_media_condition();
+        }
+        if old_device.style_uses_font_metrics() {
+            device.note_style_font_metrics();
+        }
         let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size()
             || old_device.au_viewport_unit_size() != device.au_viewport_unit_size();
         let styles_use_viewport_units = old_device.used_viewport_size();
@@ -4234,7 +4461,9 @@ impl BaseDocument {
         // when the viewport size changes, even if no media query results
         // changed. Invalidate just the elements whose styles use viewport
         // units (tracked via per-element computed value flags).
-        if viewport_size_changed && styles_use_viewport_units {
+        // Inline media conditions use the same per-style dependency flag. Their
+        // predicates can also change on a media type or input-device update.
+        if (viewport_size_changed && styles_use_viewport_units) || style_uses_media_conditions {
             if self
                 .stylist
                 .get_custom_property_initial_values_flags()
@@ -5908,8 +6137,10 @@ impl BaseDocument {
                 let config = crate::DocumentConfig {
                     viewport: Some(viewport.clone()),
                     base_url: None,
+                    document_url: None,
                     font_ctx: Some(self.font_ctx.lock().unwrap().clone()),
                     media_type: Some(self.media_type.clone()),
+                    media_environment: self.media_environment,
                     subdocument_depth: self.subdocument_depth + 1,
                     raster_budget: self.raster_budget.clone(),
                     xml_document: true,
@@ -5931,6 +6162,7 @@ impl BaseDocument {
             let mut doc = entry.document.inner_mut();
             if current {
                 doc.set_viewport(viewport);
+                doc.set_media_environment(self.media_environment);
             }
             doc.resolve(0.0);
             doc.ensure_paint_tree();

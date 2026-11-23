@@ -1073,6 +1073,16 @@ impl Writer<'_> {
                 }
                 if author.contains(&id) {
                     let value = computed_value(style, id);
+                    // pyro: usvg reads these keywords only in their SVG spelling, which
+                    // Stylo serializes in lower case.
+                    let value = match (id, value.as_str()) {
+                        (LonghandId::ColorInterpolationFilters, "srgb") => "sRGB".to_string(),
+                        (LonghandId::ColorInterpolationFilters, "linearrgb") => "linearRGB".to_string(),
+                        (LonghandId::ShapeRendering, "optimizespeed") => "optimizeSpeed".to_string(),
+                        (LonghandId::ShapeRendering, "crispedges") => "crispEdges".to_string(),
+                        (LonghandId::ShapeRendering, "geometricprecision") => "geometricPrecision".to_string(),
+                        _ => value,
+                    };
                     let _ = write!(declarations, "{name}:{value};");
                 }
             }
@@ -1190,7 +1200,7 @@ impl Writer<'_> {
                 continue;
             }
             if attr.name.ns == ns!() && local == "style" && is_svg {
-                style_attr = Some(attr.value.as_str());
+                style_attr = data.inline_declarations();
                 continue;
             }
             if attr.name.ns == ns!() && rewrites.iter().any(|r| r.name == local) {
@@ -2116,8 +2126,12 @@ impl Writer<'_> {
                     let css = image.to_css_string();
                     let url = css.trim().strip_prefix("url(").and_then(|u| u.strip_suffix(')')).unwrap_or("");
                     let url = url.trim().trim_matches(|c| c == '"' || c == '\'');
-                    let this_document = !self.root.tree().base_url.is_empty()
-                        && crate::document::without_fragment(url) == self.root.tree().base_url;
+                    // (Since local URLs resolve against the document (3e799f754), a fragment-only
+                    // `url(#m)` serializes as written, not against the base URL; WPT css-masking
+                    // `mask-image-3i`, a `<mask>` of another `<svg>` beside an image layer.)
+                    let this_document = url.starts_with('#')
+                        || !self.root.tree().base_url.is_empty()
+                            && crate::document::without_fragment(url) == self.root.tree().base_url;
                     url_fragment(&css)
                         .filter(|fragment| !loaded && this_document && is_document_svg_mask(self.root, fragment))
                 }) {
@@ -2845,15 +2859,12 @@ fn shape_element(shape: &BasicShape, reference: Rect) -> Option<String> {
             if polygon.coordinates.is_empty() {
                 return None;
             }
-            let points: Vec<String> = polygon
-                .coordinates
-                .iter()
-                .map(|point| format!("{},{}", num(ox + lp(&point.0, w)), num(oy + lp(&point.1, h))))
-                .collect();
+            let path = crate::shape_path::polygon_path(polygon.coordinates.iter().map(|coord|
+                kurbo::Point::new(ox + lp(&coord.0, w), oy + lp(&coord.1, h))), lp(&polygon.round.0, 0.0));
             let evenodd = matches!(polygon.fill, style::values::generics::basic_shape::FillRule::Evenodd);
             format!(
-                "<polygon points=\"{}\"{} />",
-                points.join(" "),
+                "<path d=\"{}\"{} />",
+                path.to_svg(),
                 if evenodd { " clip-rule=\"evenodd\"" } else { "" }
             )
         }

@@ -151,9 +151,11 @@ fn longhands_of(property: &str) -> Option<&'static [Longhand]> {
 #[derive(Clone, Debug, PartialEq)]
 enum Value {
     /// Its list, each item as its computed value serializes (`0.15s`,
-    /// `cubic-bezier(0.4, 0, 0.2, 1)`, `opacity`; animation names unquoted;
+    /// `cubic-bezier(0.4, 0, 0.2, 1)`, `opacity`;
     /// times in full precision).
     List(Vec<String>),
+    /// Resolves at computed-value time against the element's fonts, attributes and variables.
+    ElementStyle,
     /// `initial`, `unset`, `revert`, `revert-layer`: the initial value (none
     /// of these properties inherit).
     Initial,
@@ -190,6 +192,7 @@ fn pseudo_selector(selector: &str) -> Option<(String, PseudoElement)> {
     for (suffix, pseudo) in [
         ("::before", PseudoElement::Before),
         ("::after", PseudoElement::After),
+        ("::marker", PseudoElement::Marker),
         (":before", PseudoElement::Before),
         (":after", PseudoElement::After),
     ] {
@@ -255,7 +258,7 @@ impl AnimationTiming {
             let name = name.as_atom()?.to_string();
             let duration = ui.animation_duration_mod(index);
             Some(Self { name, index, duration_auto: duration.is_auto(), duration_ms: match duration { AnimationDuration::Time(t) => t.seconds() as f64 * 1000.0, _ => 0.0 }, delay_ms: ui.animation_delay_mod(index).seconds() as f64 * 1000.0, iterations: ui.animation_iteration_count_mod(index).0 as f64, style: AnimationStyle {
-                direction: ui.animation_direction_mod(index).to_css_string(), fill: ui.animation_fill_mode_mod(index).to_css_string(), paused: ui.animation_play_state_mod(index).to_css_string() == "paused", composition: ui.animation_composition_mod(index).to_css_string(), easing: Some(ui.animation_timing_function_mod(index).to_css_string()),
+                direction: ui.animation_direction_mod(index).to_css_string(), fill: ui.animation_fill_mode_mod(index).to_css_string(), paused: ui.animation_play_state_mod(index).to_css_string() == "paused", composition: ui.animation_composition_mod(index).to_css_string(), easing: Some(easing_sample_text(&ui.animation_timing_function_mod(index))),
             }, trigger: None })
         })
     }
@@ -303,6 +306,8 @@ pub struct TransitionTiming {
     /// `transition-behavior: allow-discrete`: values that do not interpolate
     /// transition too (flipping halfway).
     pub allow_discrete: bool,
+    /// Its position in `transition-property` (see [`ElementTiming::transition_claims`]).
+    pub index: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -311,12 +316,20 @@ pub struct ElementTiming {
     pub animations: Vec<AnimationTiming>,
     /// Transitions whose combined duration is positive.
     pub transitions: Vec<TransitionTiming>,
+    pub transition_properties: Option<Vec<String>>,
+    /// Every item of `transition-property` in order (`None` for `none`), whatever its combined
+    /// duration: a later item naming a property decides its transition, so one that cannot start
+    /// (a zero combined duration, or `normal` behavior for a discrete value) keeps an earlier
+    /// `all` or shorthand item from starting one (css-transitions-1 §2.1, WPT
+    /// `zero-duration-multiple-transition`, `transition-behavior`).
+    pub transition_claims: Vec<Option<String>>,
 }
 
 /// The animation and transition rules of a document's sheets.
 #[derive(Default)]
 pub struct TimingRules {
     rules: Vec<Rule>,
+    pub(crate) geometry: Option<std::rc::Weak<dyn crate::geometry::GeometrySource>>,
     keyframes: FxHashSet<String>,
     /// The longhands each `@keyframes` rule declares, by name.
     keyframe_longhands: rustc_hash::FxHashMap<String, FxHashSet<&'static str>>,
@@ -417,6 +430,19 @@ impl TimingRules {
     /// through a shorthand).
     pub fn keyframes_declare(&self, name: &str, longhand: &str) -> bool {
         self.keyframe_longhands.get(name).is_some_and(|l| l.contains(longhand))
+    }
+
+    pub fn may_sample_display(&self, effect: &crate::animation::Effect) -> bool {
+        match &effect.keyframes {
+            crate::animation::Keyframes::Css { name, .. } => {
+                self.keyframes_declare(name, "display") || self.keyframes_declare(name, "--*")
+            }
+            crate::animation::Keyframes::Text(frames) => frames.frames.iter().any(|frame| {
+                crate::style::parse_declarations(&frame.declarations).iter().any(|decl| {
+                    decl.name.eq_ignore_ascii_case("display") || decl.name.starts_with("--") || decl.name.eq_ignore_ascii_case("all")
+                })
+            }),
+        }
     }
 
     /// The elements of `doc` that may run an animation: those a rule
@@ -580,7 +606,7 @@ impl TimingRules {
             return out;
         }
         let inline: Vec<Declared> =
-            match dom.element(el).ok().and_then(|e| e.attr_local(&markup5ever::local_name!("style"))) {
+            match dom.element(el).ok().and_then(|e| e.semantic_inline_style().or_else(|| e.attr_local(&markup5ever::local_name!("style")))) {
                 Some(style) if pseudo.is_none() && mentions(style) => declarations(style),
                 _ => Vec::new(),
             };
@@ -620,6 +646,17 @@ impl TimingRules {
         if inline.is_empty() && matching.is_empty() {
             return out;
         }
+        // A layered, scoped or conditional rule can defeat the simple ordering below.
+        // Once a matching candidate needs the element context, ask the native cascade
+        // for this longhand even if the manual ordering would choose a literal.
+        let mut needs_element = [false; Longhand::ALL.len()];
+        for (longhand, value, _) in inline.iter().chain(matching.iter().flat_map(|(_, _, rule)| &rule.declarations)) {
+            if !matches!(longhand, Longhand::AnimationTrigger | Longhand::TimelineTrigger)
+                && matches!(value, Value::ElementStyle | Value::Pending { .. })
+            {
+                needs_element[*longhand as usize] = true;
+            }
+        }
         let cascaded = |longhand: Longhand| -> Option<&Value> {
             let own = inline.iter().rev().find(|d| d.0 == longhand);
             if let Some((_, value, true)) = own {
@@ -644,10 +681,43 @@ impl TimingRules {
             }
         };
         let mut style = None;
+        let authored = std::cell::OnceCell::new();
+        let element_list = |longhand: Longhand| -> Option<Vec<String>> {
+            let authored: &StyleSnapshot = authored.get_or_init(|| {
+                let geometry = self.geometry.as_ref()?.upgrade()?;
+                // Bring the mirror up to date before the read-only cascade.
+                style_of(el)?;
+                geometry.element_timing_style(crate::snapshot::render_key(el), pseudo.map(stylo_pseudo).as_ref())
+            }).as_ref()?;
+            // Keep 'auto' distinct for progress-based animation timelines.
+            if longhand == Longhand::AnimationDuration {
+                use style::values::generics::animation::AnimationDuration;
+                return Some(authored.get_ui().animation_duration_iter().map(|v| match v {
+                    AnimationDuration::Time(t) => format!("{}s", t.seconds()),
+                    AnimationDuration::Auto => "auto".to_owned(),
+                }).collect());
+            }
+            // Easings at full precision, as the samplers parse them (`easing_sample_text`).
+            if longhand == Longhand::AnimationTimingFunction {
+                return Some(authored.get_ui().animation_timing_function_iter().map(|f| easing_sample_text(&f)).collect());
+            }
+            if longhand == Longhand::TransitionTimingFunction {
+                return Some(authored.get_ui().transition_timing_function_iter().map(|f| easing_sample_text(&f)).collect());
+            }
+            let css = crate::stylo::serialize(authored, longhand.name())?;
+            Some(split_commas(&css).into_iter().map(|s| s.trim().to_owned()).collect())
+        };
         for longhand in Longhand::ALL {
+            if needs_element[longhand as usize] {
+                if let Some(list) = element_list(longhand) {
+                    out.0[longhand as usize] = Some(list);
+                    continue;
+                }
+            }
             out.0[longhand as usize] = match cascaded(longhand) {
                 None | Some(Value::Initial) => None,
                 Some(Value::List(list)) => Some(list.clone()),
+                Some(Value::ElementStyle) => element_list(longhand),
                 Some(Value::Inherit) if pseudo.is_some() => self.lists(dom, el, style_of).0[longhand as usize].clone(),
                 Some(Value::Inherit) => dom
                     .parent_element(el)
@@ -659,6 +729,7 @@ impl TimingRules {
                     match self.substitute(property, text, style.as_ref()) {
                         Some(values) => match values.iter().find(|(l, _)| *l == longhand) {
                             Some((_, Value::List(list))) => Some(list.clone()),
+                            Some((_, Value::ElementStyle)) => element_list(longhand),
                             Some((_, Value::Inherit)) if pseudo.is_some() => {
                                 self.lists(dom, el, style_of).0[longhand as usize].clone()
                             }
@@ -669,7 +740,9 @@ impl TimingRules {
                                 .and_then(|parent| self.lists(dom, parent, style_of).0[longhand as usize].clone()),
                             _ => None,
                         },
-                        None => None,
+                        // An unresolved var() can be in an unused attr()/if() fallback.
+                        // Let Stylo select the branch and apply its invalid-at-computed-value rules.
+                        None => element_list(longhand),
                     }
                 }
             };
@@ -717,19 +790,24 @@ impl TimingRules {
         if lists.is_empty() {
             return out;
         }
+        out.transition_properties = lists.get(Longhand::TransitionProperty).cloned();
         let keyword = |longhand: Longhand, i: usize, allowed: &[&str]| {
             let v = lists.item(longhand, i);
             if allowed.contains(&v) { v } else { longhand.initial() }.to_owned()
         };
         if let Some(names) = lists.get(Longhand::AnimationName) {
             for (i, name) in names.iter().enumerate() {
-                if name == "none" || !self.has_keyframes(keyframes_name(name)) {
+                if name == "none" {
                     continue;
                 }
-                let name = &keyframes_name(name).to_owned();
+                let mut parser = Parser::new(name);
+                let Ok(name) = parser.expect_ident_or_string() else { continue };
+                if !self.has_keyframes(name) {
+                    continue;
+                }
                 let easing = lists.item(Longhand::AnimationTimingFunction, i);
                 out.animations.push(AnimationTiming {
-                    name: name.clone(),
+                    name: name.to_string(),
                     // (Not declared: `auto`, css-animations-2's initial value; shown as `0s`.)
                     duration_auto: lists.get(Longhand::AnimationDuration).is_none()
                         || lists.item(Longhand::AnimationDuration, i) == "auto",
@@ -759,6 +837,7 @@ impl TimingRules {
             for (i, property) in properties.iter().enumerate() {
                 let duration_ms = time_ms(lists.item(Longhand::TransitionDuration, i)).unwrap_or(0.0).max(0.0);
                 let delay_ms = time_ms(lists.item(Longhand::TransitionDelay, i)).unwrap_or(0.0);
+                out.transition_claims.push((property != "none").then(|| property.clone()));
                 if property == "none" || duration_ms + delay_ms <= 0.0 {
                     continue;
                 }
@@ -769,6 +848,7 @@ impl TimingRules {
                     delay_ms,
                     easing: (easing != "ease").then(|| easing.to_owned()),
                     allow_discrete: lists.item(Longhand::TransitionBehavior, i) == "allow-discrete",
+                    index: i,
                 });
             }
         }
@@ -802,12 +882,46 @@ impl TimingRules {
             "animation" => animation_shorthand(&lists),
             longhand => {
                 let longhand = Longhand::by_name(longhand)?;
+                // `animation-duration: auto` resolves to `0s` only while `animation-timeline` is
+                // its initial single `auto` (css-animations-2, csswg-drafts#6530; as Chromium):
+                // with any other timeline list `auto` stays.
+                let keep_auto = longhand == Longhand::AnimationDuration && !self.timeline_initial(el, pseudo, style_of);
+                let show = |v: &str| if keep_auto && v == "auto" { v.to_owned() } else { shown(longhand, v) };
                 match lists.get(longhand) {
-                    Some(list) => list.iter().map(|v| shown(longhand, v)).collect::<Vec<_>>().join(", "),
+                    Some(list) => list.iter().map(|v| show(v.as_str())).collect::<Vec<_>>().join(", "),
+                    // (`animation-duration`'s initial value is `auto`.)
+                    None if keep_auto => "auto".to_owned(),
                     None => longhand.initial().to_owned(),
                 }
             }
         })
+    }
+
+    /// Whether `el`'s (`pseudo`'s) computed `animation-timeline` is its initial value, one
+    /// `auto` (`true` when its style is unknown).
+    fn timeline_initial(&self, el: NodeId, pseudo: Option<PseudoElement>, style_of: StyleOf<'_>) -> bool {
+        let style = match pseudo {
+            None => style_of(el),
+            Some(p) => self.geometry.as_ref().and_then(|g| g.upgrade()).and_then(|geometry| {
+                style_of(el)?;
+                geometry.element_timing_style(crate::snapshot::render_key(el), Some(&stylo_pseudo(p)))
+            }),
+        };
+        let Some(style) = style else { return true };
+        let ui = style.get_ui();
+        match ui.animation_timeline_count() {
+            0 => true,
+            1 => ui.animation_timeline_at(0).is_auto(),
+            _ => false,
+        }
+    }
+}
+
+fn stylo_pseudo(pseudo: PseudoElement) -> style::selector_parser::PseudoElement {
+    match pseudo {
+        PseudoElement::Before => style::selector_parser::PseudoElement::Before,
+        PseudoElement::After => style::selector_parser::PseudoElement::After,
+        PseudoElement::Marker => style::selector_parser::PseudoElement::Marker,
     }
 }
 
@@ -817,36 +931,20 @@ impl TimingRules {
 fn shown(longhand: Longhand, item: &str) -> String {
     match longhand {
         Longhand::AnimationDuration if item == "auto" => "0s".to_owned(),
+        Longhand::AnimationTimingFunction | Longhand::TransitionTimingFunction => shown_easing(item),
         Longhand::AnimationDuration
         | Longhand::AnimationDelay
         | Longhand::TransitionDuration
         | Longhand::TransitionDelay => match time_ms(item) {
-            Some(ms) => format!("{}s", crate::computed::fmt_num(ms / 1000.0)),
+            Some(ms) => serialize_seconds(ms / 1000.0),
             None => item.to_owned(),
         },
-        Longhand::AnimationName if item == QUOTED_NONE => item.to_owned(),
-        Longhand::AnimationName if item != "none" && !is_ident(item) => {
-            let mut out = String::new();
-            let _ = cssparser::serialize_string(item, &mut out);
-            out
-        }
         _ => item.to_owned(),
     }
 }
 
-/// An `animation-name` item that is the string "none" (`animation-name: "none"`, naming
-/// `@keyframes "none"`), told apart from the keyword `none` in the timing lists.
-const QUOTED_NONE: &str = "\"none\"";
-
-/// The `@keyframes` name an `animation-name` item names.
-fn keyframes_name(item: &str) -> &str {
-    if item == QUOTED_NONE { "none" } else { item }
-}
-
-/// Whether `text` is one CSS identifier (and not a word the shorthand would read otherwise).
-fn is_ident(text: &str) -> bool {
-    let mut p = Parser::new(text);
-    matches!(p.next(), Ok(Token::Ident(_))) && p.is_exhausted()
+fn serialize_seconds(seconds: f64) -> String {
+    format!("{}s", crate::computed::serialize_css_number(seconds))
 }
 
 /// Chromium's computed `transition`: an item per `transition-property`
@@ -869,7 +967,7 @@ fn transition_shorthand(lists: &TimingLists) -> String {
             }
             let easing = lists.item(TransitionTimingFunction, i);
             if easing != "ease" {
-                parts.push(easing.to_owned());
+                parts.push(shown_easing(easing));
             }
             if delay != "0s" {
                 parts.push(delay);
@@ -905,7 +1003,7 @@ fn animation_shorthand(lists: &TimingLists) -> String {
             for (longhand, value) in [(AnimationTimingFunction, "ease")] {
                 let v = lists.item(longhand, i);
                 if v != value {
-                    parts.push(v.to_owned());
+                    parts.push(shown_easing(v));
                 }
             }
             if delay != "0s" {
@@ -979,21 +1077,56 @@ pub fn displays_none(style: &StyleSnapshot) -> bool {
 /// The longhands `property` (a longhand, a shorthand or `all`) covers whose
 /// computed value differs between `before` and `after`: the ones a
 /// transition of `property` starts for.
-pub fn changed_longhands(before: &StyleSnapshot, after: &StyleSnapshot, property: &str) -> Vec<&'static str> {
+pub fn changed_longhands<'a>(before: &StyleSnapshot, after: &StyleSnapshot, property: &'a str) -> Vec<&'a str> {
     changed_longhands_with(before, after, property, false)
+}
+
+pub fn changed_custom_properties(before: &StyleSnapshot, after: &StyleSnapshot, allow_discrete: bool) -> Vec<String> {
+    let old = before.custom_properties();
+    let new = after.custom_properties();
+    if old == new { return Vec::new(); }
+    let mut names = FxHashSet::default();
+    for (name, _) in old.inherited.iter().chain(old.non_inherited.iter()).chain(new.inherited.iter()).chain(new.non_inherited.iter()) {
+        names.insert(name);
+    }
+    let mut changed: Vec<_> = names.into_iter().map(|name| format!("--{name}"))
+        .filter(|name| !changed_longhands_with(before, after, name, allow_discrete).is_empty()).collect();
+    changed.sort_unstable();
+    changed
+}
+
+pub fn lists_transition(style: &StyleSnapshot, properties: &[String], name: &str) -> bool {
+    use style::properties::PropertyDeclarationId;
+    let Some(id) = crate::stylo::property_id(name) else { return false };
+    let Err(property) = id.as_shorthand() else { return false };
+    properties.iter().any(|item| {
+        if item == "all" || item == name { return true; }
+        let Some(listed) = crate::stylo::property_id(item) else { return false };
+        match property {
+            PropertyDeclarationId::Longhand(target) => {
+                let target = target.to_physical(style.writing_mode);
+                match listed.as_shorthand() {
+                    Err(PropertyDeclarationId::Longhand(longhand)) => longhand.to_physical(style.writing_mode) == target,
+                    Ok(shorthand) => shorthand.longhands().any(|longhand| longhand.to_physical(style.writing_mode) == target),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    })
 }
 
 /// [`changed_longhands`]; with `allow_discrete` (`transition-behavior:
 /// allow-discrete`), values Stylo does not interpolate between count too.
-pub fn changed_longhands_with(
+pub fn changed_longhands_with<'a>(
     before: &StyleSnapshot,
     after: &StyleSnapshot,
-    property: &str,
+    property: &'a str,
     allow_discrete: bool,
-) -> Vec<&'static str> {
+) -> Vec<&'a str> {
     use style::properties::animated_properties::AnimationValue;
     use style::properties::{PropertyDeclarationId, ShorthandId};
-    use style::values::animated::{Animate, Procedure};
+    use style::values::animated::Procedure;
     // Different, and values Stylo can animate between (`width: auto` to a
     // length starts none; properties Stylo animates discretely, `float` or
     // `display`, only with `allow_discrete`). Animated values exist for physical longhands
@@ -1002,18 +1135,23 @@ pub fn changed_longhands_with(
     let differs = |longhand: style::properties::LonghandId| {
         let id = PropertyDeclarationId::Longhand(longhand);
         let physical = PropertyDeclarationId::Longhand(longhand.to_physical(after.writing_mode));
-        before.computed_value_to_string(id) != after.computed_value_to_string(id)
+        crate::animation::transition_endpoint_css(id, before) != crate::animation::transition_endpoint_css(id, after)
             && match (
-                AnimationValue::from_computed_values(physical, before),
-                AnimationValue::from_computed_values(physical, after),
+                crate::animation::transition_endpoint_value(physical, before),
+                crate::animation::transition_endpoint_value(physical, after),
             ) {
                 // (A property Stylo animates discretely transitions only with `allow-discrete`,
                 // as in Chromium, css-transitions-2 §2.1, even where its `Animate` succeeds; WPT
                 // `*-no-interpolation`, `display-interpolation`.)
+                // (One computed value at both ends whose serialization differs only by what it
+                // resolves against: `currentcolor` (or `caret-color: auto`) when only `color`
+                // changes. No transition of the longhands that follow `color`, as in Chrome; WPT
+                // css-transitions `properties-value-001` 'color … / events'.)
+                (Some(a), Some(b)) if a == b => false,
                 (Some(a), Some(b)) => {
                     allow_discrete
                         || (!longhand.is_discrete_animatable()
-                            && a.animate(&b, Procedure::Interpolate { progress: 0.5 })
+                            && a.animate_with_size_policy(&b, Procedure::Interpolate { progress: 0.5 }, after.slow_clone_interpolate_size() == style::values::computed::InterpolateSize::AllowKeywords)
                                 .is_ok_and(|v| !crate::animation::defers_matrix(&v)))
                 }
                 _ => false,
@@ -1028,13 +1166,41 @@ pub fn changed_longhands_with(
                 Err(PropertyDeclarationId::Longhand(longhand)) => {
                     return if differs(longhand) { vec![longhand.name()] } else { Vec::new() };
                 }
-                Err(_) => return Vec::new(),
+                Err(id @ PropertyDeclarationId::Custom(_)) => {
+                    if AnimationValue::is_different_for(id, before, after)
+                        && (allow_discrete || AnimationValue::from_computed_values(id, before)
+                            .zip(AnimationValue::from_computed_values(id, after))
+                            .is_some_and(|(from, to)| from.animate_with_size_policy(&to, Procedure::Interpolate { progress: 0.5 }, false).is_ok()))
+                    {
+                        return vec![property];
+                    }
+                    return Vec::new();
+                }
             },
             None => return Vec::new(),
         }
     };
     let Some(shorthand) = shorthand else { return Vec::new() };
-    shorthand.longhands().filter(|l| differs(*l)).map(|l| l.name()).collect()
+    shorthand.longhands()
+        .filter(|id| shorthand != ShorthandId::All || !id.is_logical())
+        .filter(|id| differs(*id))
+        .map(|id| id.name())
+        .collect()
+}
+
+/// Whether `longhand` (a longhand or custom property a transition runs) has another computed
+/// value in `now` than in `end` (a running transition's after-change style): css-transitions-1 §3
+/// cancels a running transition whose end value is no longer the after-change value when no new
+/// transition replaces it. A logical longhand maps through `now`'s writing mode.
+pub fn end_value_differs(end: &StyleSnapshot, now: &StyleSnapshot, longhand: &str) -> bool {
+    use style::properties::PropertyDeclarationId;
+    let Some(id) = crate::stylo::property_id(longhand) else { return false };
+    let physical = match id.as_shorthand() {
+        Err(PropertyDeclarationId::Longhand(id)) => PropertyDeclarationId::Longhand(id.to_physical(now.writing_mode)),
+        Err(custom) => custom,
+        Ok(_) => return false,
+    };
+    crate::animation::transition_endpoint_css(physical, end) != crate::animation::transition_endpoint_css(physical, now)
 }
 
 /// The keyframes a transition of `longhand` runs between: its computed value
@@ -1047,14 +1213,18 @@ pub fn transition_keyframes(
 ) -> Option<crate::animation::TextKeyframes> {
     use style::properties::PropertyDeclarationId;
     let id = crate::stylo::property_id(longhand)?;
-    let PropertyDeclarationId::Longhand(id) = id.as_shorthand().err()? else { return None };
-    let physical = id.to_physical(after.writing_mode);
-    let value = |style: &StyleSnapshot| style.computed_value_to_string(PropertyDeclarationId::Longhand(physical));
+    let physical = match id.as_shorthand().err()? {
+        PropertyDeclarationId::Longhand(id) => PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode)),
+        custom => custom,
+    };
+    let value = |style: &StyleSnapshot| crate::animation::transition_endpoint_css(physical, style);
+    let mut name = String::new();
+    cssparser::serialize_identifier(match physical { PropertyDeclarationId::Longhand(id) => id.name(), _ => longhand }, &mut name).ok()?;
     let frame = |offset: f64, value: String| crate::animation::TextKeyframe {
         offset,
         easing: None,
         composite: None,
-        declarations: format!("{}: {value}", physical.name()),
+        declarations: format!("{name}: {value}"),
     };
     Some(crate::animation::TextKeyframes { frames: vec![frame(0.0, value(before)), frame(1.0, value(after))] })
 }
@@ -1153,7 +1323,7 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                             // `::part()` selectors become rules of their own on the host.
                             let mut plain = Vec::new();
                             // `::before`/`::after` selectors too, by pseudo-element.
-                            let mut pseudos: [Vec<String>; 2] = Default::default();
+                            let mut pseudos: [Vec<String>; 3] = Default::default();
                             for selector in split_selectors(prelude) {
                                 if let Some((host, pseudo)) = pseudo_selector(selector) {
                                     pseudos[pseudo as usize].push(host);
@@ -1174,7 +1344,7 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                                     None => plain.push(selector),
                                 }
                             }
-                            for (pseudo, hosts) in [PseudoElement::Before, PseudoElement::After].into_iter().zip(&pseudos) {
+                            for (pseudo, hosts) in [PseudoElement::Before, PseudoElement::After, PseudoElement::Marker].into_iter().zip(&pseudos) {
                                 if hosts.is_empty() {
                                     continue;
                                 }
@@ -1242,6 +1412,10 @@ fn keyframe_longhands(p: &mut Parser<'_>, src: &str) -> Vec<&'static str> {
             while n.next_including_whitespace_and_comments().is_ok() {}
             let body = src.get(start..n.position().byte_index()).unwrap_or("");
             for d in crate::style::parse_declarations(body) {
+                if d.name.starts_with("--") {
+                    out.push("--*");
+                    continue;
+                }
                 let Some(id) = crate::stylo::property_id(&d.name.to_ascii_lowercase()) else { continue };
                 match id.as_shorthand() {
                     Ok(shorthand) => out.extend(shorthand.longhands().map(|l| l.name())),
@@ -1317,18 +1491,18 @@ fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>>
                 CSSWideKeyword::Inherit => Value::Inherit,
                 _ => Value::Initial,
             },
-            PropertyDeclaration::WithVariables(_) => Value::Initial,
-            // (The string "none" names `@keyframes "none"`: kept apart from the keyword, `QUOTED_NONE`.)
-            PropertyDeclaration::AnimationName(list) => Value::List(
-                list.0
-                    .iter()
-                    .map(|n| match n.as_atom() {
-                        None => "none".to_owned(),
-                        Some(a) if &**a == "none" => QUOTED_NONE.to_owned(),
-                        Some(a) => a.to_string(),
-                    })
-                    .collect(),
-            ),
+            PropertyDeclaration::WithVariables(_) => Value::ElementStyle,
+            PropertyDeclaration::AnimationDuration(list) => time_list(list.0.iter().map(|duration| {
+                use style::values::generics::animation::AnimationDuration;
+                match duration {
+                    AnimationDuration::Time(time) => computed_time_item(*longhand, time),
+                    AnimationDuration::Auto => Some("auto".to_owned()),
+                }
+            })),
+            PropertyDeclaration::AnimationDelay(list) => time_list(list.0.iter().map(|t| computed_time_item(*longhand, t))),
+            PropertyDeclaration::TransitionDelay(list) => time_list(list.0.iter().map(|t| computed_time_item(*longhand, t))),
+            PropertyDeclaration::TransitionDuration(list) => time_list(list.0.iter().map(|t| computed_time_item(*longhand, t))),
+            PropertyDeclaration::AnimationName(list) => Value::List(list.0.iter().map(style_traits::ToCss::to_css_string).collect()),
             PropertyDeclaration::AnimationTimingFunction(list) => Value::List(list.0.iter().map(easing_text).collect()),
             PropertyDeclaration::TransitionTimingFunction(list) => {
                 Value::List(list.0.iter().map(easing_text).collect())
@@ -1345,10 +1519,48 @@ fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>>
 }
 
 /// A specified easing as its computed value serializes (`step-start` is
-/// `steps(1, start)`, `steps(4, end)` is `steps(4)`).
+/// `steps(1, start)`, `steps(4, end)` is `steps(4)`), at full precision
+/// ([`easing_sample_text`]).
 fn easing_text(easing: &style::values::specified::TimingFunction) -> String {
+    easing_sample_text(&easing.to_computed_value_without_context())
+}
+
+/// pyro: a computed easing as the text the timing lists carry and the samplers parse back: a
+/// `cubic-bezier()`'s numbers at full `f32` precision. Its CSS serialization keeps six significant
+/// digits, and the curve read back from that text misses its point: the interpolation tests' easing
+/// for 0.3 (`cubic-bezier(0, 0.23333333333333334, 1, 0.23333333333333334)` at the halfway time) gave
+/// 0.29999975 through `0.233333`, so `black` to `orange` sampled `rgb(76.49994, 49.49996, 0)` and its
+/// legacy channels rounded down to `rgb(76, 49, 0)`; Chromium samples the curve it parsed (0.3:
+/// `rgb(77, 50, 0)`). [`shown_easing`] gives the serialized text back for `getComputedStyle` and script.
+pub fn easing_sample_text(easing: &style::values::computed::TimingFunction) -> String {
+    use style::values::generics::easing::TimingFunction as F;
     use style_traits::ToCss;
-    easing.to_computed_value_without_context().to_css_string()
+    match easing {
+        F::CubicBezier { x1, y1, x2, y2 } => format!("cubic-bezier({x1}, {y1}, {x2}, {y2})"),
+        other => other.to_css_string(),
+    }
+}
+
+/// An easing of the timing lists ([`easing_sample_text`]) as it serializes (`getComputedStyle`,
+/// `getTiming().easing`): a `cubic-bezier()`'s numbers to six significant digits.
+pub fn shown_easing(easing: &str) -> String {
+    use style_traits::ToCss;
+    if !easing.starts_with("cubic-bezier(") {
+        return easing.to_owned();
+    }
+    crate::animation::easing_function(easing).map_or_else(|| easing.to_owned(), |f| f.to_css_string())
+}
+
+fn time_list(items: impl Iterator<Item = Option<String>>) -> Value {
+    items.collect::<Option<Vec<_>>>().map_or(Value::ElementStyle, Value::List)
+}
+
+fn computed_time_item(longhand: Longhand, time: &style::values::specified::Time) -> Option<String> {
+    use style_traits::ToCss;
+    if time.is_calc() {
+        return time.calc_seconds_without_context().map(|seconds| format!("{seconds}s"));
+    }
+    Some(computed_item(longhand, &time.to_css_string()))
 }
 
 /// One specified item (Stylo's serialization) as its computed value: times
@@ -1431,6 +1643,19 @@ mod tests {
     }
 
     #[test]
+    fn time_serialization_uses_six_significant_digits() {
+        for (value, expected) in [
+            (0.00001, "1e-05s"),
+            (999999.0, "999999s"),
+            (999999.9, "1e+06s"),
+            (1.2345678e19, "1.23457e+19s"),
+            (-1.2345678e21, "-1.23457e+21s"),
+        ] {
+            assert_eq!(serialize_seconds(value), expected);
+        }
+    }
+
+    #[test]
     fn part_selectors_split_into_host_and_names() {
         assert_eq!(split_selectors("#a::part(x), :is(b, c) d"), vec!["#a::part(x)", " :is(b, c) d"]);
         assert_eq!(part_selector("#shadow::part(target)"), Some(("#shadow".to_owned(), vec!["target".to_owned()])));
@@ -1483,11 +1708,16 @@ mod tests {
             "allow-discrete"
         );
         assert_eq!(one(&declared("transition", ".3s"), "transition-property"), "all");
-        // Computed easings and times; names keep their case, quoted ones lose the quotes.
+        // Computed easings and times; names keep their case.
         let e = declared("transition-timing-function", "step-start, step-end, cubic-bezier(.4,0,.2,1), EASE-IN");
         assert_eq!(e[0].1, ["steps(1, start)", "steps(1)", "cubic-bezier(0.4, 0, 0.2, 1)", "ease-in"]);
+        // A bezier's numbers at full precision for the samplers, six digits where shown.
+        let b = declared("animation-timing-function", "cubic-bezier(0, 0.23333333333333334, 1, 0.23333333333333334)");
+        assert_eq!(b[0].1, ["cubic-bezier(0, 0.23333333, 1, 0.23333333)"]);
+        assert_eq!(shown(Longhand::AnimationTimingFunction, &b[0].1[0]), "cubic-bezier(0, 0.233333, 1, 0.233333)");
+        assert_eq!(shown_easing("steps(1, start)"), "steps(1, start)");
         assert_eq!(declared("transition-duration", "calc(1s + 100ms), 150ms")[0].1, ["1.1s", "0.15s"]);
-        assert_eq!(declared("animation-name", "Spin, \"a b\", none")[0].1, ["Spin", "a b", "none"]);
+        assert_eq!(declared("animation-name", "Spin, \"a b\", none")[0].1, ["Spin", r"a\ b", "none"]);
         assert_eq!(declared("transition-property", "OPACITY, --Foo")[0].1, ["opacity", "--Foo"]);
         // Invalid declarations are dropped; CSS-wide keywords apply.
         assert!(parse_property("transition-duration", "-1s").is_none());
@@ -1539,7 +1769,7 @@ mod tests {
         set(&mut lists, Longhand::AnimationIterationCount, &["infinite"]);
         assert_eq!(animation_shorthand(&lists), "1s infinite a, 2s 0.5s infinite b");
         assert_eq!(shown(Longhand::TransitionDuration, "0.150000001s"), "0.15s");
-        assert_eq!(shown(Longhand::AnimationName, "a b"), "\"a b\"");
+        assert_eq!(declared("animation-name", r#""INITIAL", "none", none"#)[0].1, [r#""INITIAL""#, r#""none""#, "none"]);
     }
 }
 

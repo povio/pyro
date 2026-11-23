@@ -62,7 +62,7 @@ fn selected_coordinate(page: &PageDom, el: NodeId) -> (i64, i64) {
 /// The form controls' entries for `form` (submitter included if given),
 /// without the `formdata` event: see [`construct_entry_list`].
 pub fn form_entries(page: &PageDom, form: NodeId, submitter: Option<NodeId>) -> Vec<(String, EntryValue)> {
-    form_entries_with_charset(page, form, submitter, "UTF-8")
+    form_entries_with_charset(page, form, submitter, "UTF-8", None)
 }
 
 thread_local! {
@@ -95,12 +95,15 @@ pub(crate) fn construct_entry_list<'s>(
     if CONSTRUCTING.with(|c| c.borrow().contains(&key)) {
         return None;
     }
-    let entries = form_entries_with_charset(page, form, submitter, charset);
+    let mut sources = Vec::new();
+    let entries = form_entries_with_charset(page, form, submitter, charset, Some(&mut sources));
     let Some(s) = s.filter(|_| page.dom.borrow().has_formdata_listeners()) else {
         return Some(EntryList::Entries(entries));
     };
     let Some(target) = page.dom.borrow().node_key(form) else { return Some(EntryList::Entries(entries)) };
-    let fd = match crate::form_data::with_entries(s, entries) {
+    let fd = match crate::form_data::with_entries(s, entries)
+        .and_then(|fd| crate::form_data::adopt_input_files(s, page, fd, &sources).map(|()| fd))
+    {
         Ok(fd) => fd,
         Err(e) => {
             s.report_exception(&e);
@@ -116,17 +119,18 @@ pub(crate) fn construct_entry_list<'s>(
 }
 
 /// `form_entries`, reporting `charset` in a hidden `_charset_` control.
+/// `sources` gets (entry index, file input, file index) of each selected
+/// file's entry.
 fn form_entries_with_charset(
     page: &PageDom,
     form: NodeId,
     submitter: Option<NodeId>,
     charset: &str,
+    mut sources: Option<&mut Vec<(usize, NodeId, usize)>>,
 ) -> Vec<(String, EntryValue)> {
     let dom = page.dom.borrow();
     let mut out = Vec::new();
-    let Ok(root) = dom.root_node(form, false) else { return out };
-    let Ok(desc) = dom.descendants(root) else { return out };
-    let controls: Vec<NodeId> = desc.filter(|&n| dom.form_owner(n).ok().flatten() == Some(form)).collect();
+    let controls = dom.owned_form_elements(form).unwrap_or_default();
     for c in controls {
         let Ok(e) = dom.element(c) else { continue };
         if !e.is_html() || dom.is_disabled(c).unwrap_or(false) {
@@ -146,6 +150,7 @@ fn form_entries_with_charset(
                     InputType::Submit | InputType::Reset | InputType::Button => {
                         if ty == InputType::Submit && Some(c) == submitter && !name.is_empty() {
                             out.push((name, EntryValue::Text(dom.value(c).unwrap_or_default())));
+                            push_dirname(&dom, c, &mut out);
                         }
                     }
                     InputType::Image => {
@@ -177,17 +182,33 @@ fn form_entries_with_charset(
                                 }),
                             ));
                         } else {
-                            for f in files {
+                            for (k, f) in files.into_iter().enumerate() {
+                                if let Some(sources) = sources.as_deref_mut() {
+                                    sources.push((out.len(), c, k));
+                                }
                                 out.push((name.clone(), EntryValue::File(f)));
                             }
                         }
                     }
                     InputType::Hidden if name.eq_ignore_ascii_case("_charset_") => {
                         out.push((name, EntryValue::Text(charset.to_owned())));
+                        push_dirname(&dom, c, &mut out);
                     }
                     _ => {
                         if !name.is_empty() {
                             out.push((name, EntryValue::Text(dom.value(c).unwrap_or_default())));
+                            if matches!(
+                                ty,
+                                InputType::Hidden
+                                    | InputType::Text
+                                    | InputType::Search
+                                    | InputType::Tel
+                                    | InputType::Url
+                                    | InputType::Email
+                                    | InputType::Password
+                            ) {
+                                push_dirname(&dom, c, &mut out);
+                            }
                         }
                     }
                 }
@@ -203,14 +224,62 @@ fn form_entries_with_charset(
                 }
             }
             "textarea" if !name.is_empty() => {
-                let v = dom.value(c).unwrap_or_default().replace('\n', "\r\n");
+                let mut v = dom.value(c).unwrap_or_default();
+                // HTML "textarea wrapping transformation": wrap="hard" (any case) breaks the
+                // submitted value's lines at the element's cols.
+                if e.attr("wrap").is_some_and(|w| w.eq_ignore_ascii_case("hard")) {
+                    let cols = e
+                        .attr("cols")
+                        .and_then(|c| pyro_dom::forms::parse_html_int(c))
+                        .filter(|&c| c > 0)
+                        .map_or(20, |c| c.min(u32::MAX as i64) as usize);
+                    v = hard_wrap(&v, cols);
+                }
                 out.push((name, EntryValue::Text(v)));
+                push_dirname(&dom, c, &mut out);
             }
             _ if dom.is_form_associated(c) => crate::internals::face_entries(&dom, c, &mut out),
             _ => {}
         }
     }
     out
+}
+
+/// Inserts line feeds so that no line of `value` is longer than `cols` characters: after
+/// the last space that fits (as Chrome), else at `cols`. The entry keeps LF; the
+/// serializers turn every newline into CRLF.
+fn hard_wrap(value: &str, cols: usize) -> String {
+    let mut out = String::with_capacity(value.len() + value.len() / cols.max(1) * 2);
+    for (i, line) in value.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        // Walked by index: draining the front per wrapped line was quadratic on a long line.
+        let chars: Vec<char> = line.chars().collect();
+        let mut start = 0;
+        while chars.len() - start > cols {
+            let cut = chars[start..=start + cols].iter().rposition(|&c| c == ' ').map_or(cols, |p| p + 1);
+            let cut = if cut == 0 { cols } else { cut };
+            out.extend(&chars[start..start + cut]);
+            out.push('\n');
+            start += cut;
+        }
+        out.extend(&chars[start..]);
+    }
+    out
+}
+
+/// HTML "constructing the entry list": a control whose `dirname` applies and is not empty
+/// adds an entry of that name with its directionality, "ltr" or "rtl", after its own.
+fn push_dirname(dom: &Dom, c: NodeId, out: &mut Vec<(String, EntryValue)>) {
+    let Some(dirname) = dom.element(c).ok().and_then(|e| e.attr("dirname")).filter(|d| !d.is_empty()) else {
+        return;
+    };
+    let dir = match dom.directionality(c) {
+        Ok(pyro_dom::direction::Direction::Rtl) => "rtl",
+        _ => "ltr",
+    };
+    out.push((dirname.to_owned(), EntryValue::Text(dir.to_owned())));
 }
 
 /// `s` in the submission encoding, with `&#NNN;` for unmappable characters.
@@ -230,10 +299,11 @@ pub fn urlencode(entries: &[(String, EntryValue)], enc: &'static Encoding) -> St
         ser.encoding_override(Some(encode));
     }
     for (k, v) in entries {
-        match v {
-            EntryValue::Text(t) => ser.append_pair(k, t),
-            EntryValue::File(f) => ser.append_pair(k, &f.name),
+        let value = match v {
+            EntryValue::Text(t) => t,
+            EntryValue::File(f) => &f.name,
         };
+        ser.append_pair(&crlf(k), &crlf(value));
     }
     ser.finish()
 }
@@ -250,16 +320,16 @@ pub fn multipart(entries: &[(String, EntryValue)], enc: &'static Encoding) -> (S
             EntryValue::Text(t) => {
                 body.extend_from_slice(&encode_entry(
                     enc,
-                    &format!("Content-Disposition: form-data; name=\"{}\"\r\n\r\n", esc(k)),
+                    &format!("Content-Disposition: form-data; name=\"{}\"\r\n\r\n", esc(&crlf(k))),
                 ));
-                body.extend_from_slice(&encode_entry(enc, t));
+                body.extend_from_slice(&encode_entry(enc, &crlf(t)));
             }
             EntryValue::File(f) => {
                 body.extend_from_slice(&encode_entry(
                     enc,
                     &format!(
                         "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: {}\r\n\r\n",
-                        esc(k),
+                        esc(&crlf(k)),
                         esc(&f.name),
                         if f.mime.is_empty() { "application/octet-stream" } else { &f.mime }
                     ),
@@ -338,21 +408,7 @@ fn submission_entries(
         EntryList::FormData(fd) => {
             let s = scope.as_ref()?;
             match crate::form_data::entries_of(s, fd) {
-                // Entries script added: "converting an entry list to a list
-                // of name-value pairs" gives their names and text CRLF line
-                // breaks (the controls' own entries already have them).
-                Ok(entries) => Some(
-                    entries
-                        .into_iter()
-                        .map(|(name, v)| {
-                            let v = match v {
-                                EntryValue::Text(t) => EntryValue::Text(crlf(t)),
-                                file => file,
-                            };
-                            (crlf(name), v)
-                        })
-                        .collect(),
-                ),
+                Ok(entries) => Some(entries),
                 Err(e) => {
                     s.report_exception(&e);
                     None
@@ -363,11 +419,11 @@ fn submission_entries(
 }
 
 /// `s` with every CR, LF and CRLF as CRLF.
-fn crlf(s: String) -> String {
+fn crlf(s: &str) -> Cow<'_, str> {
     if !s.contains(['\r', '\n']) {
-        return s;
+        return Cow::Borrowed(s);
     }
-    s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n")
+    Cow::Owned(s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n"))
 }
 
 /// Builds the navigation for submitting `form` (None for `method=dialog`
@@ -410,21 +466,39 @@ pub(crate) fn form_submission(
     let mut url = url::Url::parse(&action).ok()?;
     let enctype = attr_override(&dom, form, submitter, "enctype", "formenctype").map(|e| e.to_ascii_lowercase());
     let target = attr_override(&dom, form, submitter, "target", "formtarget").filter(|t| !t.is_empty() && t != "_self");
+    // HTML "get an element's noopener" with the form's rel: a named target keeps its opener.
+    let rel = dom.get_attribute(form, "rel").ok().flatten().unwrap_or_default().to_owned();
     drop(dom);
+    // CSP `form-action` (no fallback): a blocked submission does not navigate.
+    if let Some(list) = crate::csp::policy_list(page) {
+        let outcome = list.form_action_check(&url, false);
+        crate::csp::report(page, outcome.violations, Some(form));
+        if outcome.blocked {
+            return None;
+        }
+    }
     // HTML "submit": a form that navigates its own document before it has
     // completely loaded replaces the document's entry.
     let replace = target.is_none() && page.navigates_by_replacing();
+    let noopener = crate::window::element_noopener(&rel, target.as_deref());
+    // HTML "submit" planned navigation: rel=noreferrer sends no referrer.
+    let referrer_policy = rel
+        .split_ascii_whitespace()
+        .any(|t| t.eq_ignore_ascii_case("noreferrer"))
+        .then_some(pyro_net::ReferrerPolicy::NoReferrer);
     if method == "GET" {
         url.set_query(Some(&urlencode(&entries, enc)));
+        let popup = crate::window::element_popup_ticket(page, target.as_deref(), noopener);
         return Some(NavigationRequest {
             url: url.to_string(),
             target,
             method: "GET".into(),
             body: None,
             content_type: None,
-            opener: false,
-            popup: None,
-            referrer_policy: None,
+            opener: popup.is_some(),
+            popup,
+            window_features: Default::default(),
+            referrer_policy,
             source: Some(submitter.unwrap_or(form)),
             form_entries: None,
             replace,
@@ -436,10 +510,10 @@ pub(crate) fn form_submission(
             let mut b = String::new();
             for (k, v) in &entries {
                 let v = match v {
-                    EntryValue::Text(t) => t.clone(),
-                    EntryValue::File(f) => f.name.clone(),
+                    EntryValue::Text(t) => t,
+                    EntryValue::File(f) => &f.name,
                 };
-                b.push_str(&format!("{k}={v}\r\n"));
+                b.push_str(&format!("{}={}\r\n", crlf(k), crlf(v)));
             }
             ("text/plain".to_owned(), encode_entry(enc, &b).into_owned())
         }
@@ -453,7 +527,8 @@ pub(crate) fn form_submission(
         content_type: Some(ct),
         opener: false,
         popup: None,
-        referrer_policy: None,
+        window_features: Default::default(),
+        referrer_policy,
         source: Some(submitter.unwrap_or(form)),
         form_entries: Some(FormEntries(Rc::new(entries))),
         replace,

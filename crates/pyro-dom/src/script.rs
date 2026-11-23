@@ -25,15 +25,32 @@ pub struct ScriptInfo {
     pub src: Option<String>,
     pub async_: bool,
     pub defer: bool,
+    /// A classic script that is never run once prepared ("already started", no events): it
+    /// has `nomodule`, or `event` and `for` attributes other than window's `onload`.
     pub nomodule: bool,
     pub parser_inserted: bool,
     pub already_started: bool,
+    /// HTML "force async": a script-inserted external script without an
+    /// `async` attribute runs as soon as possible unless this is false (it is
+    /// then in its document's in-order list).
+    pub force_async: bool,
     /// Child text content (inline script source).
     pub inline_text: String,
     pub crossorigin: Option<String>,
     pub integrity: Option<String>,
     /// The `referrerpolicy` content attribute.
     pub referrerpolicy: Option<String>,
+    /// The `charset` content attribute of an HTML script (a classic script's
+    /// fallback encoding when its response names none).
+    pub charset: Option<String>,
+    /// The element (the target of its CSP violations; its cryptographic nonce is read from
+    /// it by the bindings, which hold the slot).
+    pub node: NodeId,
+    /// The source line its inline text starts at in its document (the line of the start tag's
+    /// end, for a script the document's parser created), 1 otherwise: the starting line its
+    /// inline classic script is evaluated with, so error and CSP violation line numbers are the
+    /// document's.
+    pub start_line: u32,
 }
 
 const JS_MIME: &[&str] = &[
@@ -75,8 +92,8 @@ pub enum ResourceKind {
     /// `<embed src>`: fetched for its `load` event and, by its response's Content-Type, whether it
     /// shows a document (a child navigable).
     Embed,
-    /// `<link rel=modulepreload>` / `<link rel=preload>`: fetched ahead, with
-    /// `load`/`error` on the link (bundlers' preload helpers await them).
+    /// `<link rel=modulepreload>` / `<link rel=preload>` / `<link rel=prefetch>`: fetched
+    /// ahead, with `load`/`error` on the link (bundlers' preload helpers await them).
     Preload,
     /// `<meta http-equiv=refresh>`: its insertion schedules a declarative
     /// refresh (the loader handles `Connected` events only).
@@ -119,6 +136,18 @@ pub(crate) struct ResourceQueue {
     /// Each `<style>`'s count of children changes (HTML: each one replaces its CSS style sheet
     /// object, also when its text stays the same).
     pub(crate) sheet_generations: rustc_hash::FxHashMap<NodeId, u32>,
+    /// Script-inserted scripts prepared at their post-connection step whose
+    /// fetch the loader has not started yet: what prepare saw, and the
+    /// preparation-time document. Each entry pins its node.
+    pub(crate) prepared_scripts: rustc_hash::FxHashMap<NodeId, (ScriptInfo, NodeId)>,
+    /// Elements with `autofocus` connected since the embedder last took them, in insertion
+    /// (tree) order: HTML's autofocus insertion steps, which the embedder completes by
+    /// appending them to their top-level document's autofocus candidates.
+    pub(crate) autofocus: Vec<NodeId>,
+    /// `<img>` elements with a relevant mutation (HTML "update the image data") since the
+    /// embedder last took them: their current request, and so `currentSrc`, changes in the
+    /// microtask the mutation queues (`Dom::take_current_src_updates`).
+    pub(crate) current_src_updates: Vec<NodeId>,
 }
 
 impl Dom {
@@ -142,9 +171,74 @@ impl Dom {
         self.is_connected_idx(i) || self.is_fragment_parse_host(self.n(i).owner_doc)
     }
 
+    /// The elements with `autofocus` inserted into a document since the last call, in
+    /// insertion order (each insertion again; the embedder keeps the last).
+    pub fn take_autofocus_insertions(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.resources.autofocus)
+    }
+
+    /// Whether `take_autofocus_insertions` would return anything.
+    pub fn has_autofocus_insertions(&self) -> bool {
+        !self.resources.autofocus.is_empty()
+    }
+
+    /// An HTML, SVG or MathML element with an `autofocus` attribute.
+    fn is_autofocus_idx(&self, i: u32) -> bool {
+        self.n(i).element().is_some_and(|e| {
+            e.attr_local(&local_name!("autofocus")).is_some()
+                && (e.is_html() || e.name.ns == ns!(svg) || e.name.ns == ns!(mathml))
+        })
+    }
+
     /// Whether `take_resource_events` would return anything.
     pub fn has_resource_events(&self) -> bool {
         !self.resources.events.is_empty()
+    }
+
+    /// The `<img>` elements that had a relevant mutation (their `src`, `srcset`, `sizes`,
+    /// `width`, `crossorigin` or `referrerpolicy` changed, or they or a `<source>` sibling came
+    /// into or left a `<picture>` parent) since the last call, in order, repeated per mutation.
+    pub fn take_current_src_updates(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.resources.current_src_updates)
+    }
+
+    /// Whether [`Dom::take_current_src_updates`] has any.
+    pub fn has_current_src_updates(&self) -> bool {
+        !self.resources.current_src_updates.is_empty()
+    }
+
+    /// Notes a relevant mutation of `img` for [`Dom::take_current_src_updates`].
+    fn note_current_src_update(&mut self, img: u32) {
+        if self.resources.enabled && self.is_html_img(img) {
+            let id = self.id_of(img);
+            self.resources.current_src_updates.push(id);
+        }
+    }
+
+    fn is_html_img(&self, i: u32) -> bool {
+        i != NIL && self.n(i).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img"))
+    }
+
+    /// `node` came into or is about to leave its parent: when that is a `<picture>`, a relevant
+    /// mutation of the `<img>` itself, or of the picture's `<img>` children for a `<source>`.
+    fn note_picture_child_change(&mut self, node: u32) {
+        if !self.resources.enabled {
+            return;
+        }
+        let parent = self.n(node).parent;
+        let picture = parent != NIL
+            && self.n(parent).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("picture"));
+        if !picture {
+            return;
+        }
+        if self.is_html_img(node) {
+            self.note_current_src_update(node);
+        } else if self.n(node).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("source")) {
+            let images: Vec<u32> = self.child_idx_iter(parent).filter(|&c| self.is_html_img(c)).collect();
+            for img in images {
+                self.note_current_src_update(img);
+            }
+        }
     }
 
     /// Drains pending resource events. Node ids stay valid until the next
@@ -184,7 +278,12 @@ impl Dom {
             local_name!("link")
                 if e.attr_local(&local_name!("rel")).is_some_and(|r| {
                     r.split_ascii_whitespace()
-                        .any(|t| t.eq_ignore_ascii_case("modulepreload") || t.eq_ignore_ascii_case("preload"))
+                        .any(|t| {
+                            t.eq_ignore_ascii_case("modulepreload")
+                                || t.eq_ignore_ascii_case("preload")
+                                || t.eq_ignore_ascii_case("prefetch")
+                            || t.eq_ignore_ascii_case("compression-dictionary")
+                        })
                 }) =>
             {
                 ResourceKind::Preload
@@ -217,6 +316,7 @@ impl Dom {
 
     /// Called after `node` was inserted (tree mutation or parser).
     pub(crate) fn resources_after_insert(&mut self, node: u32) {
+        self.note_picture_child_change(node);
         // The usual insertion of a script: one element holding at most text
         // (`createElement`, `textContent`, `appendChild`), or the text node
         // itself. Its subtree has one node that can be anything to the four
@@ -299,6 +399,9 @@ impl Dom {
                 self.push_resource(node, k, ResourceReason::Connected);
             }
         }
+        if self.is_connected_idx(node) && self.is_autofocus_idx(node) {
+            self.resources.autofocus.push(self.id_of(node));
+        }
         if meta {
             self.process_viewport_meta(node);
         }
@@ -315,6 +418,7 @@ impl Dom {
 
     /// Called before `node` is unlinked from a connected parent.
     pub(crate) fn resources_before_remove(&mut self, node: u32) {
+        self.note_picture_child_change(node);
         self.iframes_before_remove(node);
         self.media_before_remove(node);
         if !self.resources.enabled || !self.connected_for_resources(node) {
@@ -337,12 +441,29 @@ impl Dom {
     /// Called after the attribute `local` of `idx` was set or removed;
     /// `added` when the element did not have it before.
     pub(crate) fn resources_after_attr(&mut self, idx: u32, local: &str, added: bool) {
+        if matches!(local, "src" | "srcset" | "sizes" | "width" | "crossorigin" | "referrerpolicy") {
+            self.note_current_src_update(idx);
+        }
         self.iframes_after_attr(idx, local);
         self.media_after_attr(idx, local);
         // HTML: a connected script is prepared when it gets a `src` it did
         // not have. No other attribute change (`type`, a changed or removed
-        // `src`) prepares it again.
-        let script_src = local == "src" && added && self.script_steps_due(idx);
+        // `src`) prepares it again. An SVG script's source is its `href`
+        // (`xlink:href`), as in Chrome.
+        let source_attr = match self.n(idx).element() {
+            Some(e) if e.name.ns == ns!(svg) => "href",
+            _ => "src",
+        };
+        // HTML: a script whose force async is true loses it when it gets an
+        // `async` attribute.
+        if local == "async" && added {
+            if let Some(e) = self.n_mut(idx).element_mut() {
+                if e.is_html() && e.name.local == local_name!("script") {
+                    e.script_force_async = false;
+                }
+            }
+        }
+        let script_src = local == source_attr && added && self.script_steps_due(idx);
         let meta = matches!(local, "name" | "content") && self.is_html_meta(idx);
         if meta {
             self.process_referrer_meta(idx);
@@ -371,7 +492,11 @@ impl Dom {
             // pyro: an SVG `<image>`'s CORS settings are its request's mode too (a change is a new
             // request, with its own tainting).
             || (local == "crossorigin"
-                && self.n(idx).element().is_some_and(|e| e.name.ns == ns!(svg) && &*e.name.local == "image"));
+                && self.n(idx).element().is_some_and(|e| e.name.ns == ns!(svg) && &*e.name.local == "image"))
+            // A link's CORS settings and image source set are its fetch's (a preload, prefetch or
+            // compression dictionary fetches again).
+            || (matches!(local, "crossorigin" | "imagesrcset")
+                && self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("link")));
         if !relevant {
             return;
         }
@@ -415,12 +540,17 @@ impl Dom {
             return;
         }
         if let Ok(i) = self.check(img) {
-            self.push_resource(i, ResourceKind::Img, ResourceReason::AttrChanged);
+            // An SVG `<image>`'s request is its own kind (`SVGImageElement.decode()`).
+            let kind = if self.resource_kind(i) == Some(ResourceKind::SvgImage) {
+                ResourceKind::SvgImage
+            } else {
+                ResourceKind::Img
+            };
+            self.push_resource(i, kind, ResourceReason::AttrChanged);
         }
     }
 
-    /// How many times the `<style>` `node`'s children changed (its CSS style sheet object is
-    /// replaced each time).
+    /// Generation of a stylesheet owner's current CSS style sheet object.
     pub fn style_sheet_generation(&self, node: NodeId) -> u32 {
         self.resources.sheet_generations.get(&node).copied().unwrap_or(0)
     }
@@ -440,7 +570,12 @@ impl Dom {
         // walk had with a stack, kept without one.
         let mut i = node;
         let mut metas = false;
+        let track_autofocus = reason == ResourceReason::Connected && self.is_connected_idx(node);
+        let mut autofocus = Vec::new();
         while i != NIL {
+            if track_autofocus && self.is_autofocus_idx(i) {
+                autofocus.push(self.id_of(i));
+            }
             if let Some(k) = self.resource_kind(i) {
                 // Parser-inserted scripts are driven by ParseStep::Script.
                 let parser_script = k == ResourceKind::Script
@@ -452,6 +587,8 @@ impl Dom {
             metas |= self.is_html_meta(i);
             i = self.next_shadow_including_rev(i, node);
         }
+        // The walk is in reverse: the insertion steps run in tree order.
+        self.resources.autofocus.extend(autofocus.into_iter().rev());
         if metas && reason == ResourceReason::Connected {
             self.process_viewport_metas(node);
         }
@@ -464,9 +601,15 @@ impl Dom {
             return;
         }
         let ev = ResourceEvent { node: self.id_of(idx), kind, reason };
-        if kind == ResourceKind::StyleText && reason == ResourceReason::ChildrenChanged {
+        if matches!((kind, reason), (ResourceKind::StyleText | ResourceKind::Stylesheet, ResourceReason::Connected)
+            | (ResourceKind::StyleText, ResourceReason::ChildrenChanged))
+        {
             let generation = self.resources.sheet_generations.entry(ev.node).or_default();
             *generation = generation.wrapping_add(1);
+            // pyro: an updated style block is checked against the document's CSP (`style-src-elem`).
+            if kind == ResourceKind::StyleText {
+                self.note_style_element(idx);
+            }
         }
         // Coalesce consecutive duplicates (e.g. many text appends to one <style>).
         if self.resources.events.last() != Some(&ev) {
@@ -478,14 +621,39 @@ impl Dom {
     /// Parser hook: an element was closed (end tag / EOF). `<style>` content
     /// is complete at this point.
     pub(crate) fn resources_element_popped(&mut self, idx: u32) {
+        let mut script = false;
         if let Some(e) = self.n_mut(idx).element_mut() {
             e.flags &= !element_flags::STYLE_PARSING;
+            script = &*e.name.local == "script" && (e.is_html() || e.namespace() == &ns!(svg));
+        }
+        // Trusted Types: the parser trusts a script with the text it parsed into it.
+        if script {
+            let id = self.id_of(idx);
+            let text = self.child_text_content(id).into_owned();
+            self.set_script_text(id, &text);
         }
         if self.resources.enabled
             && self.resource_kind(idx) == Some(ResourceKind::StyleText)
             && self.connected_for_resources(idx)
         {
             self.push_resource(idx, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
+        }
+    }
+
+    /// Trusted Types' [[ScriptText]] of the script element `script`: the source text a trusted
+    /// path gave it (its parser, a Trusted Types sink), "" when none did. Its source text runs as
+    /// it is only while it is the same (Trusted Types "prepare the script text").
+    pub fn script_text(&self, script: NodeId) -> &str {
+        self.check(script).ok().and_then(|i| self.script_texts.get(&i)).map_or("", |t| t)
+    }
+
+    /// Sets [`Dom::script_text`] of `script`.
+    pub fn set_script_text(&mut self, script: NodeId, text: &str) {
+        let Ok(i) = self.check(script) else { return };
+        if text.is_empty() {
+            self.script_texts.remove(&i);
+        } else {
+            self.script_texts.insert(i, text.into());
         }
     }
 
@@ -498,12 +666,17 @@ impl Dom {
         let lang = if e.is_html() { e.attr_local(&local_name!("language")) } else { None };
         let kind = match ty {
             Some(t) if !t.is_empty() => {
-                let t = t.trim().to_ascii_lowercase();
-                if JS_MIME.contains(&t.as_str()) {
+                // JavaScript MIME types match with surrounding ASCII
+                // whitespace stripped; "module" and "importmap" must match
+                // the whole attribute value (HTML "prepare the script
+                // element" step 8: `type="module "` is a data block).
+                let raw = t.to_ascii_lowercase();
+                let t = raw.trim_matches(|c: char| c.is_ascii_whitespace());
+                if JS_MIME.contains(&t) {
                     ScriptKind::Classic
-                } else if t == "module" {
+                } else if raw == "module" {
                     ScriptKind::Module
-                } else if t == "importmap" {
+                } else if raw == "importmap" {
                     ScriptKind::ImportMap
                 } else {
                     ScriptKind::Data
@@ -521,6 +694,19 @@ impl Dom {
                 _ => ScriptKind::Classic,
             },
         };
+        // An SVG script's source is its `href`, else its `xlink:href` (SVG 2), and it has no
+        // `async`, `defer` or `nomodule` (Chrome: SVGScriptElement is never async or deferred).
+        let svg = e.name.ns == ns!(svg);
+        let src = if svg {
+            e.attr_local(&local_name!("href")).or_else(|| {
+                e.attrs
+                    .iter()
+                    .find(|a| a.name.ns == ns!(xlink) && a.name.local == local_name!("href"))
+                    .map(|a| &*a.value)
+            })
+        } else {
+            e.attr_local(&local_name!("src"))
+        };
         let mut inline_text = String::new();
         for c in self.child_idx_iter(i) {
             // "Child text content": Text and (XML) CDATA section children.
@@ -530,16 +716,20 @@ impl Dom {
         }
         Ok(ScriptInfo {
             kind,
-            src: e.attr_local(&local_name!("src")).map(str::to_owned),
-            async_: e.attr_local(&local_name!("async")).is_some(),
-            defer: e.attr_local(&local_name!("defer")).is_some(),
-            nomodule: e.attr_local(&local_name!("nomodule")).is_some(),
+            src: src.map(str::to_owned),
+            async_: !svg && e.attr_local(&local_name!("async")).is_some(),
+            defer: !svg && e.attr_local(&local_name!("defer")).is_some(),
+            nomodule: !svg && (e.attr_local(&local_name!("nomodule")).is_some() || !for_window_onload(e)),
             parser_inserted: e.flags & element_flags::PARSER_INSERTED != 0,
             already_started: e.flags & element_flags::SCRIPT_ALREADY_STARTED != 0,
+            force_async: e.script_force_async,
             inline_text,
             crossorigin: e.attr_local(&local_name!("crossorigin")).map(str::to_owned),
             integrity: e.attr_local(&local_name!("integrity")).map(str::to_owned),
             referrerpolicy: e.attr_local(&markup5ever::LocalName::from("referrerpolicy")).map(str::to_owned),
+            charset: if svg { None } else { e.attr_local(&local_name!("charset")).map(str::to_owned) },
+            node: script,
+            start_line: e.script_start_line.max(1),
         })
     }
 
@@ -548,6 +738,10 @@ impl Dom {
         let i = self.check(script)?;
         let e = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
         e.flags |= element_flags::SCRIPT_ALREADY_STARTED;
+        // A started script is never prepared again: its [[ScriptText]] is not read any more.
+        if !self.script_texts.is_empty() {
+            self.script_texts.remove(&i);
+        }
         Ok(())
     }
 
@@ -563,6 +757,35 @@ impl Dom {
         Ok(())
     }
 
+    /// Records a script-inserted script prepared at insertion (already
+    /// started): its `info` as prepare saw it and its preparation-time
+    /// `document`, for the loader's resource-event drain to start its fetch
+    /// from even if the element was removed, moved or lost its `src` since.
+    pub fn stash_prepared_script(&mut self, script: NodeId, info: ScriptInfo, document: NodeId) -> DomResult<()> {
+        self.add_ref(script)?;
+        if self.resources.prepared_scripts.insert(script, (info, document)).is_some() {
+            self.release(script);
+        }
+        Ok(())
+    }
+
+    /// Takes what [`Dom::stash_prepared_script`] recorded for `script`.
+    pub fn take_prepared_script(&mut self, script: NodeId) -> Option<(ScriptInfo, NodeId)> {
+        let entry = self.resources.prepared_scripts.remove(&script)?;
+        self.release(script);
+        Some(entry)
+    }
+
+    /// Sets the script's "force async" (the `async` IDL attribute's setter
+    /// clears it; a parser-inserted script that prepare returns from before
+    /// "already started" without an `async` attribute gets it).
+    pub fn set_script_force_async(&mut self, script: NodeId, force_async: bool) -> DomResult<()> {
+        let i = self.check(script)?;
+        let e = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
+        e.script_force_async = force_async;
+        Ok(())
+    }
+
     /// Clears the parser-inserted flag (scripts moved/cloned by script; also
     /// "force async" semantics for dynamically inserted scripts).
     pub fn clear_parser_inserted(&mut self, script: NodeId) -> DomResult<()> {
@@ -571,6 +794,19 @@ impl Dom {
         e.flags &= !element_flags::PARSER_INSERTED;
         Ok(())
     }
+}
+
+/// HTML "prepare the script element": a classic script with both `event` and `for`
+/// attributes runs only for `for` "window" and `event` "onload" or "onload()" (ASCII
+/// whitespace stripped, ASCII case-insensitive).
+fn for_window_onload(e: &crate::node::ElementData) -> bool {
+    let (Some(event), Some(for_)) = (e.attr("event"), e.attr("for")) else {
+        return true;
+    };
+    let trim = |v: &str| v.trim_matches(|c: char| c.is_ascii_whitespace()).to_owned();
+    let (event, for_) = (trim(event), trim(for_));
+    for_.eq_ignore_ascii_case("window")
+        && (event.eq_ignore_ascii_case("onload") || event.eq_ignore_ascii_case("onload()"))
 }
 
 #[cfg(test)]
@@ -596,5 +832,48 @@ mod language_attribute_tests {
         let kind = |id: &str| dom.script_info(dom.get_element_by_id(doc, id).unwrap().unwrap()).unwrap().kind;
         assert_eq!(kind("h"), ScriptKind::Data);
         assert_eq!(kind("s"), ScriptKind::Classic);
+    }
+
+    /// Autofocus insertions are recorded in tree order, again on each insertion.
+    #[test]
+    fn autofocus_insertions_in_insertion_order() {
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        dom_ref.borrow_mut().set_resource_tracking(true);
+        let doc = parse_document(
+            &dom_ref,
+            "http://test/",
+            "<!doctype html><input id=a autofocus><div><input id=b autofocus><input id=c></div>",
+        );
+        let mut dom = dom_ref.borrow_mut();
+        let id = |dom: &Dom, name: &str| dom.get_element_by_id(doc, name).unwrap().unwrap();
+        let (a, b) = (id(&dom, "a"), id(&dom, "b"));
+        assert_eq!(dom.take_autofocus_insertions(), [a, b]);
+        let div = dom.parent(b).unwrap().unwrap();
+        dom.append_child(div, a).unwrap();
+        assert_eq!(dom.take_autofocus_insertions(), [a]);
+        assert!(!dom.has_autofocus_insertions());
+    }
+
+    /// `event` + `for` other than window's onload: never run, like `nomodule`
+    /// (html/semantics/scripting-1/the-script-element/execution-timing/149.html).
+    #[test]
+    fn event_and_for_other_than_window_onload_never_run() {
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(
+            &dom_ref,
+            "http://test/",
+            "<!doctype html><script id=a for=window event='onload()'></script>\
+             <script id=b for=' WINdow\t' event='ONload\n'></script>\
+             <script id=c for=window event=load></script>\
+             <script id=d for=window event=onpageshow></script>\
+             <script id=e for=document event=onload></script>\
+             <script id=f event=load></script><script id=g for=document></script>",
+        );
+        let dom = dom_ref.borrow();
+        let skipped = |id: &str| dom.script_info(dom.get_element_by_id(doc, id).unwrap().unwrap()).unwrap().nomodule;
+        assert!(!skipped("a") && !skipped("b"));
+        assert!(skipped("c") && skipped("d") && skipped("e"));
+        // Only both attributes together are checked.
+        assert!(!skipped("f") && !skipped("g"));
     }
 }

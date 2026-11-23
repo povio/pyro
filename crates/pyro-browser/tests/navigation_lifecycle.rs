@@ -107,7 +107,7 @@ fn location_setters_follow_the_url_parser() {
     );
     // Setters strictly assign (no TypeError in strict code).
     assert_eq!(
-        eval(&t, page, "'use strict'; (() => { 'use strict'; location.port = location.port; return typeof Object.getOwnPropertyDescriptor(Location.prototype, 'search').set })()"),
+        eval(&t, page, "'use strict'; (() => { 'use strict'; location.port = location.port; return typeof Object.getOwnPropertyDescriptor(location, 'search').set })()"),
         "function"
     );
 }

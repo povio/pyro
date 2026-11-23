@@ -8,8 +8,9 @@
 //!   checkedness, a textarea's value, each option's selectedness;
 //! - `<style>` text and `<link rel=stylesheet>` URLs come from the caller
 //!   (the style engine holds the live text, CSSOM edits included);
-//! - a `<script>` is written without its text; `<noscript>` (scripting is on), `<template>`, comments and
-//!   processing instructions are left out, and so is an `<iframe>`'s `src`
+//! - a `<script>`, `<noscript>` (scripting is on) and `<template>` are written without their
+//!   content (the elements stay, `display: none`, so they count for selectors and have a computed
+//!   style); comments and processing instructions are left out, and so is an `<iframe>`'s `src`
 //!   (a frame shows the document [`Dom::set_frame_documents`] gave it, which the
 //!   renderer takes from the frame table, [`Dom::frame_table`], by the index the frame's
 //!   [`FRAME_ATTRIBUTE`] names; else nothing); a page attribute that would collide with
@@ -159,7 +160,7 @@ pub const SHADOW_HOST_ATTR: &str = "shadow-host";
 /// (light children of its host), not its own.
 pub const ASSIGNED_SLOT_ATTR: &str = "assigned-slot";
 /// Name ([`STATE_NS`]) of the attribute a light child element of a shadow host carries in render
-/// trees: its index among the host's element children. An assigned node's render parent is its
+/// trees: its zero-based DOM index and total element siblings, separated by '/'. Its render parent is its
 /// slot, so this is how the renderer finds its light-tree siblings (sibling combinators match in
 /// the node tree, not the flat tree).
 pub const LIGHT_INDEX_ATTR: &str = "light-index";
@@ -539,6 +540,45 @@ impl Dom {
         Ok(sink.out)
     }
 
+    /// pyro: the `href` of an SVG `<image>`, `<feImage>` or `<use>` element `n` that names another
+    /// resource (not an element of the document, not a `data:` URL), resolved against its
+    /// document's base URL with the query in the document's encoding, as Chromium resolves it
+    /// (HTML "encoding-parse a URL"; an unmappable character becomes an escaped `&#...;`). `None`
+    /// when the document's output encoding is UTF-8: the renderer resolves the value as it is.
+    fn svg_reference_in_encoding(&self, n: u32, value: &str) -> Option<String> {
+        let value = value.trim();
+        if value.is_empty() || value.starts_with('#') || value.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("data:"))
+        {
+            return None;
+        }
+        let doc = self.id_of(self.n(n).owner_doc);
+        let enc = encoding_rs::Encoding::for_label(self.document_data(doc).ok()?.charset.as_bytes())?.output_encoding();
+        if enc == encoding_rs::UTF_8 {
+            return None;
+        }
+        let base = url::Url::parse(self.document_base_url(doc).ok()?).ok()?;
+        let encode: &dyn Fn(&str) -> Cow<'_, [u8]> = &|query| {
+            let mut encoder = enc.new_encoder();
+            let mut out = Vec::new();
+            let mut rest = query;
+            loop {
+                let needed =
+                    encoder.max_buffer_length_from_utf8_without_replacement(rest.len()).unwrap_or(rest.len() * 4 + 8);
+                out.reserve(needed);
+                let (result, read) = encoder.encode_from_utf8_to_vec_without_replacement(rest, &mut out, true);
+                rest = &rest[read..];
+                match result {
+                    encoding_rs::EncoderResult::InputEmpty => return Cow::Owned(out),
+                    encoding_rs::EncoderResult::OutputFull => {}
+                    encoding_rs::EncoderResult::Unmappable(c) => {
+                        out.extend_from_slice(format!("%26%23{}%3B", c as u32).as_bytes());
+                    }
+                }
+            }
+        };
+        url::Url::options().base_url(Some(&base)).encoding_override(Some(encode)).parse(value).ok().map(String::from)
+    }
+
     /// The nodes [`Dom::render_html`] would serialize, keyed (see
     /// [`RenderTree`]).
     pub fn render_tree(&self, doc: NodeId, opts: &RenderHtml<'_>) -> DomResult<RenderTree> {
@@ -590,7 +630,7 @@ impl Dom {
         // The element index of each light child of a shadow host or `<details>` (`LIGHT_INDEX_ATTR`),
         // counted once per parent: one pass over its children, however many it has.
         let mut light_indices: rustc_hash::FxHashMap<u32, usize> = Default::default();
-        let mut indexed_parents: rustc_hash::FxHashSet<u32> = Default::default();
+        let mut light_counts: rustc_hash::FxHashMap<u32, usize> = Default::default();
         let mut stack = Vec::new();
         push_children(&mut stack, roots, NONE);
         while let Some(step) = stack.pop() {
@@ -645,9 +685,11 @@ impl Dom {
                 NodeKind::Element(e) => {
                     let html = e.is_html();
                     let local: &str = &e.name.local;
-                    if html && matches!(local, "noscript" | "template") {
-                        continue;
-                    }
+                    // pyro: `<noscript>` and `<template>` are in the tree without their content, as a
+                    // script is: they have a computed style (`getComputedStyle`, WPT
+                    // html/rendering/bidi-rendering/unicode-bidi-ua-rules) and count for sibling and
+                    // structural selectors; the UA sheet gives them `display: none`.
+                    let childless = html && matches!(local, "noscript" | "template");
                     // pyro: a script element is in the tree, without its text: it counts for
                     // sibling and structural selectors, and `script { display: block }` boxes
                     // render (WPT CSS2 `content-072`, `-090`, `-138`).
@@ -716,15 +758,29 @@ impl Dom {
                                     html && self.frame_documents.contains_key(&n)
                                 }
                                 ("img", "src") => image_source.is_some(),
+                                // pyro: a script-made template's `shadowrootmode` would reparse as
+                                // a declarative shadow root of its parent in the renderer.
+                                ("template", "shadowrootmode") => html,
                                 _ => false,
                             };
                             if skip {
                                 continue;
                             }
                         }
+                        // pyro: an SVG reference to another resource the renderer fetches, resolved
+                        // with its query in the document's encoding (`svg_reference_in_encoding`).
+                        let encoded = (e.name.ns == ns!(svg)
+                            && matches!(local, "image" | "feImage" | "use")
+                            && name == "href"
+                            && (a.name.ns == ns!() || a.name.ns == ns!(xlink)))
+                        .then(|| self.svg_reference_in_encoding(n, &a.value))
+                        .flatten();
                         attrs.push(RAttr {
                             name: Cow::Borrowed(&a.name),
-                            value: Cow::Borrowed(&a.value),
+                            value: match encoded {
+                                Some(url) => Cow::Owned(url),
+                                None => Cow::Borrowed(&a.value),
+                            },
                             valueless: false,
                         });
                     }
@@ -732,6 +788,17 @@ impl Dom {
                     // written after it, without any that would collide (`ENGINE_ATTRIBUTES`).
                     let page_end = attrs.len();
                     let plain = |local: &str| Cow::Owned(QualName::new(None, ns!(), local.into()));
+                    // Keep the reflected attribute available to CSS attribute selectors.
+                    // Only the declaration parser consumes this private snapshot value.
+                    // pyro: a `style` attribute CSP blocked declares nothing in the renderer too.
+                    let blocked_style = self.style_attribute_blocked_idx(n);
+                    if let Some(style) = if blocked_style { Some("") } else { e.semantic_inline_style() } {
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), "inline-declarations".into())),
+                            value: Cow::Borrowed(style),
+                            valueless: false,
+                        });
+                    }
                     if let Some(href) = href {
                         attrs.push(RAttr { name: plain("href"), value: Cow::Owned(href), valueless: false });
                         attrs.push(RAttr { name: plain(SHEET_ATTRIBUTE), value: Cow::Owned(self.sheet_key(id)), valueless: false });
@@ -784,10 +851,10 @@ impl Dom {
                         }
                     }
                     if html && local == "iframe" {
-                        if let Some(height) = self.frame_content_heights.get(&n) {
+                        if let Some((width, height)) = self.frame_content_sizes.get(&n) {
                             attrs.push(RAttr {
-                                name: plain("data-pyro-frame-content-height"),
-                                value: Cow::Owned(height.to_string()),
+                                name: plain("data-pyro-frame-content-size"),
+                                value: Cow::Owned(format!("{width},{height}")),
                                 valueless: false,
                             });
                         }
@@ -831,14 +898,18 @@ impl Dom {
                         && (self.n(parent).element().is_some_and(|p| p.shadow_root != NIL && !self.has_ua_shadow_idx(p.shadow_root))
                             || self.renders_details_slots(parent))
                     {
-                        if indexed_parents.insert(parent) {
-                            let elements = self.child_idx_iter(parent).filter(|&c| self.n(c).is_element());
-                            light_indices.extend(elements.enumerate().map(|(index, c)| (c, index)));
-                        }
+                        let count = *light_counts.entry(parent).or_insert_with(|| {
+                            let mut count = 0;
+                            for child in self.child_idx_iter(parent).filter(|&c| self.n(c).is_element()) {
+                                light_indices.insert(child, count);
+                                count += 1;
+                            }
+                            count
+                        });
                         let index = light_indices.get(&n).copied().unwrap_or(0);
                         attrs.push(RAttr {
                             name: Cow::Owned(QualName::new(None, STATE_NS.into(), LIGHT_INDEX_ATTR.into())),
-                            value: Cow::Owned(index.to_string()),
+                            value: Cow::Owned(format!("{index}/{count}")),
                             valueless: false,
                         });
                     }
@@ -887,12 +958,17 @@ impl Dom {
                     }
                     tags.push(tag);
                     stack.push(Step::Close);
-                    if is_script {
+                    if is_script || childless {
                         continue;
                     }
                     if html && local == "style" {
                         let text = (opts.style_text)(id).unwrap_or_else(|| self.child_text_content(id).into_owned());
                         stack.push(Step::Synthetic(n, text, TextKind::Style));
+                        continue;
+                    }
+                    // pyro: an SVG `<style>` whose type is not CSS has no sheet: the renderer gets it
+                    // empty (an HTML one's text says so through `style_text`).
+                    if local == "style" && e.name.ns == ns!(svg) && !Dom::style_type_is_css(e.attr("type")) {
                         continue;
                     }
                     if html && local == "textarea" {
@@ -1128,8 +1204,21 @@ impl Dom {
             self.state_dependents(i, &mut dependents);
             self.auto_dir_ancestors(i, &mut dependents);
         }
-        // A fieldset or optgroup whose own attributes changed (`disabled`) can disable or enable
-        // the controls and options inside it.
+        // `state_dependents` starts above the node: a form, fieldset or select that gained or lost
+        // a child follows it too (WPT pseudo-classes/valid-invalid: an invalid control appended to
+        // an empty form).
+        for &p in parents.iter() {
+            let follows_children = self.slot_live(p)
+                && self
+                    .n(p)
+                    .element()
+                    .is_some_and(|e| e.is_html() && matches!(&*e.name.local, "form" | "fieldset" | "select"));
+            if follows_children {
+                dependents.push(p);
+            }
+        }
+        // A fieldset, optgroup or select whose own attributes changed (`disabled`) can disable or
+        // enable the controls and options inside it.
         for &i in changed.iter() {
             self.disabled_dependents(i, &mut dependents);
         }
@@ -1148,7 +1237,12 @@ impl Dom {
             let is_frame = matches!(&self.n(i).kind, NodeKind::Element(e)
                 if e.is_html() && (matches!(&*e.name.local, "iframe" | "frame")
                     || (matches!(&*e.name.local, "object" | "embed") && self.frame_documents.contains_key(&i))));
-            let own_attributes = is_style || is_frame || textarea_attributes.get(&i) == Some(&true);
+            // A script's, noscript's or template's own attributes (`dir`, `class`): the element,
+            // which is rendered though its content is not.
+            let is_childless = matches!(&self.n(i).kind, NodeKind::Element(e)
+                if (e.is_html() && matches!(&*e.name.local, "script" | "noscript" | "template"))
+                    || (e.name.ns == ns!(svg) && &*e.name.local == "script"));
+            let own_attributes = is_style || is_frame || is_childless || textarea_attributes.get(&i) == Some(&true);
             let place =
                 if own_attributes && self.n(i).parent != NIL { rendered(self.n(i).parent) } else { rendered(i) };
             match place {
@@ -1244,8 +1338,11 @@ impl Dom {
         // The directionality of an element whose content decides it (`dir=auto`, `<bdi>`).
         let auto_dir = self.has_auto_directionality(n).then(|| self.directionality_idx(n));
         // A custom element not defined yet is not `:defined`.
-        let undefined = e.is_html() && local.contains('-') && e.flags & crate::node::element_flags::CUSTOM_DEFINED == 0;
-        if !kind && !editable && natural.is_none() && auto_dir.is_none() && !undefined {
+        let undefined = !e.is_defined();
+        // pyro: the scope of an active element-scoped view transition (`Dom::set_view_transition_scope`).
+        let scope = self.view_transition_scope_idx(n);
+        let fullscreen = self.is_fullscreen_idx(n);
+        if !kind && !editable && natural.is_none() && auto_dir.is_none() && !undefined && scope.is_none() && !fullscreen {
             return None;
         }
         let mut out = String::new();
@@ -1303,6 +1400,19 @@ impl Dom {
             }
             out.push_str("dialog-in-top-layer");
         }
+        if fullscreen {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            // `:modal` matches an element in fullscreen too.
+            out.push_str("fullscreen modal");
+        }
+        if let Some(contained) = scope {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(if contained { "view-transition-scope view-transition-contain" } else { "view-transition-scope" });
+        }
         // The top layer's paint order: renderers paint these elements above
         // the document by rank (one empty check without a top layer).
         if let Some(rank) = self.top_layer_rank(self.id_of(n)) {
@@ -1314,10 +1424,10 @@ impl Dom {
         (!out.is_empty()).then_some(out)
     }
 
-    /// The elements inside a fieldset or optgroup `i` whose `:enabled`/`:disabled` state token
-    /// follows its `disabled` attribute (the controls, options and nested fieldsets).
+    /// The elements inside a fieldset, optgroup or select `i` whose `:enabled`/`:disabled` state
+    /// token follows its `disabled` attribute (the controls, options and nested fieldsets).
     fn disabled_dependents(&self, i: u32, out: &mut Vec<u32>) {
-        if !self.slot_live(i) || !matches!(self.html_local(i).map(|l| &**l), Some("fieldset" | "optgroup")) {
+        if !self.slot_live(i) || !matches!(self.html_local(i).map(|l| &**l), Some("fieldset" | "optgroup" | "select")) {
             return;
         }
         let mut n = self.n(i).first_child;
@@ -1383,10 +1493,8 @@ impl Dom {
     fn render_child(&self, k: u32) -> bool {
         match &self.n(k).kind {
             NodeKind::Text(_) | NodeKind::CData(_) => true,
-            NodeKind::Element(e) => {
-                let local: &str = &e.name.local;
-                !(e.is_html() && matches!(local, "noscript" | "template"))
-            }
+            // pyro: every element, `<noscript>` and `<template>` included (without their content).
+            NodeKind::Element(_) => true,
             _ => false,
         }
     }

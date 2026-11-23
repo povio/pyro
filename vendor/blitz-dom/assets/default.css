@@ -7,8 +7,14 @@
 @namespace xul url(http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul);
 /* pyro: for the `svg|svg` rule below. */
 @namespace svg url(http://www.w3.org/2000/svg);
+/* pyro: for the MathML fraction rules at the end. */
+@namespace m url(http://www.w3.org/1998/Math/MathML);
 
 *|*:root { view-transition-name: root; }
+/* pyro: the scope of an active element-scoped view transition (css-view-transitions-2, as in
+   Chrome): it takes part in its own transition as `root` (an author `view-transition-name` wins),
+   and its names stay out of transitions its ancestors start. */
+*|*:-pyro-active-view-transition-scope { view-transition-name: root; view-transition-scope: all; }
 
 *|*::view-transition { position: absolute; inset: 0; }
 *|*::view-transition-group(*) {
@@ -56,7 +62,11 @@ bdi:dir(rtl) {
     direction: rtl;
 }
 
-[dir] {
+/* pyro: only the three valid values isolate (HTML § 15.3.5): an invalid dir
+   keeps the element's own default, as in Chrome. */
+[dir="ltr" i],
+[dir="rtl" i],
+[dir="auto" i] {
     unicode-bidi: isolate;
 }
 
@@ -66,9 +76,17 @@ bdi:dir(rtl) {
 
 /* https://html.spec.whatwg.org/#phrasing-content-3: only links are styled */
 a[href] {
-    color: rgb(0, 0, 238);
+    color: LinkText;
     text-decoration: underline;
     /* pyro: Chromium's `a:-webkit-any-link { cursor: pointer }`. */
+    cursor: pointer;
+}
+
+/* pyro: the other links take the link cursor too, as in Chromium: an image map's `<area href>`
+   (not one without href) and an SVG `<a href>` (WPT html/rendering presentational-hints
+   mouse-cursor-imagemap, no-help-cursor-on-links-wrapped-in-svg). */
+area:any-link,
+svg|a:any-link {
     cursor: pointer;
 }
 
@@ -81,7 +99,7 @@ a[href] {
 
 ::scroll-marker,
 ::column::scroll-marker {
-    color: rgb(0, 0, 238);
+    color: LinkText;
     text-decoration: underline;
     cursor: pointer;
 }
@@ -132,10 +150,11 @@ input[type="color" i] {
     box-sizing: border-box;
     inline-size: 50px;
     block-size: 27px;
-    border: 1px solid #767676;
+    border: 1px solid ButtonBorder;
     padding-block: 1px;
     padding-inline: 2px;
-    background-color: #EFEFEF;
+    background-color: ButtonFace;
+    color: ButtonText;
     cursor: default;
 }
 
@@ -173,14 +192,24 @@ meter {
    draws as Chromium's themed field (`native_textfield`); `appearance: none` shows this border. */
 input {
     border: 2px inset #767676;
+    color: FieldText;
     padding-block: 1px;
     padding-inline: 2px;
     background-color: Field;
     appearance: auto;
 }
 
+/* pyro: Chromium's html.css: hidden, file and image inputs have no native appearance (HTML
+   "Widgets": they are not native-appearance controls), whatever `input` above gives. */
+input[type="hidden" i],
+input[type="file" i],
+input[type="image" i] {
+    appearance: none;
+}
+
 textarea {
     appearance: auto;
+    color: FieldText;
     border: 1px solid #999;
     padding: 2px;
     background-color: Field;
@@ -208,7 +237,8 @@ select {
     display: inline-block;
     box-sizing: border-box;
     border: 1px solid #767676;
-    line-height: normal !important;
+    /* The native menulist fixup runs after other properties resolve lh. */
+    line-height: normal;
     /* pyro: blitz-paint rounds a native menu list's corners (not of `appearance: none` or
        `menulist-button`, which is painted with its CSS border). */
     -moz-default-appearance: menulist;
@@ -224,6 +254,42 @@ select[size]:not([size="0"]):not([size="1"]) {
 select[multiple],
 select[size]:not([size="0"], [size="1"], [size=""]) {
     vertical-align: text-bottom;
+}
+
+/* pyro: Chromium's base appearance of a customizable select (html.css, `appearance:
+   base-select`). Stylo applies an `@appearance-base` block to a select whose computed appearance
+   is base-select and to its subtree (not to a nested select of auto appearance). */
+@appearance-base {
+    select {
+        display: inline-flex;
+        align-items: center;
+        box-sizing: border-box;
+        border: 1px solid currentColor;
+        border-radius: 0.5em;
+        background-color: transparent;
+        color: inherit;
+        font: inherit;
+        padding-block: 0.25em;
+        padding-inline: 0.5em;
+        min-inline-size: 24px;
+        min-block-size: max(24px, calc(1lh + 0.5em));
+    }
+
+    /* A select's first child button is its button: it takes no box of its own. */
+    select > button:first-child {
+        all: unset;
+        display: contents;
+    }
+
+    option {
+        display: flex;
+        align-items: center;
+        gap: 0.5em;
+        padding-block: 0;
+        padding-inline: 0.5em;
+        min-inline-size: 24px;
+        min-block-size: max(24px, 1lh);
+    }
 }
 
 textarea {
@@ -263,6 +329,34 @@ textarea {
     text-shadow: initial;
 }
 
+/* pyro: the rest of HTML § 15.5.1 (WPT html/rendering form-controls/resets):
+   controls do not inherit text-align, inputs clip at their padding box. Clip is
+   no scroll container (inline baselines and taffy's automatic minimum sizes
+   stay as for `visible`); button-like and file inputs keep their own
+   `!important` rules below. */
+input,
+select,
+textarea {
+    text-align: initial;
+}
+
+input:not([type="range" i], [type="checkbox" i], [type="radio" i]) {
+    overflow: clip;
+    overflow-clip-margin: 0;
+}
+
+input[type="image" i] {
+    overflow-clip-margin: content-box;
+}
+
+input[type="search" i] {
+    box-sizing: border-box;
+}
+
+textarea {
+    display: inline-block;
+}
+
 /* https://html.spec.whatwg.org/multipage/rendering.html#the-select-element-2
    (select only has native appearance here) */
 select {
@@ -292,7 +386,7 @@ button,
 input[type="submit"],
 input[type="reset"],
 input[type="button"] {
-    border: 1px solid #999;
+    border: 1px solid ButtonBorder;
     /* pyro: Chromium's native look rounds a button's corners by 1px. Not a `border-radius` here
        (Chromium's computed one is 0): blitz-paint rounds a button of native appearance
        (`-moz-default-appearance: button`, `appearance: auto`, no author border or background),
@@ -302,8 +396,8 @@ input[type="button"] {
     appearance: auto;
     padding-block: 1px;
     padding-inline: 6px;
-    color: black;
-    background-color: #EFEFEF;
+    color: ButtonText;
+    background-color: ButtonFace;
     text-align: center;
     display: inline-block;
     /* pyro: Chromium's buttons size their border box. */
@@ -336,13 +430,13 @@ input[type="file" i] {
 }
 
 input[type="file" i]::file-selector-button {
-    border: 1px solid #999;
+    border: 1px solid ButtonBorder;
     -moz-default-appearance: button;
     appearance: auto;
     padding-block: 1px;
     padding-inline: 6px;
-    color: black;
-    background-color: #EFEFEF;
+    color: ButtonText;
+    background-color: ButtonFace;
     text-align: center;
     display: inline-block;
     box-sizing: border-box;
@@ -422,8 +516,15 @@ select[size]:not([size="0"], [size="1"], [size=""]) optgroup option {
     padding-inline-start: 20px;
 }
 
-source {
-    display: none;
+/* pyro: `source` is not hidden (HTML § 15.3.1): it computes inline, like `track`, and has no
+   content to render. */
+
+/* https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements: a hidden embed (any
+   `hidden` value) is an inline box of no size. */
+embed[hidden] {
+    display: inline;
+    height: 0;
+    width: 0;
 }
 
 /* To ensure http://www.w3.org/TR/REC-html40/struct/dirlang.html#style-bidi:
@@ -435,13 +536,15 @@ source {
  * inherited value) to the transformed element."
  *
  * and the rules in http://dev.w3.org/html5/spec/rendering.html#rendering
+ *
+ * pyro: the HTML spec's list (§ 15.3.5), as Chrome computes it: html, body and
+ * fieldset are not isolated.
  */
 
 address,
 article,
 aside,
 blockquote,
-body,
 caption,
 center,
 col,
@@ -451,7 +554,6 @@ dir,
 div,
 dl,
 dt,
-fieldset,
 figcaption,
 figure,
 footer,
@@ -465,7 +567,6 @@ h6,
 header,
 hgroup,
 hr,
-html,
 legend,
 li,
 listing,
@@ -498,7 +599,7 @@ output {
     unicode-bidi: isolate;
 }
 
-/* pyro: `bdo[dir]` outweighs the `[dir]` rules above, as Gecko's
+/* pyro: `bdo[dir]` outweighs the `[dir=…]` rules above, as Gecko's
    "bdo:-moz-has-dir-attr" does; Stylo does not parse that pseudo-class, which
    dropped the whole rule (and the next one). */
 bdo,
@@ -506,6 +607,7 @@ bdo[dir] {
     unicode-bidi: isolate-override;
 }
 
+input[dir="auto" i]:is([type="search" i], [type="tel" i], [type="url" i], [type="email" i]),
 textarea[dir="auto" i],
 pre[dir="auto" i] {
     unicode-bidi: plaintext;
@@ -537,9 +639,10 @@ body {
     margin: 8px;
 }
 
+/* pyro: not `multicol`, an unknown element in HTML (inline, no margins), as Chromium computes
+   it (WPT html/rendering margin-collapsing-quirks/multicol-*-mode). */
 p,
-dl,
-multicol {
+dl {
     display: block;
     margin-block-start: 1em;
     margin-block-end: 1em;
@@ -1025,6 +1128,17 @@ li {
     text-align: match-parent;
 }
 
+/* pyro: no `white-space: pre`, unlike the CSS Lists sheet: Chrome gives only an outside
+   marker `pre` (layout::list lays it out preserved), and an inside marker inherits the item's
+   white-space, so it wraps under line-break, word-break and overflow-wrap (WPT css-pseudo
+   marker-line-break, marker-word-break). */
+::marker, ::before::marker, ::after::marker {
+    unicode-bidi: isolate;
+    font-variant-numeric: tabular-nums;
+    text-transform: none;
+    text-indent: 0;
+}
+
 /* nested lists have no top/bottom margins */
 :is(ul, ol, dir, menu, dl) ul,
 :is(ul, ol, dir, menu, dl) ol,
@@ -1135,10 +1249,8 @@ iframe {
     border: 2px inset;
 }
 
-/* pyro: HTML § 15.4.1 (embedded content): the `frameborder` attribute's "no border". */
-iframe[frameborder="0"], iframe[frameborder=no i] {
-    border: none;
-}
+/* pyro: an iframe's `frameborder` that parses to zero (or not at all) zeroes the border widths:
+   a presentational hint (blitz-dom stylo.rs), the style stays inset. */
 
 spacer {
     position: static ! important;
@@ -1147,6 +1259,22 @@ spacer {
 
 canvas {
     user-select: none;
+}
+
+/* pyro: HTML-in-Canvas (WICG html-in-canvas, Chrome's UA rules): a canvas with content=drawable
+   contains its children's painting (they are drawn only by drawElementImage), its children are
+   laid out in flow, and every drawable element in it is an isolated group. Only such a canvas
+   matches. */
+canvas[content="drawable" i] {
+    contain: paint;
+}
+
+canvas[content="drawable" i] > * {
+    position: static ! important;
+}
+
+canvas[content="drawable" i] [drawable] {
+    isolation: isolate ! important;
 }
 
 :focus-visible {
@@ -1306,6 +1434,11 @@ dialog {
     height: -moz-fit-content;
 }
 
+/* HTML inertness applies to the attribute owner even with author declarations.
+ * A modal dialog can escape an inherited inert state. */
+[inert] { interactivity: inert !important; }
+dialog:modal { interactivity: auto; }
+
 dialog:not([open]) {
     display: none;
 }
@@ -1314,6 +1447,10 @@ dialog:not([open]) {
    Chromium's :-internal-dialog-in-top-layer). */
 dialog:modal, dialog:-moz-topmost-modal {
     -moz-top-layer: top !important;
+    /* pyro: the servo engine's top-layer flag (`-moz-top-layer` is Gecko's): the style adjuster
+       computes a position other than absolute or fixed to absolute in the top layer (WPT
+       the-dialog-element/top-layer-position). */
+    -servo-top-layer: auto !important;
     position: fixed;
     overflow: auto;
     visibility: visible;
@@ -1333,6 +1470,8 @@ marquee {
     display: inline-block;
     vertical-align: text-bottom;
     text-align: start;
+    /* pyro: the HTML rendering section's marquee rule (WPT form-controls/resets). */
+    overflow: hidden;
 }
 
 marquee:is([direction="up"], [direction="down"]) {
@@ -1398,9 +1537,9 @@ rtc>rt {
     font-size: unset;
 }
 
-ruby,
+/* pyro: not ruby or rt, which Chrome leaves `normal` (WPT html/rendering
+   unicode-bidi-ua-rules). */
 rb,
-rt,
 rtc {
     unicode-bidi: isolate;
 }
@@ -1489,3 +1628,32 @@ dialog:modal, :popover-open {
 pre, listing, plaintext, xmp, code, kbd, samp, tt {
     text-autospace: no-autospace;
 }
+
+/* pyro: permission elements (WICG PEPC and the install element, tentative): as in Chromium, a
+   control the page cannot disguise. The properties it ignores are important here, so no author
+   declaration applies; the bounds it puts on others are the style adjuster's
+   (`adjust_for_permission_element`). WPT html/semantics/permission-element. */
+geolocation, install, usermedia, camera, microphone {
+    cursor: pointer !important;
+    border-image: none !important;
+    background-image: none !important;
+    clip-path: none !important;
+    filter: none !important;
+    mask: none !important;
+    transform: none !important;
+    content-visibility: visible !important;
+    contain: none !important;
+    container-type: normal !important;
+    container-name: none !important;
+    contain-intrinsic-size: none !important;
+    corner-shape: round !important;
+}
+
+/* pyro: MathML Core's user agent rules for fractions (MathML Core Appendix A; Chromium's
+ * mathml.css): inline math is compact and display math normal, a fraction's children are a
+ * script level deeper in compact math (their font 0.71 times smaller), and a fraction has 1px
+ * of padding beside its bar. Its layout is `layout::math`. */
+m|math { math-style: compact; }
+m|math[display="block" i] { math-style: normal; }
+m|mfrac { padding-inline: 1px; }
+m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }

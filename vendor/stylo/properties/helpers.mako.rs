@@ -55,6 +55,13 @@ pub mod ${property.ident} {
                     CSSWideKeyword::Initial => {
                         % if not property.style_struct.inherited:
                             declaration.debug_crash("Unexpected initial or unset for non-inherited property");
+                        % elif engine == "servo" and property.name in ("font-size", "stroke-width"):
+                            if context.builder.effective_zoom.is_one() {
+                                context.builder.reset_${property.ident}();
+                            } else {
+                                let value = get_initial_specified_value().to_computed_value(context);
+                                context.builder.set_${property.ident}(value);
+                            }
                         % else:
                             context.builder.reset_${property.ident}();
                         % endif
@@ -121,6 +128,9 @@ pub mod ${property.ident} {
         }
         % endif
 
+        % if property.is_font_affecting():
+        let previous_font_basis = std::mem::replace(&mut context.for_font_affecting_property, true);
+        % endif
         % if property.vector and not property.vector.simple_bindings and engine == "gecko":
             // In the case of a vector property we want to pass down an
             // iterator so that this can be computed without allocation.
@@ -143,7 +153,10 @@ pub mod ${property.ident} {
             % else:
             let computed = specified_value.to_computed_value(context);
             % endif
-            context.builder.set_${property.ident}(computed)
+            context.builder.set_${property.ident}(computed);
+        % endif
+        % if property.is_font_affecting():
+        context.for_font_affecting_property = previous_font_basis;
         % endif
         % endif
     }
@@ -623,7 +636,13 @@ pub mod ${property.ident} {
         % if shorthand.kind == "four_sides":
         ${self.four_sides_shorthand(shorthand)}
         % endif
-        % if shorthand.kind == "single_border":
+        % if shorthand.kind in ("inset_single", "inset_pair", "inset_quad"):
+        ${self.gap_inset_shorthand(shorthand)}
+        % endif
+        % if shorthand.kind == "mirrored":
+        ${self.mirrored_shorthand(shorthand)}
+        % endif
+        % if shorthand.kind in ("single_border", "mirrored_border", "gap_rule"):
         ${self.single_border_shorthand(shorthand)}
         % endif
         % if "IS_LEGACY_SHORTHAND" in shorthand.flags:
@@ -660,6 +679,48 @@ pub mod ${property.ident} {
                 dest.write_char(' ')?;
                 second.to_css(dest)?;
             }
+            Ok(())
+        }
+    }
+</%def>
+
+<%def name="gap_inset_shorthand(shorthand)">
+    <% count = {"inset_single": 1, "inset_pair": 2, "inset_quad": 4}[shorthand.kind] %>
+    type Inset = crate::values::specified::length::RuleInset;
+
+    fn parse_value(context: &ParserContext, input: &mut Parser) -> Result<Longhands, ParseError> {
+        use crate::parser::Parse;
+        let first = Inset::parse(context, input)?;
+        % if count >= 2:
+        let second = input.try_parse(|input| Inset::parse(context, input)).unwrap_or_else(|_| first.clone());
+        % endif
+        % if count == 4:
+        let (third, fourth) = if input.try_parse(|input| input.expect_delim('/')).is_ok() {
+            let third = Inset::parse(context, input)?;
+            let fourth = input.try_parse(|input| Inset::parse(context, input)).unwrap_or_else(|_| third.clone());
+            (third, fourth)
+        } else { (first.clone(), second.clone()) };
+        % endif
+        Ok(crate::properties::shorthands::expanded! {
+            % for index, prop in enumerate(shorthand.sub_properties):
+            ${prop.ident}: ${['first', 'second', 'third', 'fourth'][index % count]}.clone(),
+            % endfor
+        })
+    }
+
+    impl<'a> ToCss for LonghandsToSerialize<'a> {
+        fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result where W: fmt::Write {
+            % for index, prop in enumerate(shorthand.sub_properties[count:]):
+            if self.${prop.ident} != self.${shorthand.sub_properties[index % count].ident} { return Ok(()); }
+            % endfor
+            self.${shorthand.sub_properties[0].ident}.to_css(dest)?;
+            % if count > 1:
+            if ${' && '.join('self.' + prop.ident + ' == self.' + shorthand.sub_properties[0].ident for prop in shorthand.sub_properties[1:count])} { return Ok(()); }
+            % for index, prop in enumerate(shorthand.sub_properties[1:count], 1):
+            dest.write_str("${' / ' if index == 2 else ' '}")?;
+            self.${prop.ident}.to_css(dest)?;
+            % endfor
+            % endif
             Ok(())
         }
     }
@@ -702,13 +763,37 @@ pub mod ${property.ident} {
     }
 </%def>
 
+<%def name="mirrored_shorthand(shorthand)">
+    fn parse_value(context: &ParserContext, input: &mut Parser) -> Result<Longhands, ParseError> {
+        let value = longhands::${shorthand.sub_properties[0].ident}::parse(context, input)?;
+        Ok(crate::properties::shorthands::expanded! {
+            ${shorthand.sub_properties[0].ident}: value.clone(),
+            ${shorthand.sub_properties[1].ident}: value,
+        })
+    }
+
+    impl ToCss for LonghandsToSerialize<'_> {
+        fn to_css<W: fmt::Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+            if self.${shorthand.sub_properties[0].ident} == self.${shorthand.sub_properties[1].ident} {
+                self.${shorthand.sub_properties[0].ident}.to_css(dest)?;
+            }
+            Ok(())
+        }
+    }
+</%def>
+
 <%def name="single_border_shorthand(shorthand)">
     fn parse_value(
         context: &ParserContext,
         input: &mut Parser,
     ) -> Result<Longhands, ParseError> {
-        let (width, style, color) = crate::properties::shorthands::parse_border(context, input)?;
+        let (width, style, color) = crate::properties::shorthands::${'parse_border' if shorthand.kind == 'single_border' else 'parse_gap_rules'}(context, input)?;
         Ok(crate::properties::shorthands::expanded! {
+            % if shorthand.kind == 'mirrored_border':
+            ${shorthand.sub_properties[3].ident}: width.clone(),
+            ${shorthand.sub_properties[4].ident}: style.clone(),
+            ${shorthand.sub_properties[5].ident}: color.clone(),
+            % endif
             ${shorthand.sub_properties[0].ident}: width,
             ${shorthand.sub_properties[1].ident}: style,
             ${shorthand.sub_properties[2].ident}: color,
@@ -717,7 +802,12 @@ pub mod ${property.ident} {
 
     impl<'a> ToCss for LonghandsToSerialize<'a>  {
         fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result where W: fmt::Write {
-            crate::properties::shorthands::serialize_directional_border(
+            % if shorthand.kind == 'mirrored_border':
+            % for i in range(3):
+            if self.${shorthand.sub_properties[i].ident} != self.${shorthand.sub_properties[i+3].ident} { return Ok(()); }
+            % endfor
+            % endif
+            crate::properties::shorthands::${'serialize_directional_border' if shorthand.kind == 'single_border' else 'serialize_gap_rules'}(
                 dest,
                 % for i in range(3):
                 self.${shorthand.sub_properties[i].ident},

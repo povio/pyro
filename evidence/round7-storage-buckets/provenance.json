@@ -1,0 +1,52 @@
+{
+  "parent": "850e52ba30384ccf3231128f541003a6926db4e2",
+  "parentTree": "02352ed894965c6a213d6ddbb7e96c37de8469de",
+  "parentBinarySHA256": "2151baad9249bab742c135d34f4478485dfd87382848de49f452a27b38f057a1",
+  "initialCandidate": "e84de9fc661638d2004298a6dc9f924c3b52a7da",
+  "initialBinarySHA256": "b382d54db26da02f8f5e6f3ffeb139f19ec67f121cac9ce2edad161bcf6e6b22",
+  "candidate": "c438701f1472ebab6a500e2927b89a4b212740d1",
+  "candidateTree": "929c9a47c741b5c1a21f933f516db0fe950ae9f0",
+  "candidateBinarySHA256": "ce9bcc20f77c0573d3d038387167e7fee262325454e5ab6a50ea2e7308a54759",
+  "originalSelectorSHA256": "01127157f14df4f99c83846a30861f6f9a89ebb8e75bbfbb34a126a1cc16b2b7",
+  "finalSelectorSHA256": "f77a5b120aafd0c4bccf1dc90181fce9aa035752ec2d851a083df6b05b6ac87e",
+  "finalExcludedURLs": [
+    "storage/buckets/opaque-origin.https.window.html"
+  ],
+  "sourceImpact": "Final scope is one URL smaller than initial. The archived base and signed JSON are original 56-URL receipts, projected onto 55 by report.py. Candidate and independent candidate receipts contain only 55 URLs.",
+  "profile": "wptiter/render -j1",
+  "jscArchiveKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "specDigests": {
+    "storage-spec.html": "b14c51f73043496227a34452bf35d50fcadb5d8f166f3fa3955fffbd71c512c5",
+    "buckets-spec.html": "811520575f8b465aa25b51c796e3a33462acf9303b77a4c34b1565b96457eeec"
+  },
+  "signedReference": {
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "manifestSha256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+    "version": "158.0.8127.37",
+    "channel": "Google Chrome stable",
+    "os": "macOS 27.2.1 arm64",
+    "GoogleTeam": "EQHXZ8M8AV",
+    "executableSHA256": "b87bcebb575e53b0f29a4eeeb6480ec9c9bc3537690cacd52d6c67c2c3e3908e",
+    "frameworkSHA256": "a04d264c815c317ba1ffa89d388144ec639ec0e4a1a114a2ba524ad4bdd130c8",
+    "dmgSHA256": "75b9fdb7573aab8a89f1b00319692a1f785fb4e6fd07e97916a13b00b3d34bae",
+    "codesignResult": "codesign --verify --deep --strict passed",
+    "viewport": [
+      800,
+      600,
+      1
+    ],
+    "server": "wptserve",
+    "testdriver": true,
+    "http2": true,
+    "jobsPerShard": 4,
+    "context": "fresh per page; private profile per process",
+    "noNativeReplayRunnerSHA256": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+    "expectedRunnerSHA256": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+    "PlaywrightCore": "1.65.1",
+    "PlaywrightTarballSHA256": "6f5a60be62a4fddfbe7d10c448d8fbd54547da3358f2f8a04211440471ee863e",
+    "profileSHA256": "9249fd4ed0c99ddcc34ca0ba377af793a2d49184152d3cdd59c23ee80b2a1ab9",
+    "previous157ProfileSHA256": "4eca5733609fe2839db2fd930210e161a41b575ff52a4bc077896c20e93cdbb8",
+    "serializations": "Manifest-first testharness with original names, structured harness results, per-URL protocol and environment."
+  }
+}

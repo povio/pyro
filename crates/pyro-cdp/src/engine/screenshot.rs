@@ -80,6 +80,24 @@ struct PdfWait {
     deadline: Instant,
 }
 
+/// A `captureScreenshot` waiting for the lazy content it started (images, iframes).
+struct ShotWait {
+    id: u64,
+    session: String,
+    pid: PageId,
+    area: Area,
+    format: ImageFormat,
+    out: Option<std::path::PathBuf>,
+    started: Instant,
+    deadline: Instant,
+    /// The lazy content this capture started: what it waits for.
+    lazy: pyro_browser::LazyStarted,
+}
+
+/// Longest a screenshot waits for a lazy iframe it started to navigate (a hung navigation must
+/// not hold it for [`PDF_FETCH_WAIT`]); its lazy images may take that long.
+const SHOT_FRAME_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Longest a `printToPDF` waits for layout sub-resources.
 const PDF_FETCH_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -114,6 +132,12 @@ pub(crate) struct Renders {
     /// `IO` streams by handle: bytes and the read offset.
     streams: HashMap<String, (Vec<u8>, usize)>,
     pdf_waits: Vec<PdfWait>,
+    /// Screenshots waiting for the lazy content they started.
+    shot_waits: Vec<ShotWait>,
+    /// The poll thread for waits on the page's own loads (lazy content) runs: one at a time.
+    polling: Arc<AtomicBool>,
+    /// Bumped by each poll thread start: an older thread still running exits.
+    poll_generation: Arc<std::sync::atomic::AtomicU64>,
     /// pyro: how many times a PDF wait was parked ([`EngineHost::pdf_parks`]).
     pdf_parks: u64,
 }
@@ -589,6 +613,7 @@ impl EngineHost {
             transition_frames,
             html: String::new(),
             frames,
+            document_url: (frame.url != base_url).then(|| frame.url.clone()),
             base_url,
             sheets: s.sheets,
             width: s.width,
@@ -596,6 +621,7 @@ impl EngineHost {
             device_scale_factor: s.device_scale_factor,
             dark: s.dark,
             print: s.print,
+            media_environment: pyro_render::media_environment(&page.viewport()),
             input: pyro_render::InputCapabilities {
                 pointer: match page.viewport().pointer {
                     pyro_dom::media::Pointer::None => pyro_render::Pointer::None,
@@ -718,7 +744,82 @@ impl EngineHost {
             (None, true) => Area::FullPage,
             (None, false) => self.viewport_area(pid),
         };
+        // Lazy images and iframes the lazy load check has not let go yet: all of them for a
+        // full-page capture (a clip beyond the viewport too, as a full-page tool sends one),
+        // those near the viewport otherwise. The capture waits for them, as a print does.
+        let whole = matches!(area, Area::FullPage | Area::Clip { beyond_viewport: true, .. });
         let started = Instant::now();
+        let (id, session) = (cmd.command.id, cmd.session_id.to_owned());
+        let lazy = self.thread.browser.approve_lazy_content(pid, whole);
+        if !lazy.is_empty() && self.thread.browser.lazy_loading(&lazy, true) {
+            let deadline = started + PDF_FETCH_WAIT;
+            self.renders.shot_waits.push(ShotWait { id, session, pid, area, format, out, started, deadline, lazy });
+            self.poll_waits();
+            return Ok(None);
+        }
+        self.start_capture(id, session, pid, area, format, out, started).map(|()| None)
+    }
+
+    /// Checks the waiting captures and prints again every 50 ms (the page's own loads end
+    /// without a waker): one poll thread, which stops once nothing waits on such loads.
+    fn poll_waits(&self) {
+        if self.renders.polling.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        // A thread stopped and a new one started before it saw the stop: the old one exits on
+        // the generation change, so only one ever polls.
+        let generation = self.renders.poll_generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let poll = self.renders.deliver(self.thread.handle());
+        let (running, current) = (self.renders.polling.clone(), self.renders.poll_generation.clone());
+        let _ = std::thread::Builder::new().name("pyro-capture-poll".into()).spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if !running.load(Ordering::Acquire) || current.load(Ordering::Acquire) != generation {
+                break;
+            }
+            poll(Finished::Fetched);
+        });
+    }
+
+    /// Stops the poll thread when no capture or print waits on the page's own loads.
+    fn stop_polling_if_idle(&self) {
+        let waiting = !self.renders.shot_waits.is_empty()
+            || self.renders.pdf_waits.iter().any(|w| self.thread.browser.content_loading(w.pid));
+        if !waiting {
+            self.renders.polling.store(false, Ordering::Release);
+        }
+    }
+
+    /// Captures the waiting screenshots whose lazy content is in or whose deadline passed.
+    fn resume_shots(&mut self) {
+        let now = Instant::now();
+        let waits = std::mem::take(&mut self.renders.shot_waits);
+        for w in waits {
+            // Its own lazy images until the deadline; its lazy iframes' navigations for a shorter
+            // while (a hung one must not hold it).
+            let frames = now < w.started + SHOT_FRAME_WAIT;
+            if now < w.deadline && self.thread.browser.lazy_loading(&w.lazy, frames) {
+                self.renders.shot_waits.push(w);
+                continue;
+            }
+            let (id, session) = (w.id, w.session.clone());
+            let ShotWait { id: wid, session: wsession, pid, area, format, out, started, .. } = w;
+            if let Err(e) = self.start_capture(wid, wsession, pid, area, format, out, started) {
+                self.out.push(msg::error_frame(Some(id), &e, Some(&session)));
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_capture(
+        &mut self,
+        id: u64,
+        session: String,
+        pid: PageId,
+        area: Area,
+        format: ImageFormat,
+        out: Option<std::path::PathBuf>,
+        started: Instant,
+    ) -> CdpResult<()> {
         let snapshot = self.snapshot(pid, None)?;
         let snapshot_ms = ms(started.elapsed());
         let fetcher = self.fetcher(pid);
@@ -734,10 +835,9 @@ impl EngineHost {
             done: Box::new(move |r| deliver(Finished::Capture(token, r))),
         };
         self.renders.worker()?.submit(job).map_err(|_| CdpError::server("the render thread is gone"))?;
-        let wait =
-            CaptureWait { id: cmd.command.id, session: cmd.session_id.to_owned(), started, snapshot_ms, stream: false };
+        let wait = CaptureWait { id, session, started, snapshot_ms, stream: false };
         self.renders.captures.insert(token, wait);
-        Ok(None)
+        Ok(())
     }
 
     /// Starts a screencast frame of `pid` (`screencast.rs`): the viewport,
@@ -877,6 +977,8 @@ impl EngineHost {
         // from (one Blitz document per page document), once the fonts and
         // images its layout started fetching are in. The browser thread
         // keeps running meanwhile.
+        // Chrome loads lazy content to print: all of it starts now, and the print waits for it.
+        self.thread.browser.approve_lazy_content(pid, true);
         let page_dom = self.thread.browser.page(pid).and_then(|p| p.main_frame.page_dom.clone());
         if page_dom.is_some_and(|d| super::blitz_geometry::sync_for_pdf(&d).is_some()) {
             let capture = CaptureWait {
@@ -924,6 +1026,10 @@ impl EngineHost {
         super::blitz_geometry::park_until_fetched(&document, Box::new(move || deliver(Finished::Fetched)));
         if !self.pdf_fetching(pid) {
             super::blitz_geometry::wake_parked(&document);
+        } else if self.thread.browser.content_loading(pid) {
+            // The page's own loads (lazy content the print started) end without waking the
+            // geometry: the poll thread checks again.
+            self.poll_waits();
         }
         if first {
             // The deadline of the first parked wait; later ones get theirs
@@ -960,7 +1066,7 @@ impl EngineHost {
     /// fetch of the page's documents (a frame's too) pending in their layout bodies, whichever
     /// geometry made it (a frame's own one may have, and the page's then only waits on it).
     fn pdf_fetching(&self, pid: PageId) -> bool {
-        if super::blitz_geometry::fetching(&self.pdf_document(pid)) {
+        if super::blitz_geometry::fetching(&self.pdf_document(pid)) || self.thread.browser.content_loading(pid) {
             return true;
         }
         let browser = &self.thread.browser;
@@ -1064,10 +1170,11 @@ impl EngineHost {
             let page = self.thread.browser.page(pid).ok_or_else(|| CdpError::server("page is gone"))?;
             let frame = &page.main_frame;
             let dom = frame.page_dom.as_ref().ok_or_else(|| CdpError::server("page has no document"))?;
-            let s = dom.render_snapshot(&frame.base_url, element.map(|id| (id, pyro_render::CLIP_ATTRIBUTE)));
+            let base_url = dom.render_base_url(&frame.base_url);
+            let s = dom.render_snapshot(&base_url, element.map(|id| (id, pyro_render::CLIP_ATTRIBUTE)));
             let value = json!({
                 "captured": true, "snapshotMs": ms(started.elapsed()),
-                "snapshot": { "html": s.html, "baseUrl": frame.base_url, "sheets": s.sheets,
+                "snapshot": { "html": s.html, "baseUrl": base_url, "documentUrl": frame.url, "sheets": s.sheets,
                     "width": s.width, "height": s.height, "deviceScaleFactor": s.device_scale_factor,
                     "dark": s.dark, "scrollX": s.scroll_x, "scrollY": s.scroll_y,
                     "xmlDocument": s.xml_document, "quirksMode": s.quirks_mode,
@@ -1188,6 +1295,12 @@ impl EngineHost {
         }
         if fetched && !self.renders.pdf_waits.is_empty() {
             self.resume_pdfs();
+        }
+        if fetched && !self.renders.shot_waits.is_empty() {
+            self.resume_shots();
+        }
+        if fetched {
+            self.stop_polling_if_idle();
         }
     }
 }

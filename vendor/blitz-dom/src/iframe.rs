@@ -60,6 +60,7 @@ impl BaseDocument {
         DocumentConfig {
             viewport: None,
             base_url,
+            document_url: frame.and_then(|f| f.document_url.clone()),
             frame_client: frame.map(|frame| frame.client.clone()),
             frames: frame.map(|frame| frame.frames.clone()).unwrap_or_default(),
             ua_stylesheets: self.ua_stylesheets.clone(),
@@ -73,6 +74,7 @@ impl BaseDocument {
             html_parser_provider: Some(self.html_parser_provider.clone()),
             font_ctx: Some(self.font_ctx.lock().unwrap().clone()),
             media_type: Some(self.media_type.clone()),
+            media_environment: self.media_environment,
             style_threading: self.style_threading,
             incremental: Some(self.incremental_layout),
             abort_signal: Some(abort_signal),
@@ -116,9 +118,11 @@ impl BaseDocument {
         node_id: NodeId,
         html: &str,
         base_url: Option<String>,
+        document_url: Option<String>,
         abort_signal: AbortSignal,
     ) {
-        let config = self.iframe_document_config(node_id, base_url, abort_signal, None);
+        let mut config = self.iframe_document_config(node_id, base_url, abort_signal, None);
+        config.document_url = document_url;
         let sub_doc = self
             .html_parser_provider
             .clone()
@@ -191,7 +195,7 @@ impl BaseDocument {
     pub(crate) fn load_iframe_srcdoc(&mut self, node_id: NodeId, srcdoc: &str) {
         let signal = self.new_iframe_generation(node_id, None);
         let base_url = Some(self.url.to_string());
-        self.attach_iframe_document(node_id, srcdoc, base_url, signal);
+        self.attach_iframe_document(node_id, srcdoc, base_url, Some("about:srcdoc".into()), signal);
     }
 
     /// Start fetching HTML for an iframe from `url`. The parsed document is
@@ -256,6 +260,6 @@ impl BaseDocument {
             return;
         }
 
-        self.attach_iframe_document(node_id, html, resolved_url, signal);
+        self.attach_iframe_document(node_id, html, resolved_url, None, signal);
     }
 }

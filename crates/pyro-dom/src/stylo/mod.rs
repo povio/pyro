@@ -25,6 +25,8 @@ pub(crate) fn enable_features() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         style_config::set_pref!("layout.css.anchor-positioning.enabled", true);
+        // pyro: `container-type: scroll-state` and `@container scroll-state(scrollable)`.
+        style_config::set_pref!("layout.css.scroll-state.enabled", true);
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
         // pyro: `font-format()`/`font-tech()` in `@supports`, `tech()` in `@font-face` sources.
@@ -37,9 +39,12 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.background-clip.text.enabled", true);
         style_config::set_pref!("layout.css.webkit-text-fill-color.enabled", true);
         style_config::set_pref!("layout.css.columns.enabled", true);
+        style_config::set_pref!("layout.css.hyphens.enabled", true);
+        style_config::set_pref!("layout.css.font-variant-emoji.enabled", true);
         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
         style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
         style_config::set_pref!("layout.css.progress-function.enabled", true);
+        style_config::set_pref!("layout.css.random.enabled", true);
         style_config::set_pref!("layout.css.font-variations.enabled", true);
         style_config::set_pref!("layout.css.text-indent-keywords.enabled", true);
         // pyro: `grid-template-rows/columns: subgrid` (Taffy lays subgrids out, css-grid-2 §9).
@@ -50,6 +55,8 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.writing-mode.sideways.enabled", true);
         // Properties Stylo 0.22 enabled with `layout.unimplemented`.
         style_config::set_pref!("layout.css.appearance.enabled", true);
+        // pyro: `appearance: base-select` (customizable select), as Chromium ships it.
+        style_config::set_pref!("dom.select.customizable_select.enabled", true);
         style_config::set_pref!("layout.css.backdrop-filter.enabled", true);
         style_config::set_pref!("layout.css.contain.enabled", true);
         style_config::set_pref!("layout.css.content.alt-text.enabled", true);
@@ -57,6 +64,7 @@ pub(crate) fn enable_features() {
         // pyro: `closest-corner`/`farthest-corner` radii in `ellipse()` (CSS Shapes 2).
         style_config::set_pref!("layout.css.ellipse-corners.enabled", true);
         style_config::set_pref!("layout.css.counters.enabled", true);
+        style_config::set_pref!("layout.css.first-line.enabled", true);
         style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
         // pyro: `font-synthesis-style`, `-small-caps` and `-position` (and the shorthand).
         style_config::set_pref!("layout.css.font-synthesis.enabled", true);
@@ -77,6 +85,9 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.text-wrap-style.pretty.enabled", true);
         style_config::set_pref!("layout.css.overscroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scroll-driven-animations.enabled", true);
+        // pyro: as blitz-dom's `init_stylo_prefs`: `display` in `@keyframes`, and Stylo's
+        // `Animate for Display` (css-display-4 §2.1).
+        style_config::set_pref!("layout.css.display-animations.enabled", true);
         style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
         style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
         style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
@@ -126,54 +137,48 @@ pub(crate) fn property_id(name: &str) -> Option<style::properties::PropertyId> {
 }
 
 /// A property's computed value as `getComputedStyle` serializes it: a
-/// longhand directly, a shorthand when all its longhands serialize alike, a
+/// longhand directly, a shorthand from its resolved longhands, a
 /// custom property as specified. `None` for unknown properties.
 pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
-    use style::properties::PropertyDeclarationId;
     let id = property_id(name)?;
     match id.as_shorthand() {
         Ok(shorthand) => {
-            // The value all its longhands share...
-            let values: Vec<(&str, String)> = shorthand
+            if shorthand == style::properties::ShorthandId::All {
+                return None;
+            }
+            let mut context = style::values::resolved::Context {
+                style,
+                for_property: id.clone(),
+                current_longhand: None,
+            };
+            let declarations: Vec<_> = shorthand
                 .longhands()
-                .map(|l| (l.name(), style.computed_value_to_string(PropertyDeclarationId::Longhand(l))))
+                .map(|longhand| style.computed_or_resolved_declaration(longhand, Some(&mut context)))
                 .collect();
-            if values.iter().all(|(_, v)| *v == values[0].1) {
-                return values.into_iter().next().map(|(_, v)| v);
-            }
-            // ...else the shorthand serialization of a block declaring the
-            // longhands' resolved values (CSSOM's).
-            let mut css = String::new();
-            for (name, value) in &values {
-                css.push_str(name);
-                css.push(':');
-                css.push_str(value);
-                css.push(';');
-            }
-            let url = url_data();
-            let block = style::properties::parse_style_attribute(
-                &css,
-                &url,
-                None,
-                QuirksMode::NoQuirks,
-                style::stylesheets::CssRuleType::Style,
-            );
             let mut out = String::new();
-            block.shorthand_to_css(shorthand, &mut out).ok()?;
-            (!out.is_empty()).then_some(out)
+            let declarations: Vec<_> = declarations.iter().collect();
+            shorthand.longhands_to_css(&declarations, &mut out).ok()?;
+            Some(resolved_alignment(shorthand.name(), out))
         }
         Err(declaration) => {
-            // Stylo resolves every length unzoomed but a line-height length.
+            // Serialize resolved line-height in CSS pixels at the element's effective zoom.
             if name.eq_ignore_ascii_case("line-height") {
-                if let style::values::generics::font::GenericLineHeight::Length(l) = style.get_font().line_height {
+                use style::values::generics::font::GenericLineHeight;
+                let font = style.get_font();
+                let zoomed_px = match font.line_height {
+                    GenericLineHeight::Length(l) => Some(l.0.px()),
+                    GenericLineHeight::Number(n) => Some(n.0 * font.font_size.computed_size().px()),
+                    _ => None,
+                };
+                if let Some(length) = zoomed_px {
                     let mut out = String::new();
-                    let px = style.effective_zoom.unzoom(l.0.px());
+                    let px = style.effective_zoom.unzoom(length);
                     style_traits::ToCss::to_css(&CSSPixelLength::new(px), &mut style_traits::CssWriter::new(&mut out))
                         .ok()?;
                     return Some(out);
                 }
             }
-            let value = style.computed_value_to_string(declaration);
+            let value = resolved_alignment(name, style.computed_value_to_string(declaration));
             // Gecko's prefixed keywords, as Chrome spells them.
             Some(match value.strip_prefix("-moz-") {
                 Some(rest @ ("center" | "left" | "right")) if name.eq_ignore_ascii_case("text-align") => {
@@ -182,6 +187,49 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
                 _ => value,
             })
         }
+    }
+}
+
+/// Preserve the DOM double carried by a CSSUnitValue across the text bridge to Typed OM.
+pub(crate) fn precise_typed_numeric(style: &ComputedValues, name: &str, css: &str) -> Option<String> {
+    use style::typed_om::{NumericValue, TypedValue};
+    let id = property_id(name)?;
+    let longhand = id.longhand_id()?;
+    let border_width = longhand.logical_group() == Some(style::properties::LogicalGroupId::BorderWidth);
+    let list = if border_width {
+        // CSSOM resolves a hidden/none border to zero. Typed OM exposes its computed width.
+        style.property_value_to_typed_value_list(longhand)?
+    } else {
+        let mut context = style::values::resolved::Context { style, for_property: id, current_longhand: None };
+        let declaration = style.computed_or_resolved_declaration(longhand, Some(&mut context));
+        declaration.to_typed_value_list()?
+    };
+    let [TypedValue::Numeric(NumericValue::Unit(unit))] = list.values.as_slice() else { return None };
+    let suffix = match unit.unit_str() {
+        "percent" => "%",
+        "number" => "",
+        other => other,
+    };
+    // Compound values can reify differently for different properties. Only replace a
+    // serialized standalone number with the same unit as the reified value.
+    css.strip_suffix(suffix)?.parse::<f64>().ok()?;
+    // CSSUnitValue stores numbers as f32 in Stylo, but an <integer> CSS
+    // declaration preserves all 32 bits. Keep the exact integer serialization.
+    if suffix.is_empty() && css.parse::<i32>().is_ok_and(|n|
+        n as f32 == unit.value && f64::from(n) != f64::from(unit.value)) {
+        return None;
+    }
+    let value = if border_width { style.effective_zoom.unzoom(unit.value) } else { unit.value };
+    value.is_finite().then(|| format!("{}{suffix}", f64::from(value)))
+}
+
+fn resolved_alignment(name: &str, value: String) -> String {
+    if matches!(name, "align-items" | "align-content" | "align-self" | "justify-items" | "justify-content" | "justify-self" | "place-items" | "place-content" | "place-self")
+        && value.contains("flex-")
+    {
+        value.replace("flex-start", "flow-start").replace("flex-end", "flow-end")
+    } else {
+        value
     }
 }
 
@@ -198,6 +246,7 @@ pub(crate) fn url_data() -> UrlExtraData {
 pub fn longhand_names() -> &'static [&'static str] {
     static NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         use style::properties::ShorthandId;
+        enable_features();
         // `all` covers every longhand but these two.
         let mut names: Vec<&'static str> = ShorthandId::All.longhands().map(|l| l.name()).collect();
         names.extend(["direction", "unicode-bidi"]);
@@ -249,6 +298,21 @@ pub fn supports_declaration(property: &str, value: &str) -> bool {
     .is_ok()
 }
 
+/// Parse a DOMMatrix transform list without an element or a reference box.
+pub fn matrix_from_css_text(text: &str) -> Option<([f64; 16], bool)> {
+    use style::parser::{Parse, ParserContext};
+    use style::values::specified::transform::Transform;
+    ensure_parse_prefs();
+    let url = url_data();
+    let context = ParserContext::new(
+        style::stylesheets::Origin::Author, &url, None, style_traits::ParsingMode::DEFAULT,
+        QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+    );
+    let transform = cssparser::Parser::new(text).parse_entirely(|input| Transform::parse(&context, input)).ok()?;
+    let (matrix, has_3d) = transform.to_transform_3d_matrix_f64(None).ok()?;
+    Some((matrix.to_array(), !has_3d))
+}
+
 /// `CSS.supports(conditionText)`: `text` parsed as a `<supports-condition>`,
 /// else as one declaration in parentheses, and evaluated as `@supports`
 /// would be (declarations, `selector()`, `not` / `and` / `or`; unknown
@@ -295,8 +359,8 @@ pub enum PseudoArg {
 
 /// Parses `getComputedStyle`'s `pseudoElt` (CSSOM): text without a leading
 /// colon is ignored; otherwise exactly one `<pseudo-element-selector>` with
-/// nothing after it, the legacy single-colon forms of `::before`, `::after`
-/// and `::first-letter` included.
+/// nothing after it, the legacy single-colon forms of `::before`, `::after`,
+/// `::first-line`, and `::first-letter` included.
 pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
     if !text.starts_with(':') {
         return PseudoArg::Element;
@@ -322,15 +386,8 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         .filter(|head| head.eq_ignore_ascii_case("::highlight("))
         .and_then(|_| text[12..].strip_suffix(')'))
     {
-        let name = inner.trim();
-        let ident = !name.is_empty()
-            && !name.starts_with(|c: char| c.is_ascii_digit())
-            && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii());
-        if !ident {
-            return PseudoArg::Invalid;
-        }
-        let id = style::selector_parser::highlight_name_id(&style::Atom::from(name));
-        return PseudoArg::Pseudo(PseudoElement::Highlight(id));
+        return style::selector_parser::highlight_selector(&mut cssparser::Parser::new(inner))
+            .map(PseudoArg::Pseudo).unwrap_or(PseudoArg::Invalid);
     }
     let mut parser = cssparser::Parser::new(text);
     let mut next = || parser.next_including_whitespace_and_comments().ok().cloned();
@@ -347,10 +404,15 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
     let pseudo = match name.as_str() {
         "before" => PseudoElement::Before,
         "after" => PseudoElement::After,
+        "first-line" => PseudoElement::FirstLine,
         "first-letter" => PseudoElement::FirstLetter,
         "selection" if double => PseudoElement::Selection,
         "view-transition" if double => PseudoElement::ViewTransition,
         "target-text" if double => PseudoElement::TargetText,
+        "spelling-error" if double => PseudoElement::SpellingError,
+        "grammar-error" if double => PseudoElement::GrammarError,
+        "search-text" if double => PseudoElement::SearchText,
+        "checkmark" if double => PseudoElement::Checkmark,
         "marker" if double => PseudoElement::Marker,
         "placeholder" if double => PseudoElement::Placeholder,
         "backdrop" if double => PseudoElement::Backdrop,

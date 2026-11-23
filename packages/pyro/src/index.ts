@@ -314,8 +314,10 @@ export class Pyro {
    * `['--hyphen-digit-breaks', 'on']` to wrap text between a hyphen and a digit as Chrome
    * does (`4b87-|916e`; off by default). `stderr: 'ignore'` keeps the server's
    * own output (its address, engine warnings) off this process's stderr.
+   * `env` adds to the server's environment (`PYRO_*` equivalents of the
+   * flags, which a binary that does not know them ignores).
    */
-  static async launch(opts: ConnectOptions & { bin?: string; args?: string[]; stderr?: 'inherit' | 'ignore' } = {}): Promise<Pyro> {
+  static async launch(opts: ConnectOptions & { bin?: string; args?: string[]; env?: Record<string, string>; stderr?: 'inherit' | 'ignore' } = {}): Promise<Pyro> {
     const port = await freePort();
     const child = spawn(opts.bin ?? resolveBinary(), ['serve', '--host', '127.0.0.1', '--port', String(port), ...(opts.args ?? [])], {
       stdio: ['ignore', 'ignore', opts.stderr ?? 'inherit'],
@@ -323,7 +325,7 @@ export class Pyro {
       // `serve --parent-pid`: a runner may stop this process without running
       // its exit handlers (bun test --parallel workers), and the browser's
       // process group would outlive it.
-      env: { ...process.env, PYRO_PARENT_PID: String(process.pid) },
+      env: { ...process.env, ...opts.env, PYRO_PARENT_PID: String(process.pid) },
     });
     let spawnError: Error | undefined;
     child.once('error', (error) => { spawnError = error; });

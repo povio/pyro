@@ -4,14 +4,14 @@
 // returns { FontFace, FontFaceSet, FontFaceSetLoadEvent, fonts }.
 (native => {
   'use strict';
-  const { descriptor, sources, isFont, fontQuery, cssFaces, urlState, enginePending, register, loading } = native;
+  const { descriptor, sources, isFont, fontQuery, cssFaces, urlState, enginePending, register, loading, canvasFaces } = native;
   const apply = Reflect.apply;
   const ET = EventTarget;
   const Ev = Event;
   const DE = DOMException;
   const addListener = ET.prototype.addEventListener;
   const dispatch = ET.prototype.dispatchEvent;
-  const realmFetch = globalThis.fetch;
+  const fontFetch = native.fetch;
   // Captured now: a page's fake timers installed later do not stall loads. A realm without
   // timers (embedder tests) queues microtasks instead.
   const setTimer = typeof setTimeout === 'function' ? setTimeout : (fn) => { Promise.resolve().then(fn); };
@@ -229,7 +229,8 @@
         // `local()` fonts are not looked up: the next source is tried, as for a missing one.
         if (kind !== 'url') { next(i + 1); return; }
         let request;
-        try { request = apply(realmFetch, globalThis, [url, { mode: 'cors', credentials: 'same-origin' }]); }
+        // The engine's fetch of a "font" request (CSP: font-src), not the realm's `fetch`.
+        try { request = apply(fontFetch, globalThis, [url, { mode: 'cors', credentials: 'same-origin' }]); }
         catch (e) { next(i + 1); return; }
         apply(then, request, [
           (response) => (response.ok ? response.arrayBuffer() : null),
@@ -456,12 +457,15 @@
     }
 
     #sync() {
-      if (!this.#document || !register) return;
+      if (!register && !canvasFaces) return;
       const entries = [];
       for (const face of this.#faces) {
         const entry = FF_internal.render(face);
         if (entry) entries.push(entry);
       }
+      // pyro: canvas text draws with the set's loaded faces, a worker's too.
+      if (canvasFaces) { try { canvasFaces(entries); } catch (e) {} }
+      if (!this.#document || !register) return;
       try { register(entries); } catch (e) {}
     }
 

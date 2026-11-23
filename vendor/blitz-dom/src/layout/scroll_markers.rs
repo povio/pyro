@@ -303,7 +303,7 @@ fn is_scroll_container(style: &ComputedValues) -> bool {
 fn contains_out_of_flow(style: &ComputedValues, fixed: bool) -> bool {
     use style::values::specified::box_::Contain;
     let b = style.get_box();
-    let contain = b.slow_clone_contain();
+    let contain = b.used_containment();
     (!fixed && b.slow_clone_position() != style::computed_values::position::T::Static)
         || !b.transform.0.is_empty()
         || b.slow_clone_perspective() != style::values::computed::Perspective::None
@@ -1325,6 +1325,30 @@ impl BaseDocument {
             .collect()
     }
 
+    /// pyro: the elements styled `scroll-initial-target: nearest` (CSS Scroll Snap 2 § 3: their
+    /// nearest scroll container starts scrolled to them), in tree order.
+    pub fn initial_scroll_targets(&self) -> Vec<NodeId> {
+        use style::values::computed::ScrollInitialTarget;
+        if !self.scroll_initial_target_styles {
+            return Vec::new();
+        }
+        let mut found = Vec::new();
+        let mut stack = vec![self.root_node().id];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else { continue };
+            if node.is_element()
+                && node.primary_styles().is_some_and(|style| {
+                    style.get_box().slow_clone_scroll_initial_target() == ScrollInitialTarget::Nearest
+                })
+            {
+                found.push(id);
+            }
+            // (A shadow host's children are its shadow tree's: a target in one counts too.)
+            stack.extend(node.children.iter().rev().copied());
+        }
+        found
+    }
+
     /// pyro: the target of the `::scroll-marker` box at the document point (`x`, `y`): its
     /// element, or its multi-column container and column (CSS Overflow 5 § 3.2: activating a
     /// marker scrolls to its target; WPT css-overflow `column-scroll-marker-002`).
@@ -1349,9 +1373,89 @@ impl BaseDocument {
         None
     }
 
+    /// pyro: the `::scroll-button()` of `owner` hit at the document point (`x`, `y`), by the
+    /// painted hit test (`hit`: stacking order, clips, `visibility` and `pointer-events` as for any
+    /// box): the physical direction it scrolls (`(dx, dy)`, each -1, 0 or 1) and whether it is
+    /// enabled (`owner` can scroll that way, `can_scroll_towards`). The hit box must be the button
+    /// or inside it (its text): one of `owner`'s own boxes or a child's covering the button is no
+    /// button hit. Nothing is hit-tested for an element without buttons. CSS Overflow 5 § 2.2: a
+    /// button's activation scrolls its originating element by a page in its direction.
+    pub fn scroll_button_hit(&mut self, owner: NodeId, x: f32, y: f32) -> Option<((i8, i8), bool)> {
+        use style::logical_geometry::PhysicalSide;
+        let buttons = self.nodes.get(owner)?.scroll_pseudos()?.buttons;
+        if buttons.iter().all(Option::is_none) {
+            return None;
+        }
+        let hit = self.hit(x, y)?;
+        // From the hit box up to `owner`: a button's box is a child of its originating element.
+        let mut id = hit.node_id;
+        let direction = loop {
+            if id == owner {
+                return None;
+            }
+            if let Some(direction) = buttons.iter().position(|&button| button == Some(id)) {
+                break direction;
+            }
+            id = self.nodes.get(id)?.parent?;
+        };
+        let wm = self.nodes[owner].primary_styles()?.writing_mode;
+        let side = match direction {
+            0 => wm.block_start_physical_side(),
+            1 => wm.inline_start_physical_side(),
+            2 => wm.inline_end_physical_side(),
+            _ => wm.block_end_physical_side(),
+        };
+        let delta = match side {
+            PhysicalSide::Top => (0, -1),
+            PhysicalSide::Bottom => (0, 1),
+            PhysicalSide::Left => (-1, 0),
+            PhysicalSide::Right => (1, 0),
+        };
+        Some((delta, self.can_scroll_towards(owner, direction as u8)))
+    }
+
+    /// pyro: whether an element of the document has a `::scroll-button()` box.
+    pub fn has_scroll_buttons(&self) -> bool {
+        self.scroll_pseudo_owners.iter().any(|&owner| {
+            self.nodes
+                .get(owner)
+                .and_then(|node| node.scroll_pseudos())
+                .is_some_and(|pseudos| pseudos.buttons.iter().any(Option::is_some))
+        })
+    }
+
+    /// pyro: the originating element of the `::scroll-button()` that the painted hit test (`hit`)
+    /// finds at the document point (`x`, `y`): the hit box is the button's or inside it (its
+    /// text). A hit test answers a button's originating element (CSS Overflow 5 § 2.2; WPT
+    /// css-overflow `scroll-button-elementFromPoint`), which pyro's element-box hit test cannot
+    /// see when the button is painted over the element's content or another element. `None` on
+    /// a page without buttons (no hit test then) or when anything else is on top.
+    pub fn scroll_button_owner_at(&mut self, x: f32, y: f32) -> Option<NodeId> {
+        if !self.has_scroll_buttons() {
+            return None;
+        }
+        let mut id = self.hit(x, y)?.node_id;
+        loop {
+            let node = self.nodes.get(id)?;
+            if let Some((PseudoElement::ScrollButtonAll, origin)) = node.scroll_pseudo() {
+                return Some(origin);
+            }
+            // An element's own box (or one inside it) is no button's.
+            if node.is_element() {
+                return None;
+            }
+            id = node.parent?;
+        }
+    }
+
     /// pyro: whether an element of the document was ever styled with a `scroll-snap-type`.
     pub fn uses_scroll_snap(&self) -> bool {
         self.scroll_snap_styles
+    }
+
+    /// pyro: whether an element of the document was ever styled `scroll-initial-target: nearest`.
+    pub fn uses_scroll_initial_target(&self) -> bool {
+        self.scroll_initial_target_styles
     }
 
     /// pyro: whether the document has scroll pseudo-elements (markers, groups, buttons).
@@ -1360,7 +1464,9 @@ impl BaseDocument {
     }
 
     pub fn update_scroll_marker_states(&mut self) {
-        if !self.scroll_pseudo_owners.is_empty() {
+        // pyro: and `scroll-state(scrollable)` queries (`resolve::refresh_scroll_state_queries`).
+        let scroll_state_queries = !self.nodes.scroll_state_queries.lock().unwrap().is_empty();
+        if !self.scroll_pseudo_owners.is_empty() || scroll_state_queries {
             if let Some(root) = self.try_root_element().map(|root| root.id) {
                 self.nodes[root].mark_damaged();
             }
@@ -1572,7 +1678,9 @@ impl BaseDocument {
     /// buttons' `:disabled`): an embedder that sets a scroll position after a resolve resolves
     /// again.
     pub fn tracks_scroll_states(&self) -> bool {
-        !self.scroll_pseudo_owners.is_empty() || !self.scroll_target_groups.is_empty()
+        !self.scroll_pseudo_owners.is_empty()
+            || !self.scroll_target_groups.is_empty()
+            || !self.nodes.scroll_state_queries.lock().unwrap().is_empty()
     }
 
     /// pyro: the current scroll target of each scroll container (CSS Overflow 5 § 2.1: the

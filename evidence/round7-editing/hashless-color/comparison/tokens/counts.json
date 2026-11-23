@@ -1,0 +1,35 @@
+{
+  "after": {
+    "glyphs": 94,
+    "html": 94,
+    "value": 94,
+    "enabled": 96,
+    "undoable": 96,
+    "anchor": 96,
+    "focus": 96,
+    "direction": 96,
+    "events": 92,
+    "connected": 96
+  },
+  "afterTyping": {
+    "glyphs": 92,
+    "html": 66,
+    "value": 92,
+    "enabled": 96,
+    "undoable": 96,
+    "anchor": 68,
+    "focus": 68,
+    "direction": 96,
+    "connected": 96
+  },
+  "restored": {
+    "glyphs": 94,
+    "html": 94,
+    "value": 94,
+    "enabled": 96,
+    "undoable": 96,
+    "anchor": 96,
+    "focus": 96,
+    "direction": 96
+  }
+}

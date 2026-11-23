@@ -1,0 +1,314 @@
+[
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<address>[bar]</address>baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<address>[bar]</address>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<address>b[a]r</address>baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<address>b[a]r</address>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<cite>[bar]</cite>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<cite>b[a]r</cite>baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<cite>b[a]r</cite>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<dfn>[bar]</dfn>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<dfn>b[a]r</dfn>baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<dfn>b[a]r</dfn>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<var>[bar]</var>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<var>b[a]r</var>baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo<var>b[a]r</var>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo{<address>bar</address>}baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo{<address>bar</address>}baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo{<cite>bar</cite>}baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo{<dfn>bar</dfn>}baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"foo{<var>bar</var>}baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<address>[bar]</address>baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<address>[bar]</address>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<address>b[a]r</address>baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<address>b[a]r</address>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<cite>[bar]</cite>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<cite>b[a]r</cite>baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<cite>b[a]r</cite>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<dfn>[bar]</dfn>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<dfn>b[a]r</dfn>baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<dfn>b[a]r</dfn>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<var>[bar]</var>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<var>b[a]r</var>baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo<var>b[a]r</var>baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo{<address>bar</address>}baz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo{<address>bar</address>}baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo{<cite>bar</cite>}baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo{<dfn>bar</dfn>}baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?1-1000",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"foo{<var>bar</var>}baz\" queryCommandState(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?2001-last",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"<i>fo[o</i><address>b]ar</address>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?2001-last",
+  "[[\"stylewithcss\",\"false\"],[\"italic\",\"\"]] \"<i>fo[o</i><address>b]ar</address>\" queryCommandIndeterm(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/italic.html?2001-last",
+  "[[\"stylewithcss\",\"true\"],[\"italic\",\"\"]] \"<i>fo[o</i><address>b]ar</address>\" queryCommandIndeterm(\"italic\") after",
+  1,
+  "Fail",
+  "Pass",
+  "Pass"
+ ]
+]

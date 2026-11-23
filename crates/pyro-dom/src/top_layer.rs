@@ -14,6 +14,34 @@ use crate::dom::Dom;
 use crate::error::DomResult;
 use crate::node::NodeId;
 
+/// The enumerated states of the HTML popover attribute. A missing attribute has no state.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PopoverType {
+    Auto,
+    Hint,
+    Manual,
+}
+
+impl PopoverType {
+    pub fn from_value(value: &str) -> Self {
+        if value.is_empty() || value.eq_ignore_ascii_case("auto") {
+            Self::Auto
+        } else if value.eq_ignore_ascii_case("hint") {
+            Self::Hint
+        } else {
+            Self::Manual
+        }
+    }
+
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Hint => "hint",
+            Self::Manual => "manual",
+        }
+    }
+}
+
 /// Which popover stack a showing popover belongs to (HTML "popover
 /// attribute" states that have light dismiss).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -26,8 +54,12 @@ pub enum PopoverStack {
 pub(crate) struct TopLayer {
     /// Dialogs shown with `showModal()`.
     modal: FxHashSet<NodeId>,
+    /// Elements whose fullscreen flag is set (`:fullscreen`; the embedder keeps the stack).
+    fullscreen: FxHashSet<NodeId>,
     /// Popovers whose visibility state is "showing".
     popovers: FxHashSet<NodeId>,
+    /// Showing elements whose popover attribute changed state during a DOM write.
+    changed_popovers: Vec<NodeId>,
     /// The document's top layer, bottom first: modal dialogs and showing
     /// popovers in the order they entered it.
     order: Vec<NodeId>,
@@ -37,8 +69,12 @@ pub(crate) struct TopLayer {
     /// marks it stale (`None`), and the next read rebuilds it once, so
     /// hiding many popovers in a row costs no renumbering each.
     rank: std::cell::RefCell<Option<FxHashMap<NodeId, usize>>>,
-    /// Showing `popover=auto` popovers, bottom first.
+    /// Showing `popover=auto` popovers, bottom first, and the selects whose
+    /// picker is open (it is an auto popover).
     auto_stack: Vec<NodeId>,
+    /// Selects (customizable, `appearance: base-select`) whose picker is
+    /// open: they match `:open` ([`Dom::set_select_picker_open`]).
+    pickers: FxHashSet<NodeId>,
     /// Showing `popover=hint` popovers, bottom first.
     hint_stack: Vec<NodeId>,
     /// The element that showed each showing popover (`popovertarget`,
@@ -118,6 +154,27 @@ impl Dom {
         Ok(())
     }
 
+    /// Sets or clears an element's fullscreen flag (Fullscreen: `:fullscreen` matches it).
+    pub fn set_fullscreen(&mut self, el: NodeId, fullscreen: bool) -> DomResult<()> {
+        self.check(el)?;
+        let changed =
+            if fullscreen { self.top_layer.fullscreen.insert(el) } else { self.top_layer.fullscreen.remove(&el) };
+        if changed {
+            // Styles that read `:fullscreen` start over.
+            self.bump();
+        }
+        Ok(())
+    }
+
+    /// Whether the element's fullscreen flag is set.
+    pub fn is_fullscreen(&self, el: NodeId) -> bool {
+        self.top_layer.fullscreen.contains(&el)
+    }
+
+    pub(crate) fn is_fullscreen_idx(&self, idx: u32) -> bool {
+        !self.top_layer.fullscreen.is_empty() && self.top_layer.fullscreen.contains(&self.id_of(idx))
+    }
+
     /// Whether the dialog was shown with `showModal()` and not closed since.
     pub fn is_modal(&self, el: NodeId) -> bool {
         self.top_layer.modal.contains(&el)
@@ -135,6 +192,35 @@ impl Dom {
         let id = self.id_of(idx);
         let dialog = self.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == "dialog");
         dialog && (tl.modal.contains(&id) || tl.pending.contains(&id))
+    }
+
+    /// pyro: makes `el` the scope of an active element-scoped view transition (`Some`), or no
+    /// longer one (`None`). The UA sheet gives a scope `view-transition-name: root` and
+    /// `view-transition-scope: all` (`:-pyro-active-view-transition-scope`, as in Chrome). A
+    /// scope that keeps its size (`Some(true)`, from the start of its transition until its update
+    /// callback is done) is laid out at its border-box size from before (css-view-transitions-2:
+    /// size containment with the last remembered size; not part of its computed style).
+    pub fn set_view_transition_scope(&mut self, el: NodeId, state: Option<bool>) {
+        let changed = match state {
+            Some(contained) => self.view_transition_scopes.insert(el, contained) != Some(contained),
+            None => self.view_transition_scopes.remove(&el).is_some(),
+        };
+        if changed {
+            // (A state change of the element alone: its render state attribute.)
+            self.bump();
+            if let Ok(i) = self.check(el) {
+                self.note(crate::dom::Change::State(i));
+            }
+        }
+    }
+
+    /// pyro: whether the element at `idx` is the scope of an active element-scoped view
+    /// transition (`Some`), and whether it keeps its size ([`Dom::set_view_transition_scope`]).
+    pub(crate) fn view_transition_scope_idx(&self, idx: u32) -> Option<bool> {
+        if self.view_transition_scopes.is_empty() {
+            return None;
+        }
+        self.view_transition_scopes.get(&self.id_of(idx)).copied()
     }
 
     pub(crate) fn is_modal_idx(&self, idx: u32) -> bool {
@@ -177,7 +263,36 @@ impl Dom {
         if self.top_layer.popovers.remove(&el) {
             self.bump();
         }
+        if self.top_layer.pickers.contains(&el) {
+            let _ = self.set_select_picker_open(el, false);
+        }
         self.top_layer.leave(el);
+    }
+
+    /// Opens or closes a select's picker. An open picker is an auto popover: it is on top of
+    /// the auto popover stack (other auto popovers, dialogs and light dismiss close it) and the
+    /// select matches `:open`. The bindings run the steps around it (`popover.rs`).
+    pub fn set_select_picker_open(&mut self, el: NodeId, open: bool) -> DomResult<()> {
+        let i = self.check(el)?;
+        let changed = if open { self.top_layer.pickers.insert(el) } else { self.top_layer.pickers.remove(&el) };
+        self.top_layer.auto_stack.retain(|&e| e != el);
+        if open {
+            self.top_layer.auto_stack.push(el);
+        }
+        if changed {
+            self.bump();
+            self.note(crate::dom::Change::State(i));
+        }
+        Ok(())
+    }
+
+    /// Whether a select's picker is open.
+    pub fn is_select_picker_open(&self, el: NodeId) -> bool {
+        !self.top_layer.pickers.is_empty() && self.top_layer.pickers.contains(&el)
+    }
+
+    pub(crate) fn is_select_picker_open_idx(&self, idx: u32) -> bool {
+        !self.top_layer.pickers.is_empty() && self.top_layer.pickers.contains(&self.id_of(idx))
     }
 
     /// Whether the popover's visibility state is "showing".
@@ -187,6 +302,36 @@ impl Dom {
 
     pub(crate) fn is_popover_showing_idx(&self, idx: u32) -> bool {
         !self.top_layer.popovers.is_empty() && self.top_layer.popovers.contains(&self.id_of(idx))
+    }
+
+    pub(crate) fn popover_attribute_changed(&mut self, idx: u32, old: Option<&str>, new: Option<&str>) {
+        if self.is_popover_showing_idx(idx) && old.map(PopoverType::from_value) != new.map(PopoverType::from_value) {
+            let el = self.id_of(idx);
+            if !self.top_layer.changed_popovers.contains(&el) {
+                self.top_layer.changed_popovers.push(el);
+                self.touch_hook();
+            }
+        }
+    }
+
+    pub fn has_changed_popovers(&self) -> bool {
+        !self.top_layer.changed_popovers.is_empty()
+    }
+
+    /// Return showing elements belonging to this document. Nodes disconnected or
+    /// collected since the mutation have already left the top layer.
+    pub fn take_changed_popovers(&mut self, document: NodeId) -> Vec<NodeId> {
+        let mut changed = Vec::new();
+        for el in std::mem::take(&mut self.top_layer.changed_popovers) {
+            if self.is_popover_showing(el) {
+                if self.node_document(el).ok() == Some(document) {
+                    changed.push(el);
+                } else {
+                    self.top_layer.changed_popovers.push(el);
+                }
+            }
+        }
+        changed
     }
 
     /// Pushes a showing popover on top of its popover stack.
@@ -221,6 +366,16 @@ impl Dom {
     /// The element that showed the showing popover `el`.
     pub fn popover_invoker(&self, el: NodeId) -> Option<NodeId> {
         self.top_layer.invokers.get(&el).copied()
+    }
+
+    /// Whether any showing popover has an invoker (sequential focus navigation's fast path).
+    pub(crate) fn has_popover_invokers(&self) -> bool {
+        !self.top_layer.invokers.is_empty()
+    }
+
+    /// Each showing popover with an invoker, and that invoker.
+    pub(crate) fn popover_invoker_pairs(&self) -> Vec<(NodeId, NodeId)> {
+        self.top_layer.invokers.iter().map(|(&popover, &invoker)| (popover, invoker)).collect()
     }
 
     pub fn popover_anchor_keys(&self) -> Vec<(u64, u64)> {
@@ -329,21 +484,80 @@ impl Dom {
     /// HTML removing steps: a removed dialog is no longer modal and a removed
     /// popover is hidden (no events), as are those inside the removed subtree.
     pub(crate) fn top_layer_before_remove(&mut self, node: u32) {
-        if self.top_layer.modal.is_empty() && self.top_layer.popovers.is_empty() && self.top_layer.pending.is_empty() {
+        if self.top_layer.modal.is_empty()
+            && self.top_layer.popovers.is_empty()
+            && self.top_layer.pending.is_empty()
+            && self.top_layer.pickers.is_empty()
+            && self.top_layer.fullscreen.is_empty()
+        {
             return;
         }
+        // The popovers this removal hides: those whose invokers they hold are hidden with them.
+        let mut hidden: Vec<NodeId> = Vec::new();
         for i in self.shadow_including_subtree(node) {
             let id = self.id_of(i);
+            // Fullscreen "removing steps": a removed element is no longer fullscreen (its
+            // document's fullscreen stack drops it when next read).
+            if self.top_layer.fullscreen.remove(&id) {
+                self.bump();
+            }
+            // A removed select's picker closes.
+            if self.top_layer.pickers.contains(&id) {
+                let _ = self.set_select_picker_open(id, false);
+            }
             if self.top_layer.pending.remove(&id) {
                 self.top_layer.exit(id);
                 self.bump();
             }
             let was_modal = self.top_layer.modal.remove(&id);
+            // HTML "hide popover" (no events) of a removed showing popover closes the popovers
+            // above it in its stack first.
+            if self.top_layer.popovers.contains(&id) {
+                for which in [PopoverStack::Auto, PopoverStack::Hint] {
+                    let stack = self.top_layer.stack(which);
+                    if let Some(at) = stack.iter().position(|&e| e == id) {
+                        let above: Vec<NodeId> = stack[at + 1..].to_vec();
+                        for el in above.into_iter().rev() {
+                            self.top_layer.popovers.remove(&el);
+                            self.top_layer.leave(el);
+                            hidden.push(el);
+                        }
+                    }
+                }
+            }
             let was_showing = self.top_layer.popovers.remove(&id);
+            if was_showing {
+                hidden.push(id);
+            }
             if was_modal || was_showing {
                 self.top_layer.leave(id);
                 self.bump();
             }
+        }
+        // Popovers invoked from inside a popover this removal hid (a hint whose invoker was in a
+        // removed auto popover) are hidden with it, and those invoked from them. Removing only an
+        // invoker closes nothing (WPT popovers/popover-target-element-disabled).
+        while !hidden.is_empty() {
+            let holders: Vec<u32> = hidden.iter().filter_map(|&h| self.check(h).ok()).collect();
+            let invoked: Vec<NodeId> = self
+                .top_layer
+                .invokers
+                .iter()
+                .filter(|(_, invoker)| {
+                    self.check(**invoker)
+                        .is_ok_and(|inv| holders.iter().any(|&h| self.shadow_including_inclusive_ancestor(h, inv)))
+                })
+                .map(|(popover, _)| *popover)
+                .filter(|popover| self.top_layer.popovers.contains(popover))
+                .collect();
+            for &el in &invoked {
+                self.top_layer.popovers.remove(&el);
+                self.top_layer.leave(el);
+            }
+            if !invoked.is_empty() {
+                self.bump();
+            }
+            hidden = invoked;
         }
     }
 }

@@ -1,0 +1,1284 @@
+[
+  {
+    "tag": "text",
+    "attr": "rotate",
+    "supported": true,
+    "brands": [
+      "SVGAnimatedNumberList",
+      "SVGNumberList"
+    ],
+    "identity": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "initial": [
+      [
+        1,
+        20,
+        -3.5
+      ],
+      [
+        1,
+        20,
+        -3.5
+      ],
+      true,
+      true
+    ],
+    "sync": [
+      4,
+      4,
+      true,
+      true
+    ],
+    "insertion": [
+      true,
+      true,
+      true,
+      [
+        4,
+        4,
+        5,
+        7
+      ]
+    ],
+    "indexed": [
+      true,
+      7,
+      [
+        7,
+        4,
+        5,
+        7
+      ]
+    ],
+    "removal": [
+      true,
+      [
+        7,
+        5,
+        7
+      ],
+      [
+        7,
+        5,
+        7
+      ]
+    ],
+    "errors": {
+      "readonly": "NoModificationAllowedError",
+      "readonlyItem": "NoModificationAllowedError",
+      "badArg": "TypeError",
+      "badIndex": "IndexSizeError",
+      "nan": "TypeError"
+    },
+    "clearAbsent": "",
+    "crossList": [
+      true,
+      true,
+      11,
+      12
+    ],
+    "removeLast": "",
+    "namespace": [
+      7,
+      5,
+      7,
+      12
+    ],
+    "parses": [
+      [
+        "10 20",
+        [
+          10,
+          20
+        ]
+      ],
+      [
+        "1e-2,+3.5",
+        [
+          0.009999999776482582,
+          3.5
+        ]
+      ],
+      [
+        "1,2x",
+        []
+      ],
+      [
+        "1,,2",
+        []
+      ],
+      [
+        "1,",
+        []
+      ],
+      [
+        "1-2",
+        [
+          1,
+          -2
+        ]
+      ],
+      [
+        "1.2.3",
+        [
+          1.2000000476837158,
+          0.30000001192092896
+        ]
+      ],
+      [
+        "1\f2",
+        [
+          1,
+          2
+        ]
+      ],
+      [
+        "1e999",
+        []
+      ],
+      [
+        "1/**/2",
+        [
+          1,
+          2
+        ]
+      ],
+      [
+        "2px",
+        []
+      ],
+      [
+        "3%",
+        []
+      ],
+      [
+        "",
+        []
+      ]
+    ],
+    "cleared": [
+      0,
+      0,
+      ""
+    ]
+  },
+  {
+    "tag": "tspan",
+    "attr": "rotate",
+    "supported": true,
+    "brands": [
+      "SVGAnimatedNumberList",
+      "SVGNumberList"
+    ],
+    "identity": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "initial": [
+      [
+        1,
+        20,
+        -3.5
+      ],
+      [
+        1,
+        20,
+        -3.5
+      ],
+      true,
+      true
+    ],
+    "sync": [
+      4,
+      4,
+      true,
+      true
+    ],
+    "insertion": [
+      true,
+      true,
+      true,
+      [
+        4,
+        4,
+        5,
+        7
+      ]
+    ],
+    "indexed": [
+      true,
+      7,
+      [
+        7,
+        4,
+        5,
+        7
+      ]
+    ],
+    "removal": [
+      true,
+      [
+        7,
+        5,
+        7
+      ],
+      [
+        7,
+        5,
+        7
+      ]
+    ],
+    "errors": {
+      "readonly": "NoModificationAllowedError",
+      "readonlyItem": "NoModificationAllowedError",
+      "badArg": "TypeError",
+      "badIndex": "IndexSizeError",
+      "nan": "TypeError"
+    },
+    "clearAbsent": "",
+    "crossList": [
+      true,
+      true,
+      11,
+      12
+    ],
+    "removeLast": "",
+    "namespace": [
+      7,
+      5,
+      7,
+      12
+    ],
+    "parses": [
+      [
+        "10 20",
+        [
+          10,
+          20
+        ]
+      ],
+      [
+        "1e-2,+3.5",
+        [
+          0.009999999776482582,
+          3.5
+        ]
+      ],
+      [
+        "1,2x",
+        []
+      ],
+      [
+        "1,,2",
+        []
+      ],
+      [
+        "1,",
+        []
+      ],
+      [
+        "1-2",
+        [
+          1,
+          -2
+        ]
+      ],
+      [
+        "1.2.3",
+        [
+          1.2000000476837158,
+          0.30000001192092896
+        ]
+      ],
+      [
+        "1\f2",
+        [
+          1,
+          2
+        ]
+      ],
+      [
+        "1e999",
+        []
+      ],
+      [
+        "1/**/2",
+        [
+          1,
+          2
+        ]
+      ],
+      [
+        "2px",
+        []
+      ],
+      [
+        "3%",
+        []
+      ],
+      [
+        "",
+        []
+      ]
+    ],
+    "cleared": [
+      0,
+      0,
+      ""
+    ]
+  },
+  {
+    "tag": "feColorMatrix",
+    "attr": "values",
+    "supported": true,
+    "brands": [
+      "SVGAnimatedNumberList",
+      "SVGNumberList"
+    ],
+    "identity": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "initial": [
+      [
+        1,
+        20,
+        -3.5
+      ],
+      [
+        1,
+        20,
+        -3.5
+      ],
+      true,
+      true
+    ],
+    "sync": [
+      4,
+      4,
+      true,
+      true
+    ],
+    "insertion": [
+      true,
+      true,
+      true,
+      [
+        4,
+        4,
+        5,
+        7
+      ]
+    ],
+    "indexed": [
+      true,
+      7,
+      [
+        7,
+        4,
+        5,
+        7
+      ]
+    ],
+    "removal": [
+      true,
+      [
+        7,
+        5,
+        7
+      ],
+      [
+        7,
+        5,
+        7
+      ]
+    ],
+    "errors": {
+      "readonly": "NoModificationAllowedError",
+      "readonlyItem": "NoModificationAllowedError",
+      "badArg": "TypeError",
+      "badIndex": "IndexSizeError",
+      "nan": "TypeError"
+    },
+    "clearAbsent": "",
+    "crossList": [
+      true,
+      true,
+      11,
+      12
+    ],
+    "removeLast": "",
+    "namespace": [
+      7,
+      5,
+      7,
+      12
+    ],
+    "parses": [
+      [
+        "10 20",
+        [
+          10,
+          20
+        ]
+      ],
+      [
+        "1e-2,+3.5",
+        [
+          0.009999999776482582,
+          3.5
+        ]
+      ],
+      [
+        "1,2x",
+        []
+      ],
+      [
+        "1,,2",
+        []
+      ],
+      [
+        "1,",
+        []
+      ],
+      [
+        "1-2",
+        []
+      ],
+      [
+        "1.2.3",
+        []
+      ],
+      [
+        "1\f2",
+        [
+          1,
+          2
+        ]
+      ],
+      [
+        "1e999",
+        []
+      ],
+      [
+        "1/**/2",
+        []
+      ],
+      [
+        "2px",
+        []
+      ],
+      [
+        "3%",
+        []
+      ],
+      [
+        "",
+        []
+      ]
+    ],
+    "cleared": [
+      0,
+      0,
+      ""
+    ]
+  },
+  {
+    "tag": "feConvolveMatrix",
+    "attr": "kernelMatrix",
+    "supported": true,
+    "brands": [
+      "SVGAnimatedNumberList",
+      "SVGNumberList"
+    ],
+    "identity": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "initial": [
+      [
+        1,
+        20,
+        -3.5
+      ],
+      [
+        1,
+        20,
+        -3.5
+      ],
+      true,
+      true
+    ],
+    "sync": [
+      4,
+      4,
+      true,
+      true
+    ],
+    "insertion": [
+      true,
+      true,
+      true,
+      [
+        4,
+        4,
+        5,
+        7
+      ]
+    ],
+    "indexed": [
+      true,
+      7,
+      [
+        7,
+        4,
+        5,
+        7
+      ]
+    ],
+    "removal": [
+      true,
+      [
+        7,
+        5,
+        7
+      ],
+      [
+        7,
+        5,
+        7
+      ]
+    ],
+    "errors": {
+      "readonly": "NoModificationAllowedError",
+      "readonlyItem": "NoModificationAllowedError",
+      "badArg": "TypeError",
+      "badIndex": "IndexSizeError",
+      "nan": "TypeError"
+    },
+    "clearAbsent": "",
+    "crossList": [
+      true,
+      true,
+      11,
+      12
+    ],
+    "removeLast": "",
+    "namespace": [
+      7,
+      5,
+      7,
+      12
+    ],
+    "parses": [
+      [
+        "10 20",
+        [
+          10,
+          20
+        ]
+      ],
+      [
+        "1e-2,+3.5",
+        [
+          0.009999999776482582,
+          3.5
+        ]
+      ],
+      [
+        "1,2x",
+        []
+      ],
+      [
+        "1,,2",
+        []
+      ],
+      [
+        "1,",
+        []
+      ],
+      [
+        "1-2",
+        []
+      ],
+      [
+        "1.2.3",
+        []
+      ],
+      [
+        "1\f2",
+        [
+          1,
+          2
+        ]
+      ],
+      [
+        "1e999",
+        []
+      ],
+      [
+        "1/**/2",
+        []
+      ],
+      [
+        "2px",
+        []
+      ],
+      [
+        "3%",
+        []
+      ],
+      [
+        "",
+        []
+      ]
+    ],
+    "cleared": [
+      0,
+      0,
+      ""
+    ]
+  },
+  {
+    "tag": "feFuncR",
+    "attr": "tableValues",
+    "supported": true,
+    "brands": [
+      "SVGAnimatedNumberList",
+      "SVGNumberList"
+    ],
+    "identity": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "initial": [
+      [
+        1,
+        20,
+        -3.5
+      ],
+      [
+        1,
+        20,
+        -3.5
+      ],
+      true,
+      true
+    ],
+    "sync": [
+      4,
+      4,
+      true,
+      true
+    ],
+    "insertion": [
+      true,
+      true,
+      true,
+      [
+        4,
+        4,
+        5,
+        7
+      ]
+    ],
+    "indexed": [
+      true,
+      7,
+      [
+        7,
+        4,
+        5,
+        7
+      ]
+    ],
+    "removal": [
+      true,
+      [
+        7,
+        5,
+        7
+      ],
+      [
+        7,
+        5,
+        7
+      ]
+    ],
+    "errors": {
+      "readonly": "NoModificationAllowedError",
+      "readonlyItem": "NoModificationAllowedError",
+      "badArg": "TypeError",
+      "badIndex": "IndexSizeError",
+      "nan": "TypeError"
+    },
+    "clearAbsent": "",
+    "crossList": [
+      true,
+      true,
+      11,
+      12
+    ],
+    "removeLast": "",
+    "namespace": [
+      7,
+      5,
+      7,
+      12
+    ],
+    "parses": [
+      [
+        "10 20",
+        [
+          10,
+          20
+        ]
+      ],
+      [
+        "1e-2,+3.5",
+        [
+          0.009999999776482582,
+          3.5
+        ]
+      ],
+      [
+        "1,2x",
+        []
+      ],
+      [
+        "1,,2",
+        []
+      ],
+      [
+        "1,",
+        []
+      ],
+      [
+        "1-2",
+        []
+      ],
+      [
+        "1.2.3",
+        []
+      ],
+      [
+        "1\f2",
+        [
+          1,
+          2
+        ]
+      ],
+      [
+        "1e999",
+        []
+      ],
+      [
+        "1/**/2",
+        []
+      ],
+      [
+        "2px",
+        []
+      ],
+      [
+        "3%",
+        []
+      ],
+      [
+        "",
+        []
+      ]
+    ],
+    "cleared": [
+      0,
+      0,
+      ""
+    ]
+  },
+  {
+    "tag": "feFuncG",
+    "attr": "tableValues",
+    "supported": true,
+    "brands": [
+      "SVGAnimatedNumberList",
+      "SVGNumberList"
+    ],
+    "identity": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "initial": [
+      [
+        1,
+        20,
+        -3.5
+      ],
+      [
+        1,
+        20,
+        -3.5
+      ],
+      true,
+      true
+    ],
+    "sync": [
+      4,
+      4,
+      true,
+      true
+    ],
+    "insertion": [
+      true,
+      true,
+      true,
+      [
+        4,
+        4,
+        5,
+        7
+      ]
+    ],
+    "indexed": [
+      true,
+      7,
+      [
+        7,
+        4,
+        5,
+        7
+      ]
+    ],
+    "removal": [
+      true,
+      [
+        7,
+        5,
+        7
+      ],
+      [
+        7,
+        5,
+        7
+      ]
+    ],
+    "errors": {
+      "readonly": "NoModificationAllowedError",
+      "readonlyItem": "NoModificationAllowedError",
+      "badArg": "TypeError",
+      "badIndex": "IndexSizeError",
+      "nan": "TypeError"
+    },
+    "clearAbsent": "",
+    "crossList": [
+      true,
+      true,
+      11,
+      12
+    ],
+    "removeLast": "",
+    "namespace": [
+      7,
+      5,
+      7,
+      12
+    ],
+    "parses": [
+      [
+        "10 20",
+        [
+          10,
+          20
+        ]
+      ],
+      [
+        "1e-2,+3.5",
+        [
+          0.009999999776482582,
+          3.5
+        ]
+      ],
+      [
+        "1,2x",
+        []
+      ],
+      [
+        "1,,2",
+        []
+      ],
+      [
+        "1,",
+        []
+      ],
+      [
+        "1-2",
+        []
+      ],
+      [
+        "1.2.3",
+        []
+      ],
+      [
+        "1\f2",
+        [
+          1,
+          2
+        ]
+      ],
+      [
+        "1e999",
+        []
+      ],
+      [
+        "1/**/2",
+        []
+      ],
+      [
+        "2px",
+        []
+      ],
+      [
+        "3%",
+        []
+      ],
+      [
+        "",
+        []
+      ]
+    ],
+    "cleared": [
+      0,
+      0,
+      ""
+    ]
+  },
+  {
+    "tag": "feFuncB",
+    "attr": "tableValues",
+    "supported": true,
+    "brands": [
+      "SVGAnimatedNumberList",
+      "SVGNumberList"
+    ],
+    "identity": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "initial": [
+      [
+        1,
+        20,
+        -3.5
+      ],
+      [
+        1,
+        20,
+        -3.5
+      ],
+      true,
+      true
+    ],
+    "sync": [
+      4,
+      4,
+      true,
+      true
+    ],
+    "insertion": [
+      true,
+      true,
+      true,
+      [
+        4,
+        4,
+        5,
+        7
+      ]
+    ],
+    "indexed": [
+      true,
+      7,
+      [
+        7,
+        4,
+        5,
+        7
+      ]
+    ],
+    "removal": [
+      true,
+      [
+        7,
+        5,
+        7
+      ],
+      [
+        7,
+        5,
+        7
+      ]
+    ],
+    "errors": {
+      "readonly": "NoModificationAllowedError",
+      "readonlyItem": "NoModificationAllowedError",
+      "badArg": "TypeError",
+      "badIndex": "IndexSizeError",
+      "nan": "TypeError"
+    },
+    "clearAbsent": "",
+    "crossList": [
+      true,
+      true,
+      11,
+      12
+    ],
+    "removeLast": "",
+    "namespace": [
+      7,
+      5,
+      7,
+      12
+    ],
+    "parses": [
+      [
+        "10 20",
+        [
+          10,
+          20
+        ]
+      ],
+      [
+        "1e-2,+3.5",
+        [
+          0.009999999776482582,
+          3.5
+        ]
+      ],
+      [
+        "1,2x",
+        []
+      ],
+      [
+        "1,,2",
+        []
+      ],
+      [
+        "1,",
+        []
+      ],
+      [
+        "1-2",
+        []
+      ],
+      [
+        "1.2.3",
+        []
+      ],
+      [
+        "1\f2",
+        [
+          1,
+          2
+        ]
+      ],
+      [
+        "1e999",
+        []
+      ],
+      [
+        "1/**/2",
+        []
+      ],
+      [
+        "2px",
+        []
+      ],
+      [
+        "3%",
+        []
+      ],
+      [
+        "",
+        []
+      ]
+    ],
+    "cleared": [
+      0,
+      0,
+      ""
+    ]
+  },
+  {
+    "tag": "feFuncA",
+    "attr": "tableValues",
+    "supported": true,
+    "brands": [
+      "SVGAnimatedNumberList",
+      "SVGNumberList"
+    ],
+    "identity": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "initial": [
+      [
+        1,
+        20,
+        -3.5
+      ],
+      [
+        1,
+        20,
+        -3.5
+      ],
+      true,
+      true
+    ],
+    "sync": [
+      4,
+      4,
+      true,
+      true
+    ],
+    "insertion": [
+      true,
+      true,
+      true,
+      [
+        4,
+        4,
+        5,
+        7
+      ]
+    ],
+    "indexed": [
+      true,
+      7,
+      [
+        7,
+        4,
+        5,
+        7
+      ]
+    ],
+    "removal": [
+      true,
+      [
+        7,
+        5,
+        7
+      ],
+      [
+        7,
+        5,
+        7
+      ]
+    ],
+    "errors": {
+      "readonly": "NoModificationAllowedError",
+      "readonlyItem": "NoModificationAllowedError",
+      "badArg": "TypeError",
+      "badIndex": "IndexSizeError",
+      "nan": "TypeError"
+    },
+    "clearAbsent": "",
+    "crossList": [
+      true,
+      true,
+      11,
+      12
+    ],
+    "removeLast": "",
+    "namespace": [
+      7,
+      5,
+      7,
+      12
+    ],
+    "parses": [
+      [
+        "10 20",
+        [
+          10,
+          20
+        ]
+      ],
+      [
+        "1e-2,+3.5",
+        [
+          0.009999999776482582,
+          3.5
+        ]
+      ],
+      [
+        "1,2x",
+        []
+      ],
+      [
+        "1,,2",
+        []
+      ],
+      [
+        "1,",
+        []
+      ],
+      [
+        "1-2",
+        []
+      ],
+      [
+        "1.2.3",
+        []
+      ],
+      [
+        "1\f2",
+        [
+          1,
+          2
+        ]
+      ],
+      [
+        "1e999",
+        []
+      ],
+      [
+        "1/**/2",
+        []
+      ],
+      [
+        "2px",
+        []
+      ],
+      [
+        "3%",
+        []
+      ],
+      [
+        "",
+        []
+      ]
+    ],
+    "cleared": [
+      0,
+      0,
+      ""
+    ]
+  }
+]

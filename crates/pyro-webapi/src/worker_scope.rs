@@ -5,7 +5,10 @@
 //! gives the realm what the bindings look up through `page_of` (events,
 //! `fetch`, `URL`, base URL and origin), so those run unchanged, each on this
 //! thread with this thread's state. Only the classes in `register` exist here,
-//! which is what makes `document` or `Worker` undefined in a worker.
+//! which is what makes `document` undefined in a worker. A dedicated worker
+//! has `Worker`: its nested workers belong to its `PageDom` (`worker::dispose`
+//! ends them with it), and it waits a bounded time for their threads before
+//! its VM goes (`worker::join_nested`).
 //!
 //! API subset: `self`, `location`, `navigator`, `name`, `postMessage`, `close`,
 //! `onmessage`/`onmessageerror`/`onerror`, `importScripts`, timers,
@@ -61,6 +64,9 @@ const CLOSING_POLL: Duration = Duration::from_millis(50);
 const MAX_BUFFERED_EVENTS: usize = 256;
 /// As on the browser thread: JSC itself bounds its recursion by the stack it finds.
 const STACK_BYTES: usize = 8 * 1024 * 1024;
+/// How long a worker that ends waits for the threads of its nested workers;
+/// each level waits its own, so a chain of them can take this once per level.
+const NESTED_JOIN: Duration = Duration::from_secs(1);
 
 /// What a worker's thread needs from the page side. `Send`.
 pub(crate) struct WorkerStart {
@@ -75,6 +81,10 @@ pub(crate) struct WorkerStart {
     shared: Arc<Shared>,
     frame_id: Option<String>,
     origin: Option<String>,
+    creator_cluster: Option<crate::page::AgentCluster>,
+    creator_secure: bool,
+    cookie_partition_key: Option<String>,
+    cookie_site_context: pyro_net::cookies::SiteContext,
     user_agent: Option<UserAgentOverride>,
     extra_headers: HeaderMap,
     cache_disabled: bool,
@@ -82,14 +92,33 @@ pub(crate) struct WorkerStart {
     indexed_db: crate::indexeddb::Namespace,
     /// Its Cache Storage, likewise.
     caches: crate::cache_storage::Namespace,
+    opfs: crate::opfs::Namespace,
+    buckets: crate::storage_buckets::catalog::Catalog,
+    permissions: crate::navigator_extras::PermissionTable,
+    web_locks: crate::web_locks::LockService,
     /// `new Worker(url, {type: 'module'})`: the script is a module.
     pub(crate) module: bool,
+    /// `WorkerOptions.credentials`: a module worker's main script and every
+    /// module of its realm are fetched with it (HTML "fetch a module worker
+    /// script graph"). A classic worker's fetches stay same-origin.
+    pub(crate) credentials: Credentials,
+    /// A dedicated worker's main script request: its creator's referrer
+    /// source and policy (HTML "fetch a classic/module worker script" uses
+    /// the outside settings). None: no `Referer` is sent.
+    pub(crate) referrer: Option<(pyro_net::Url, pyro_net::ReferrerPolicy)>,
+    /// A worker started by a worker: its place under
+    /// `worker::MAX_NESTED_WORKERS`, held by the worker's thread until it
+    /// exits (`run`), or given back with this if the thread never starts.
+    pub(crate) nested: Option<crate::worker::NestedSlot>,
     pub(crate) early: Vec<Early>,
     /// A service worker version: its global is a `ServiceWorkerGlobalScope`.
     pub(crate) service: Option<crate::service_worker_scope::ServiceStart>,
     /// A shared worker: its global is a `SharedWorkerGlobalScope`, and
     /// documents connect to it (`WorkerLoop::connect`).
     pub(crate) shared_worker: bool,
+    /// The owner document's CSP: its script's redirects and its module graph's static imports
+    /// are checked against it ([`crate::worker::csp_check`]).
+    pub(crate) csp: crate::worker::WorkerCsp,
 }
 
 impl WorkerStart {
@@ -115,15 +144,28 @@ impl WorkerStart {
             shared,
             frame_id: page.request_context().frame_id,
             origin: s.realm().origin(),
+            creator_cluster: Some(page.agent_cluster()),
+            cookie_partition_key: page.cookie_partition_key(),
+            cookie_site_context: page.cookie_site_context(),
+            creator_secure: s.global_data::<WorkerGlobalScope>()
+                .map_or_else(|| crate::secure_context::secure(s, page), |parent| parent.secure),
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
             indexed_db: page.local_storage.borrow().indexed_db(),
             caches: page.local_storage.borrow().caches(),
+            opfs: page.local_storage.borrow().opfs(),
+            buckets: page.local_storage.borrow().buckets(),
+            permissions: page.context_services().permissions.clone(),
+            web_locks: page.context_services().web_locks.clone(),
             module: false,
+            credentials: Credentials::SameOrigin,
+            referrer: None,
+            nested: None,
             early: Vec::new(),
             service: None,
             shared_worker: false,
+            csp: Default::default(),
         })
     }
 
@@ -154,15 +196,27 @@ impl WorkerStart {
             shared,
             frame_id: None,
             origin: Some(origin),
+            creator_cluster: None,
+            cookie_partition_key: service.partition_key.clone(),
+            cookie_site_context: service.cookie_site_context,
+            creator_secure: true,
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
             indexed_db: page.local_storage.borrow().indexed_db(),
             caches: page.local_storage.borrow().caches(),
+            opfs: page.local_storage.borrow().opfs(),
+            buckets: page.local_storage.borrow().buckets(),
+            permissions: page.context_services().permissions.clone(),
+            web_locks: page.context_services().web_locks.clone(),
             module,
+            credentials: Credentials::SameOrigin,
+            referrer: None,
+            nested: None,
             early: Vec::new(),
             service: Some(service),
             shared_worker: false,
+            csp: Default::default(),
         })
     }
 }
@@ -286,7 +340,44 @@ pub struct WorkerLoop {
     /// connections that arrive wait in `held`, as the worker's port message
     /// queue is enabled once its script ran (HTML "run a worker").
     starting: Rc<Cell<bool>>,
+    /// Which of the realm's module requests are its top-level graph's static imports.
+    graph: Rc<GraphPhase>,
     held: Vec<Held>,
+}
+
+/// Which module requests of a worker's realm belong to its top-level module graph, fetched
+/// with the owner as the fetch client (HTML "fetch a module worker script graph": the owner's
+/// CSP decides, for the worker's destination), and which are `import()` of the running script
+/// (the worker's own fetches, under its own CSP).
+#[derive(Default)]
+pub(crate) struct GraphPhase {
+    /// The engine's first step (`load_module_graph`) runs: the graph is being fetched and none
+    /// of the worker's script has run, so every request is a static import.
+    loading: Cell<bool>,
+    /// The engine fetches and evaluates the graph in one step (`eval_module`): until it settles
+    /// a request may be a static import or an `import()` of the evaluating top level, and the
+    /// engine does not say which, so both policies are checked.
+    mixed: Cell<bool>,
+}
+
+/// What a worker's module request is, as far as [`GraphPhase`] can tell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GraphRequest {
+    Static,
+    Mixed,
+    Dynamic,
+}
+
+impl GraphPhase {
+    fn request(&self) -> GraphRequest {
+        if self.loading.get() {
+            GraphRequest::Static
+        } else if self.mixed.get() {
+            GraphRequest::Mixed
+        } else {
+            GraphRequest::Dynamic
+        }
+    }
 }
 
 /// What a worker that is still starting was sent.
@@ -415,6 +506,23 @@ impl PageHooks for ScopeHooks {
         self.sched.post(TaskSource::DomManipulation, move |_| task());
     }
 
+    fn post_web_task(
+        &self,
+        priority: pyro_runtime::WebPrioritySource,
+        delay: std::time::Duration,
+        task: Box<dyn FnOnce()>,
+    ) -> Option<Box<dyn FnOnce()>> {
+        Some(self.sched.post_web_task(priority, delay, Box::new(move |_| task())))
+    }
+
+    fn post_web_continuation(
+        &self,
+        priority: pyro_runtime::WebPrioritySource,
+        task: Box<dyn FnOnce()>,
+    ) -> Option<Box<dyn FnOnce()>> {
+        Some(self.sched.post_web_continuation(priority, Box::new(move |_| task())))
+    }
+
     fn post_delayed_task(&self, delay: Duration, task: Box<dyn FnOnce()>) {
         let task = RefCell::new(Some(task));
         self.sched.set_timer(delay, false, true, move |_| {
@@ -434,7 +542,10 @@ impl PageHooks for ScopeHooks {
     }
 }
 
-fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
+fn run(mut start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
+    // A nested worker's place under the cap lasts as long as this thread,
+    // whatever ends it: given back on the way out, after the teardown.
+    let _nested = start.nested.take();
     let event_loop = EventLoop::<WorkerLoop>::new();
     #[cfg(target_os = "macos")]
     let event_loop = {
@@ -450,6 +561,9 @@ fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
         return;
     }
     let (id, shared, poster, module) = (start.id, start.shared.clone(), start.poster.clone(), start.module);
+    // A module shared worker's graph is fetched and linked before it runs:
+    // a failure there is a failure to load, not an exception of the worker.
+    let phased = module && start.shared_worker;
     let service = start.service.as_ref().map(|s| s.version);
     // A service worker's version learns whether its script ran.
     let evaluated = |ok: bool| {
@@ -462,7 +576,8 @@ fn run(start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) {
     match set_up(&event_loop, start) {
         Ok((mut state, script)) => {
             if let Some(script) = script {
-                let ok = !shared.closing.load(Ordering::Acquire) && run_script(&state, &script, module);
+                let ok = !shared.closing.load(Ordering::Acquire)
+                    && if phased { start_module_graph(&state, &script) } else { run_script(&state, &script, module) };
                 evaluated(ok);
                 run_collecting_when_quiet(&mut event_loop, &mut state, &shared);
             } else {
@@ -522,6 +637,21 @@ fn run_collecting_when_quiet(event_loop: &mut EventLoop<WorkerLoop>, state: &mut
 /// The realm and, when it loaded, the script. A failed load was reported.
 fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(WorkerLoop, Option<(String, String)>)> {
     let engine = Engine::new()?;
+    // The VM's deferred work (WebAssembly.compile/instantiate settling, finished on a compilation
+    // thread) runs in a task of this loop, as on the browser thread (JSC patch 0040). One task per
+    // wake while none is queued.
+    let handle = event_loop.handle();
+    let queued = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    engine.set_deferred_work_waker(move || {
+        if queued.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let queued = queued.clone();
+        let _ = handle.post(move |state: &mut WorkerLoop| {
+            queued.store(false, Ordering::Release);
+            state.engine.run_deferred_work();
+        });
+    });
     *start.shared.terminate.lock().unwrap_or_else(|e| e.into_inner()) = Some(engine.terminate_handle()?);
     // `terminate()` may have run before the handle was there to act on it.
     if start.shared.closing.load(Ordering::Acquire) {
@@ -540,24 +670,49 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
     let document = dom.borrow_mut().create_document(pyro_dom::DocumentKind::Html, start.url.as_str());
     dom.borrow_mut().set_document_active(document, true).map_err(|e| JsError::Type(format!("{e:?}").into()))?;
+    // CSP: a `data:` or `blob:` script's worker has its owner's policies, each with its
+    // delivery (header or `<meta>`) and disposition; a fetched script's are its response's,
+    // recorded by `fetch_script`.
+    if matches!(start.url.scheme(), "data" | "blob") && !start.csp.inherited.is_empty() {
+        let _ = dom.borrow_mut().inherit_csp_policies(document, &start.csp.inherited);
+    }
     let page = PageDom::new(dom, document);
+    // Dedicated workers, including data/blob workers and nested workers, use
+    // their creator's cluster. Shared and service workers own a distinct cluster.
+    if !start.shared_worker {
+        if let Some(cluster) = &start.creator_cluster {
+            page.inherit_agent_cluster(cluster.clone());
+        }
+    }
+    let cookie_site = if start.url.scheme() == "data" { pyro_net::cookies::SiteContext::CrossSite } else { start.cookie_site_context };
+    page.set_cookie_context(start.cookie_partition_key.clone(), cookie_site);
+    page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(
+        start.permissions.clone(), start.web_locks.clone(),
+    )));
     // The worker's time origin: `performance.now()`, `Event.timeStamp` and
     // its Resource Timing entries count from here.
     let started = Instant::now();
     let origin_wall_ms = epoch_ms();
-    page.set_event_clock(Rc::new(move || crate::performance::now_since(started)));
+    page.set_event_clock(Rc::new(move |at| crate::performance::time_since(started, at)));
     page.set_user_agent_override(start.user_agent.clone()).map_err(|e| JsError::Type(e.to_string().into()))?;
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
     page.set_storage_namespaces(
-        crate::storage::StorageNamespace::with_shared(start.indexed_db.clone(), start.caches.clone()),
+        crate::storage::StorageNamespace::with_shared(
+            start.indexed_db.clone(), start.caches.clone(), start.opfs.clone(), start.buckets.clone(),
+        ),
         Default::default(),
     );
     page.set_request_context(crate::RequestContext { frame_id: start.frame_id.clone(), loader_id: None });
     let window = page.create_window_target(document);
     *page.net.borrow_mut() = Some(start.net.clone());
     page.set_hooks(Some(Rc::new(ScopeHooks { sched: event_loop.scheduler(), handle: event_loop.handle() })));
-    let origin = start.origin.clone().or_else(|| Some(start.url.origin().ascii_serialization()));
+    let worker_origin = if start.url.scheme() == "data" {
+        Some(start.url.origin().ascii_serialization())
+    } else {
+        start.origin.clone()
+    };
+    let origin = worker_origin.clone().or_else(|| Some(start.url.origin().ascii_serialization()));
     let realm = engine.create_realm(RealmOptions { name: String::new(), global_class: Some(class), origin })?;
     let scope = ScopeData {
         target: EventTargetData::window(&page, window),
@@ -565,16 +720,18 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         shared: start.shared.clone(),
         poster: start.poster.clone(),
         url: start.url.clone(),
+        secure: pyro_net::is_potentially_trustworthy_url(&start.url)
+            && (start.creator_secure || start.shared_worker || start.service.is_some()),
         name: start.name.clone(),
         user_agent: crate::window::user_agent(&page),
         sched: event_loop.scheduler(),
         timers: RefCell::new(HashMap::new()),
         next_timer: Cell::new(1),
-        websocket_module: RefCell::new(None),
         module: start.module,
         started,
         origin_wall_ms,
         performance: Cell::new(None),
+        response_url: RefCell::new(None),
     };
     if start.service.is_some() {
         realm.set_global_data::<ServiceWorkerGlobalScope>(scope)?;
@@ -583,15 +740,26 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     } else {
         realm.set_global_data::<DedicatedWorkerGlobalScope>(scope)?;
     }
+    // True while a module worker's top-level graph loads and evaluates.
+    let starting = Rc::new(Cell::new(false));
+    let graph = Rc::new(GraphPhase::default());
     // Static imports of a module worker and `import()` in any worker: the
     // worker's own fetches, like `importScripts`.
     realm.set_module_fetcher(Some(Rc::new(WorkerModuleFetcher {
         page: Rc::downgrade(&page),
         net: start.net.clone(),
         shared: start.shared.clone(),
-        origin: start.origin.clone(),
+        credentials: script_credentials(&start),
+        origin: worker_origin,
+        outside_origin: start.origin.clone(),
         url: start.url.to_string(),
         sched: event_loop.scheduler(),
+        in_flight: Rc::default(),
+        service_graph: start.service.is_some().then(|| starting.clone()),
+        csp: start.csp.clone(),
+        graph: graph.clone(),
+        id: start.id,
+        poster: start.poster.clone(),
     })));
     {
         let s = realm.scope()?;
@@ -605,12 +773,20 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         install(&s, &page, global)?;
         if let Some(service) = &start.service {
             crate::service_worker_scope::install(&s, service, start.poster.clone(), start.shared.clone())?;
+            crate::cookie_store::bind_environment(&s, &page)?;
+            crate::cookie_store::exposure::install(&s, true)?;
         }
     }
     // A synchronous request parks this thread: `terminate()` must still end it.
     let closing = start.shared.clone();
     crate::xhr::set_sync_watch(&page, Box::new(move || closing.closing.load(Ordering::Acquire)));
-    let script = load_main_script(&page, &start);
+    let (script, response_url) = load_main_script(&page, &start);
+    // The URL its nested workers' requests are sent with as their referrer.
+    if let Some(url) = response_url {
+        if let Some(g) = realm.scope()?.global_data::<WorkerGlobalScope>() {
+            *g.response_url.borrow_mut() = Some(url);
+        }
+    }
     let state = WorkerLoop {
         engine,
         page,
@@ -620,7 +796,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         id: start.id,
         poster: start.poster.clone(),
         in_error: false,
-        starting: Rc::new(Cell::new(false)),
+        starting,
+        graph,
         held: Vec::new(),
     };
     if script.is_none() && start.service.is_none() && !start.shared.closing.load(Ordering::Acquire) {
@@ -630,23 +807,52 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     Ok((state, script.map(|text| (text, start.url.to_string()))))
 }
 
-fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> Option<String> {
+/// The main script request's referrer, in; its response's URL (after
+/// redirects), out.
+struct MainRequest {
+    referrer: Option<(pyro_net::Url, pyro_net::ReferrerPolicy)>,
+    response_url: RefCell<Option<pyro_net::Url>>,
+}
+
+/// The script and, when it was fetched, its response's URL.
+fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> (Option<String>, Option<pyro_net::Url>) {
+    let main = MainRequest { referrer: start.referrer.clone(), response_url: RefCell::new(None) };
+    let script = load_main_bytes(page, start, &main).map(|bytes| script_text(&bytes));
+    (script, main.response_url.take())
+}
+
+fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) -> Option<Bytes> {
     let bytes = match (&start.script, start.url.scheme()) {
         (Some(bytes), _) => bytes.clone(),
         // A revoked or unknown object URL.
         (None, "blob") => return None,
         _ => {
-            let (bytes, mime) = fetch_script(
+            let fetched = fetch_script(
                 page,
                 &start.net,
                 &start.shared,
                 &start.origin,
                 start.url.clone(),
-                Destination::Script,
+                // Sec-Fetch-Dest: the global's kind.
+                if start.service.is_some() {
+                    Destination::ServiceWorker
+                } else if start.shared_worker {
+                    Destination::SharedWorker
+                } else {
+                    Destination::Worker
+                },
                 RequestMode::SameOrigin,
+                script_credentials(start),
                 true,
-            )
-            .ok()?;
+                Some(main),
+                start.csp.guard.clone(),
+            );
+            // A redirect (or a final response URL) the owner's CSP blocked or reported is
+            // reported at the owner.
+            if let Some(guard) = &start.csp.guard {
+                post_violations(start.id, &start.poster, guard.take_violations());
+            }
+            let (bytes, mime) = fetched.ok()?;
             // A module worker's script is a module script: strict MIME
             // checking (HTML "fetch a single module script").
             if start.module && crate::module_script::mime_error(pyro_js::ModuleType::JavaScript, &mime, "").is_some() {
@@ -655,7 +861,16 @@ fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> Option<String> {
             bytes
         }
     };
-    Some(script_text(&bytes))
+    Some(bytes)
+}
+
+/// The credentials mode of a worker's main script and module fetches.
+fn script_credentials(start: &WorkerStart) -> Credentials {
+    if start.module {
+        start.credentials
+    } else {
+        Credentials::SameOrigin
+    }
 }
 
 fn script_text(bytes: &[u8]) -> String {
@@ -663,10 +878,22 @@ fn script_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// Before the worker's main script (classic, module or a shared worker's phased module graph):
+/// eval and Function follow the worker's own CSP list (its script's response's, or its owner's
+/// for a `data:` or `blob:` script, both recorded by `set_up`) and Trusted Types, as a window's
+/// classic scripts do (`trusted_types::sync_compile_strings`, which installs the compile hooks
+/// when a policy asks). Without this a worker's realm got the hooks only once it used
+/// `trustedTypes`, so a worker's string compilation went unchecked.
+/// It also arms WebAssembly's gate (`sync_compile_strings` calls `csp::sync_wasm_gate`).
+fn sync_compile_gate(s: &Scope<'_>, state: &WorkerLoop) {
+    crate::trusted_types::sync_compile_strings(s, &state.page);
+}
+
 /// Whether a classic script ran to its end (a module's evaluation is
 /// asynchronous: its failure is reported, and this says true).
 fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bool {
     let Ok(s) = state.realm.scope() else { return false };
+    sync_compile_gate(&s, state);
     if !module {
         if let Err(e) = s.eval(&script.0, Some(&script.1), 1) {
             s.report_exception(&e);
@@ -679,23 +906,110 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bo
     // the error (`error` at the Worker).
     // Until it settles, what the worker is sent waits (`WorkerLoop::held`).
     state.starting.set(true);
+    // One engine step fetches and evaluates the graph: its requests are static imports or
+    // `import()`s of the top level, which the engine does not tell apart (`GraphPhase::mixed`).
+    state.graph.mixed.set(true);
     let (started, failed) = (state.starting.clone(), state.starting.clone());
+    let (graph_done, graph_failed) = (state.graph.clone(), state.graph.clone());
     let evaluated = s.eval_module(&script.0, &script.1).and_then(|promise| {
         s.then(
             promise,
-            move |_, _| started.set(false),
+            move |_, _| {
+                started.set(false);
+                graph_done.mixed.set(false);
+            },
             move |s, error| {
                 failed.set(false);
+                graph_failed.mixed.set(false);
                 s.report_exception(&JsError::thrown(pyro_js::Persistent::new(s, error)))
             },
         )
     });
     if let Err(e) = evaluated {
         state.starting.set(false);
+        state.graph.mixed.set(false);
         s.report_exception(&e);
         return false;
     }
     true
+}
+
+/// A module shared worker's script in HTML's two steps
+/// ([`Scope::load_module_graph`], then [`Scope::link_and_evaluate_module`]).
+/// A graph that fails to fetch, parse or link is a failure to load: the
+/// document side hears `Up::LoadFailed` (`error` at every connected
+/// `SharedWorker`) and ends the worker, and what waits in `held` is never
+/// delivered (`starting` stays set). A throw of the evaluation is the
+/// worker's own exception: it is reported, and what waits is delivered.
+/// The constructor admits module shared workers only with the two steps.
+fn start_module_graph(state: &WorkerLoop, script: &(String, String)) -> bool {
+    let Ok(s) = state.realm.scope() else { return false };
+    sync_compile_gate(&s, state);
+    let id = state.id;
+    state.starting.set(true);
+    // The first step fetches the graph and runs nothing: every request until it settles is a
+    // static import (`GraphPhase::loading`); after it, one is an `import()`.
+    state.graph.loading.set(true);
+    let loaded = match s.load_module_graph(&script.0, &script.1) {
+        Ok(Some(loaded)) => loaded,
+        Ok(None) | Err(_) => {
+            state.graph.loading.set(false);
+            load_failed(&state.poster, id);
+            return false;
+        }
+    };
+    let (url, starting) = (script.1.clone(), state.starting.clone());
+    let (link_poster, fetch_poster) = (state.poster.clone(), state.poster.clone());
+    let (graph_loaded, graph_failed) = (state.graph.clone(), state.graph.clone());
+    let watched = s.then(
+        loaded,
+        move |s, _| {
+            graph_loaded.loading.set(false);
+            match s.link_and_evaluate_module(&url) {
+                Ok(promise) => {
+                    let (settled, failed) = (starting.clone(), starting.clone());
+                    let reported = s.then(
+                        promise,
+                        move |_, _| settled.set(false),
+                        move |s, error| {
+                            failed.set(false);
+                            s.report_exception(&JsError::thrown(Persistent::new(s, error)))
+                        },
+                    );
+                    if let Err(e) = reported {
+                        starting.set(false);
+                        s.report_exception(&e);
+                    }
+                }
+                // JavaScriptCore throws the evaluation error of a graph without top-level await
+                // synchronously (as for paint worklets, 6f2c7a9ce): the script ran, so the
+                // error is the worker's own, reported, and what waits is delivered.
+                Err(pyro_js::JsError::Thrown(e)) if !crate::paint_worklet::is_link_error(s, e.get(s)) => {
+                    starting.set(false);
+                    s.note_module_evaluation_error(e.get(s));
+                    s.report_exception(&pyro_js::JsError::Thrown(e));
+                }
+                // A link error (or a parse error JSC reports at link time).
+                Err(_) => load_failed(&link_poster, id),
+            }
+        },
+        // A fetch failed, a module's MIME type was refused, or it did not parse.
+        move |_, _| {
+            graph_failed.loading.set(false);
+            load_failed(&fetch_poster, id)
+        },
+    );
+    if watched.is_err() {
+        state.graph.loading.set(false);
+        load_failed(&state.poster, id);
+        return false;
+    }
+    true
+}
+
+/// Tells the document side that worker `id` failed to load.
+fn load_failed(poster: &RemotePoster, id: u64) {
+    poster(Box::new(move || deliver_up(id, Up::LoadFailed)));
 }
 
 /// The ES module source of a worker's realm: each module is fetched in a task
@@ -705,9 +1019,81 @@ struct WorkerModuleFetcher {
     page: std::rc::Weak<PageDom>,
     net: NetClient,
     shared: Arc<Shared>,
+    credentials: Credentials,
+    /// The worker's origin (opaque for a data: URL worker): an `import()` fetches as it.
     origin: Option<String>,
+    /// Its creator's origin: the top-level graph's static imports fetch as it (HTML "fetch a
+    /// module worker script graph" uses the outside settings; WPT
+    /// workers/modules/dedicated-worker-import-data-url-cross-origin.html).
+    outside_origin: Option<String>,
     url: String,
     sched: Scheduler<WorkerLoop>,
+    /// The fetches in flight by URL and module type, with the requests that
+    /// joined each (HTML module map: an entry being fetched collects
+    /// callbacks). The engine asks for a module once per load until one
+    /// settles, so concurrent loads would each fetch it. Nothing stays once a
+    /// fetch settles: a failed one is fetched again by the next request.
+    in_flight: Rc<RefCell<HashMap<(String, pyro_js::ModuleType), Vec<pyro_js::ModuleRequest>>>>,
+    /// A service worker's flag of its top-level module graph loading and
+    /// evaluating (never set for a classic one): any other module request is
+    /// an `import()`.
+    service_graph: Option<Rc<Cell<bool>>>,
+    /// The owner's CSP, which the top-level graph's static imports answer to ([`GraphPhase`]);
+    /// an `import()` answers to the worker's own.
+    csp: crate::worker::WorkerCsp,
+    graph: Rc<GraphPhase>,
+    id: u64,
+    poster: RemotePoster,
+}
+
+/// Violations of the owner's CSP found on the worker's thread go to the owner's document.
+fn post_violations(id: u64, poster: &RemotePoster, violations: Vec<pyro_net::csp::Violation>) {
+    if !violations.is_empty() {
+        poster(Box::new(move || deliver_up(id, Up::Violations(violations))));
+    }
+}
+
+/// The CSP check of a module a worker fetches (`dest`: its module type's destination), by
+/// what the request is ([`GraphRequest`]):
+/// - a static import of the top-level graph: the owner's policies, for the worker's own
+///   destination (`worker-src`), violations to the owner;
+/// - an `import()`: the worker's own policies, for `dest`, violations at its global;
+/// - either (the engine does one step): both, blocked when either blocks; the redirect guard
+///   is the owner's.
+///
+/// No nonce is carried: a worker's module requests have no initiating element.
+fn module_csp(
+    page: &Rc<PageDom>,
+    csp: &crate::worker::WorkerCsp,
+    request: GraphRequest,
+    id: u64,
+    poster: &RemotePoster,
+    url: &pyro_net::Url,
+    dest: pyro_net::csp::RequestDest,
+) -> Result<Option<Arc<pyro_net::csp::RequestCsp>>, crate::csp::Blocked> {
+    use pyro_net::csp::{CspRequest, RequestCsp, RequestDest};
+    let own = || crate::csp::check_request(page, CspRequest::new(url.clone(), dest), None);
+    if request == GraphRequest::Dynamic {
+        return own();
+    }
+    let owner = match &csp.owner {
+        Some(list) => {
+            let worker_dest = if dest == RequestDest::Script { csp.dest } else { dest };
+            let check = CspRequest::new(url.clone(), worker_dest);
+            let outcome = list.pre_request(&check);
+            post_violations(id, poster, outcome.violations);
+            if outcome.blocked {
+                return Err(crate::csp::Blocked);
+            }
+            Some(RequestCsp::new(list.clone(), check))
+        }
+        None => None,
+    };
+    if request == GraphRequest::Mixed {
+        let own = own()?;
+        return Ok(owner.or(own));
+    }
+    Ok(owner)
 }
 
 impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
@@ -716,45 +1102,129 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
     }
 
     fn fetch(&self, realm: &Realm, url: String, request: pyro_js::ModuleRequest) {
-        let realm = realm.downgrade();
-        let (page, net, shared, origin) =
-            (self.page.clone(), self.net.clone(), self.shared.clone(), self.origin.clone());
-        let request = RefCell::new(Some(request));
-        self.sched.post(TaskSource::Networking, move |_| {
-            let Some(request) = request.borrow_mut().take() else { return };
-            let Some(realm) = realm.upgrade().filter(|r| !r.is_disposed()) else { return };
-            let Ok(s) = realm.scope() else { return };
-            // A worker has no CSSStyleSheet: a CSS module fails unfetched.
-            if let Some(e) = crate::module_script::disallowed(request.module_type(), false) {
+        // HTML HostLoadImportedModule: `import()` in a ServiceWorkerGlobalScope
+        // fails with a TypeError, at once (no task, no microtask checkpoint).
+        if self.service_graph.as_ref().is_some_and(|loading| !loading.get()) {
+            if let Ok(s) = realm.scope() {
+                let e = JsError::Type("import() is disallowed on ServiceWorkerGlobalScope".into());
                 if let Err(e) = request.reject(&s, &e) {
                     s.report_exception(&e);
                 }
+            }
+            return;
+        }
+        let key = (url.clone(), request.module_type());
+        {
+            let mut in_flight = self.in_flight.borrow_mut();
+            if let Some(joined) = in_flight.get_mut(&key) {
+                joined.push(request);
                 return;
             }
-            let source = match (page.upgrade(), pyro_net::Url::parse(&url)) {
-                (Some(page), Ok(parsed)) => match page.blob_url(&url) {
-                    Some((bytes, mime)) => Ok((bytes, pyro_net::parse_content_type(&mime).0)),
-                    None => {
-                        // A JSON module is fetched with destination "json"
-                        // (CSS modules were rejected above).
-                        let destination = match request.module_type() {
-                            pyro_js::ModuleType::Json => Destination::Json,
-                            _ => Destination::Script,
-                        };
-                        fetch_script(&page, &net, &shared, &origin, parsed, destination, RequestMode::Cors, false)
+            in_flight.insert(key.clone(), Vec::new());
+        }
+        // A blob: URL names the blob it named when the module was requested
+        // (URL parsing takes the blob URL entry): one revoked right after
+        // `import()` still loads.
+        let blob =
+            if url.starts_with("blob:") { self.page.upgrade().and_then(|page| page.blob_url(&url)) } else { None };
+        let realm = realm.downgrade();
+        // What the request is is read now, as the engine makes it.
+        let graph_request = self.graph.request();
+        // A static import of the top-level graph fetches as the creator; a dedicated worker's
+        // graph (`GraphRequest::Mixed`) cannot tell its static imports from the top level's
+        // `import()`s, which take the creator's origin too until the engine marks them.
+        let origin = match graph_request {
+            GraphRequest::Static | GraphRequest::Mixed => self.outside_origin.clone().or_else(|| self.origin.clone()),
+            GraphRequest::Dynamic => self.origin.clone(),
+        };
+        let (page, net, shared, in_flight, credentials) =
+            (self.page.clone(), self.net.clone(), self.shared.clone(), self.in_flight.clone(), self.credentials);
+        let (csp, id, poster) = (self.csp.clone(), self.id, self.poster.clone());
+        let request = RefCell::new(Some(request));
+        self.sched.post(TaskSource::Networking, move |_| {
+            // Every request of the fetch, taken out before any completes: one
+            // the engine makes while they complete starts a fetch of its own.
+            let take = || {
+                let joined = in_flight.borrow_mut().remove(&key).unwrap_or_default();
+                request.borrow_mut().take().into_iter().chain(joined).collect::<Vec<_>>()
+            };
+            let Some(realm) = realm.upgrade().filter(|r| !r.is_disposed()) else {
+                drop(take());
+                return;
+            };
+            let Ok(s) = realm.scope() else {
+                drop(take());
+                return;
+            };
+            let ty = key.1;
+            // A worker has no CSSStyleSheet: a CSS module fails unfetched.
+            let outcome = match crate::module_script::disallowed(ty, false) {
+                Some(e) => Err(e),
+                None => {
+                    let source = match (page.upgrade(), pyro_net::Url::parse(&url)) {
+                        (Some(page), Ok(parsed)) => {
+                            // CSP, once per fetch (the requests that joined it share the outcome).
+                            let dest = crate::csp::module_dest(ty);
+                            match module_csp(&page, &csp, graph_request, id, &poster, &parsed, dest) {
+                                Err(_) => Err(crate::csp::BLOCKED_BY_CSP.to_owned()),
+                                Ok(guard) => {
+                                    let fetched = match blob.clone().or_else(|| page.blob_url(&url)) {
+                                        Some((bytes, mime)) => Ok((bytes, pyro_net::parse_content_type(&mime).0)),
+                                        None => {
+                                            // A JSON module is fetched with destination "json"
+                                            // (CSS modules were rejected above).
+                                            let destination = match ty {
+                                                pyro_js::ModuleType::Json => Destination::Json,
+                                                pyro_js::ModuleType::Text => Destination::Text,
+                                                _ => Destination::Script,
+                                            };
+                                            fetch_script(
+                                                &page,
+                                                &net,
+                                                &shared,
+                                                &origin,
+                                                parsed,
+                                                destination,
+                                                RequestMode::Cors,
+                                                credentials,
+                                                false,
+                                                None,
+                                                guard.clone(),
+                                            )
+                                        }
+                                    };
+                                    // The guard's findings go where its policy is: the owner's
+                                    // for a graph request, else the worker's own.
+                                    if let Some(guard) = &guard {
+                                        if graph_request == GraphRequest::Dynamic || csp.owner.is_none() {
+                                            crate::csp::report_guard(&page, Some(guard), None);
+                                        } else {
+                                            post_violations(id, &poster, guard.take_violations());
+                                        }
+                                    }
+                                    fetched
+                                }
+                            }
+                        }
+                        _ => Err("invalid URL".to_owned()),
+                    };
+                    match source {
+                        Ok((bytes, mime)) => match crate::module_script::mime_error(ty, &mime, &url) {
+                            None => Ok(script_text(&bytes)),
+                            Some(e) => Err(JsError::Type(e.into())),
+                        },
+                        Err(_) => Err(JsError::Type(format!("Failed to fetch module: {url}").into())),
                     }
-                },
-                _ => Err("invalid URL".to_owned()),
+                }
             };
-            let done = match source {
-                Ok((bytes, mime)) => match crate::module_script::mime_error(request.module_type(), &mime, &url) {
-                    None => crate::module_script::complete(&s, request, &script_text(&bytes)),
-                    Some(e) => request.reject(&s, &JsError::Type(e.into())),
-                },
-                Err(_) => request.reject(&s, &JsError::Type(format!("Failed to fetch module: {url}").into())),
-            };
-            if let Err(e) = done {
-                s.report_exception(&e);
+            for request in take() {
+                let done = match &outcome {
+                    Ok(text) => crate::module_script::complete(&s, request, text),
+                    Err(e) => request.reject(&s, e),
+                };
+                if let Err(e) = done {
+                    s.report_exception(&e);
+                }
             }
         });
     }
@@ -764,16 +1234,26 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
 fn tear_down(event_loop: EventLoop<WorkerLoop>, state: WorkerLoop) {
     state.events.release();
     crate::service_worker_scope::tear_down();
+    // Ends the nested workers this worker started (`worker::dispose`).
     state.page.dispose();
+    // Their threads were told to stop: wait for them, at most `NESTED_JOIN`
+    // (a thread blocked outside script, in a fetch or a sync XHR, notices
+    // within its poll interval). One still running is handed to the process
+    // (`worker::join_nested`) and joined by `join_stopped`. Nothing they post
+    // back runs now: this loop takes no more tasks.
+    crate::worker::join_nested(NESTED_JOIN);
     drop(event_loop);
     state.engine.set_hooks(None);
     drop(state);
 }
 
 /// Fetches a script, blocking this worker's thread until it ends or the worker
-/// is told to stop, with its MIME type essence. The `main` script's
-/// `Referrer-Policy` header becomes the worker's policy; an imported
-/// script's does not.
+/// is told to stop, with its MIME type essence. `main_request`: a main
+/// script's referrer, and where its response URL goes. The `main` script's
+/// `Referrer-Policy` header becomes the worker's policy, and its CSP headers
+/// the worker's CSP list; an imported script's do not. `csp`: the request's
+/// CSP guard, checked at each redirect and against the final response URL.
+#[allow(clippy::too_many_arguments)]
 fn fetch_script(
     page: &Rc<PageDom>,
     net: &NetClient,
@@ -782,11 +1262,19 @@ fn fetch_script(
     url: pyro_net::Url,
     destination: Destination,
     mode: RequestMode,
+    credentials: Credentials,
     main: bool,
+    main_request: Option<&MainRequest>,
+    csp: Option<Arc<pyro_net::csp::RequestCsp>>,
 ) -> Result<(Bytes, String), String> {
     let mut request = Request::get(url, destination);
     request.mode = mode;
-    request.credentials = Credentials::SameOrigin;
+    request.credentials = credentials;
+    request.csp = csp;
+    if let Some((referrer, policy)) = main_request.and_then(|m| m.referrer.clone()) {
+        request.referrer = Some(referrer);
+        request.referrer_policy = policy;
+    }
     request.origin = origin.clone();
     request.frame_id = page.request_context().frame_id;
     request.max_body = Some(MAX_SCRIPT_BYTES);
@@ -815,10 +1303,30 @@ fn fetch_script(
                     net.cancel(id);
                     return Err(format!("HTTP status {}", head.status.as_u16()));
                 }
+                // Fetch: a script-like response is blocked by nosniff or an
+                // audio/image/video/CSV MIME type (a worker's script, importScripts).
+                if destination.is_script_like()
+                    && pyro_net::script_response_blocked(&head.mime, pyro_net::is_nosniff(&head.headers))
+                {
+                    net.cancel(id);
+                    return Err(format!("MIME type ('{}') is not executable", head.mime));
+                }
+                if let Some(main_request) = main_request {
+                    *main_request.response_url.borrow_mut() = Some(head.url.clone());
+                }
                 if main {
                     page.set_referrer_policy_header(pyro_net::ReferrerPolicy::from_header(
                         head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                     ));
+                    // The worker's own CSP list is its script's response's (CSP3 §4.2.2).
+                    let joined = |name: &str| {
+                        head.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join(",")
+                    };
+                    let (enforce, report_only) =
+                        (joined("content-security-policy"), joined("content-security-policy-report-only"));
+                    if !enforce.is_empty() || !report_only.is_empty() {
+                        let _ = page.dom.borrow_mut().set_trusted_types_policies(page.document(), &enforce, &report_only);
+                    }
                 }
             }
             Ok(ResponseEvent::Data(bytes)) => body.extend_from_slice(&bytes),
@@ -842,13 +1350,12 @@ pub struct ScopeData {
     shared: Arc<Shared>,
     poster: RemotePoster,
     url: pyro_net::Url,
+    secure: bool,
     name: String,
     user_agent: String,
     sched: Scheduler<WorkerLoop>,
     timers: RefCell<HashMap<u32, TimerId>>,
     next_timer: Cell<u32>,
-    /// websocket.js's module, made on the scope's first use of `WebSocket`.
-    pub(crate) websocket_module: RefCell<Option<Persistent>>,
     /// A module worker: `importScripts` throws.
     module: bool,
     /// The time origin (`performance`), and its wall-clock time.
@@ -856,6 +1363,10 @@ pub struct ScopeData {
     origin_wall_ms: f64,
     /// Identity of `performance` once made.
     performance: Cell<Option<IdentityKey>>,
+    /// The main script response's URL, after redirects (none for a `data:`
+    /// or `blob:` script): the referrer source of the worker's nested
+    /// workers' script requests.
+    response_url: RefCell<Option<pyro_net::Url>>,
 }
 
 fn set_timer<'s>(s: &Scope<'s>, g: &ScopeData, a: Args<'s>, repeat: bool) -> JsResult<Value<'s>> {
@@ -865,7 +1376,12 @@ fn set_timer<'s>(s: &Scope<'s>, g: &ScopeData, a: Args<'s>, repeat: bool) -> JsR
     let callback = if handler.is_function() {
         Persistent::new(s, handler)
     } else {
-        let source = handler.to_string()?;
+        // Trusted Types, then CSP's string compilation check, when the timer is set (as Chrome):
+        // blocked, it returns 0 and sets nothing.
+        let sink = if repeat { "WorkerGlobalScope setInterval" } else { "WorkerGlobalScope setTimeout" };
+        let Some(source) = crate::trusted_types::timer_handler_source(s, &g.target.page, handler, sink)? else {
+            return Ok(s.number(0.0));
+        };
         Persistent::new(s, s.eval(&format!("(function () {{\n{source}\n}})"), Some(g.url.as_str()), 1)?)
     };
     let args: Vec<Persistent> = a.iter().skip(2).map(|v| Persistent::new(s, v)).collect();
@@ -925,11 +1441,26 @@ impl JsClass for WorkerGlobalScope {
             }
             Ok(s.wrap::<WorkerLocation>(g.url.clone(), Some(IdentityKey(KEY_LOCATION, 0)))?.value())
         });
-        def.getter("navigator", |s, g| Ok(navigator(s, g)?.value()));
-        def.getter("origin", |s, _g| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
+        def.getter("navigator", navigator);
+        def.global_value_accessor(
+            "Notification",
+            |s, g| {
+                let value = crate::navigator_extras::member(s, &g.target.page, "Notification")?;
+                crate::lazy_module::replace(s, &g.target.page, "Notification", value)?;
+                Ok(value)
+            },
+            |s, g, v| crate::lazy_module::replace(s, &g.target.page, "Notification", v),
+        );
+        // [Replaceable] (WindowOrWorkerGlobalScope): assignment shadows it
+        // with an own data property; the realm's origin is left as it is.
+        def.accessor(
+            "origin",
+            |s, _g| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))),
+            |s, g, value| crate::window::replace_window_attribute(s, &g.target.page, "origin", value),
+        );
         // The worker's URL stands for its owner's context: a same-origin
         // script, or a blob:/data: URL whose origin is the creator's.
-        def.getter("isSecureContext", |s, g| Ok(s.boolean(pyro_net::is_potentially_trustworthy_url(&g.url))));
+        def.getter("isSecureContext", |s, g| Ok(s.boolean(g.secure)));
         // No COOP/COEP isolation here.
         def.getter("crossOriginIsolated", |s, _g| Ok(s.boolean(false)));
         def.method_this("reportError", 1, |s, _g, this, a| {
@@ -938,21 +1469,22 @@ impl JsClass for WorkerGlobalScope {
         def.getter("crypto", |s, _g| crate::crypto::crypto_value(s));
         def.getter("performance", |s, g| Ok(performance_of(s, g)?.value()));
         // Performance Timeline observers, made on the realm's first use.
+        // The accessors sit on the global's prototype here; a read settles the
+        // name (and once the other, see `observer_interface`) as own data.
         def.global_value_accessor(
             "PerformanceObserver",
-            |s, g| crate::performance::worker_observer_module(s, performance_of(s, g)?)?.get("PerformanceObserver"),
+            |s, g| observer_interface(s, g, "PerformanceObserver"),
             |s, g, v| crate::lazy_module::replace(s, &g.target.page, "PerformanceObserver", v),
         );
         def.global_value_accessor(
             "PerformanceObserverEntryList",
-            |s, g| {
-                crate::performance::worker_observer_module(s, performance_of(s, g)?)?
-                    .get("PerformanceObserverEntryList")
-            },
+            |s, g| observer_interface(s, g, "PerformanceObserverEntryList"),
             |s, g, v| crate::lazy_module::replace(s, &g.target.page, "PerformanceObserverEntryList", v),
         );
         crate::crypto::define_globals(def);
         crate::streams::define_globals(def);
+        crate::observable::define_globals(def);
+        crate::scheduler::define_global(def);
         crate::canvas::define_worker_globals(def);
         // CSS Font Loading: `FontFace` and the worker's `FontFaceSet`.
         crate::font_loading::define_globals(def);
@@ -962,7 +1494,6 @@ impl JsClass for WorkerGlobalScope {
         crate::storage_manager::define_globals(def);
         crate::websocket::define_worker_globals(def);
         def.getter("indexedDB", |s, g| crate::indexeddb::window_factory(s, &g.target.page));
-        crate::indexeddb::define_globals(def);
         def.getter("caches", |s, g| crate::cache_storage::caches(s, &g.target.page));
         crate::cache_storage::define_globals(def);
         def.method("setTimeout", 1, |s, g, a| set_timer(s, g, a, false));
@@ -1022,18 +1553,38 @@ impl JsClass for WorkerGlobalScope {
             let mut scripts = Vec::with_capacity(urls.len());
             for url in urls {
                 let name = url.to_string();
-                let bytes =
-                    match page.blob_url(&name) {
-                        Some((bytes, _)) => bytes,
-                        None => fetch_script(page, &net, &g.shared, &origin, url, Destination::Script, RequestMode::NoCors, false).map(|(b, _)| b).map_err(
-                            |e| {
-                                JsError::dom(
-                            "NetworkError",
-                            format!("Failed to execute 'importScripts': The script at '{name}' failed to load: {e}."),
-                        )
-                            },
-                        )?,
-                    };
+                // CSP: the worker's own policies, `script-src-elem` (violations at the global).
+                let request = pyro_net::csp::CspRequest::new(url.clone(), pyro_net::csp::RequestDest::Script);
+                let guard = crate::csp::check_request(page, request, None).map_err(|_| {
+                    JsError::dom(
+                        "NetworkError",
+                        format!("Failed to execute 'importScripts' on 'WorkerGlobalScope': The script at '{name}' failed to load."),
+                    )
+                })?;
+                let fetched = match page.blob_url(&name) {
+                    Some((bytes, _)) => Ok(bytes),
+                    None => fetch_script(
+                        page,
+                        &net,
+                        &g.shared,
+                        &origin,
+                        url,
+                        Destination::Script,
+                        RequestMode::NoCors,
+                        Credentials::SameOrigin,
+                        false,
+                        None,
+                        guard.clone(),
+                    )
+                    .map(|(b, _)| b),
+                };
+                crate::csp::report_guard(page, guard.as_ref(), None);
+                let bytes = fetched.map_err(|e| {
+                    JsError::dom(
+                        "NetworkError",
+                        format!("Failed to execute 'importScripts': The script at '{name}' failed to load: {e}."),
+                    )
+                })?;
                 scripts.push((script_text(&bytes), name));
             }
             for (text, name) in scripts {
@@ -1061,7 +1612,13 @@ impl JsClass for DedicatedWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("name", |s, g| Ok(s.string(&g.name)));
+        crate::canvas::define_video_globals(def);
+        // [Replaceable]: assignment shadows it; the worker's name stays.
+        def.accessor(
+            "name",
+            |s, g| Ok(s.string(&g.name)),
+            |s, g, value| crate::window::replace_window_attribute(s, &g.target.page, "name", value),
+        );
         def.method("postMessage", 1, |s, g, a| {
             a.require(1, "DedicatedWorkerGlobalScope.postMessage")?;
             let message = encode_message(s, a.get(0), a.get(1))?;
@@ -1109,7 +1666,12 @@ impl JsClass for SharedWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("name", |s, g| Ok(s.string(&g.name)));
+        // [Replaceable]: assignment shadows it; the worker's name stays.
+        def.accessor(
+            "name",
+            |s, g| Ok(s.string(&g.name)),
+            |s, g, value| crate::window::replace_window_attribute(s, &g.target.page, "name", value),
+        );
         def.method("close", 0, |s, g, _a| {
             g.shared.closing.store(true, Ordering::Release);
             let id = g.id;
@@ -1147,6 +1709,10 @@ impl JsClass for ServiceWorkerGlobalScope {
                 );
             )+};
         }
+        def.global_getter("cookieStore", |s, g| crate::cookie_store::member(s, &g.target.page, "cookieStore"));
+        def.global_accessor("oncookiechange",
+            |s, g| crate::target::event_handler(s, &g.target, "cookiechange"),
+            |s, g, value| crate::target::set_event_handler(s, &g.target, "cookiechange", value));
         handlers!("oninstall" => "install", "onactivate" => "activate", "onfetch" => "fetch",
             "onmessage" => "message", "onmessageerror" => "messageerror");
     }
@@ -1185,15 +1751,44 @@ impl JsClass for WorkerNavigator {
     fn define(def: &mut ClassDef<Self>) {
         def.getter("userAgent", |s, ua| Ok(s.string(ua)));
         def.getter("appVersion", |s, ua| Ok(s.string(ua.strip_prefix("Mozilla/").unwrap_or(ua))));
+        // NavigatorID's other members (WorkerNavigator has no productSub,
+        // vendor or vendorSub).
+        def.getter("appCodeName", |s, _ua| Ok(s.string("Mozilla")));
+        def.getter("appName", |s, _ua| Ok(s.string("Netscape")));
+        def.getter("product", |s, _ua| Ok(s.string("Gecko")));
+        def.getter("platform", |s, _ua| {
+            let page = crate::target::page_of(s)?;
+            Ok(s.string(&crate::window::platform(&page)))
+        });
         def.getter("hardwareConcurrency", |s, _ua| Ok(s.number(4.0)));
         def.getter("onLine", |s, _ua| Ok(s.boolean(true)));
         def.getter("language", |s, _ua| Ok(s.string("en-US")));
+        def.getter("locks", |s, _ua| crate::web_locks::locks(s, &crate::target::page_of(s)?));
         def.getter("storage", |s, _ua| crate::storage_manager::storage(s, &crate::target::page_of(s)?));
+        def.getter("storageBuckets", |s, _ua| crate::storage_buckets::manager(s, &crate::target::page_of(s)?));
     }
 }
 
 fn performance_of<'s>(s: &Scope<'s>, g: &ScopeData) -> JsResult<pyro_js::Object<'s>> {
     crate::performance::worker_performance(s, &g.target.page, &g.performance, g.started, g.origin_wall_ms)
+}
+
+/// `PerformanceObserver` or `PerformanceObserverEntryList`, settled as an own
+/// data property of the global (WebIDL interface objects); the first read of
+/// either also settles the other unless the page defined or deleted it before
+/// (`otherToSettle` in performance_observer.js).
+fn observer_interface<'s>(s: &Scope<'s>, g: &ScopeData, name: &str) -> JsResult<Value<'s>> {
+    let module = crate::performance::worker_observer_module(s, performance_of(s, g)?)?;
+    if let Some(pick) = module.get("otherToSettle")?.as_object() {
+        let other = pick.call(None, &[s.global().value(), s.string(name)])?;
+        if !other.is_undefined() {
+            let other = other.to_string()?;
+            crate::lazy_module::replace(s, &g.target.page, &other, module.get(&other)?)?;
+        }
+    }
+    let value = module.get(name)?;
+    crate::lazy_module::replace(s, &g.target.page, name, value)?;
+    Ok(value)
 }
 
 /// The worker realm's `performance`.
@@ -1202,21 +1797,22 @@ pub(crate) fn performance<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     performance_of(s, g)
 }
 
-fn navigator<'s>(s: &Scope<'s>, g: &ScopeData) -> JsResult<pyro_js::Object<'s>> {
-    if let Some(o) = s.lookup_identity(IdentityKey(KEY_NAVIGATOR, 0)) {
-        return Ok(o);
-    }
-    s.wrap::<WorkerNavigator>(g.user_agent.clone(), Some(IdentityKey(KEY_NAVIGATOR, 0)))
+fn navigator<'s>(s: &Scope<'s>, g: &ScopeData) -> JsResult<Value<'s>> {
+    let key = IdentityKey(KEY_NAVIGATOR, 0);
+    // The worker owns its navigator and the per-realm modules
+    // stored on it even when script retains only a CryptoKey or a stream.
+    crate::window::same_object(s, &g.target.page, key, || s.wrap::<WorkerNavigator>(g.user_agent.clone(), Some(key)))
 }
 
 /// The per-realm object the lazily made script modules (streams, Web Crypto,
 /// StorageManager) hang from as hidden properties: the realm's `navigator`.
 pub(crate) fn module_holder<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<pyro_js::Object<'s>> {
     let unavailable = || JsError::Type("this realm has no navigator".into());
-    match s.global_data::<WorkerGlobalScope>() {
-        Some(g) => navigator(s, g),
-        None => crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable),
-    }
+    let holder = match s.global_data::<WorkerGlobalScope>() {
+        Some(g) => navigator(s, g)?,
+        None => crate::window::navigator(s, page)?,
+    };
+    holder.as_object().ok_or_else(unavailable)
 }
 
 /// Whether `s` runs in a worker global scope rather than a Window: the XHR
@@ -1225,9 +1821,15 @@ pub(crate) fn is_worker(s: &Scope<'_>) -> bool {
     s.global_data::<WorkerGlobalScope>().is_some()
 }
 
+pub(crate) fn secure_worker(s: &Scope<'_>) -> Option<bool> {
+    s.global_data::<WorkerGlobalScope>().map(|g| g.secure)
+}
+
 /// The classes a worker's realm exposes; returns its global's class.
 fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::ClassId {
     engine.register::<EventTarget>();
+    crate::trusted_types::register(engine);
+    engine.register::<crate::scheduler::WebScheduler>();
     crate::event::register_for_worker(engine);
     crate::abort::register(engine);
     crate::message_channel::register(engine);
@@ -1238,6 +1840,8 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     crate::form_data::register(engine);
     engine.register::<crate::headers::Headers>();
     engine.register::<crate::url::URL>();
+    engine.register::<crate::origin::Origin>();
+    engine.register::<crate::url_pattern::URLPattern>();
     engine.register::<crate::url_search_params::URLSearchParams>();
     engine.register::<crate::url_search_params::ParamsIterator>();
     engine.register::<crate::response::Response>();
@@ -1245,21 +1849,49 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     engine.register::<crate::xhr::WorkerXMLHttpRequest>();
     engine.register::<crate::xhr::XMLHttpRequestUpload>();
     engine.register::<crate::indexeddb::IdbFactory>();
+    crate::storage_buckets::register(engine);
+    crate::opfs::register(engine);
     engine.register::<crate::cache_storage::CacheHandle>();
     engine.register::<crate::cache_storage::StoredBody>();
     engine.register::<crate::request::Request>();
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();
     crate::performance::register_for_worker(engine);
-    crate::canvas::register(engine);
+    crate::canvas::register_worker(engine);
     engine.register::<WorkerGlobalScope>();
     if service {
         return engine.register::<ServiceWorkerGlobalScope>();
     }
+    engine.register::<crate::file_reader::FileReaderSync>();
     if shared_worker {
         return engine.register::<SharedWorkerGlobalScope>();
     }
+    // Nested dedicated workers (HTML: `Worker` is exposed in dedicated
+    // workers). Not yet in shared workers: see docs/webapi/WORKER.md.
+    crate::worker::register(engine);
+    crate::audio_data::register(engine);
+    crate::encoded_chunks::register(engine);
     engine.register::<DedicatedWorkerGlobalScope>()
+}
+
+/// These secure-context interface objects belong on the worker global itself.
+fn install_lock_interfaces(s: &Scope<'_>) -> JsResult<()> {
+    macro_rules! interface {
+        ($name:ident) => {{
+            struct $name;
+            impl pyro_js::LazyGlobalInterface for $name {
+                const NAME: &'static str = stringify!($name);
+                fn value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+                    let page = crate::target::page_of(s)?;
+                    crate::web_locks::MODULE.module(s, &page)?.get_atom(Self::NAME)
+                }
+            }
+            s.define_lazy_global_interface::<$name>()?;
+        }};
+    }
+    interface!(LockManager);
+    interface!(Lock);
+    Ok(())
 }
 
 /// The part of `crate::install` that applies without a window.
@@ -1274,11 +1906,12 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     realm.set_exception_reporter(Some(crate::lifecycle::report_exception));
     let helpers = crate::install_helpers(s)?;
     crate::file::install(s, helpers.get_atom("blobParts")?)?;
-    crate::encoding::install(s, helpers.get_atom("dataView")?)?;
+    crate::encoding::install(s, helpers.get_atom("encoding")?)?;
     crate::headers::install(s, helpers.get_atom("headers")?)?;
     crate::url_search_params::install(s, helpers.get_atom("urlSearchParams")?)?;
     crate::form_data::install(s, helpers.get_atom("formData")?)?;
     crate::fetch::install(s)?;
+    crate::fetch::install_wasm_streaming(s, helpers.get_atom("wasmStreaming")?)?;
     crate::xhr::install(s, page)?;
     crate::structured_clone::install(s, page, helpers.get_atom("structuredClone")?)?;
     // What the lazy globals (streams, CryptoKey) replace themselves with.
@@ -1287,8 +1920,33 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     {
         page.define_properties.borrow_mut().insert(s.realm_id(), Persistent::new(s, define));
     }
+    crate::reporting::install_worker(s)?;
+    if secure_worker(s) == Some(true) {
+        crate::storage_manager::install_worker_file_system_globals(s)?;
+        install_lock_interfaces(s)?;
+        if s.global_data::<DedicatedWorkerGlobalScope>().is_some() {
+            crate::audio_decoder::install_worker(s)?;
+            crate::audio_encoder::install_worker(s)?;
+            crate::video_encoder::install_worker(s)?;
+            crate::image_decoder::install_worker(s)?;
+        }
+        crate::storage_buckets::install_worker(s)?;
+    } else if let Some(class) = s.global().get_atom("WorkerNavigator")?.as_object() {
+        if let Some(proto) = class.get_atom("prototype")?.as_object() {
+            proto.delete("locks")?;
+            proto.delete("storageBuckets")?;
+        }
+    }
+    if secure_worker(s) != Some(true) {
+        s.global().delete("StorageBucketManager")?;
+        s.global().delete("StorageBucket")?;
+    }
+    if s.global_data::<DedicatedWorkerGlobalScope>().is_some_and(|g| !g.secure) {
+        s.global().delete("VideoDecoder")?;
+    }
     // Before the worker's script can change the intrinsics they capture.
     crate::structured_clone::prepare_wire(s)?;
+    crate::indexeddb::install_worker_globals(s, page)?;
     // The global is JSC's default one, whose prototype cannot be replaced
     // (docs/ARCHITECTURE.md), and libraries read `self.constructor.name`.
     s.eval(
@@ -1296,5 +1954,30 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
         Some("pyro://internal/worker-scope.js"),
         1,
     )?;
+    // `origin` is WorkerGlobalScope's (not [Global]), so it is inherited, not
+    // the global's own: assignment shadows it ([Replaceable]) and deleting
+    // the shadow shows it again. The global's chain lacks the interface
+    // prototype objects, so the copy moves to the global's own prototype
+    // (one per realm) instead. That prototype is the realm's named properties
+    // object, which refuses new properties under JSC patch 0041: `origin` then
+    // stays the global's own (it was before; the worker still starts).
+    s.eval(
+        "(() => { const p = Object.getPrototypeOf(self), d = Object.getOwnPropertyDescriptor(self, 'origin');
+           if (d && p && p !== Object.prototype && !Object.hasOwn(p, 'origin')) {
+             try { Object.defineProperty(p, 'origin', d); } catch { return; }
+             delete self.origin;
+           } })()",
+        Some("pyro://internal/worker-scope.js"),
+        1,
+    )?;
     Ok(())
+}
+
+/// The referrer source of a nested worker's script request when `s` is a
+/// worker's realm: its main script's response URL, else its URL (a `data:`
+/// or `blob:` one, which gives no referrer). None outside a worker.
+pub(crate) fn nested_referrer_source(s: &Scope<'_>) -> Option<pyro_net::Url> {
+    let g = s.global_data::<WorkerGlobalScope>()?;
+    let url = g.response_url.borrow().clone();
+    Some(url.unwrap_or_else(|| g.url.clone()))
 }

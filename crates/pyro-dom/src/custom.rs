@@ -91,6 +91,9 @@ pub(crate) struct ReactionQueue {
     observed: FxHashMap<LocalName, Vec<LocalName>>,
     /// The element names some window defined (the parser constructs those).
     defined: FxHashSet<LocalName>,
+    /// Qualified prefilter for creation reactions. A definition in another
+    /// registry does not enqueue an upgrade on a freshly parsed element.
+    registry_definitions: FxHashSet<(Option<NodeId>, crate::RegistryAssociation, LocalName, LocalName)>,
     /// Installed by the bindings of a window with its first definition,
     /// by the window's document.
     parser: FxHashMap<NodeId, Rc<dyn ParserCustomElements>>,
@@ -175,9 +178,36 @@ impl Dom {
         {
             self.inline_transitions_seen = true;
         }
+        if name.ns == markup5ever::ns!() && &*name.local == "popover" {
+            self.popover_attribute_changed(i, old, new);
+        }
+        // HTML-in-Canvas: a canvas may now be drawable (`Dom::drawable_canvas_seen`).
+        if self.canvas_seen
+            && !self.drawable_canvas_seen
+            && name.ns == markup5ever::ns!()
+            && &*name.local == "content"
+            && new.is_some_and(|v| v.eq_ignore_ascii_case("drawable"))
+        {
+            self.drawable_canvas_seen = true;
+        }
         let observes = self.n(i).element().is_some_and(|e| e.flags & element_flags::OBSERVES_ATTRIBUTES != 0);
         if observes {
             self.observed_attribute_changed(i, name, old, new);
+        }
+        if self.pending_input_value_attr.is_some() && name.local == markup5ever::local_name!("type") {
+            self.apply_pending_input_value_attr(i);
+        }
+        if name.local == markup5ever::local_name!("selected") && name.ns == markup5ever::ns!() {
+            self.option_selected_attr_changed(i);
+        }
+        if self.select_seen && name.ns == markup5ever::ns!() && name.local == markup5ever::local_name!("multiple") {
+            self.select_multiple_changed(i, new.is_some());
+        }
+        if self.selectedcontent_seen && name.ns == markup5ever::ns!() {
+            self.selectedcontent_after_attr(i, &name.local);
+        }
+        if self.input_seen && name.ns == markup5ever::ns!() {
+            self.input_after_attr(i, &name.local, old);
         }
     }
 
@@ -223,6 +253,27 @@ impl Dom {
             parser.insert(document, hooks);
         }
         self.reactions.parser = parser;
+    }
+
+    pub fn note_registry_definition(&mut self, doc: NodeId, registry: crate::RegistryAssociation,
+        name: &LocalName, local: &LocalName, observed: Vec<LocalName>) {
+        self.note_custom_definition(name, observed);
+        let owner = (registry == crate::RegistryAssociation::Default).then_some(doc);
+        self.reactions.registry_definitions.insert((owner, registry, name.clone(), local.clone()));
+    }
+
+    pub(crate) fn fragment_definition_name(&self, i: u32) -> Option<LocalName> {
+        let registry = self.registry_idx(i);
+        if registry == crate::RegistryAssociation::Null { return None; }
+        let owner = (registry == crate::RegistryAssociation::Default).then(|| self.id_of(self.n(i).owner_doc));
+        let el = self.n(i).element().unwrap();
+        let local = el.local_name();
+        let found = |name: &LocalName| self.reactions.registry_definitions.contains(&(owner, registry, name.clone(), local.clone()));
+        if found(local) { Some(local.clone()) } else { el.is_value.as_ref().filter(|is| found(is)).cloned() }
+    }
+
+    pub(crate) fn forget_registry_definitions(&mut self, registry: crate::RegistryAssociation, document: Option<NodeId>) {
+        self.reactions.registry_definitions.retain(|(owner, r, _, _)| *r != registry || *owner != document);
     }
 
     /// The parser hooks of `document`, when an HTML element named `name`
@@ -340,7 +391,9 @@ impl Dom {
         if attrs.is_empty() {
             return;
         }
+        let track_href = self.blob_hyperlinks.is_some();
         let Some(e) = self.n_mut(i).element_mut() else { return };
+        let old_href = if track_href { crate::blob_hyperlinks::hyperlink_href(e).map(Box::<str>::from) } else { None };
         let mut all: Vec<crate::node::Attr> = e.attrs.to_vec();
         for (name, value) in attrs {
             if !all.iter().any(|a| a.name == name) {
@@ -348,8 +401,12 @@ impl Dom {
             }
         }
         e.set_attrs(all);
+        if track_href && old_href.as_deref() != crate::blob_hyperlinks::hyperlink_href(e) {
+            self.capture_hyperlink_blob(i);
+        }
         self.resummarize(i);
         self.note_inline_handlers(i);
+        self.note_inline_style(i);
     }
 
     /// Appends the attributes of the token the parser constructed `el` for,

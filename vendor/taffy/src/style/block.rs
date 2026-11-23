@@ -66,6 +66,11 @@ pub trait BlockContainerStyle: CoreStyle {
 
 /// The set of styles required for a Block layout item (child of a Block container)
 pub trait BlockItemStyle: CoreStyle {
+    /// Intrinsic basis and calculation for a calculated maximum, in layout axes.
+    fn max_size_calculation(&self) -> Size<Option<(Dimension, super::CalcSizeFunction)>> {
+        Size { width: None, height: None }
+    }
+
     /// Whether the item is a table. Table children are handled specially in block layout.
     #[inline(always)]
     fn is_table(&self) -> bool {

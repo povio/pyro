@@ -1,8 +1,9 @@
 //! Trusted Types: `trustedTypes` (`TrustedTypePolicyFactory`), `TrustedTypePolicy` and the
 //! `TrustedHTML` / `TrustedScript` / `TrustedScriptURL` values, made in JS (trusted_types.js) on a
 //! realm's first use, on windows and workers. The document's CSP (headers, report-only headers
-//! and `<meta>`; only the Trusted Types directives are acted on, no other directive is
-//! enforced): `trusted-types` limits policy names, `require-trusted-types-for 'script'` makes
+//! and `<meta>`; here the Trusted Types directives, the fetch directives are `crate::csp`'s,
+//! which fires its violations through this module's `dispatchViolation`): `trusted-types` limits
+//! policy names, `require-trusted-types-for 'script'` makes
 //! the HTML and script sinks take Trusted Types values ([`compliant_string`]); a violation fires
 //! `securitypolicyviolation` (SecurityPolicyViolationEvent) at the document, and blocks only
 //! under an enforced policy.
@@ -14,6 +15,7 @@ use pyro_js::{JsError, JsResult, Object, Scope, Value};
 use crate::page::PageDom;
 
 use crate::lazy_module::LazyModule;
+use crate::sanitizer_options::ParserOptions;
 
 pub(crate) static MODULE: LazyModule = LazyModule {
     key: "lpTrustedTypes",
@@ -21,6 +23,40 @@ pub(crate) static MODULE: LazyModule = LazyModule {
     url: "pyro://internal/trusted_types.js",
     natives: Some(natives),
 };
+
+// Engine-private properties are traced with their host object, including when
+// the document that created it has gone. A retained policy holds its creation
+// realm's callback; retained parse inputs hold only their immutable payload.
+struct TrustedValue;
+impl pyro_js::JsClass for TrustedValue {
+    const NAME: &'static str = "TrustedValue";
+    type Data = Option<ParserOptions>;
+    type Parent = pyro_js::NoParent;
+    fn define(def: &mut pyro_js::ClassDef<Self>) {
+        def.not_exposed();
+    }
+}
+
+pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<TrustedValue>();
+}
+
+const HTML_DATA: &str = "lpTrustedHTMLData";
+const POLICY_CALLBACK: &str = "lpTrustedParserPolicy";
+const OPTIONS_PROTOTYPE: &str = "lpTrustedParserPrototype";
+
+fn wrap_value<'s>(s: &Scope<'s>, prototype: Value<'_>, slot: &'static str, value: Value<'_>) -> JsResult<Object<'s>> {
+    let object = s.wrap::<TrustedValue>(None, None)?;
+    object.set_prototype(prototype);
+    s.set_hidden(object, slot, value)?;
+    Ok(object)
+}
+
+fn wrap_parser_options<'s>(s: &Scope<'s>, proto: Value<'_>, options: ParserOptions) -> JsResult<Value<'s>> {
+    let object = s.wrap::<TrustedValue>(Some(options), None)?;
+    object.set_prototype(proto);
+    Ok(object.value())
+}
 
 /// The Trusted Types interfaces and `trustedTypes` on a window or worker global.
 pub(crate) fn define_globals<W>(def: &mut pyro_js::ClassDef<W>)
@@ -41,20 +77,87 @@ where
     );
 }
 
+/// TrustedHTMLParserOptions is exposed only in Window realms.
+pub(crate) fn define_parser_options_global<W>(def: &mut pyro_js::ClassDef<W>)
+where
+    W: pyro_js::JsClass,
+    W::Data: crate::window::WindowHost,
+{
+    crate::lazy_module::lazy_globals!(def, MODULE, "TrustedHTMLParserOptions");
+}
+
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
-    // The policies of the realm's document that have Trusted Types directives: [text, report-only].
+    natives.set_atom("windowRealm", s.boolean(!crate::worker_scope::is_worker(s)))?;
+    let make_value = s.function("makeValue", |s, _this, a| {
+        let key = match crate::util::dom_string(a.get(0))?.as_str() {
+            "html" => HTML_DATA,
+            "policy" => POLICY_CALLBACK,
+            _ => return Err(JsError::Type("Invalid Trusted Types value".into())),
+        };
+        let object = wrap_value(s, a.get(1), key, a.get(2))?;
+        if key == POLICY_CALLBACK {
+            s.set_hidden(object, OPTIONS_PROTOTYPE, a.get(3))?;
+        }
+        Ok(object.value())
+    })?;
+    natives.set_atom("makeValue", make_value.value())?;
+    let create_options = s.function("createParserOptions", |s, _this, a| {
+        let invalid_receiver = || JsError::Type("Expected a TrustedTypePolicy receiver".into());
+        let policy = a.get(0).as_object().ok_or_else(invalid_receiver)?;
+        let callback = s.get_hidden(policy, POLICY_CALLBACK)?.and_then(|v| v.as_object()).ok_or_else(invalid_receiver)?;
+        let result = callback.call(None, &[a.get(1), a.get(2)])?;
+        let options = ParserOptions::convert(s, result)?;
+        let proto = s.get_hidden(policy, OPTIONS_PROTOTYPE)?.ok_or_else(invalid_receiver)?;
+        if let Some(realm) = s.object_realm(policy).filter(|r| r.id() != s.realm_id() && !r.is_disposed()) {
+            return Ok(s.rehome(wrap_parser_options(&realm.scope()?, proto, options)?));
+        }
+        // A removed frame can retain its policy in another window. The
+        // callback and public prototype still belong to its original realm.
+        wrap_parser_options(s, proto, options)
+    })?;
+    natives.set_atom("createParserOptions", create_options.value())?;
+    // The policies of the realm's document that have Trusted Types directives:
+    // [text, report-only, from a `<meta>`].
     let policies = s.function("policies", |s, _this, _a| {
         let mut entries = Vec::new();
         if let Ok(page) = crate::target::page_of(s) {
             let policies: Vec<pyro_dom::CspPolicy> = page.dom.borrow().trusted_types_policies(page.document()).to_vec();
             for policy in policies {
-                entries.push(s.array(&[s.string(&policy.text), s.boolean(policy.report_only)])?.value());
+                entries.push(
+                    s.array(&[s.string(&policy.text), s.boolean(policy.report_only), s.boolean(policy.meta)])?.value(),
+                );
             }
         }
         Ok(s.array(&entries)?.value())
     })?;
     natives.set_atom("policies", policies.value())?;
+    // A violation's report delivery (csp_report), after its event: the violated policy's
+    // `report-uri` (not a `<meta>` policy's) or `report-to`. Args: policy text, report-only,
+    // from a `<meta>`, directive, blocked, sample, document URL, referrer. Workers send none yet
+    // (their report delivery belongs with the worker CSP hooks).
+    let deliver = s.function("deliverReport", |s, _this, a| {
+        if crate::worker_scope::is_worker(s) {
+            return Ok(s.undefined());
+        }
+        if let Ok(page) = crate::target::page_of(s) {
+            let text = |i: usize| crate::util::dom_string(a.get(i));
+            let violation = crate::csp_report::Violation {
+                policy: text(0)?,
+                report_only: a.get(1).to_bool(),
+                effective_directive: text(3)?,
+                blocked: text(4)?,
+                sample: text(5)?,
+                url: text(6)?,
+                referrer: text(7)?,
+                ..Default::default()
+            };
+            let targets = crate::csp_report::ReportTargets::from_policy(&violation.policy, a.get(2).to_bool());
+            crate::csp_report::report_violation(&page, &violation, &targets);
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("deliverReport", deliver.value())?;
     // eval and Function through the module's hooks (patched JSC 0035), and the document's
     // enforcement for them.
     let install = s.function("installCompileHooks", |s, _this, a| {
@@ -69,12 +172,50 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     natives.set_atom("installCompileHooks", install.value())?;
+    // ttLevel() -> Trusted Types' own eval level (the hooks also run for CSP's).
+    let tt = s.function("ttLevel", |s, _this, _a| {
+        let level = crate::target::page_of(s).map_or(0, |page| tt_level(&page));
+        Ok(s.number(f64::from(level)))
+    })?;
+    natives.set_atom("ttLevel", tt.value())?;
+    // cspEval(code) -> whether the realm's CSP lets `code` compile (`'unsafe-eval'`); a
+    // violation is reported otherwise, located at the script that called eval or Function.
+    // Asked after Trusted Types passed `code` (canCompile): with them enforced, CSP3
+    // `'trusted-types-eval'` lets it compile, as for a timer's string handler.
+    let csp_eval = s.function("cspEval", |s, _this, a| {
+        let code = crate::util::dom_string(a.get(0))?;
+        let allowed = crate::target::page_of(s).map_or(true, |page| {
+            if tt_level(&page) == 2 && crate::csp::trusted_types_eval_allows(&page) {
+                return true;
+            }
+            let location = if crate::csp::has_policies(&page) { crate::csp::SourceLocation::running(s) } else { None };
+            crate::csp::eval_allowed_at(&page, &code, location.as_ref())
+        });
+        Ok(s.boolean(allowed))
+    })?;
+    natives.set_atom("cspEval", csp_eval.value())?;
+    // sourceLocation() -> [sourceFile, lineNumber, columnNumber] of the page script on the
+    // stack (the file stripped for reports), or null when there is none: a Trusted Types
+    // violation's location, read when it happens.
+    let location = s.function("sourceLocation", |s, _this, _a| match crate::csp::SourceLocation::running(s) {
+        Some(at) => Ok(s
+            .array(&[s.string(&at.source_file), s.number(f64::from(at.line)), s.number(f64::from(at.column))])?
+            .value()),
+        None => Ok(s.null()),
+    })?;
+    natives.set_atom("sourceLocation", location.value())?;
     Ok(natives)
 }
 
-/// The eval/Function enforcement the document's policies ask for: 2 when an enforced policy
-/// has `require-trusted-types-for 'script'`, 1 when only report-only ones do, else 0.
+/// The eval/Function enforcement the document's policies ask for: Trusted Types' level
+/// ([`tt_level`]) or CSP's (`'unsafe-eval'` missing, `crate::csp::eval_level`), the higher.
 fn eval_level(page: &PageDom) -> u8 {
+    tt_level(page).max(crate::csp::eval_level(page))
+}
+
+/// Trusted Types' part of [`eval_level`]: 2 when an enforced policy has
+/// `require-trusted-types-for 'script'`, 1 when only report-only ones do, else 0.
+fn tt_level(page: &PageDom) -> u8 {
     let dom = page.dom.borrow();
     let mut level = 0;
     for policy in dom.trusted_types_policies(page.document()) {
@@ -94,9 +235,11 @@ fn eval_level(page: &PageDom) -> u8 {
 /// document's `require-trusted-types-for` (a `<meta>` CSP can add it while the document parses).
 /// Makes the Trusted Types module (which installs the hooks) when a policy first asks.
 pub fn sync_compile_strings(s: &Scope<'_>, page: &Rc<PageDom>) {
-    if page.dom.borrow().trusted_types_policies(page.document()).is_empty() && page.tt_eval_level.get() == 0 {
+    if page.dom.borrow().csp_policies(page.document()).is_empty() && page.tt_eval_level.get() == 0 {
         return;
     }
+    // WebAssembly compilation follows the same policies (`'wasm-unsafe-eval'`).
+    crate::csp::sync_wasm_gate(s, page);
     let level = eval_level(page);
     if level == page.tt_eval_level.get() {
         return;
@@ -108,6 +251,23 @@ pub fn sync_compile_strings(s: &Scope<'_>, page: &Rc<PageDom>) {
     }
     page.tt_eval_level.set(level);
     s.set_trusted_types_enforcement(level as i32);
+}
+
+/// HTML "timer initialization steps" for the string handler `handler` of `setTimeout` /
+/// `setInterval` (`sink`: "Window setTimeout", "WorkerGlobalScope setInterval", ...), checked
+/// when the timer is set, as Chrome: Trusted Types first (a TrustedScript, else what the default
+/// policy makes of the string; a TypeError when an enforced policy rejects it), then CSP's
+/// string compilation check (`crate::csp::eval_allowed`, its violation reported now even when
+/// the timer is cleared right away). `None`: blocked, the timer is not set (it returns 0).
+pub fn timer_handler_source(s: &Scope<'_>, page: &Rc<PageDom>, handler: Value<'_>, sink: &str) -> JsResult<Option<String>> {
+    let code = compliant_string(s, page, Kind::Script, handler, sink, false)?;
+    // CSP3 'trusted-types-eval': with Trusted Types enforced, what passed them compiles.
+    if tt_level(page) == 2 && crate::csp::trusted_types_eval_allows(page) {
+        return Ok(Some(code));
+    }
+    // Its violation is located at the script that set the timer.
+    let location = if crate::csp::has_policies(page) { crate::csp::SourceLocation::running(s) } else { None };
+    Ok(crate::csp::eval_allowed_at(page, &code, location.as_ref()).then_some(code))
 }
 
 /// Whether the document's policies have `require-trusted-types-for 'script'`: the script sinks
@@ -150,6 +310,43 @@ pub fn javascript_url_script(s: &Scope<'_>, page: &Rc<PageDom>, source: &str) ->
     }
 }
 
+/// Trusted Types "prepare the script text" (slot value verification) for the script element
+/// `el` whose child text content is `text`, as "prepare the script element" runs it: the text as
+/// it is while it is the script's [[ScriptText]] (`Dom::script_text`: what its parser or a
+/// trusted sink gave it) or the document does not require Trusted Types; else what the default
+/// policy makes of it at the "HTMLScriptElement text" or "SVGScriptElement text" sink. `None`
+/// (the script is not prepared) when that fails or the policy throws.
+pub fn script_source(s: &Scope<'_>, page: &Rc<PageDom>, el: pyro_dom::NodeId, text: &str) -> Option<String> {
+    let (doc, svg) = {
+        let dom = page.dom.borrow();
+        let doc = dom.node_document(el).unwrap_or_else(|_| page.document());
+        if !requires_for_script_in(page, doc) || dom.script_text(el) == text {
+            return Some(text.to_owned());
+        }
+        (doc, dom.element(el).is_ok_and(|e| !e.is_html()))
+    };
+    let sink = if svg { "SVGScriptElement text" } else { "HTMLScriptElement text" };
+    match compliant_string_in(s, page, doc, Kind::Script, s.string(text), sink, false) {
+        Ok(script) => Some(script),
+        Err(e) => {
+            // A policy that throws reports its exception; a missing one is a violation only.
+            if !matches!(e, JsError::Type(_)) {
+                s.report_exception(&e);
+            }
+            None
+        }
+    }
+}
+
+/// Whether the script element `el` needs [`script_source`] before it is prepared with `text`:
+/// its document requires Trusted Types and `text` is not its [[ScriptText]]. No JavaScript runs.
+pub fn script_source_unverified(page: &PageDom, el: pyro_dom::NodeId, text: &str) -> bool {
+    let dom = page.dom.borrow();
+    let doc = dom.node_document(el).unwrap_or_else(|_| page.document());
+    drop(dom);
+    requires_for_script_in(page, doc) && page.dom.borrow().script_text(el) != text
+}
+
 /// Whether `el` is an HTML `<script>` (its text and `src` are Trusted Types sinks).
 pub(crate) fn is_html_script(page: &PageDom, el: pyro_dom::NodeId) -> bool {
     page.dom.borrow().element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "script")
@@ -170,9 +367,10 @@ pub(crate) fn attribute_kind(page: &PageDom, el: pyro_dom::NodeId, local: &str, 
     match ns.filter(|ns| !ns.is_empty()) {
         None if (html || svg || mathml) && !local.bytes().any(|b| b.is_ascii_uppercase()) && {
             // The element's event handler content attributes: GlobalEventHandlers, and
-            // WindowEventHandlers on `<body>` and `<frameset>`.
+            // WindowEventHandlers on `<body>` and `<frameset>`, and a permission element's own.
             let ty = local.strip_prefix("on").unwrap_or("");
             crate::handlers::GLOBAL.contains(&ty)
+                || (html && crate::handlers::element_handler(tag, ty))
                 || (html && matches!(tag, "body" | "frameset") && crate::handlers::WINDOW.contains(&ty))
         } =>
         {
@@ -207,6 +405,76 @@ pub(crate) fn attribute_value(
         Some((kind, sink)) => compliant_string_in(s, page, doc, kind, value, &sink, false).map(Some),
         None => Ok(None),
     }
+}
+
+/// Converted (TrustedHTML or DOMString) argument, before a positional HTML
+/// method reads its following options dictionary or invokes the default policy.
+pub(crate) enum HtmlInput {
+    Trusted(String),
+    String(String),
+}
+
+impl HtmlInput {
+    pub(crate) fn convert(s: &Scope<'_>, value: Value<'_>) -> JsResult<Self> {
+        if let Some(object) = value.as_object() {
+            if let Some(data) = s.get_hidden(object, HTML_DATA)? {
+                return Ok(Self::Trusted(crate::util::dom_string(data)?));
+            }
+        }
+        Ok(Self::String(crate::util::dom_string(value)?))
+    }
+
+    /// Resolve parser options before applying the HTML policy. A branded
+    /// options object or a successful options policy approves this parse.
+    pub(crate) fn for_html_insertion(
+        self,
+        s: &Scope<'_>,
+        page: &Rc<PageDom>,
+        options: Value<'_>,
+        sink: &str,
+    ) -> JsResult<(String, ParserOptions)> {
+        let (options, vetted) = parser_options(s, page, options, sink, false)?;
+        if vetted {
+            return Ok((match self { Self::Trusted(html) | Self::String(html) => html }, options));
+        }
+        Ok((self.compliant(s, page, sink)?, options))
+    }
+
+    pub(crate) fn compliant(self, s: &Scope<'_>, page: &Rc<PageDom>, sink: &str) -> JsResult<String> {
+        match self {
+            Self::Trusted(html) => Ok(html),
+            Self::String(html) if requires_for_script(page) => {
+                compliant_string(s, page, Kind::Html, s.string(&html), sink, false)
+            }
+            Self::String(html) => Ok(html),
+        }
+    }
+}
+
+/// Convert and vet the complete options snapshot before parsing. A streaming
+/// sink has no separate HTML argument on which to enforce a missing policy.
+pub(crate) fn parser_options(
+    s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, sink: &str, streaming: bool,
+) -> JsResult<(ParserOptions, bool)> {
+    if let Some(wrapper) = s.unwrap::<TrustedValue>(value) {
+        if let Some(snapshot) = wrapper.as_ref() {
+            return Ok((snapshot.clone(), true));
+        }
+    }
+    let options = ParserOptions::convert(s, value)?;
+    if requires_for_script(page) {
+        let module = MODULE.module(s, page)?;
+        let callback = module.get("defaultParserOptions")?.as_object()
+            .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
+        let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), s.boolean(options.filter.is_some())])?;
+        if !result.is_null() && !result.is_undefined() {
+            return Ok((ParserOptions::convert(s, result)?, true));
+        }
+        if (streaming || options.needs_vetting || result.is_null()) && sink_violation(s, page, sink, "")? {
+            return Err(JsError::Type("This document requires trusted HTML parser options".into()));
+        }
+    }
+    Ok((options, false))
 }
 
 /// The Trusted Types a sink takes.
@@ -266,11 +534,19 @@ pub(crate) fn compliant_string_in(
     if result.is_null() || result.is_undefined() {
         // A violation, reported to every policy that requires Trusted Types; blocked when one
         // of them is enforced (report-only ones let the string through).
-        let enforced = call("sinkViolation", &[s.string(sink), s.string(&input)])?.to_bool();
+        let enforced = sink_violation(s, page, sink, &input)?;
         if enforced {
             return Err(JsError::Type(format!("Failed to set '{sink}': This document requires '{name}' assignment.").into()));
         }
         return Ok(input);
     }
     crate::util::dom_string(result)
+}
+
+/// Report an unvetted value to applicable CSP policies and return whether any blocks it.
+pub(crate) fn sink_violation(s: &Scope<'_>, page: &Rc<PageDom>, sink: &str, input: &str) -> JsResult<bool> {
+    let module = MODULE.module(s, page)?;
+    let report = module.get("sinkViolation")?.as_object()
+        .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
+    Ok(report.call(None, &[s.string(sink), s.string(input)])?.to_bool())
 }

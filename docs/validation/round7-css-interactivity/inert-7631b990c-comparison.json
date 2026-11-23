@@ -1,0 +1,304 @@
+{
+  "rows": [
+    {
+      "url": "css/css-ui/interactivity-inert-all.html",
+      "name": "The 'all' shorthand should set 'interactivity'",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-animated.html",
+      "name": "Click event should work for interactivity:auto animation",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-click.html",
+      "name": "Click event should work after interactivity change",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-click.html",
+      "name": "No click event for interactivity:inert element",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-find.html",
+      "name": "Fail to find inert text",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-find.html",
+      "name": "Find non-inert text",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-find.html",
+      "name": "Find non-inert text inside inert ancestor",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Fail",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-focus.html",
+      "name": "Focus non-inert input inside inert ancestry",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Fail",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-focus.html",
+      "name": "Focus outer input",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-focus.html",
+      "name": "Try focus inert input",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-fullscreen-ua.html",
+      "name": "Author 'interactivity:inert' overrides UA :fullscreen 'interactivity:auto' rule",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-fullscreen-ua.html",
+      "name": "UA :fullscreen interactivity rule",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-fullscreen-ua.html",
+      "name": "UA :fullscreen rule overriding inherited [inert] 'interactivity:inert' rule",
+      "occurrence": 1,
+      "parent": "Fail",
+      "candidate": "Fail",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-fullscreen-ua.html",
+      "name": "UA [inert] rule overriding inherited :fullscreen 'interactivity:auto' rule",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-fullscreen-ua.html",
+      "name": "UA [inert] rule wins over UA :fullscreen rule",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-html-attribute-ua.html",
+      "name": "Author interactivity:auto does not override UA [inert] { interactivity: inert } on the element itself",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-html-attribute-ua.html",
+      "name": "Author interactivity:auto on a descendant can override inherited UA [inert] { interactivity: inert }",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-html-attribute-ua.html",
+      "name": "[inert] { interactivity: inert }",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-html-attribute-ua.html",
+      "name": "[inert] { interactivity: inert } inherited",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-modal-dialog-ua.html",
+      "name": "Author 'interactivity:inert' overrides UA dialog:modal 'interactivity:auto' rule",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-modal-dialog-ua.html",
+      "name": "UA [inert] rule overriding inherited dialog:modal 'interactivity:auto' rule",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-modal-dialog-ua.html",
+      "name": "UA [inert] rule wins over UA dialog:modal inert rule",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-modal-dialog-ua.html",
+      "name": "UA dialog:modal interactivity rule",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Pass"
+    },
+    {
+      "url": "css/css-ui/interactivity-inert-modal-dialog-ua.html",
+      "name": "UA dialog:modal rule overriding inherited [inert] 'interactivity:inert' rule",
+      "occurrence": 1,
+      "parent": "Pass",
+      "candidate": "Pass",
+      "chrome": "Pass",
+      "baseline_95976a331": "Fail"
+    }
+  ],
+  "parentPages": {
+    "css/css-ui/interactivity-inert-all.html": [
+      "a59f72901be960fdce113ba7a3cde2d9afcb48f2",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-animated.html": [
+      "8fc86dabbfd7245c1a88246597757931d7bb3ba3",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-click.html": [
+      "c1b882c70230ffab24249f5b67240aef2c8a1e9b",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-find.html": [
+      "03570e5f790613f460fa6da784535cccbaa0d557",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-focus.html": [
+      "af7cf7469ea5a23bc5830430e0fa76ded9df9634",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-fullscreen-ua.html": [
+      "80dbc35209f30750894c0e55b595b185dcc401aa",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-html-attribute-ua.html": [
+      "7ead9eb6fbbea298ebdd5612bebeff7247df31f9",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-modal-dialog-ua.html": [
+      "9405699c5ac1051298c8f5ef08f359e94d1e1675",
+      "complete",
+      "OK"
+    ]
+  },
+  "candidatePages": {
+    "css/css-ui/interactivity-inert-all.html": [
+      "a59f72901be960fdce113ba7a3cde2d9afcb48f2",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-animated.html": [
+      "8fc86dabbfd7245c1a88246597757931d7bb3ba3",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-click.html": [
+      "c1b882c70230ffab24249f5b67240aef2c8a1e9b",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-find.html": [
+      "03570e5f790613f460fa6da784535cccbaa0d557",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-focus.html": [
+      "af7cf7469ea5a23bc5830430e0fa76ded9df9634",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-fullscreen-ua.html": [
+      "80dbc35209f30750894c0e55b595b185dcc401aa",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-html-attribute-ua.html": [
+      "7ead9eb6fbbea298ebdd5612bebeff7247df31f9",
+      "complete",
+      "OK"
+    ],
+    "css/css-ui/interactivity-inert-modal-dialog-ua.html": [
+      "9405699c5ac1051298c8f5ef08f359e94d1e1675",
+      "complete",
+      "OK"
+    ]
+  }
+}

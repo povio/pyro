@@ -1,0 +1,30 @@
+insetcss-main-candidate 8082 page passes 5526 named passes 178178 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+insetcss-main-parent 8082 page passes 5526 named passes 178130 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+insetcss-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+insetcss-main-parent pages left only 0 right only 0
+insetcss-main-parent passes left only 48 right only 0
+insetcss-main-parent observed left only 0 right only 0
+insetcss-main-stable pages left only 262 right only 1686
+insetcss-main-stable passes left only 5701 right only 10486
+insetcss-main-stable observed left only 309 right only 681
+Losses vs parent by URL: Counter()
+insetcss-focus-candidate 27 page passes 21 named passes 4804 observed names 4921 statuses {'complete:0': 27}
+insetcss-focus-parent 27 page passes 21 named passes 4756 observed names 4921 statuses {'complete:0': 27}
+insetcss-focus-stable 27 page passes 27 named passes 4921 observed names 4921 statuses {'complete:0': 27}
+insetcss-focus-parent pages left only 0 right only 0
+insetcss-focus-parent passes left only 48 right only 0
+insetcss-focus-parent observed left only 0 right only 0
+insetcss-focus-stable pages left only 0 right only 6
+insetcss-focus-stable passes left only 0 right only 117
+insetcss-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+insetcss-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+insetcss-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+insetcss-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+insetcss-supplement-parent pages left only 0 right only 0
+insetcss-supplement-parent passes left only 0 right only 0
+insetcss-supplement-parent observed left only 0 right only 0
+insetcss-supplement-stable pages left only 0 right only 8
+insetcss-supplement-stable passes left only 0 right only 42
+insetcss-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

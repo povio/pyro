@@ -1,0 +1,37 @@
+{
+  "window": true,
+  "worker": true,
+  "ordered": [
+    [
+      "shared",
+      "shared"
+    ],
+    [
+      "exclusive",
+      "shared"
+    ]
+  ],
+  "oneSharedRemaining": [
+    "shared"
+  ],
+  "grant": {
+    "state": "held",
+    "mode": "exclusive"
+  },
+  "queuedWaits": true,
+  "aborted": [
+    true,
+    false
+  ],
+  "late": true,
+  "stealSetup": {
+    "state": "held",
+    "mode": "exclusive"
+  },
+  "steal": "order",
+  "broken": {
+    "state": "reject",
+    "name": "AbortError"
+  },
+  "clean": 0
+}

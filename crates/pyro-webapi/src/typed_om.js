@@ -70,7 +70,12 @@
       return parseValues(`${property}`, `${cssText}`, true, 'parseAll');
     }
   }
-  const plain = (text) => new CSSStyleValue(ILLEGAL, text);
+  const associatedProperties = new WeakMap();
+  const plain = (property, text) => {
+    const value = new CSSStyleValue(ILLEGAL, text);
+    associatedProperties.set(value, property);
+    return value;
+  };
 
   // ---------- CSSUnparsedValue / CSSVariableReferenceValue ----------
   const isUnparsedMember = (v) => typeof v === 'string' || v instanceof CSSVariableReferenceValue;
@@ -211,19 +216,47 @@
 
   // ---------- CSSNumericValue ----------
   const typeEquals = (a, b) => TYPES.every((t) => (a[t] || 0) === (b[t] || 0));
-  const addTypes = (a, b) => {
-    // Percent hint: a type with percent added to a length-like type takes the other.
-    if (typeEquals(a, b)) return { ...a };
-    const pa = a.percent || 0, pb = b.percent || 0;
-    const strip = (t) => { const o = { ...t }; delete o.percent; return o; };
-    if (pa && !pb && Object.keys(strip(a)).length === 0) return { ...b, percentHint: Object.keys(b).find((k) => b[k])};
-    if (pb && !pa && Object.keys(strip(b)).length === 0) return { ...a, percentHint: Object.keys(a).find((k) => a[k]) };
+  const mathTypes = new WeakMap();
+  const applyPercentHint = (type, hint) => {
+    if (type.percentHint === hint) return type;
+    const result = { ...type, percentHint: hint };
+    if (result.percent) {
+      result[hint] = (result[hint] || 0) + result.percent;
+      delete result.percent;
+    }
+    return result;
+  };
+  const combineTypes = (left, right, multiply) => {
+    if (left.percentHint && right.percentHint && left.percentHint !== right.percentHint) return null;
+    const hint = left.percentHint || right.percentHint;
+    if (hint) {
+      left = applyPercentHint(left, hint);
+      right = applyPercentHint(right, hint);
+    }
+    if (multiply) {
+      const result = hint ? { percentHint: hint } : {};
+      for (const k of TYPES) {
+        const power = (left[k] || 0) + (right[k] || 0);
+        if (power) result[k] = power;
+      }
+      return result;
+    }
+    if (typeEquals(left, right)) return left;
+    if (hint || (!left.percent && !right.percent)) return null;
+    for (const k of TYPES) {
+      if (k === 'percent' || (!left[k] && !right[k])) continue;
+      const candidate = applyPercentHint(left, k);
+      if (typeEquals(candidate, applyPercentHint(right, k))) return candidate;
+    }
     return null;
   };
-  const mulTypes = (a, b) => {
-    const t = {};
-    for (const k of TYPES) { const v = (a[k] || 0) + (b[k] || 0); if (v) t[k] = v; }
-    return t;
+  const combineValueTypes = (values, multiply) => {
+    let result = numericType(values[0]);
+    for (let i = 1; result && i < values.length; i++) {
+      const next = numericType(values[i]);
+      result = next && combineTypes(result, next, multiply);
+    }
+    return result;
   };
   const rectify = (v, what) => {
     if (v instanceof CSSNumericValue) return v;
@@ -250,6 +283,11 @@
     to(unit) {
       const u = unitName(unit);
       if (u === null) throw new DE("Failed to execute 'to' on 'CSSNumericValue': Invalid unit for conversion", 'SyntaxError');
+      if (isUnit(this)) {
+        const result = convert(this, u);
+        if (result) return result;
+        throw new TypeError("Failed to execute 'to' on 'CSSNumericValue': Cannot convert to the given unit");
+      }
       const sum = sumValues(this);
       if (!sum || sum.length !== 1) throw new TypeError("Failed to execute 'to' on 'CSSNumericValue': Cannot convert to the given unit");
       const r = convert(sum[0], u);
@@ -285,7 +323,7 @@
     }
     static parse(cssText) {
       if (arguments.length < 1) throw new TypeError("Failed to execute 'parse' on 'CSSNumericValue': 1 argument required, but only 0 present.");
-      const v = parseNumeric(`${cssText}`.trim());
+      const v = parseNumeric(`${cssText}`.trim(), true);
       if (!v) throw new DE("Failed to execute 'parse' on 'CSSNumericValue': Invalid math expression", 'SyntaxError');
       return v;
     }
@@ -348,7 +386,9 @@
       if (args.length < minArgs) throw new DE(`Failed to construct '${name}': Must specify at least one argument.`, 'SyntaxError');
       const values = args.map((v) => rectify(v, name));
       this.#values = new CSSNumericArray(ILLEGAL, values);
-      if (name !== 'CSSMathProduct' && !numericType(this)) throw new TypeError(`Failed to construct '${name}': Incompatible types`);
+      const type = combineValueTypes(values, name === 'CSSMathProduct');
+      if (!type) throw new TypeError(`Failed to construct '${name}': Incompatible types`);
+      mathTypes.set(this, type);
     }
     get values() { return this.#values; }
     get operator() { return OPERATORS[name]; }
@@ -389,10 +429,9 @@
       this.#lower = rectify(lower, 'CSSMathClamp');
       this.#value = rectify(value, 'CSSMathClamp');
       this.#upper = rectify(upper, 'CSSMathClamp');
-      const t = numericType(this.#lower);
-      if (!t || !typeEquals(t, numericType(this.#value) || {}) || !typeEquals(t, numericType(this.#upper) || {})) {
-        throw new TypeError("Failed to construct 'CSSMathClamp': Incompatible types");
-      }
+      const type = combineValueTypes([this.#lower, this.#value, this.#upper], false);
+      if (!type) throw new TypeError("Failed to construct 'CSSMathClamp': Incompatible types");
+      mathTypes.set(this, type);
     }
     get lower() { return this.#lower; }
     get value() { return this.#value; }
@@ -440,75 +479,101 @@
     if (v instanceof CSSMathInvert) {
       const t = numericType(v.value);
       if (!t) return null;
-      const o = {};
+      const o = t.percentHint ? { percentHint: t.percentHint } : {};
       for (const k of TYPES) if (t[k]) o[k] = -t[k];
       return o;
     }
-    if (v instanceof CSSMathClamp) return numericType(v.lower);
-    if (v instanceof CSSMathProduct) {
-      let t = {};
-      for (const x of v.values) { const xt = numericType(x); if (!xt) return null; t = mulTypes(t, xt); }
-      return t;
-    }
-    if (v instanceof CSSMathSum || v instanceof CSSMathMin || v instanceof CSSMathMax) {
-      let t = null;
-      for (const x of v.values) {
-        const xt = numericType(x);
-        if (!xt) return null;
-        t = t === null ? xt : addTypes(t, xt);
-        if (!t) return null;
-      }
-      return t;
-    }
-    return null;
+    return mathTypes.get(v) || null;
   };
 
-  // A value as a sum of unit values with at most one non-number unit each (`toSum`, `to`), or null.
-  const sumValues = (v) => {
+  // Sum-value terms keep powers of canonical units until the entire expression is
+  // reduced: a reciprocal or squared unit need not itself fit in CSSUnitValue.
+  const unitKey = units => Object.keys(units).sort().map(unit => unit + ':' + units[unit]).join(',');
+  function accumulate(terms, value, units) {
+    const key = unitKey(units), existing = terms.get(key);
+    if (existing) existing.value += value;
+    else terms.set(key, { value, units });
+  }
+  function sumTerms(v) {
     if (isUnit(v)) {
-      const info = v.unit === 'number' || v.unit === 'percent' ? null : unitInfo(v.unit);
-      if (info && info.f !== null) return [new CSSUnitValue(v.value * info.f, info.canonical)];
-      return [new CSSUnitValue(v.value, v.unit)];
+      const info = unitInfo(v.unit);
+      const absolute = info && info.f !== null;
+      const unit = absolute ? info.canonical : v.unit;
+      return [{ value: absolute ? v.value * info.f : v.value, units: unit === 'number' ? {} : { [unit]: 1 } }];
+    }
+    if (v instanceof CSSMathInvert || v instanceof CSSMathNegate) {
+      const terms = sumTerms(v.value);
+      if (!terms) return null;
+      if (v instanceof CSSMathNegate) return terms.map(t => ({value: -t.value, units: t.units}));
+      if (terms.length !== 1 || terms[0].value === 0) return null;
+      const term = terms[0], units = {};
+      for (const [unit, power] of Object.entries(term.units)) units[unit] = -power;
+      return [{ value: 1 / term.value, units }];
     }
     if (v instanceof CSSMathSum) {
-      const out = [];
-      for (const x of v.values) {
-        const s = sumValues(x);
-        if (!s) return null;
-        for (const item of s) {
-          const same = out.find((o) => o.unit === item.unit);
-          if (same) out[out.indexOf(same)] = new CSSUnitValue(same.value + item.value, item.unit);
-          else out.push(item);
-        }
+      const sum = new Map();
+      for (const item of v.values) {
+        const terms = sumTerms(item);
+        if (!terms) return null;
+        for (const term of terms) accumulate(sum, term.value, term.units);
       }
-      return out;
+      return [...sum.values()];
     }
-    if (v instanceof CSSMathNegate) { const s = sumValues(v.value); return s && s.map((x) => new CSSUnitValue(-x.value, x.unit)); }
     if (v instanceof CSSMathProduct) {
-      let acc = [new CSSUnitValue(1, 'number')];
-      for (const x of v.values) {
-        const s = sumValues(x);
-        if (!s) return null;
-        const next = [];
-        for (const a of acc) for (const b of s) {
-          if (a.unit !== 'number' && b.unit !== 'number') return null;
-          next.push(new CSSUnitValue(a.value * b.value, a.unit === 'number' ? b.unit : a.unit));
+      let product = [{value: 1, units: {}}];
+      for (const item of v.values) {
+        const terms = sumTerms(item);
+        if (!terms) return null;
+        const next = new Map();
+        for (const a of product) for (const b of terms) {
+          const units = {...a.units};
+          for (const [unit, power] of Object.entries(b.units)) {
+            units[unit] = (units[unit] || 0) + power;
+            if (!units[unit]) delete units[unit];
+          }
+          accumulate(next, a.value * b.value, units);
         }
-        acc = next;
+        product = [...next.values()];
       }
-      return acc;
+      return product;
     }
-    if (v instanceof CSSMathInvert) {
-      const s = sumValues(v.value);
-      if (!s || s.length !== 1 || s[0].unit !== 'number') return null;
-      return [new CSSUnitValue(1 / s[0].value, 'number')];
-    }
-    if (v instanceof CSSMathMin || v instanceof CSSMathMax) {
-      const all = [...v.values].map(sumValues);
-      if (all.some((s) => !s || s.length !== 1) || all.some((s) => s[0].unit !== all[0][0].unit)) return null;
-      return [new CSSUnitValue(Math[v instanceof CSSMathMin ? 'min' : 'max'](...all.map((s) => s[0].value)), all[0][0].unit)];
+    if (v instanceof CSSMathMin || v instanceof CSSMathMax || v instanceof CSSMathClamp) {
+      const items = v instanceof CSSMathClamp ? [v.lower, v.value, v.upper] : [...v.values];
+      const terms = items.map(sumTerms);
+      if (terms.some(list => !list || list.length !== 1)) return null;
+      const units = terms[0][0].units, key = unitKey(units);
+      if (terms.some(list => unitKey(list[0].units) !== key)) return null;
+      const numbers = terms.map(list => list[0].value);
+      const value = v instanceof CSSMathClamp ? Math.max(numbers[0], Math.min(numbers[1], numbers[2])) :
+        (v instanceof CSSMathMin ? Math.min(...numbers) : Math.max(...numbers));
+      return [{value, units}];
     }
     return null;
+  }
+  const sumValues = v => {
+    if (v instanceof CSSMathSum) {
+      // Most sums contain only scalar units convertible to one canonical unit.
+      // Read their current values directly; unit values remain mutable after construction.
+      let canonical, total = 0;
+      for (const item of v.values) {
+        if (!isUnit(item)) { canonical = undefined; break; }
+        const info = unitInfo(item.unit), absolute = info && info.f !== null;
+        const unit = absolute ? info.canonical : item.unit;
+        if (canonical !== undefined && canonical !== unit) { canonical = undefined; break; }
+        canonical = unit;
+        total += absolute ? item.value * info.f : item.value;
+      }
+      if (canonical !== undefined && Number.isFinite(total)) return [new CSSUnitValue(total, canonical)];
+    }
+    const terms = sumTerms(v);
+    if (!terms) return null;
+    const values = [];
+    for (const {value, units} of terms) {
+      const keys = Object.keys(units);
+      if (keys.length > 1 || (keys.length === 1 && units[keys[0]] !== 1) || !Number.isFinite(value)) return null;
+      values.push(new CSSUnitValue(value, keys[0] ?? 'number'));
+    }
+    return values;
   };
   const convert = (v, unit) => {
     if (v.unit === unit) return new CSSUnitValue(v.value, unit);
@@ -989,7 +1054,25 @@
 
   // ---------- Parsing numeric text (dimensions and math functions) ----------
   const NUM = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(%|[a-zA-Z]+)?/;
-  const parseNumeric = (text) => {
+  // These leaves belong to the parser and have not escaped to script. Fold
+  // their magnitudes without allocating CSSUnitValue copies for conversion.
+  function foldParsedUnits(left, right) {
+    const a = left instanceof CSSMathNegate ? left.value : left;
+    const b = right instanceof CSSMathNegate ? right.value : right;
+    if (!isUnit(a) || !isUnit(b)) return null;
+    let unit = a.unit, av = a.value, bv = b.value;
+    if (unit !== b.unit) {
+      const from = unitInfo(unit), other = unitInfo(b.unit);
+      if (!from || !other || from.f === null || other.f === null || from.canonical !== other.canonical) return null;
+      unit = from.canonical;
+      av *= from.f;
+      bv *= other.f;
+    }
+    const value = (left === a ? av : -av) + (right === b ? bv : -bv);
+    if (unit === a.unit) { a.value = value; return a; }
+    return new CSSUnitValue(value, unit);
+  }
+  const parseNumeric = (text, simplifyParsedSums = false) => {
     const p = { s: text, i: 0 };
     const ws = () => { while (p.i < p.s.length && /\s/.test(p.s[p.i])) p.i++; };
     const term = () => {
@@ -1038,6 +1121,28 @@
         const t = product();
         items.push(op === '+' ? t : new CSSMathNegate(t));
       }
+      if (simplifyParsedSums && items.length === 2) {
+        return foldParsedUnits(items[0], items[1]) ?? new CSSMathSum(...items);
+      }
+      if (simplifyParsedSums && items.length > 2) {
+        // Combine compatible numeric leaves while retaining the order and
+        // structure of unresolved terms (and their authored math operators).
+        const combined = [], indices = new Map();
+        for (const item of items) {
+          const leaf = item instanceof CSSMathNegate ? item.value : item;
+          if (!isUnit(leaf)) { combined.push(item); continue; }
+          const info = unitInfo(leaf.unit);
+          const canonical = info && info.f !== null ? info.canonical : leaf.unit;
+          const index = indices.get(canonical);
+          if (index === undefined) {
+            indices.set(canonical, combined.length);
+            combined.push(item);
+          } else {
+            combined[index] = foldParsedUnits(combined[index], item);
+          }
+        }
+        return combined.length === 1 ? combined[0] : new CSSMathSum(...combined);
+      }
       return items.length === 1 ? items[0] : new CSSMathSum(...items);
     };
     try {
@@ -1074,9 +1179,12 @@
   // Longhands whose values are several components ({1,2}, {1,4}) or whose grammar level 1 does not
   // reify (as in Chromium): always a plain CSSStyleValue.
   const UNREIFIED = new Set(['border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius',
-    'border-bottom-right-radius', 'border-image-width', 'border-image-outset', 'border-image-slice', 'border-image-repeat',
-    'border-spacing', 'column-rule-width', 'vertical-align']);
+    'border-bottom-right-radius',
+    'border-spacing', 'vertical-align']);
   const CSS_WIDE = /^(inherit|initial|unset|revert|revert-layer|default)$/i;
+  const OPAQUE_PROPERTIES = new Set(['margin', 'padding', 'border-radius', 'border-width', 'border-color', 'transition', 'flex-flow', 'font', 'font-family', 'font-variant', 'gap', 'grid-gap',
+    'grid', 'grid-area', 'grid-template', 'marker', 'mask', 'offset', 'scroll-margin', 'scroll-padding',
+    'text-decoration', 'text-shadow', 'will-change']);
   const LIST_VALUED = new Set(['transition', 'transition-property', 'transition-duration', 'transition-timing-function',
     'transition-delay', 'transition-behavior', 'animation', 'animation-name', 'animation-duration', 'animation-timing-function',
     'animation-delay', 'animation-iteration-count', 'animation-direction', 'animation-fill-mode', 'animation-play-state',
@@ -1108,31 +1216,72 @@
     out.push(text.slice(start).trim());
     return out;
   };
+  const COLUMN_RULE_VALUES = new Set(['column-rule-style', 'column-rule-width']);
   const reifyOne = (property, text, custom, shorthand = false) => {
+    if (property === 'background-size') {
+      // A single size is stored and serialized with an automatic second dimension.
+      const pair = splitSpaces(text);
+      if (pair.length === 2 && pair[1] === 'auto') text = pair[0];
+    }
     if (custom || /var\(/i.test(text)) return unparsedFrom(text);
     if (CSS_WIDE.test(text)) return new CSSKeywordValue(text.toLowerCase());
-    if (UNREIFIED.has(property)) return plain(text);
+    if (UNREIFIED.has(property)) return plain(property, text);
     // A grid line's number (with or without a name) is no single numeric value.
-    if (/^grid-(row|column)-(start|end)$/.test(property) && !/^[A-Za-z_-][A-Za-z0-9_-]*$/.test(text)) return plain(text);
-    if (/^-?[A-Za-z_][A-Za-z0-9_-]*$/.test(text)) return NAMED_COLORS.has(text.toLowerCase()) ? plain(text) : new CSSKeywordValue(text);
+    if (/^grid-(row|column)-(start|end)$/.test(property) && !/^[A-Za-z_-][A-Za-z0-9_-]*$/.test(text)) return plain(property, text);
+    if (/^-?[A-Za-z_][A-Za-z0-9_-]*$/.test(text)) return NAMED_COLORS.has(text.toLowerCase()) ? plain(property, text) : new CSSKeywordValue(text);
     if (property === 'transform') { const t = transformFrom(text); if (t) return t; }
     if (!shorthand && /^url\((?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^()'"\s]*)\)$/i.test(text)) return new CSSImageValue(ILLEGAL, text);
     const n = parseNumeric(text);
     if (n) return n;
-    return plain(text);
+    return plain(property, text);
   };
-  const reify = (property, text, all) => {
+  const BORDER_IMAGE_TUPLES = new Set(['border-image-width', 'border-image-outset', 'border-image-slice', 'border-image-repeat']);
+  const reify = (property, text, all, computed = false) => {
     const k = kind(property);
     if (!k) return null;
     const [name, which] = k;
     if (which === 2) return [unparsedFrom(text)];
     if (CSS_WIDE.test(text) || /var\(/i.test(text)) return [reifyOne(name, text, false)];
+    if (COLUMN_RULE_VALUES.has(name) || (computed && BORDER_IMAGE_TUPLES.has(name))) return [plain(name, text)];
+    // A declared transition-property list is an opaque value unless it is 'none'.
+    // A single computed property name reifies as a keyword.
+    if (name === 'transition-property' && text !== 'none' && (!computed || splitTop(text).length > 1)) {
+      return [plain(name, text)];
+    }
+    if ((name === 'text-shadow' && text === 'none') || (name === 'will-change' && text === 'auto')) return [new CSSKeywordValue(text)];
+    if (OPAQUE_PROPERTIES.has(name)) return [plain(name, text)];
     // A shorthand's value of several components is not reified (a plain CSSStyleValue); one
     // component is, as a longhand's.
-    if (which === 1) return [splitSpaces(text).length > 1 ? plain(text) : reifyOne(name, text, false, true)];
+    if (which === 1) return [splitSpaces(text).length > 1 ? plain(name, text) : reifyOne(name, text, false, true)];
     const parts = LIST_VALUED.has(name) ? splitTop(text) : [text];
     const values = parts.map((t) => reifyOne(name, t, false));
+    if (name === 'background-size' && values.some(value => value.constructor === CSSStyleValue)) {
+      return [plain(name, text)];
+    }
     return all ? values : values.slice(0, 1);
+  };
+  const reifyMapValue = (src, name, all) => {
+    if (src.computed && name.startsWith('--')) {
+      const components = src.components(name);
+      if (components) return (all ? components : components.slice(0, 1)).map(([kind, text]) => {
+        switch (kind) {
+          case 'keyword': return new CSSKeywordValue(text);
+          case 'numeric': return parseNumeric(text) ?? plain(name, text);
+          case 'transform-function': return transformFrom(text)?.[0] ?? plain(name, text);
+          case 'transform': return transformFrom(text) ?? plain(name, text);
+          case 'image': if (/^url\(/i.test(text)) return new CSSImageValue(ILLEGAL, text);
+        }
+        return plain(name, text);
+      });
+    }
+    // CSS column rules store parsed CSS text as a repeatable list. A scalar
+    // supplied through Typed OM keeps its numeric or keyword specified value.
+    if (COLUMN_RULE_VALUES.has(name)) {
+      const typed = src.typedText?.(name);
+      if (typed != null) return [reifyOne(name, typed, false)];
+    }
+    const text = src.get(name);
+    return text === '' ? [] : reify(name, text, all, src.computed) || [];
   };
   function parseValues(property, cssText, all, what) {
     const k = kind(property);
@@ -1143,7 +1292,7 @@
       if (cssText.trim() === '') throw new TypeError(`Failed to execute '${what}' on 'CSSStyleValue': The value provided ('${cssText}') could not be parsed as a '${property}'.`);
       return [unparsedFrom(cssText.trim())];
     }
-    if (text === '') return [plain(cssText.trim())];
+    if (text === '') return [plain(k[0], cssText.trim())];
     return reify(k[0], text, all);
   }
 
@@ -1170,19 +1319,14 @@
     get(property) {
       const src = mapSource(this);
       if (arguments.length < 1) throw new TypeError("Failed to execute 'get' on 'StylePropertyMapReadOnly': 1 argument required, but only 0 present.");
-      const [name, which] = nameOf(property, 'get', 'StylePropertyMapReadOnly');
-      const text = src.get(name);
-      if (text === '') return which === 2 ? undefined : undefined;
-      const values = reify(name, text, false);
-      return values ? values[0] : undefined;
+      const [name] = nameOf(property, 'get', 'StylePropertyMapReadOnly');
+      return reifyMapValue(src, name, false)[0];
     }
     getAll(property) {
       const src = mapSource(this);
       if (arguments.length < 1) throw new TypeError("Failed to execute 'getAll' on 'StylePropertyMapReadOnly': 1 argument required, but only 0 present.");
       const [name] = nameOf(property, 'getAll', 'StylePropertyMapReadOnly');
-      const text = src.get(name);
-      if (text === '') return [];
-      return reify(name, text, true) || [];
+      return reifyMapValue(src, name, true);
     }
     has(property) {
       const src = mapSource(this);
@@ -1193,10 +1337,10 @@
     get size() { return mapSource(this).names().length; }
     entries() {
       const src = mapSource(this);
-      return src.names().map((n) => [n, reify(n, src.get(n), true) || []])[Symbol.iterator]();
+      return src.names().map((n) => [n, reifyMapValue(src, n, true)])[Symbol.iterator]();
     }
     keys() { const src = mapSource(this); return src.names()[Symbol.iterator](); }
-    values() { const src = mapSource(this); return src.names().map((n) => reify(n, src.get(n), true) || [])[Symbol.iterator](); }
+    values() { const src = mapSource(this); return src.names().map((n) => reifyMapValue(src, n, true))[Symbol.iterator](); }
     forEach(cb, thisArg = undefined) {
       for (const [k, v] of this.entries()) apply(cb, thisArg, [v, k, this]);
     }
@@ -1205,8 +1349,23 @@
 
   // A value given to set()/append() as text for `name`: a CSSStyleValue's serialization (checked
   // against the property), or a string parsed as the property.
+  const integerLonghands = new Set(['order', 'orphans', 'widows', 'z-index', 'column-count', 'math-depth']);
+  const opacityLonghands = new Set(['opacity', 'fill-opacity', 'flood-opacity', 'stop-opacity', 'stroke-opacity']);
+  // Step keywords that Stylo stores as steps(1, start|end); their specified Typed OM value stays the keyword.
+  const STEP_KEYWORDS = new Set(['step-start', 'step-end']);
+  const timingFunctionLonghands = new Set(['animation-timing-function', 'transition-timing-function']);
+  function retainsTypedOrigin(name, value, text) {
+    if (timingFunctionLonghands.has(name)) return value instanceof CSSKeywordValue && STEP_KEYWORDS.has(text);
+    if (name === 'column-rule-width' || name === 'column-rule-style')
+      return value instanceof CSSNumericValue || value instanceof CSSKeywordValue && !CSS_WIDE.test(value.value);
+    if (opacityLonghands.has(name)) return value instanceof CSSMathValue || isUnit(value) && value.unit === 'percent';
+    return integerLonghands.has(name) && value instanceof CSSNumericValue && text.startsWith('calc(');
+  }
   const valueText = (name, which, v, what) => {
     if (v instanceof CSSStyleValue) {
+      if (associatedProperties.has(v) && associatedProperties.get(v) !== name) {
+        throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Value belongs to another property`);
+      }
       if (which === 2) {
         if (!(v instanceof CSSUnparsedValue)) throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
         return v.toString();
@@ -1218,17 +1377,32 @@
       }
       const text = v.toString();
       const typed = !(v instanceof CSSUnparsedValue) && v.constructor !== CSSStyleValue && !(v instanceof CSSKeywordValue && CSS_WIDE.test(v.value));
+      // A numeric object cannot stand for an opaque shorthand or a CSS grid line.
+      // A CSSStyleValue parsed for the property can still carry its complete grammar.
+      if (v instanceof CSSNumericValue && ((which === 1 && OPAQUE_PROPERTIES.has(name)) ||
+          /^grid-(row|column)-(start|end)$/.test(name))) {
+        throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
+      }
       // A number is no length: unitless 0 parses as one, so a property that takes numbers must take 1.
       if (isUnit(v) && v.unit === 'number' && v.value === 0 && parse(name, '1') === null) {
         throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
       }
       // A shorthand takes a typed value only where it stands for the whole shorthand (one component).
       if (typed && which === 1) {
+        if (v instanceof CSSNumericValue && /^border(?:-(?:top|right|bottom|left|(?:block|inline)(?:-(?:start|end))?))?$/.test(name)) {
+          throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
+        }
         const normalized = parse(name, text);
         if (normalized === null || splitSpaces(normalized).length > 1) throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
         return text;
       }
       if (parse(name, text) !== null) return text;
+      // Typed OM represents a fractional <number> assigned to an <integer> as
+      // a one-item sum. CSS calc() rounds it when the property computes.
+      if (isUnit(v) && v.unit === 'number' && !Number.isInteger(v.value) && integerLonghands.has(name)) {
+        const wrapped = `calc(${text})`;
+        if (parse(name, wrapped) !== null) return wrapped;
+      }
       // A value of the right type outside the property's range is kept, in calc() (which clamps).
       // (Only below the range: its absolute value must be valid, so a non-integer stays invalid for an integer.)
       const below = v.value < 0 ? parse(name, unitText(-v.value, v.unit)) !== null : v.unit === 'number' && parse(name, '1') !== null && (Number.isInteger(v.value) || parse(name, '1.5') !== null)
@@ -1262,7 +1436,11 @@
       const texts = values.map((v) => valueText(name, which, v, 'set'));
       const text = texts.join(', ');
       if (values.length > 1 && parse(name, text) === null) throw new TypeError("Failed to execute 'set' on 'StylePropertyMap': Invalid type for property");
-      src.set(name, text);
+      if (which === 0 && values.length === 1 && retainsTypedOrigin(name, values[0], text)) {
+        src.setTyped(name, text);
+      } else {
+        src.set(name, text);
+      }
     }
     append(property, ...values) {
       const src = mapSource(this);
@@ -1276,7 +1454,11 @@
         throw new TypeError("Failed to execute 'append' on 'StylePropertyMap': Invalid type for property");
       }
       const texts = values.map((v) => valueText(name, which, v, 'append'));
-      src.set(name, [current, ...texts].filter((t) => t !== '').join(', '));
+      const combined = [current, ...texts].filter((t) => t !== '').join(', ');
+      if (texts.some((t) => CSS_WIDE.test(t)) || parse(name, combined) === null) {
+        throw new TypeError("Failed to execute 'append' on 'StylePropertyMap': Invalid type for property");
+      }
+      src.set(name, combined);
     }
     delete(property) {
       const src = mapSource(this);
@@ -1302,12 +1484,14 @@
     if (m) return m;
     m = new StylePropertyMap(ILLEGAL, {
       get: (name) => d.getPropertyValue(name),
+      typedText: (name) => native.typedNumericText(d, name),
+      setTyped: (name, text) => native.setTypedNumeric(d, name, text),
       set: (name, text) => { if (text === '') d.removeProperty(name); else d.setProperty(name, text); },
       clear: () => { d.cssText = ''; },
       names: () => {
         const seen = new Set();
         for (let i = 0; i < d.length; i++) seen.add(d.item(i));
-        return [...seen].sort((a, b) => (b.startsWith('--') - a.startsWith('--')) || (a < b ? -1 : a > b ? 1 : 0));
+        return [...seen];
       },
     });
     styleMaps.set(d, m);
@@ -1315,18 +1499,36 @@
   };
   const attributeStyleMap = (el) => declarationMap(declOf(el));
   // `element.computedStyleMap()`: the element's computed values (`getComputedStyle`).
-  const RESOLVED = /^((min-|max-)?(width|height|inline-size|block-size)|(margin|padding|inset)(-(top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?|top|right|bottom|left)$/;
+  const RESOLVED = /^((min-|max-)?(width|height|inline-size|block-size)|(margin|padding|inset)(-(top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?|top|right|bottom|left|transform|line-height|border-(top|right|bottom|left|(block|inline)-(start|end))-width)$/;
+  // Standard names precede vendor-prefixed names, then custom names. Chrome orders custom
+  // names by UTF-16 code unit (so `--💩`, a surrogate pair, sorts before `--豈` U+F900),
+  // which is what css-typed-om's computed iterable test expects.
+  const propertyGroup = (name) => name.startsWith('--') ? 2 : name.startsWith('-') ? 1 : 0;
+  const compareComputedPropertyNames = (a, b) => {
+    const group = propertyGroup(a) - propertyGroup(b);
+    if (group || a === b) return group;
+    return a < b ? -1 : 1;
+  };
   const computedStyleMap = (el, computedValue) => {
     const cs = () => getComputedStyle(el);
     return new StylePropertyMapReadOnly(ILLEGAL, {
+      computed: true,
+      components: computedValue,
       // Computed values: for the properties whose getComputedStyle value is a resolved (used) one,
       // the style engine's computed value; getComputedStyle's for the rest.
-      get: (name) => (RESOLVED.test(name) ? computedValue(name) : null) ?? cs().getPropertyValue(name),
+      // A longhand only the engine has (no property of getComputedStyle's declaration, as in
+      // Chrome) reads its computed value from the engine too.
+      get: (name) => {
+        const resolved = RESOLVED.test(name) ? computedValue(name) : null;
+        if (resolved !== null) return resolved;
+        const s = cs();
+        return name.startsWith('--') || name in s ? s.getPropertyValue(name) : computedValue(name) ?? '';
+      },
       names: () => {
         const s = cs();
         const names = [];
         for (let i = 0; i < s.length; i++) names.push(s.item(i));
-        return names.sort((a, b) => (b.startsWith('--') - a.startsWith('--')) || (a < b ? -1 : a > b ? 1 : 0));
+        return names.sort(compareComputedPropertyNames);
       },
     });
   };

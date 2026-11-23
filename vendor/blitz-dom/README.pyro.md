@@ -12,7 +12,12 @@ blitz-html and stylo_taffy are vendored from the same commit unchanged (`vendor/
 `UPSTREAM.patch` (applies with `git apply` from the root of an upstream checkout at the commit above) is
 the whole diff: every section below.
 
+SVG `pointer-events` presentation attributes participate in Stylo's author cascade, supplying the computed hit-testing value for each graphics element.
+
 ## Updating or dropping the patch
+
+Preserve the macOS `objc2-core-text` manifest dependency when regenerating `Cargo.toml`.
+The font metrics provider resolves the six standard CSS system font roles using Core Text UI fonts at their default sizes, routing family selection through `system-ui`.
 
 - To move to a newer blitz main: in a blitz checkout, commit this directory's `src/` and `assets/` over
   `packages/blitz-dom` at the commit above (or apply `UPSTREAM.patch`) and merge or cherry-pick onto the new
@@ -154,6 +159,13 @@ attributes and the `<style>` sheets inside the SVG, but never saw the page's she
   shape written as the SVG element usvg builds the same geometry from (`<circle>`, `<ellipse>`, `<rect>` with
   radii, `<polygon>`); `url(#id)` and `none` are written as they are. `mask-image: url(#mask)` becomes the
   `mask`.
+- `stylo.rs` (`build_presentational_hints`): `type` on `ol`, `ul` and `li` maps to `list-style-type` ("1", "a",
+  "A", "i", "I" case-sensitively; "none", "disc", "circle", "square" ASCII case-insensitively), and `align` on
+  `img`, `iframe`, `embed`, `object` and image inputs maps "top", "absmiddle"/"abscenter" and "absbottom" to
+  `vertical-align` (HTML § 15.3.8, § 15.4.3; WPT html/rendering *-presentational-hints-ascii-case-insensitive).
+- `stylo.rs` (`build_presentational_hints`): `background` on `body`, `table`, `thead`, `tbody`, `tfoot`, `tr`,
+  `td` and `th` maps to `background-image`, the value a URL parsed against the document's base URL (HTML § 15.3.3,
+  § 15.3.9; WPT html/infrastructure/urls/resolving-urls/query-encoding/attributes.sub.html).
 - `stylo.rs` (`build_presentational_hints`): an SVG element's `clip-path` and `transform-origin` attributes are
   presentational hints of the CSS properties (Chromium's presentation attributes), so a basic shape, CSS units
   and keywords in them reach usvg as above, and an invalid one (`transform-origin="top 100%"`) is ignored, as in
@@ -1898,6 +1910,25 @@ Covered by WPT `css/css-sizing/aspect-ratio/replaced-element-029`, `-030` and `g
 
 Covered by `crates/pyro-render/tests/size_containment.rs` and `inline_size_containment.rs`; WPT
 `css/css-sizing/contain-intrinsic-size`: 23 more reftests pass.
+
+### Last remembered sizes (round 7, CSS Sizing 4 § 5.1)
+
+- `src/node/element.rs` (`LayoutData::remembered_size`): logical and per axis, `[inline, block]`.
+- `src/stylo.rs`, `src/resolve.rs` (`cis_auto`, `retain_contain_intrinsic_auto`): elements styled with
+  `contain-intrinsic-size: auto` in an axis (or `content-visibility: auto`, which adds it) join a set; after each
+  style traversal an element forgets its size in each axis that lost `auto` at once, and a removed one forgets both.
+- `src/resolve.rs` (`record_remembered_sizes`): at the rendering update's ResizeObserver step (pyro-browser's
+  frame, after its callbacks; pyro-webapi's ResizeObserver delivery, before its callbacks), not at each layout, an
+  element laid out with its contents remembers its content box size in its `auto` axes (size containment does not
+  stop it); one skipping its contents or without a box of the current layout (`layout_parent`) keeps its sizes,
+  never 0x0. The step never lays out: with a stale layout it asks for the next one (`request_remembered_sizes`,
+  done at the end of `resolve`), and a page without such elements does nothing. `update_content_visibility`
+  remembers a `content-visibility: auto` element's size as it starts skipping its contents (it was laid out with
+  them), so a card scrolled away with no frame keeps the size it showed at. Counted by `remembered_size_work`
+  (pyro-render `tests/content_visibility_auto.rs`).
+- `src/layout/mod.rs` (`remembered_intrinsic_size`): an `auto` axis takes the remembered size only while its
+  element skips its contents (`content-visibility: hidden`, or `auto` while not relevant); `contain: size` alone
+  keeps the fallback. A `none` axis with a remembered size is not replaced by the empty container's size.
 ## `image-set()`, images as `content`, font features and descriptors (WPT css-images and css-fonts, round 3 lane F)
 
 - `src/util.rs` (`unfiltered_image`, `image_resolution`): an `image-set()` layer loads and draws the option
@@ -2321,6 +2352,9 @@ inline layout for its atomic inlines), Chromium's `UseParentPercentageResolution
 `crates/pyro-render/tests/intrinsic_percentages.rs`.
 
 Round 3 lane C2T (CSS2), covered by `crates/pyro-render/tests/css2_intrinsic_and_hints.rs`:
+- `src/stylo.rs`: legacy HTML `font[color]` maps to the color presentational hint.
+- `src/stylo.rs`: the HTML `align` presentational hint on divs, table row groups, rows, and cells
+  accepts ASCII case-insensitive `left`, `right`, `center`, `middle`, and `justify`.
 - `src/stylo.rs`: the `<br clear>` presentational hint (`left`, `right`, `all`/`both` → `clear`), WPT
   `css/CSS2/floats-clear/floats-clear-multicol-*`.
 - `src/layout/inline/layout.rs`: an atomic inline's percentage margins resolve against the line root's content
@@ -2408,6 +2442,8 @@ both edges, as in Blink; WPT css-overflow `input-scrollable-region-001`).
   `min-*` and `max-*`. Measured in definite space, an `auto`/`fit-content` basis gives the space between the
   calculations of its min-content and max-content widths (Blink's fit-content of the result). A size it measured
   and its parent hands back is not calculated again (`calc_size_results`, per pass). Horizontal writing modes only.
+  Final layout retains each measured basis and its used limits (except shrink-to-fit widths that depend on two measurements) for CSSOM to resolve an interpolated calculation
+  with the same intrinsic basis, without substituting the live endpoint or mutating the layout during readback.
 ## List item numbers from the `list-item` counter (WPT round 3, lane IT)
 
 A marker's number is its item's `list-item` counter value, computed by the counter walk (`layout::counters`, which
@@ -2556,6 +2592,9 @@ does not let margins collapse through it, even when its lines have no height (CS
   SVG), so stylo's `display: contents` unboxing rules apply (an outer `<svg>`, other SVG and MathML elements: none).
   `query_container_size`: a first query from a laid-out element outside the traversal (a lazy `::highlight()`/
   `::backdrop` style) samples the content box at once (no later pass fills it).
+  A table or an internal table box (no size containment, CSS Contain 2 § 3.1) has no queried size there and in
+  `resolve.rs` `refresh_container_query_sizes` (a box that becomes one drops its size, which restyles its subtree),
+  as Chrome (WPT css-conditional container-queries `ineligible-containment`, `container-units-ineligible-container`).
 - `node/svg_css.rs`: `display: contents` on `<g>`, `<tspan>`, `<a>`, nested `<svg>` writes a bare wrapper with only the
   inherited properties declared on it; a `<use>` keeps only its reference and position; other elements nothing.
 - `lang.rs`: a node assigned to a slot takes its language from the slot's host, not the slot.
@@ -2577,10 +2616,14 @@ does not let margins collapse through it, even when its lines have no height (CS
   first-line box as parent (`TextLayout::first_line_styles`): span edges with `em` widths follow it. A text-box-trim
   edge and the first line's strut use the line's root style (`Line::root_style`). String markers of items without a
   line of their own sit on `marker_baseline` (with the trim shift of the anonymous block holding the first line).
-- Round 4 lane B: `layout/mod.rs` (leaf layout of replaced elements): an iframe of `frame-sizing: content-height` (or
-  `content-block-size`) whose render tree element carries `data-pyro-frame-content-height` (pyro-dom's snapshot, from
-  the embedded document's root element height when that document opted in to responsive embedded sizing) has that
-  natural height (WPT css-sizing `responsive-iframe/*`).
+- Round 4 lane B, round 7: `layout/mod.rs` (leaf layout of replaced elements): an iframe of `frame-sizing:
+  content-width` / `content-height` (or `content-inline-size` / `content-block-size`, mapped to a physical axis by
+  the iframe's own writing mode) whose render tree element carries `data-pyro-frame-content-size` (`W,H`: pyro-dom's
+  snapshot, from the embedded document's content size when that document opted in to responsive embedded sizing)
+  has that natural size on that axis; the other keeps the default object size (WPT css-sizing
+  `responsive-iframe/*`). `resolve.rs` (`BaseDocument::document_content_size`): the document's content size (the
+  root's border box and its scrollable overflow, not widened to the viewport; leftward overflow for a document
+  scrolled from the right), which pyro gives the iframe.
 - `layout/table.rs`, `layout/mod.rs`, `layout/inline/layout.rs` (round 4 lane E): percentage heights of a table cell's
   children follow CSS Tables 3 / Blink: unless the table's height (or the row's) is definite, the cell's stretched
   height is no basis (`TableTreeWrapper::definite_height`); the cell's own length `height` is
@@ -2643,8 +2686,11 @@ Round 4 lane G:
   `container-units-selection-pseudo`). Outside list markers carry their `text-emphasis` marks
   (`ListItemLayout::annotations`, `inline::build::marker_emphasis` sharing `emphasis_layout` with inline text; WPT
   css-pseudo `marker-content-024`).
-- `animation.rs`: `display` to or from `none` interpolates as Stylo's `Animate for Display` says (the other value
-  throughout, `none` only at its end), which the discrete fallback skipped (`transition-behavior: allow-discrete`).
+- `animation.rs`, `document.rs` (`init_stylo_prefs`): `display` to or from `none` interpolates as Stylo's `Animate for
+  Display` says (the other value throughout, `none` only at its end; `transition-behavior: allow-discrete`). The pref
+  `layout.css.display-animations.enabled` is on: without it Stylo flips `display` halfway (the old fallback here never
+  ran, `animate_discrete` succeeds) and drops `display` from `@keyframes`, so a CSS animation of `display` alone had no
+  steps and gave the underlying value (WPT css-display `animations/display-interpolation{,-none}`).
 - Round 4 lane F, `font_metrics.rs`: `ch` is the "0" of the first available font (the first face whose `unicode-range`
   covers U+0030, whatever glyphs it has; WPT `ch-unit-018`), 0.5em (1em upright) when it has none; in upright vertical text its vertical
   advance from `vmtx` (WPT css-values `ch-unit-017`, `-019`). Upright Latin text itself still advances horizontally
@@ -2776,6 +2822,15 @@ Covered by `an_rtl_span_in_an_ltr_line_contains_by_the_lines_direction` in
   size, layout, style and paint containment). Not for form controls (their contents are their own), non-atomic inline
   boxes or `display: contents` (containment does not apply). Top-layer descendants of a skipped subtree are not shown.
   WPT css-contain `content-visibility/*` (+38). `pyro-render/tests/content_visibility_hidden.rs`.
+- Round 7, `node/node.rs` (`NodeFlags::CV_HIDDEN_FORCED`), `resolve.rs` (`force_hidden_contents`,
+  `clear_hidden_forcing`, `clear_content_visibility_forcing`), `layout/construct.rs`: a geometry query on an element
+  in skipped `content-visibility: hidden` contents lays out the contents of every `hidden` ancestor (Chromium's
+  forced layout of a locked subtree; CSS Contain 2 § 4.1). Disjoint from `auto` forcing (`CV_FORCED`): the element
+  keeps its size containment (and remembered size), so nothing outside it moves; its contents are built until the
+  next frame or page state (`clear_content_visibility_forcing`, which a capture runs before its layout, so they are
+  never painted) or a hit test (`clear_hidden_forcing`). WPT css-contain `content-visibility-038`, `-088`, `-089`,
+  `-091`..`-093`, `-hidden-*`, `-img`, `-input-image`, `-forced-layout-client-rects`.
+  `pyro-render/tests/content_visibility_hidden.rs`.
 
 ## Selections over transformed text (WPT round 4, lane S1)
 
@@ -2878,3 +2933,84 @@ what it lays out itself: a grid's explicit tracks of a fixed size and the gaps b
 multi-column container's `column-count` columns of `column-width` and their gaps. Both were 0 wide and tall (WPT
 css-contain `contain-size-grid-002`, `contain-size-multicol-001`, `-002`). Horizontal writing modes only. Test
 `a_size_contained_grid_or_multicol_container_keeps_its_tracks_and_columns` (pyro-render).
+
+## Block-end margin trimming of nested blocks
+
+`layout/mod.rs`, `compute_block_child_layout`: a block laid out with taffy's `BlockContext::trims_block_end` (its
+parent's `margin-trim: block-end` reaching the margins that collapse through its bottom edge; vendor/taffy
+README.pyro.md) is laid out afresh and its layout cache cleared after it, as for a block among floats: the cache
+does not key on the flag. WPT css-box `margin-trim/block-container-block-end-self-collapsing-children-nested-*`.
+Test `block_end_trims_self_collapsing_boxes_nested_at_the_bottom` (pyro-render).
+
+- `assets/default.css`: an `@appearance-base` block with Chromium's base appearance of a customizable select
+  (`appearance: base-select`): the select an `inline-flex` box with a 1px `currentColor` border and 24px minimum
+  sizes, its first child button `display: contents`, options `flex`. Stylo applies the block to a select of base
+  appearance and its subtree (vendor/stylo README.pyro.md). WPT html `customizable-select/base-appearance-inheritance`.
+
+- `layout/construct.rs` `is_open_base_select`, `layout/mod.rs` `lay_out_select_picker`, `mutator.rs`
+  `rebuild_select_for_open_state`: a drop-down select of base appearance (`appearance: base-select`)
+  whose picker is open (`:open` from pyro-dom's state tokens) builds boxes for its options, groups and
+  separators as a list box does, and lays them out below its own (leaf) box, stacked, as wide as the
+  widest and at least the select; the select's scrollable overflow takes them in, so they are painted
+  and hit with it. The select's boxes are built again when the state flips. A closed one is unchanged.
+  WPT html `customizable-select/select-mouse-behavior` and the other picker pages.
+
+## `:empty` with comments and empty text
+
+`src/stylo.rs`, `is_empty`: an element whose children are all comments or empty text nodes (an empty CDATA
+section, a script's `createTextNode('')`) matches `:empty` (Selectors 4 § 14.2, as Chrome). Upstream counted any
+child. WPT css/selectors/old-tests `css3-modsel-153`, `css3-modsel-d1b`. So a text child turning empty or non-empty
+(`set_node_text`, `append_text_to_node`) restyles its parent where it carries `HAS_EMPTY_SELECTOR`, and the `:has()`
+anchors over it (`restyle_for_text_emptiness_change`); test `incremental_style_invalidation_never_serves_stale_geometry`
+(pyro-layout).
+
+## `:lang()` against an ill-formed tag
+
+`src/lang.rs`, `range_matches`: a language tag with a subtag longer than 8 characters matches no range, as in
+Chrome (and pyro-dom's `lang_range_matches`). WPT css/selectors/selectors-4 `lang-singleton-subtag-matching`.
+
+## Classes from the no-namespace `class` attribute only
+
+`src/node/element.rs` (`ElementData::new`), `src/mutator.rs` (`set_attribute`, `clear_attribute`): only a
+`class` attribute in no namespace gives the element's classes, as `id` already did; an XHTML-namespaced
+`xhtml:class` in an XML document does not. WPT css/selectors/old-tests `css3-modsel-171`.
+
+## Quirks-mode selector matching
+
+`src/document.rs` (`BaseDocument::new`), `src/stylo.rs` (`TDocument::quirks_mode`, the `:has()` invalidators): a
+document made with `DocumentConfig::quirks_mode` gives its `Stylist` `QuirksMode::Quirks`, so ID and class
+selectors match ASCII case-insensitively there, as in every browser (HTML "case-sensitivity of selectors"). Its
+author sheets already parsed in quirks mode (`BaseDocument::sheet_quirks_mode`); style attributes and CSSOM edits
+still parse in no-quirks mode. WPT css/selectors/invalidation `quirks-mode-stylesheet-dynamic-add-001`.
+## MathML fractions (`layout/math.rs`)
+
+An ordinary `<mfrac>` (MathML namespace, `display: inline`, exactly two element children that are in flow
+and hold no block box, no `::before`/`::after`, no text beside them) is built with its numerator and
+denominator as its layout children (`NodeFlags::IS_MATH_FRACTION`, `construct_fraction`) and laid out by
+`LayoutPassState::compute_math_fraction_layout` (Chromium's `MathMLFractionLayoutAlgorithm`): each child at its
+max-content size, centred, its baseline shifted up or down from the fraction's by the primary font's OpenType
+MATH constants (`BlitzFontMetricsProvider::math_parameters_for` reads the `MathConstants` table directly) or
+Chromium's fallbacks without a MATH table (bar 0.05em, gaps one bar or three in display style, stack gap three or
+seven, shifts zero, axis half the x-height). `linethickness` is a length or a percentage of the default. The bar
+is recorded on the element (`ElementData::math_fraction_bar`) and painted by blitz-paint
+(`draw_math_fraction_bar`). Every `mfrac` is an atomic inline (`replaced::is_inline_box`): one that is not
+ordinary holds its children's inline layout. `assets/default.css` gets MathML Core's fraction rules
+(`math-style`, `padding-inline: 1px`, `math-depth: auto-add; font-size: math` on its children). Not done: operator
+spacing, `numalign`/`denomalign`/`bevelled`, `math-shift`, vertical or right-to-left math, the `math` root's own
+layout (display centring, `font-family: math`). Tests: `crates/pyro-render/tests/mathml_fraction.rs`, unit tests in
+`layout/math.rs`.
+
+## A scroll container's in-flow bounds take boxes empty in one axis
+
+`src/resolve.rs`, `padded_inflow_box` and its callers (`scrollport`): a scroll container's padded in-flow box of a child
+empty in a single axis is no longer dropped; it is united with the scrollport (where Chromium's in-flow bounds
+start) and counts when the union is empty in neither axis. `unite_overflow` still leaves such a child out of a box
+that does not scroll. As Chrome 153 measured: a 0x100 child of a 100x0 scroller gives scrollHeight 100, a 300x0 child
+of a 100x100 one scrollWidth 300, of a 0x0 scroller nothing, and a flex item shrunk to no width keeps its
+margin-inline-end. A self-collapsing block (`self_collapses`: no height, only self-collapsing children, no formatting context root, not
+floated or replaced) reaches to the end of the margins collapsed through it from where its block starts: after its
+border box, `collapse(prev, top, bottom) - collapse(prev, top)` (after a 300px block, `margin: 50px 0`,
+`margin: 0 0 50px` and `margin: 20px 0 50px` all give 350, as Chrome). WPT css-overflow `scrollable-overflow-zero-one-axis`,
+`scrollable-overflow-*with-flex-item-margin-inline-end*`; tests
+`a_box_empty_in_one_axis_still_extends_its_scrollers_overflow_like_chromium` and
+`only_a_scroll_containers_in_flow_bounds_take_boxes_empty_in_one_axis` (pyro-layout).

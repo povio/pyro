@@ -1,0 +1,128 @@
+[
+  {
+    "fixture": {
+      "css": false,
+      "shape": "locked",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 128, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "plain",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 128, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "control",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": null,
+      "first": null,
+      "final": null,
+      "signed": null
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "locked",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 128, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "plain",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "first": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "final": [
+        "b",
+        "rgb(0, 128, 0)"
+      ],
+      "signed": [
+        "b",
+        "rgb(0, 128, 0)"
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "control",
+      "value": "000000fff"
+    },
+    "glyph": {
+      "base": null,
+      "first": null,
+      "final": null,
+      "signed": null
+    }
+  }
+]

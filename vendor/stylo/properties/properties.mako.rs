@@ -401,6 +401,13 @@ impl NonCustomPropertyId {
     /// Returns whether a given rule allows a given property.
     #[inline]
     pub(super) fn allowed_in_rule(self, rule_types: CssRuleTypes) -> bool {
+        // A margin rule parsed on its own, outside its @page (Pyro's CSSOM reparses a CSSMarginRule's
+        // declarations), takes every property, as Chrome's margin rules do (WPT css-page cssom/margin-002,
+        // parsing/margin-rules-002). Upstream reaches the same answer through an empty intersection below,
+        // in release builds only.
+        if rule_types == CssRuleTypes::from(CssRuleType::Margin) {
+            return true;
+        }
         let allowed_types = rule_types.intersection(CssRuleTypes::DECLARATION_ALLOWED_TYPES);
         debug_assert!(
             !allowed_types.is_empty(),
@@ -809,6 +816,11 @@ impl LogicalMappingData {
 }
 
 impl LonghandId {
+    /// Whether relative font units in this longhand use the inherited metrics.
+    pub fn uses_parent_font_metrics(self) -> bool {
+        matches!(self, ${" | ".join("Self::" + p.camel_case for p in data.longhands if p.is_font_affecting())})
+    }
+
     /// Returns an iterator over all the shorthands that include this longhand.
     pub fn shorthands(self) -> NonCustomPropertyIterator<ShorthandId> {
         // first generate longhand to shorthands lookup map
@@ -2887,8 +2899,8 @@ macro_rules! longhand_properties_idents {
 #[cfg(feature = "gecko")]
 size_of_test!(ComputedValues, 248);
 #[cfg(feature = "servo")]
-// pyro: + `pyro_unvisited`.
-size_of_test!(ComputedValues, 240);
+// pyro: + `pyro_unvisited` and the shared Page style struct.
+size_of_test!(ComputedValues, 248);
 
 // FFI relies on this.
 size_of_test!(Option<Arc<ComputedValues>>, 8);

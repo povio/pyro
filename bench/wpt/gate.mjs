@@ -37,12 +37,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   MAX_IGNORED_INCOMPLETE, consensus, differs, entryOf, formatBaseline, readBaselineAt, writeBaselineAt, isImprovement, isRegression, judge, lostCount,
-  mergeEntry, newMs, passCount, passing, readFlaky, readJson, roundMs, serverFor, skippable, weakening, wholePage,
+  isWorkerVariant, mergeEntry, newMs, passCount, passing, readFlaky, readJson, roundMs, serverFor, skippable, weakening, wholePage,
 } from './lib.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const [cmd, ...argv] = process.argv.slice(2);
-const FLAGS = ['--missing-shards', '--testdriver', '--full', '--no-rerun', '--no-check', '--replace', '--prune', '--durations', '--reuse-context', '--accept-loss', '--suggest'];
+const FLAGS = ['--missing-shards', '--testdriver', '--worker-globals', '--full', '--no-rerun', '--no-check', '--replace', '--prune', '--durations', '--reuse-context', '--accept-loss', '--suggest'];
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
 const flag = (k) => argv.includes(k);
 const positional = () => argv.filter((a, i) => !a.startsWith('--') && !(argv[i - 1]?.startsWith('--') && !FLAGS.includes(argv[i - 1])));
@@ -100,6 +100,8 @@ function run() {
   if (baseline) common.push('--baseline', BASELINE_FILE);
   for (const k of ['--dirs', '--match', '--timeout', '--long-timeout', '--sample-encoding', '--slow-jobs']) if (opt(k)) common.push(k, opt(k));
   if (flag('--reuse-context')) common.push('--reuse-context');
+  // Worker variants of testharness pages (run.mjs --worker-globals; it needs --server wptserve).
+  if (flag('--worker-globals')) common.push('--worker-globals');
   // The server (README "wptserve"): reftests and crashtests are served by wptserve, with testdriver, so no reftest
   // or crashtest is left out for needing either; testharness pages by serve.mjs unless --server wptserve.
   const { server, testdriver } = serverFor(KIND, opt('--server'), flag('--testdriver'));
@@ -236,7 +238,18 @@ function check(files) {
   if (baseline) md += `| baseline (WPT ${baseline.wpt.revision.slice(0, 12)}) | ${Object.keys(baseline.tests).length} | ${before} |\n`;
   const skippedNote = L.skipped.size ? `, ${L.skipped.size} skipped (nothing to protect)` : '';
   const nowPass = cmp.reduce((a, c) => a + (c.runs > 1 ? consensus(c.runList).pass.length : passing(c.t).length), 0);
-  md += `| this run | ${L.pages.size} run${skippedNote} | ${baseline ? `${before - lost + gained} (−${lost} +${gained})` : nowPass} |\n\n`;
+  md += `| this run | ${L.pages.size} run${skippedNote} | ${baseline ? `${before - lost + gained} (−${lost} +${gained})` : nowPass} |\n`;
+  // Worker variants (--worker-globals) on a line of their own, so the window pages compare with runs without them.
+  const workers = cmp.filter((c) => isWorkerVariant(c.url));
+  if (workers.length) {
+    const passOf = (c) => (c.runs > 1 ? consensus(c.runList).pass.length : passing(c.t).length);
+    const line = (label, list) => {
+      const all = list.filter((c) => (c.t.subtests?.length ?? 0) > 0 && passOf(c) === c.t.subtests.length).length;
+      return `| ${label} | ${list.length} (${all} with every subtest passing) | ${list.reduce((a, c) => a + passOf(c), 0)} |\n`;
+    };
+    md += line('… window pages', cmp.filter((c) => !isWorkerVariant(c.url))) + line('… worker variants', workers);
+  }
+  md += '\n';
   const walls = L.runs.map((r) => `${(r.wallMs / 1000).toFixed(0)} s`).join(' / ');
   // What discovery left out, by reason (the same in every shard), and the server that decided part of it.
   const excl = Object.entries(L.runs[0].excluded ?? {}).filter(([why]) => !NOT_PAGES.has(why)).sort((a, b) => b[1] - a[1]);

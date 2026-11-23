@@ -28,7 +28,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, discover, discoverReftests, plan, shard, readBaselineAt, readJson } from './lib.mjs';
-import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
+import { REFTEST_CONTEXT, reftestEnv, runReftest, testharnessEnv } from './reftest.mjs';
 import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
 import { BROWSER_HOST, startProxy, startWptserve } from './wptserve.mjs';
 import { installTestdriver } from './testdriver.mjs';
@@ -59,6 +59,8 @@ const WPTSERVE = SERVER === 'wptserve';
 // --testdriver (with --server wptserve): testdriver pages run, testdriver-vendor.js driving the browser through the
 // runner (testdriver.mjs). README "testdriver".
 const TESTDRIVER = argv.includes('--testdriver');
+const workerGlobals = argv.includes('--worker-globals');
+if (workerGlobals && (!WPTSERVE || KIND !== 'testharness')) throw new Error('--worker-globals needs testharness with --server wptserve');
 if (TESTDRIVER && !WPTSERVE) throw new Error('--testdriver needs --server wptserve');
 const BASELINE = opt('--baseline') && readBaselineAt(opt('--baseline'));
 const [SHARD, SHARDS] = (opt('--shard', '0/1')).split('/').map(Number);
@@ -72,7 +74,7 @@ if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}:
 if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);
 
 function selectTests() {
-  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER });
+  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER, workerGlobals });
   let sel = tests;
   const M = opt('--match') && new RegExp(opt('--match'));
   if (M) sel = sel.filter((t) => M.test(t.url));
@@ -203,7 +205,7 @@ async function startBrowser() {
   child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'error', '--load-resources', 'stylesheet', '--load-resources', 'iframe', '--cdp-max-connections', '64'],
     // PYRO_PARENT_PID: the browser exits with this runner however it ends. It runs in a process group of its own, so a
     // runner killed with its CI job (a cancelled or superseded run) left it serving on the self-hosted machine.
-    { stdio: KIND === 'crashtest' ? ['ignore', 'ignore', 'pipe'] : 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), ...(RENDERS ? reftestEnv(WPT) : ahemEnv(WPT)), ...(KIND === 'crashtest' ? { RUST_BACKTRACE: process.env.RUST_BACKTRACE ?? '0' } : {}) } });
+    { stdio: KIND === 'crashtest' ? ['ignore', 'ignore', 'pipe'] : 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), ...(RENDERS ? reftestEnv(WPT) : testharnessEnv(WPT)), ...(KIND === 'crashtest' ? { RUST_BACKTRACE: process.env.RUST_BACKTRACE ?? '0' } : {}) } });
   if (child.stderr) watchStderr(child.stderr);
   for (let i = 0; i < 1000; i++) {
     try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); if (r.ok) { endpoint = `http://127.0.0.1:${port}`; return; } } catch {}
@@ -221,7 +223,8 @@ function waitForReport(ms) {
     const finish = (complete) => {
       if (settled) return;
       settled = true;
-      resolve({ complete, log: typeof report === 'object' && report ? report.log : null });
+      const current = typeof report === 'object' && report ? report : null;
+      resolve({ complete, log: current?.log ?? null, harnessStatus: current?.harnessStatus });
     };
     setTimeout(() => finish(false), ms);
     const hook = () => {
@@ -279,7 +282,7 @@ async function runOne(slot, t, gen) {
     const left = t.limit - (Date.now() - t0);
     // A navigation inside the test destroys the context the wait runs in: wait again in the new one.
     const r = left > 0 ? await page.evaluate(waitForReport, left).catch(() => null) : null;
-    if (r?.complete) return { status: 'complete', log: r.log, ms: Date.now() - t0 };
+    if (r?.complete) return { status: 'complete', log: r.log, harnessStatus: r.harnessStatus, ms: Date.now() - t0 };
     if (!r) replaced();
     if (Date.now() - t0 >= t.limit) {
       const partial = r?.log ?? (await page.evaluate(() => (typeof report === 'object' && report ? report.log : null)).catch(() => null));
@@ -489,7 +492,7 @@ async function worker(q) {
     trace(`end ${w} ${t.url} ${r.status} ${r.ms ?? ''}`);
     // A reftest's stage timings, and the worker's own time around the page (`gap`: from the previous page's end to
     // this page's start, i.e. queueing, solo waits and context resets).
-    results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log), ...(r.stages ? { stages: { ...r.stages, gap: startedAt - (slot.lastEnd ?? startedAt) } } : {}) });
+    results.push({ ...meta, status: r.status, harnessStatus: r.harnessStatus, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log), ...(r.stages ? { stages: { ...r.stages, gap: startedAt - (slot.lastEnd ?? startedAt) } } : {}) });
     slot.lastEnd = Date.now();
     lastFinish = Date.now();
     if (++done % 100 === 0 || Date.now() - lastProgress > 30000) {
@@ -522,7 +525,7 @@ const serverCpuS = server ? cpuOf(server.pid) : 0;
 const ru = process.resourceUsage();
 const run = {
   label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: opt('--dirs') === 'all' ? ['all'] : DIRS, jobs: JOBS,
-  restricted: RESTRICTED, reuseContext: REUSE, server: SERVER, testdriver: TESTDRIVER, wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
+  restricted: RESTRICTED, reuseContext: REUSE, server: SERVER, testdriver: TESTDRIVER, workerGlobals, wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
   wallMs, loopLagMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, watchdogKills, excluded, ...(info ? { info } : {}), results,
 };
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(run)); try { fs.unlinkSync(OUT + '.partial'); } catch {} }

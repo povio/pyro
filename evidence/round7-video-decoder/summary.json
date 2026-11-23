@@ -1,0 +1,21 @@
+{
+  "selection": {
+    "base/full": 4,
+    "base/passes": 165,
+    "base/complete": 42,
+    "final/full": 12,
+    "final/passes": 274,
+    "final/complete": 42,
+    "chrome/full": 42,
+    "chrome/passes": 801,
+    "chrome/complete": 42,
+    "gains": 109,
+    "losses": 0,
+    "matchedChromeGains": 109,
+    "failToOptionalUnsupported": 18,
+    "chromeExtraNames": 294,
+    "chromeOnlyPass": 527,
+    "lpOnlyPass": 0,
+    "namesChanged": 0
+  }
+}

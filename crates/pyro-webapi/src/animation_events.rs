@@ -65,6 +65,8 @@ pub(crate) struct Timeline {
     id: u64,
     /// The page clock when it started (its style change), in ms.
     start_ms: f64,
+    /// The style change event that started it ([`State::style_events`]).
+    generation: u64,
     pub(crate) delay_ms: f64,
     pub(crate) duration_ms: f64,
     /// 1 for a transition.
@@ -102,6 +104,9 @@ pub(crate) struct Timeline {
     /// A transition: the before-change and after-change styles it runs between
     /// (`getComputedStyle` interpolates them, `animation_frame::Source::transition_value`).
     pub(crate) styles: Option<(StyleSnapshot, StyleSnapshot)>,
+    /// A transition: its reversing-adjusted start style (css-transitions-1 §3; `None`: its
+    /// before-change style) and its reversing shortening factor (1 unless it reversed another).
+    reversing: Option<(StyleSnapshot, f64)>,
     /// pyro: a CSS animation's `animation-timeline` and range as last handed to script (`None`:
     /// time-based), to tell its object of a change.
     timeline_text: Option<(String, String, String)>,
@@ -171,6 +176,9 @@ pub(crate) struct State {
     listed: Cell<bool>,
     /// The last timeline id handed out.
     ids: Cell<u64>,
+    /// Style change events processed so far ([`update`]): a transition's generation, which orders
+    /// `getAnimations()` (one event's transitions share it and list by property name).
+    style_events: Cell<u64>,
     /// Content roots seen styled `display: none` where Chrome has
     /// `content-visibility: hidden` (see [`hides_content`]): their content
     /// keeps a before-change style while hidden.
@@ -202,6 +210,12 @@ pub(crate) struct State {
     /// root removed and inserted again has no before-change styles, and a
     /// removed root does not keep its content's styles until navigation.
     hidden_roots_removals: Cell<u64>,
+    /// `Dom::removal_count` when [`cancel_orphaned_transitions`] last looked for running
+    /// transitions whose element left its place in the tree.
+    transitions_removals: Cell<u64>,
+    /// A style change event canceled a running transition: the `CSSTransition` objects script
+    /// holds are told ([`sync_canceled_runs`]), so that their `ready` rejects and they go idle.
+    runs_canceled: Cell<bool>,
 }
 
 /// A CSS animation or transition `getAnimations()` lists.
@@ -217,6 +231,8 @@ pub(crate) struct Run {
     /// The animation's name, or the transitioning property.
     pub name: String,
     pub start_ms: f64,
+    /// The style change event that started it (orders simultaneous transitions).
+    pub generation: u64,
     pub delay_ms: f64,
     pub duration_ms: f64,
     pub iterations: f64,
@@ -225,6 +241,7 @@ pub(crate) struct Run {
     /// The effect's easing (a transition's; `linear` for an animation, whose
     /// timing function applies per keyframe).
     pub easing: String,
+    pub keyframe_easing: String,
     /// The local time an animation paused by its style holds.
     pub paused_at: Option<f64>,
     /// pyro: an animation's `animation-trigger` item, the element declaring the timeline trigger
@@ -233,6 +250,10 @@ pub(crate) struct Run {
 }
 
 impl State {
+    pub(crate) fn transition_frames(&self, id: u64) -> Option<std::sync::Arc<pyro_dom::animation::TextKeyframes>> {
+        self.transitions.borrow().iter().find(|run| run.id == id)?.keyframes()
+    }
+
     /// The animation clock (page time, ms) of the running task: its first reading, held for the
     /// rest of the task, so that the CSS animations and transitions a task starts start at the
     /// time the frame samples them (their time is 0 until the clock moves, as a browser's pending
@@ -242,7 +263,7 @@ impl State {
         match self.task_clock.get() {
             Some((at, now)) if at == seq => now,
             _ => {
-                let now = crate::event::page_now_ms(page);
+                let now = page.timeline_now_ms();
                 self.task_clock.set(Some((seq, now)));
                 now
             }
@@ -530,6 +551,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         return;
     }
     let state = &page.animation_events;
+    state.style_events.set(state.style_events.get() + 1);
     let mut planned = Vec::new();
     {
         let dom = page.dom.borrow();
@@ -544,12 +566,20 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         let mut wanted = Vec::new();
         let style_of = |e: NodeId| style.stylo_style(&dom, e);
         let pseudo_rules = rules.has_pseudo_rules();
+        let display_effects = std::cell::OnceCell::new();
+        let may_sample_display = |target| {
+            display_effects.get_or_init(|| {
+                crate::animation_frame::frame(page, state.task_now(page), false).elements.into_iter()
+                    .filter(|element| element.animations.iter().any(|effect| rules.may_sample_display(effect)))
+                    .map(|element| element.key).collect::<FxHashSet<_>>()
+            }).contains(&pyro_dom::snapshot::render_key(target))
+        };
         for el in rules.animation_candidates(&dom, page.document()) {
-            if dom.is_connected(el).unwrap_or(false) {
+            if dom.is_connected(el).unwrap_or(false) && !animation_display_suppressed(&dom, style, el, &may_sample_display) {
                 wanted.extend(rules.element(&dom, el, &style_of).animations.into_iter().map(|a| (el, None, a)));
                 // Its `::before`/`::after`, while it generates a box.
                 if pseudo_rules {
-                    for pseudo in [PseudoElement::Before, PseudoElement::After] {
+                    for pseudo in [PseudoElement::Before, PseudoElement::After, PseudoElement::Marker] {
                         let timing = rules.element_for(&dom, el, Some(pseudo), &style_of);
                         if !timing.animations.is_empty() && style.pseudo_style(&dom, el, pseudo, false).is_some() {
                             wanted.extend(timing.animations.into_iter().map(|a| (el, Some(pseudo), a)));
@@ -568,47 +598,54 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             Err(_) => FxHashSet::default(),
         };
         let mut animations = state.animations.borrow_mut();
-        let before = animations.len();
-        animations.retain(|known| {
-            let keep = wanted.iter().any(|(el, pseudo, a)| {
-                *el == known.el && *pseudo == known.pseudo && known.timing.as_ref().is_some_and(|t| t.same_run(a))
-            });
-            if !keep {
-                known.live.set(false);
-                if !known.ended.get() && dom.is_alive(known.el) && dom.is_connected(known.el).unwrap_or(false) {
-                    planned.push(Planned {
-                        el: known.el,
-                        pseudo: pseudo_name(known.pseudo),
-                        ty: "animationcancel",
-                        transition: false,
-                        name: known.name.clone(),
-                        elapsed_s: 0.0,
-                        after: Duration::ZERO,
-                        live: Rc::new(Cell::new(true)),
-                        ends: None,
-                        epoch: None,
-                        step: None,
-                    });
-                }
+        let mut previous: Vec<_> = animations.drain(..).map(Some).collect();
+        let mut occurrences = FxHashMap::default();
+        for (index, run) in previous.iter().flatten().enumerate() {
+            occurrences.entry((run.el, run.pseudo, run.name.clone())).or_insert_with(Vec::new).push(index);
+        }
+        let matches: Vec<_> = wanted
+            .into_iter()
+            .rev()
+            .map(|(el, pseudo, animation)| {
+                let known = occurrences
+                    .get_mut(&(el, pseudo, animation.name.clone()))
+                    .and_then(Vec::pop)
+                    .and_then(|index| previous[index].take());
+                (el, pseudo, animation, known)
+            })
+            .collect();
+        let mut changed = false;
+        for known in previous.into_iter().flatten() {
+            changed = true;
+            known.live.set(false);
+            if !known.ended.get() && dom.is_alive(known.el) && dom.is_connected(known.el).unwrap_or(false) {
+                planned.push(Planned {
+                    el: known.el,
+                    pseudo: pseudo_name(known.pseudo),
+                    ty: "animationcancel",
+                    transition: false,
+                    name: known.name.clone(),
+                    elapsed_s: 0.0,
+                    after: Duration::ZERO,
+                    live: Rc::new(Cell::new(true)),
+                    ends: None,
+                    epoch: None,
+                    step: None,
+                });
             }
-            keep
-        });
-        let mut changed = animations.len() != before;
+        }
         // pyro: a run script controls changed: its object takes the CSS properties script did not
         // override (`animations.js` `cssFollow`), in a task.
         let mut scripted_changed = false;
         let mut any_trigger = false;
         // (Each known run is one wanted animation's: two of one name are two runs.)
-        let mut claimed: FxHashSet<u64> = FxHashSet::default();
-        for (el, pseudo, animation) in wanted {
-            if let Some(known) = animations.iter_mut().find(|known| {
-                !claimed.contains(&known.id)
-                    && known.el == el
-                    && known.pseudo == pseudo
-                    && known.timing.as_ref().is_some_and(|t| t.same_run(&animation))
-            })
-            {
-                claimed.insert(known.id);
+        for (el, pseudo, animation, known) in matches.into_iter().rev() {
+            if let Some(mut known) = known {
+                let timing = known.timing.as_mut().unwrap();
+                if timing.index != animation.index {
+                    timing.index = animation.index;
+                    changed = true;
+                }
                 // pyro: new times change the run, which goes on from its start (CSS Animations 1
                 // § 3), its events planned again.
                 if !known.timing.as_ref().unwrap().same_times(&animation) {
@@ -632,7 +669,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                             known.ended.set(false);
                         }
                         let (local, held) = (known.local_ms(now_ms), known.paused_at.is_some());
-                        plan_animation(known, local, 1.0, held, &mut planned);
+                        plan_animation(&mut known, local, 1.0, held, &mut planned);
                     }
                 }
                 // A change of how it plays: paused holds its local time,
@@ -666,9 +703,10 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                     scripted_changed |= scripted_ids.contains(&known.id);
                     if replan && !scripted_ids.contains(&known.id) {
                         let (local, held) = (known.local_ms(now_ms), known.paused_at.is_some());
-                        plan_animation(known, local, 1.0, held, &mut planned);
+                        plan_animation(&mut known, local, 1.0, held, &mut planned);
                     }
                 }
+                animations.push(known);
                 continue;
             }
             changed = true;
@@ -683,6 +721,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 timeline_text: driven.then(|| timeline_text_of(style, &dom, el, pseudo, animation.index)).flatten(),
                 id: state.next_id(),
                 start_ms: now_ms,
+                generation: state.style_events.get(),
                 delay_ms: animation.delay_ms,
                 duration_ms: animation.duration_ms,
                 iterations: animation.iterations,
@@ -700,6 +739,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 easing: None,
                 keyframes: None,
                 styles: None,
+                reversing: None,
             };
             // Held at 0 when paused: it starts only where a negative delay
             // put it in its active phase already, and goes no further. (A scroll-driven one has
@@ -719,6 +759,10 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         // Style change events of the elements whose style changed.
         if state.transitions_tracked(&dom, style) {
             transitions_from_changes(state, &dom, style, now_ms, &mut planned);
+        } else {
+            // Untracked: the used `anchor()` px changes are dropped, so the first tracked style
+            // change event does not transition from a long-stale value.
+            let _ = style.take_anchor_evals(&dom);
         }
         let mut transitions = state.transitions.borrow_mut();
         let count = transitions.len();
@@ -743,7 +787,19 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         }
     }
     finish_overlay_exits(page);
+    sync_canceled_runs(page);
     schedule(page, planned, defer);
+}
+
+/// The `CSSTransition` objects of the transitions a style change event canceled go idle (their
+/// `ready` rejects with an `AbortError`), in a task, as `getAnimations()` would find them: Chrome
+/// cancels them in the style change event (WPT `CSSTransition-ready`, `CSSTransition-canceling`).
+/// Only once script called `getAnimations()` (no object exists before).
+fn sync_canceled_runs(page: &Rc<PageDom>) {
+    let state = &page.animation_events;
+    if state.runs_canceled.replace(false) && state.listed.get() {
+        crate::animations::push_css_runs(page, false);
+    }
 }
 
 /// Script changed the state of CSS animation `id`'s object (play, pause,
@@ -842,6 +898,7 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
         let Ok(dom) = page.dom.try_borrow() else { return Vec::new() };
         let Some(layout) = page.try_layout() else { return Vec::new() };
         let style = layout.style();
+        track_style_changes(state, &dom, style);
         style.engine_styled(&dom);
         state.stamp.get() == Some(style.observation_stamp(&dom))
     };
@@ -873,8 +930,9 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
                     })
                     .flatten(),
                 transition,
-                name: t.name.clone(),
+                name: if transition { shown_property(&t.name).to_owned() } else { t.name.clone() },
                 start_ms: t.start_ms,
+                generation: t.generation,
                 delay_ms: t.delay_ms,
                 duration_ms: t.duration_ms,
                 iterations: t.iterations,
@@ -884,9 +942,11 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
                     None => "backwards".to_owned(),
                 },
                 easing: match transition {
-                    true => t.easing.clone().unwrap_or_else(|| "ease".to_owned()),
+                    // (Sampled at full precision; shown as it serializes.)
+                    true => t.easing.as_deref().map_or_else(|| "ease".to_owned(), pyro_dom::timing::shown_easing),
                     false => "linear".to_owned(),
                 },
+                keyframe_easing: style.and_then(|s| s.easing.as_deref()).map_or_else(|| "ease".into(), pyro_dom::timing::shown_easing),
                 paused_at: t.paused_at,
                 trigger: t.timing.as_ref().and_then(|timing| timing.trigger.clone()).and_then(|item| {
                     let name = item.split_whitespace().next()?.to_owned();
@@ -936,6 +996,8 @@ pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
         let Some(layout) = page.try_layout() else { return };
         let style = layout.style();
         if !state.transitions_tracked(&dom, style) {
+            // (As `update`: untracked used `anchor()` px changes are dropped.)
+            let _ = style.take_anchor_evals(&dom);
             return;
         }
         track_style_changes(state, &dom, style);
@@ -952,6 +1014,7 @@ pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
         }
     }
     finish_overlay_exits(page);
+    sync_canceled_runs(page);
     schedule(page, planned, true);
 }
 
@@ -971,6 +1034,44 @@ pub(crate) fn may_transition_overlay(page: &Rc<PageDom>, el: NodeId) -> bool {
         .transitions
         .iter()
         .any(|t| t.allow_discrete && matches!(t.property.as_str(), "overlay" | "all"))
+}
+
+/// Hiding `el` (kept in the top layer for its `overlay` transition) after its style flush
+/// ([`style_flush`]): an `overlay` transition of `el` started in this task, its `transitionstart`
+/// not fired (a pending transition, its time still 0: typically `none` → `auto` when it was shown
+/// and hidden with no rendering in between, the show's flush styling it out of the top layer and
+/// the hide's in it), is dropped without events, as if never started. Reversing it at the next
+/// style change event would shorten the `auto` → `none` transition that keeps the element in the
+/// top layer by its progress, 0, taking the element out at once (WPT css-position
+/// `overlay/overlay-transition-backdrop`). One started in an earlier task (an opening that
+/// rendered) is reversed as usual. (A `transitionrun` a listener already heard gets no
+/// `transitioncancel`.)
+pub(crate) fn drop_unrendered_overlay_transition(page: &Rc<PageDom>, el: NodeId) {
+    let state = &page.animation_events;
+    let now = state.task_now(page);
+    let Ok(mut transitions) = state.transitions.try_borrow_mut() else { return };
+    let count = transitions.len();
+    transitions.retain(|t| {
+        let unrendered = t.el == el
+            && t.pseudo.is_none()
+            && t.name == "overlay"
+            && t.live.get()
+            && !t.ended.get()
+            && t.start_ms == now
+            && t.progress.get() == 0;
+        if unrendered {
+            t.live.set(false);
+        }
+        !unrendered
+    });
+    if transitions.len() != count {
+        drop(transitions);
+        state.bump();
+        // (The `CSSTransition` script may hold goes idle.)
+        if state.listed.get() {
+            crate::animations::push_css_runs(page, false);
+        }
+    }
 }
 
 /// The elements kept in the top layer after leaving it ([`pyro_dom::Dom::keep_in_top_layer`])
@@ -1003,6 +1104,8 @@ fn finish_overlay_exits(page: &Rc<PageDom>) {
 /// sync right before the read's full one (two syncs per read of a changed
 /// document).
 pub(crate) fn layout_flush(page: &Rc<PageDom>, el: NodeId) {
+    // pyro: an iframe showing a responsively embedded document is read at its content's size.
+    page.sync_responsive_frames();
     if let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) {
         if !page.is_disposed() && !page.scripting_disabled() {
             track_style_changes(&page.animation_events, &dom, layout.style());
@@ -1041,12 +1144,18 @@ fn transitions_from_changes(
     planned: &mut Vec<Planned>,
 ) {
     drop_removed_hidden_roots(state, dom);
+    cancel_orphaned_transitions(state, dom, style, now_ms, planned);
     let changes = style.take_style_changes(dom);
-    if changes.is_empty() {
+    // The elements whose used `anchor()`/`anchor-size()` px changed since the last style change
+    // event, with their px then and now.
+    let mut evals: FxHashMap<NodeId, ([Option<f32>; 10], [Option<f32>; 10])> =
+        style.take_anchor_evals(dom).into_iter().map(|(el, before, after)| (el, (before, after))).collect();
+    if changes.is_empty() && evals.is_empty() {
         return;
     }
     let rules = state.rules(dom, style);
     let mut starting = Starting::default();
+    let mut hidden = FxHashSet::default();
     for (el, pseudo, before, now) in changes {
         // The document's own tree only: the rules are the document's (a
         // document rule does not style a shadow tree's elements).
@@ -1063,6 +1172,7 @@ fn transitions_from_changes(
             }
             continue;
         }
+        let (before, now) = anchor_px_styles(style, el, before, now, evals.remove(&el));
         let (was_none, is_none) = (displays_none(&before), displays_none(&now));
         if !was_none && !is_none {
             start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
@@ -1086,6 +1196,9 @@ fn transitions_from_changes(
             keep_hidden_content(state, dom, style, &rules, el);
         } else if is_none {
             drop_hidden_content(state, dom, el);
+            if !was_none {
+                hidden.insert(el);
+            }
         }
         if was_content {
             reveal_hidden_content(state, dom, style, &rules, el, now_ms, &mut starting);
@@ -1100,7 +1213,144 @@ fn transitions_from_changes(
             }
         }
     }
+    // An element whose `anchor()`/`anchor-size()` px changed with no style change (its anchor
+    // moved or resized, another element took the anchor name): its computed values changed, as
+    // Chrome computes them to px (WPT css-anchor-position `anchor-transition-eval`, `-name`).
+    for (el, (px_before, px_now)) in evals {
+        if !dom.in_document_tree(el) || hidden.contains(&el) {
+            continue;
+        }
+        let Some(now) = style.stylo_style(dom, el) else { continue };
+        if displays_none(&now) || displays_none_or_hidden(dom, style, el) {
+            continue;
+        }
+        let (before, now) = anchor_px_pair(&now, &now, &px_before, &px_now);
+        start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
+    }
     starting.commit(state, planned);
+    if !hidden.is_empty() {
+        let mut running = state.transitions.borrow_mut();
+        let previous = running.len();
+        running.retain(|transition| {
+            if !hidden.iter().any(|&root| root == transition.el || is_ancestor(dom, root, transition.el)) {
+                return true;
+            }
+            cancel_running(state, transition, now_ms, planned);
+            false
+        });
+        if running.len() != previous {
+            state.bump();
+        }
+    }
+}
+
+/// The before-change and after-change styles `before` and `now` of `el` with their `anchor()` and
+/// `anchor-size()` insets and sizes computed to the px layout used then and now (`eval`: the px of
+/// an element whose px changed since the last style change event; otherwise its px now, for both),
+/// as Chrome computes them before it transitions: a changed `position-anchor` or anchor
+/// transitions though the text of `top: anchor(top)` stays the same.
+fn anchor_px_styles(
+    style: &pyro_dom::style::StyleEngine,
+    el: NodeId,
+    before: StyleSnapshot,
+    now: StyleSnapshot,
+    eval: Option<([Option<f32>; 10], [Option<f32>; 10])>,
+) -> (StyleSnapshot, StyleSnapshot) {
+    let queries = |s: &StyleSnapshot| (0..10).any(|slot| pyro_dom::animation::anchor_slot_queries(s, slot));
+    if eval.is_none() && !queries(&before) && !queries(&now) {
+        return (before, now);
+    }
+    let Some((px_before, px_now)) = eval.or_else(|| style.anchor_used(el).map(|px| (px, px))) else {
+        return (before, now);
+    };
+    anchor_px_pair(&before, &now, &px_before, &px_now)
+}
+
+/// [`anchor_px_styles`] with the px known: a slot is replaced in both styles, or (one of them
+/// without its px) in neither.
+fn anchor_px_pair(
+    before: &StyleSnapshot,
+    now: &StyleSnapshot,
+    px_before: &[Option<f32>; 10],
+    px_now: &[Option<f32>; 10],
+) -> (StyleSnapshot, StyleSnapshot) {
+    let queries = pyro_dom::animation::anchor_slot_queries;
+    let both = |slot: usize| {
+        (!queries(before, slot) || px_before[slot].is_some()) && (!queries(now, slot) || px_now[slot].is_some())
+    };
+    (
+        pyro_dom::animation::with_anchor_px(before, px_before, both).unwrap_or_else(|| before.clone()),
+        pyro_dom::animation::with_anchor_px(now, px_now, both).unwrap_or_else(|| now.clone()),
+    )
+}
+
+/// Cancels running transition `transition` (unless it ended or was canceled already): its
+/// `transitioncancel`, whose `elapsedTime` is how far its active phase got.
+fn cancel_running(state: &State, transition: &Timeline, now_ms: f64, planned: &mut Vec<Planned>) {
+    if transition.live.replace(false) && !transition.ended.get() {
+        state.runs_canceled.set(true);
+        let local = state.scripted.borrow().values().find(|effect| effect.css_id() == Some(transition.id))
+            .and_then(|effect| effect.current(now_ms)).unwrap_or(now_ms - transition.start_ms);
+        let mut event = cancel_event(transition.el, transition.pseudo, &transition.name);
+        event.elapsed_s = (local - transition.delay_ms).clamp(0.0, transition.duration_ms) / 1000.0;
+        planned.push(event);
+    }
+}
+
+/// The running transitions whose target is no longer rendered where it started are canceled
+/// (css-transitions-1 §3: "if an element is no longer in the document, implementations must
+/// cancel any running transitions on it"; Chrome cancels them too when the element is moved, even
+/// back under the same parent, and when its `::before`/`::after` stops generating a box):
+/// - those of the elements removed from the tree (a subtree's) since the last style change
+///   event, whether or not they were inserted again since;
+/// - those of a pseudo-element its element no longer generates (`content: none`).
+///
+/// One counter check while nothing was removed and no pseudo-element transitions.
+fn cancel_orphaned_transitions(
+    state: &State,
+    dom: &pyro_dom::Dom,
+    style: &pyro_dom::style::StyleEngine,
+    now_ms: f64,
+    planned: &mut Vec<Planned>,
+) {
+    let removals = dom.removal_count();
+    let since = state.transitions_removals.replace(removals);
+    let Ok(mut running) = state.transitions.try_borrow_mut() else { return };
+    if running.is_empty() {
+        return;
+    }
+    // `None`: the log does not go back far enough; every element out of the document then.
+    let removed: Option<Option<FxHashSet<NodeId>>> =
+        (since != removals).then(|| dom.nodes_removed_since(since).map(|nodes| nodes.into_iter().collect()));
+    let has_pseudo = running.iter().any(|t| t.pseudo.is_some() && t.live.get());
+    if removed.is_none() && !has_pseudo {
+        return;
+    }
+    let previous = running.len();
+    running.retain(|transition| {
+        let gone = match &removed {
+            Some(Some(nodes)) => nodes.contains(&transition.el),
+            Some(None) => !dom.is_connected(transition.el).unwrap_or(false),
+            None => false,
+        };
+        let pseudo_gone = !gone
+            && transition.live.get()
+            && !transition.ended.get()
+            && transition.pseudo.is_some_and(|pseudo| {
+                dom.is_alive(transition.el)
+                    && style
+                        .pseudo_style(dom, transition.el, pseudo, false)
+                        .is_none_or(|s| !pyro_dom::timing::generates_pseudo_box(&s))
+            });
+        if !gone && !pseudo_gone {
+            return true;
+        }
+        cancel_running(state, transition, now_ms, planned);
+        false
+    });
+    if running.len() != previous {
+        state.bump();
+    }
 }
 
 /// Whether `el` (after-change style `now`) runs a discrete transition of `display` (or `all`).
@@ -1117,6 +1367,33 @@ fn transitions_display(
         .transitions
         .iter()
         .any(|t| t.allow_discrete && matches!(t.property.as_str(), "display" | "all"))
+}
+
+fn animation_display_suppressed(
+    dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine, el: NodeId, may_sample_display: &impl Fn(NodeId) -> bool,
+) -> bool {
+    if style.displayed_as_synced(dom, el) != Some(false) {
+        return false;
+    }
+    let mut current = Some(el);
+    while let Some(target) = current {
+        if let Some(snapshot) = style.stylo_style(dom, target).filter(displays_none) {
+            let sampled = snapshot.rules.as_ref().is_some_and(|rules| {
+                rules.self_and_ancestors().any(|rule| rule.cascade_level().is_animation())
+            });
+            let ordinary = !sampled || !may_sample_display(target);
+            if ordinary && !hides_content(dom, target)
+                && !matches!(style.transition_value(target, "display"), Some(pyro_dom::animation::TransitionValue::Text(value)) if value != "none") {
+                return true;
+            }
+        }
+        current = dom.assigned_slot_any(target).or_else(|| {
+            let parent = dom.parent(target).ok()??;
+            if dom.is_shadow_root(parent).unwrap_or(false) { dom.fragment_host(parent).ok().flatten() }
+            else { dom.element(parent).ok().map(|_| parent) }
+        });
+    }
+    false
 }
 
 /// Whether the engine's `display: none` of `el` is where Chrome has
@@ -1323,12 +1600,17 @@ fn is_ancestor(dom: &pyro_dom::Dom, ancestor: NodeId, node: NodeId) -> bool {
 /// hundreds per frame, and a pass per start cost more than the restyle.
 #[derive(Default)]
 struct Starting {
+    changed: FxHashMap<(NodeId, Option<PseudoElement>), (StyleSnapshot, Vec<String>)>,
     timelines: Vec<Timeline>,
     /// The properties started, by element, with their index in `timelines`.
-    keys: FxHashMap<(NodeId, Option<PseudoElement>), Vec<(&'static str, usize)>>,
+    keys: FxHashMap<(NodeId, Option<PseudoElement>), Vec<(String, usize)>>,
     /// Their events, planned after the cancel events of the transitions
     /// they replace.
     events: Vec<Planned>,
+    /// The running transitions canceled ([`start_transitions_of`]): those whose end value the
+    /// after-change style no longer has, none replacing them, and those whose current value
+    /// already is the after-change value.
+    ended: FxHashSet<u64>,
 }
 
 fn cancel_event(el: NodeId, pseudo: Option<PseudoElement>, name: &str) -> Planned {
@@ -1351,21 +1633,27 @@ impl Starting {
     /// Replaces the running transitions of the elements and properties that
     /// start again, and starts the new ones.
     fn commit(self, state: &State, planned: &mut Vec<Planned>) {
-        if self.timelines.is_empty() {
+        if self.timelines.is_empty() && self.changed.is_empty() && self.ended.is_empty() {
             return;
         }
         let mut running = state.transitions.borrow_mut();
+        let previous_count = running.len();
         running.retain(|known| {
             let same = self
                 .keys
                 .get(&(known.el, known.pseudo))
                 .is_some_and(|started| started.iter().any(|(name, _)| *name == known.name));
-            if same && known.live.get() && !known.ended.get() {
+            let unlisted = self.changed.get(&(known.el, known.pseudo))
+                .is_some_and(|(style, properties)| !pyro_dom::timing::lists_transition(style, properties, &known.name));
+            let ended = self.ended.contains(&known.id);
+            if (same || unlisted || ended) && known.live.get() && !known.ended.get() {
                 known.live.set(false);
+                state.runs_canceled.set(true);
                 planned.push(cancel_event(known.el, known.pseudo, &known.name));
             }
-            !same
+            !same && !unlisted && !ended
         });
+        if running.len() == previous_count && self.timelines.is_empty() { return; }
         planned.extend(self.events);
         running.extend(self.timelines);
         state.bump();
@@ -1410,20 +1698,50 @@ fn start_transitions_of(
     // The after-change style's custom properties resolve `var()` (a pseudo-element's: the
     // element's).
     let style_of = |e: NodeId| if e == el && pseudo.is_none() { Some(now.clone()) } else { style.stylo_style(dom, e) };
-    let ElementTiming { transitions, .. } = rules.element_for(dom, el, pseudo, &style_of);
-    let mut started: Vec<&'static str> = Vec::new();
-    for transition in &transitions {
+    let ElementTiming { transitions, transition_properties, transition_claims, .. } =
+        rules.element_for(dom, el, pseudo, &style_of);
+    if !state.transitions.borrow().is_empty() {
+        if let Some(properties) = transition_properties {
+            starting.changed.insert((el, pseudo), (now.clone(), properties));
+        }
+    }
+    // Whether an item of `transition-property` after `index` names `longhand` (changed): that item
+    // decides its transition, even one that starts none (a zero combined duration, or `normal`
+    // behavior for a value that does not interpolate).
+    let claimed_later = |index: usize, longhand: &str| {
+        transition_claims.iter().skip(index + 1).flatten().any(|item| {
+            item == "all"
+                || item == longhand
+                || pyro_dom::timing::changed_longhands_with(before, now, item, true).contains(&longhand)
+        })
+    };
+    let mut started = Vec::new();
+    for transition in transitions.iter().rev() {
+        let custom = if transition.property == "all" {
+            pyro_dom::timing::changed_custom_properties(before, now, transition.allow_discrete)
+        } else { Vec::new() };
         let changed =
             pyro_dom::timing::changed_longhands_with(before, now, &transition.property, transition.allow_discrete);
-        for longhand in changed {
-            if started.contains(&longhand) {
+        for longhand in changed.into_iter().chain(custom.iter().map(String::as_str)) {
+            if started.iter().any(|name| name == longhand) || claimed_later(transition.index, longhand) {
                 continue;
             }
-            started.push(longhand);
+            started.push(longhand.to_owned());
             // A property a CSS or script animation drives does not
             // transition: its value changes with the animation's.
             if crate::animation_frame::animates(state, rules, el, pseudo, longhand) {
                 continue;
+            }
+            // Interrupting a running transition of the property: the new one starts from its
+            // current value, and none starts when that already is the after-change value (the
+            // running one is canceled; css-transitions-1 §3).
+            let mut from = before.clone();
+            if let Some((id, sample)) = interrupted_value(state, el, pseudo, longhand, now_ms, style.app_units_per_device_pixel()) {
+                if pyro_dom::animation::same_computed_value(longhand, &sample, now) {
+                    starting.ended.insert(id);
+                    continue;
+                }
+                from = sample;
             }
             // Started already in this style change event (an element of a
             // revealed root that changed too): that one is replaced.
@@ -1435,14 +1753,26 @@ fn start_transitions_of(
                     starting.events.push(cancel_event(el, pseudo, longhand));
                     *first = index;
                 }
-                None => keys.push((longhand, index)),
+                None => keys.push((longhand.to_owned(), index)),
+            }
+            // Reversing a running transition of the property (the after-change value is its
+            // reversing-adjusted start value): shortened by how far it got (css-transitions-1 §3;
+            // WPT `CSSTransition-currentTime`, `CSSTransition-effect`).
+            let (mut delay_ms, mut duration_ms, mut reversing) = (transition.delay_ms, transition.duration_ms, None);
+            if let Some((factor, start)) = reversed_portion(state, el, pseudo, longhand, now, now_ms) {
+                duration_ms *= factor;
+                if delay_ms < 0.0 {
+                    delay_ms *= factor;
+                }
+                reversing = Some((start, factor));
             }
             let timeline = Timeline {
                 timeline_text: None,
                 id: state.next_id(),
                 start_ms: now_ms,
-                delay_ms: transition.delay_ms,
-                duration_ms: transition.duration_ms,
+                generation: state.style_events.get(),
+                delay_ms,
+                duration_ms,
                 iterations: 1.0,
                 el,
                 pseudo,
@@ -1455,10 +1785,11 @@ fn start_transitions_of(
                 epoch: Rc::new(Cell::new(true)),
                 progress: Rc::new(Cell::new(0)),
                 easing: transition.easing.clone(),
-                keyframes: pyro_dom::timing::transition_keyframes(before, now, longhand).map(std::sync::Arc::new),
-                styles: Some((before.clone(), now.clone())),
+                keyframes: pyro_dom::timing::transition_keyframes(&from, now, longhand).map(std::sync::Arc::new),
+                styles: Some((from, now.clone())),
+                reversing,
             };
-            let (delay, duration) = (transition.delay_ms, transition.duration_ms);
+            let (delay, duration) = (delay_ms, duration_ms);
             // (`transitionstart` and `transitionend` belong to the transition's plan, which script
             // replaces through its `CSSTransition`: `scripted_state`.)
             let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, step: Option<u32>| Planned {
@@ -1479,6 +1810,91 @@ fn start_transitions_of(
             starting.events.push(event("transitionend", delay + duration, duration, Some(ENDED)));
             starting.timelines.push(timeline);
         }
+    }
+    // A running transition of a property no transition started for now whose after-change value
+    // is no longer its end value is canceled (css-transitions-1 §3: a zero combined duration, a
+    // value it cannot interpolate to, `transition-behavior` back to `normal` for a discrete one;
+    // WPT `CSSTransition-canceling`, `transition-behavior`).
+    if let Ok(running) = state.transitions.try_borrow() {
+        for known in running.iter() {
+            if known.el != el || known.pseudo != pseudo || !known.live.get() || known.ended.get() {
+                continue;
+            }
+            if started.iter().any(|name| *name == known.name) {
+                continue;
+            }
+            let Some((_, end)) = &known.styles else { continue };
+            if pyro_dom::timing::end_value_differs(end, now, &known.name) {
+                starting.ended.insert(known.id);
+            }
+        }
+    }
+}
+
+/// When the after-change style `now` of `el`'s `pseudo` reverses its running transition of
+/// `longhand` (gives it back that transition's reversing-adjusted start value), the new
+/// transition's reversing shortening factor and its reversing-adjusted start style (the running
+/// one's end): `|portion × old factor + 1 − old factor|`, at most 1, where `portion` is the running
+/// transition's eased progress at its current time (script's, once it set one).
+fn reversed_portion(
+    state: &State,
+    el: NodeId,
+    pseudo: Option<PseudoElement>,
+    longhand: &str,
+    now: &StyleSnapshot,
+    now_ms: f64,
+) -> Option<(f64, StyleSnapshot)> {
+    let running = state.transitions.try_borrow().ok()?;
+    let known = running.iter().find(|t| {
+        t.el == el && t.pseudo == pseudo && t.name == longhand && t.live.get() && !t.ended.get()
+    })?;
+    let (before, end) = known.styles.as_ref()?;
+    let (start, old_factor) = match &known.reversing {
+        Some((start, factor)) => (start, *factor),
+        None => (before, 1.0),
+    };
+    if pyro_dom::timing::end_value_differs(start, now, longhand) {
+        return None;
+    }
+    let local = state
+        .scripted
+        .try_borrow()
+        .ok()
+        .and_then(|s| s.values().find(|e| e.css_id() == Some(known.id)).and_then(|e| e.current(now_ms)))
+        .unwrap_or(now_ms - known.start_ms);
+    let progress = if known.duration_ms > 0.0 {
+        ((local - known.delay_ms) / known.duration_ms).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let portion = pyro_dom::animation::eased_progress(progress, false, known.easing.as_deref().unwrap_or("ease"));
+    let factor = (portion * old_factor + 1.0 - old_factor).abs().min(1.0);
+    Some((factor, end.clone()))
+}
+
+/// The running transition of `el`'s `pseudo`'s `longhand` that a new one interrupts and its
+/// current value (`au_per_dev_px`: the engine's device pixel), when that value is the transition's
+/// own ([`crate::animation_frame::interrupted_transition`]).
+fn interrupted_value(
+    state: &State,
+    el: NodeId,
+    pseudo: Option<PseudoElement>,
+    longhand: &str,
+    now_ms: f64,
+    au_per_dev_px: i32,
+) -> Option<(u64, StyleSnapshot)> {
+    let running = state.transitions.try_borrow().ok()?;
+    let known = running.iter().find(|t| {
+        t.el == el && t.pseudo == pseudo && t.name == longhand && t.live.get() && !t.ended.get()
+    })?;
+    let (from, to) = known.styles.as_ref()?;
+    let (portion, original) = crate::animation_frame::interrupted_transition(state, known, now_ms)?;
+    if !original {
+        return None;
+    }
+    match pyro_dom::animation::transition_value(longhand, from, to, portion, false, Some("linear"), au_per_dev_px)? {
+        pyro_dom::animation::TransitionValue::Style(sample) => Some((known.id, sample)),
+        _ => None,
     }
 }
 
@@ -1516,14 +1932,16 @@ fn schedule(page: &Rc<PageDom>, planned: Vec<Planned>, defer: bool) {
 }
 
 /// Dispatches one event at its element, unless its timeline was canceled or
-/// the element left the document meanwhile.
+/// the element left the document meanwhile (a `transitioncancel` still reaches it: removing an
+/// element is what cancels its transitions, and Chrome fires that event at it).
 fn fire(page: &Rc<PageDom>, event: &Planned) {
     if !event.live.get() || event.epoch.as_ref().is_some_and(|e| !e.get()) || page.is_disposed() {
         return;
     }
     {
         let dom = page.dom.borrow();
-        if !dom.is_alive(event.el) || !dom.is_connected(event.el).unwrap_or(false) {
+        let detached_cancel = event.ty == "transitioncancel";
+        if !dom.is_alive(event.el) || !(detached_cancel || dom.is_connected(event.el).unwrap_or(false)) {
             return;
         }
     }
@@ -1544,7 +1962,7 @@ fn fire(page: &Rc<PageDom>, event: &Planned) {
     {
         let mut fields = ev.fields.borrow_mut();
         if event.transition {
-            fields.property_name = event.name.clone();
+            fields.property_name = shown_property(&event.name).to_owned();
         } else {
             fields.animation_name = event.name.clone();
         }
@@ -1552,6 +1970,17 @@ fn fire(page: &Rc<PageDom>, event: &Planned) {
         fields.pseudo_element = event.pseudo.to_owned();
     }
     crate::target::fire_at_node(page, event.el, &ev);
+}
+
+/// The name a transition of longhand `name` shows (`propertyName`, `transitionProperty`): Stylo's
+/// `vertical-align` is a shorthand of `baseline-shift` (and two discrete longhands), Chrome's a
+/// longhand, whose transitions it names `vertical-align` (WPT css-transitions
+/// `properties-value-*` 'vertical-align … / events').
+fn shown_property(name: &str) -> &str {
+    match name {
+        "baseline-shift" => "vertical-align",
+        _ => name,
+    }
 }
 
 /// pyro: a scroll-driven CSS animation's `animation-timeline` and range, serialized.
@@ -1573,6 +2002,7 @@ fn pseudo_name(pseudo: Option<PseudoElement>) -> &'static str {
         None => "",
         Some(PseudoElement::Before) => "::before",
         Some(PseudoElement::After) => "::after",
+        Some(PseudoElement::Marker) => "::marker",
     }
 }
 

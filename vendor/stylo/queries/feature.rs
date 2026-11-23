@@ -126,6 +126,8 @@ bitflags! {
         const STYLE = 1 << 7;
         /// Requires an anchored query container.
         const ANCHORED = 1 << 8;
+        /// pyro: requires a scroll-state query container (`scroll-state()`).
+        const SCROLL_STATE = 1 << 9;
     }
 }
 

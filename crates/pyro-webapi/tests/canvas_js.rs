@@ -85,6 +85,21 @@ fn eval(realm: &Realm, src: &str) -> String {
 const CANVAS: &str = "<!doctype html><canvas id=c width=100 height=50></canvas>";
 
 #[test]
+fn geometry_rects_and_quad_bounds_are_independent_snapshots() {
+    let env = env(CANVAS);
+    assert_eq!(eval(&env.main, r#"(() => {
+        const target = document.querySelector('canvas');
+        const snapshot = target.getBoundingClientRect();
+        snapshot.width = -10;
+        const quad = DOMQuad.fromRect(snapshot);
+        const bounds = quad.getBounds();
+        quad.p2.x = quad.p1.x + 20;
+        return [snapshot instanceof DOMRectReadOnly, snapshot instanceof DOMRect,
+                bounds.width, quad.getBounds().width, target.getBoundingClientRect().width].join('|');
+    })()"#), "true|true|10|30|100");
+}
+
+#[test]
 fn styles_gradients_and_patterns_are_kept_like_chrome() {
     let e = env(CANVAS);
     let r = &e.main;
@@ -311,6 +326,18 @@ fn canvas_interfaces_are_lazy_globals() {
     assert_eq!(eval(r, "window.ImageData = 1; ImageData"), "1");
 }
 
+/// The test window has no timers: a `setTimeout` that queues its callbacks for
+/// [`run_tasks`], set before the canvas module is made (it captures the global's).
+const TASKS: &str = "globalThis.__tasks = []; globalThis.setTimeout = (f) => __tasks.push(f);";
+
+/// Runs the callbacks queued with the [`TASKS`] `setTimeout`, each a task with its
+/// microtask checkpoint, until none is left.
+fn run_tasks(r: &Realm) {
+    while eval(r, "__tasks.length") != "0" {
+        eval(r, "__tasks.shift()()");
+    }
+}
+
 /// `px(x, y)`: the pixel at (x, y) as "r,g,b,a".
 const PX: &str = "var c = document.getElementById('c'), x = c.getContext('2d'); \
     var px = (X, Y, ctx) => Array.from((ctx || x).getImageData(X, Y, 1, 1).data).join();";
@@ -468,6 +495,7 @@ fn image_data_round_trips_and_draw_image() {
 fn canvas_encodes_png_jpeg_and_blobs() {
     let e = env(CANVAS);
     let r = &e.main;
+    eval(r, TASKS);
     eval(r, PX);
     assert_eq!(eval(r, "c.toDataURL().slice(0, 22)"), "data:image/png;base64,");
     assert_eq!(eval(r, "c.toDataURL('image/jpeg', 0.5).slice(0, 23)"), "data:image/jpeg;base64,");
@@ -483,6 +511,10 @@ fn canvas_encodes_png_jpeg_and_blobs() {
         r,
         "window.decoded = 'pending'; createImageBitmap(blob).then(bm => { var y = document.createElement('canvas').getContext('2d'); y.drawImage(bm, 0, 0); decoded = [bm.width, bm.height, px(0, 0, y), px(1, 0, y)].join('|'); }, err => decoded = 'ERR ' + err);",
     );
+    // createImageBitmap resolves in a task (HTML; 01b84fe5d, WPT
+    // createImageBitmap-resolves-in-task.any.html).
+    assert_eq!(eval(r, "decoded"), "pending");
+    run_tasks(r);
     assert_eq!(eval(r, "decoded"), "100|50|255,0,0,255|0,0,0,0");
 }
 
@@ -490,6 +522,7 @@ fn canvas_encodes_png_jpeg_and_blobs() {
 fn offscreen_canvas_and_image_bitmaps() {
     let e = env(CANVAS);
     let r = &e.main;
+    eval(r, TASKS);
     eval(r, PX);
     assert_eq!(
         eval(r, "var o = new OffscreenCanvas(4, 4); var ox = o.getContext('2d'); [ox === o.getContext('2d'), ox.canvas === o, ox instanceof OffscreenCanvasRenderingContext2D, x instanceof OffscreenCanvasRenderingContext2D, o.getContext('webgl')].join()"),
@@ -519,6 +552,7 @@ fn offscreen_canvas_and_image_bitmaps() {
         r,
         "window.made = null; x.fillStyle = 'blue'; x.fillRect(20, 20, 2, 2); createImageBitmap(c, 20, 20, 2, 2, {resizeWidth: 4, resizeHeight: 4, resizeQuality: 'pixelated'}).then(b => { x.clearRect(0, 0, 100, 50); x.drawImage(b, 0, 0); made = [b.width, b.height, px(3, 3), px(4, 4)].join('|'); });",
     );
+    run_tasks(r);
     assert_eq!(eval(r, "made"), "4|4|0,0,255,255|0,0,0,0");
     eval(r, "window.rejected = null; createImageBitmap({}).catch(e => rejected = e.name);");
     assert_eq!(eval(r, "rejected"), "TypeError");
@@ -567,6 +601,95 @@ fn canvas_bitmaps_are_lazy_and_reported_for_rendering() {
     // setAttribute resizes (and clears) as the IDL attribute does.
     assert_eq!(eval(r, "c.setAttribute('width', '10'); px(0, 0)"), "0,0,0,0");
     assert!(e.page.canvas_bitmaps().is_empty());
+}
+
+/// A display-p3 canvas holds P3 values and is painted in sRGB: its bitmap for rendering is
+/// converted back (WPT css/filter-effects `fecolormatrix-display-p3`: an sRGB image drawn on it
+/// shows the colors it has).
+#[test]
+fn a_display_p3_canvas_is_painted_in_srgb() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, "var c = document.getElementById('c'), x = c.getContext('2d', { colorSpace: 'display-p3' }); x.fillStyle = 'rgb(255, 255, 138)'; x.fillRect(0, 0, 1, 1);");
+    // The bitmap's P3 value of that sRGB yellow has more blue.
+    let blue: u32 = eval(r, "x.getImageData(0, 0, 1, 1).data[2]").parse().unwrap();
+    assert!(blue > 145, "{blue}");
+    let bitmaps = e.page.canvas_bitmaps();
+    let (_, _, _, rgba) = &bitmaps[0];
+    assert!(rgba[..4].iter().zip([255u8, 255, 138, 255]).all(|(a, b)| a.abs_diff(b) <= 1), "{:?}", &rgba[..4]);
+    // Converted once while nothing is drawn: the same rows for the renderer to keep.
+    assert!(std::sync::Arc::ptr_eq(&e.page.canvas_bitmaps()[0].3, rgba));
+    eval(r, "x.fillRect(1, 0, 1, 1);");
+    assert!(!std::sync::Arc::ptr_eq(&e.page.canvas_bitmaps()[0].3, rgba));
+}
+
+#[test]
+fn video_frame_draw_orientation_follows_destination_canvas_style() {
+    let e = env("<!doctype html><div id=wrap><canvas id=c width=4 height=4></canvas></div>");
+    let r = &e.main;
+    eval(r, r#"
+        const c = document.getElementById('c'), container = document.getElementById('wrap');
+        const ctx = c.getContext('2d');
+        // Two stored rows, red then blue. A 90-degree clockwise rotation
+        // puts the blue pixel at the origin and makes the frame 2 by 1.
+        const source = new VideoFrame(new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255]), {
+            format: 'RGBA', codedWidth: 1, codedHeight: 2, timestamp: 0, rotation: 90
+        });
+        const draw = () => {
+            ctx.clearRect(0, 0, 4, 4);
+            ctx.drawImage(source, 0, 0);
+            const first = ctx.getImageData(0, 0, 1, 1).data;
+            const edge = ctx.getImageData(1, 0, 1, 1).data;
+            return [first[0], first[2], edge[3], source.rotation, source.displayWidth, source.displayHeight].join();
+        };
+    "#);
+    assert_eq!(eval(r, "draw()"), "0,255,255,90,2,1");
+    assert_eq!(eval(r, "container.style.imageOrientation = 'none'; draw()"), "255,0,0,90,2,1");
+    assert_eq!(eval(r, "c.style.imageOrientation = 'from-image'; draw()"), "0,255,255,90,2,1");
+    eval(r, "source.close()");
+}
+
+#[test]
+fn canvas_video_frame_snapshot_is_independent_and_charged_until_last_close() {
+    let env = crate::support::network::Env::new("http://localhost:5173/");
+    let page = &env.page;
+    let budget = page.dom.borrow().document_data(page.document()).unwrap().raster_budget.clone();
+    env.eval("var c = document.createElement('canvas'); c.width = 2; c.height = 3;
+              var ctx = c.getContext('2d'); ctx.fillStyle = 'red'; ctx.fillRect(0,0,2,3);
+              ctx.getImageData(0,0,1,1)");
+    let before = budget.used();
+    env.eval("var frame = new VideoFrame(c, {timestamp: 42}); var twin = frame.clone(); frame.close();
+              ctx.fillStyle = 'blue'; ctx.fillRect(0,0,2,3);
+              var data = new Uint8Array(twin.allocationSize()); var done = false;
+              twin.copyTo(data).then(() => { done = true })");
+    env.until("done");
+    assert_eq!(env.eval("Array.from(data.slice(0,4)).join(',')"), "255,0,0,255");
+    assert_eq!(budget.used() - before, 24);
+    env.eval("twin.close()");
+    assert_eq!(budget.used(), before);
+}
+
+#[test]
+fn image_decoder_frame_charge_lasts_until_last_clone_closes() {
+    let env = crate::support::network::Env::new("http://localhost:5173/");
+    let page = &env.page;
+    let budget = page.dom.borrow().document_data(page.document()).unwrap().raster_budget.clone();
+    let before = budget.used();
+    let png = pyro_canvas::Surface::new(2, 3).encode(pyro_canvas::Encoding::Png).unwrap();
+    let source = format!("new Uint8Array({png:?})");
+    env.eval(&format!(
+        "globalThis.done = false;
+         globalThis.decoder = new ImageDecoder({{type:'image/png', data:{source}}});
+         decoder.decode().then(r => {{globalThis.frame = r.image; globalThis.done = true;}});"
+    ));
+    env.until("done");
+    env.eval("decoder.close(); globalThis.clone1 = frame.clone(); globalThis.clone2 = new VideoFrame(clone1)");
+    assert_eq!(budget.used() - before, 2 * 3 * 4);
+    env.eval("frame.close(); frame.close(); clone1.close()");
+    assert_eq!(env.eval("clone2.codedWidth + 'x' + clone2.codedHeight"), "2x3");
+    assert_eq!(budget.used() - before, 2 * 3 * 4);
+    env.eval("clone2.close(); clone2.close()");
+    assert_eq!(budget.used(), before);
 }
 
 #[test]

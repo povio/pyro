@@ -1,0 +1,24 @@
+{
+  "available": "function",
+  "complete": true,
+  "locked": true,
+  "selectedBefore": [
+    true,
+    0
+  ],
+  "deselected": [
+    false,
+    -1,
+    true
+  ],
+  "first": [
+    true,
+    320,
+    240
+  ],
+  "again": [
+    true,
+    320,
+    240
+  ]
+}

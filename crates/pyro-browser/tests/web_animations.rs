@@ -155,6 +155,18 @@ fn finish_cancel_pause_and_reverse() {
 }
 
 #[test]
+fn keyframe_easing_survives_a_round_trip_without_changing_the_curve() {
+    let (_thread, root) = page();
+    assert_eq!(eval(&root, "const timing = {duration: 1000, easing: 'cubic-bezier(0, 0.0000004, 1, 0.0000004)'};
+        const animation = document.body.animate([], timing);
+        animation.pause(); animation.currentTime = 500;
+        const effect = animation.effect;
+        const progress = effect.getComputedTiming().progress;
+        effect.updateTiming({easing: effect.getTiming().easing});
+        String(progress === effect.getComputedTiming().progress)"), "true");
+}
+
+#[test]
 fn effect_timing_and_keyframes() {
     let (_t, root) = page();
     assert_eq!(
@@ -664,6 +676,146 @@ fn review_hidden_until_found_content_transitions_when_revealed() {
     assert_eq!(
         settle(&mut t, &root, "transitionend:width:a"),
         "transitionrun:width:a transitionstart:width:a transitionend:width:a"
+    );
+}
+
+#[test]
+fn removing_or_moving_an_element_cancels_its_transitions() {
+    // WPT css-transitions disconnected-element-001, transition-reparented,
+    // transition-cancel-elapsed-time-on-removal: a removed element's running transitions are
+    // canceled (its `transitioncancel` still reaches it, though it no longer bubbles to the
+    // window), as are a moved one's, even back under the same parent; the moved element's
+    // computed style is its after-change value at once.
+    let (mut t, root) = transition_page(".t { transition: width 10s linear; width: 100px; height: 10px } .w { width: 200px }");
+    eval(
+        &root,
+        "globalThis.own = [];
+         globalThis.a = el('a', 't'); globalThis.b = el('b', 't'); globalThis.c = el('c');
+         for (const x of [a, b]) x.addEventListener('transitioncancel', e => own.push(e.target.id + ':' + (e.elapsedTime >= 0)));
+         a.offsetHeight; b.offsetHeight; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "a.classList.add('w'); b.classList.add('w'); a.offsetHeight; b.offsetHeight; 0");
+    run_until(&mut t, &root, "log.includes('transitionrun:width:a') && log.includes('transitionrun:width:b')");
+    assert_ne!(eval(&root, "getComputedStyle(b).width"), "200px");
+    eval(&root, "a.remove(); c.appendChild(b); 0");
+    assert_eq!(eval(&root, "getComputedStyle(b).width"), "200px");
+    run_until(&mut t, &root, "own.length == 2");
+    assert_eq!(eval(&root, "own.sort().join(' ')"), "a:true b:true");
+}
+
+#[test]
+fn a_later_list_item_decides_and_a_stale_running_transition_is_canceled() {
+    // WPT css-transitions zero-duration-multiple-transition, transition-behavior,
+    // CSSTransition-canceling, CSSTransition-ready: `color 1s, color 0s` starts nothing; a running
+    // transition whose property changes to a value it cannot interpolate to (no new transition)
+    // is canceled, and its object goes idle with `ready` rejected by an `AbortError`.
+    let (mut t, root) = transition_page("#z { color: red; transition-property: color, color; transition-duration: 1s, 0s }");
+    eval(&root, "globalThis.z = el('z'); getComputedStyle(z).color; z.style.color = 'green'; 0");
+    assert_eq!(eval(&root, "z.getAnimations().length + ' ' + getComputedStyle(z).color"), "0 rgb(0, 128, 0)");
+    eval(
+        &root,
+        "globalThis.m = el('m'); m.style.marginLeft = '0px'; getComputedStyle(m).marginLeft;
+         m.style.transition = 'margin-left 100s'; m.style.marginLeft = '100px'; getComputedStyle(m).marginLeft;
+         globalThis.anim = m.getAnimations()[0]; globalThis.why = '';
+         anim.ready.then(() => why = 'fulfilled', e => why = e.name);
+         m.style.marginLeft = 'auto'; getComputedStyle(m).marginLeft; 0",
+    );
+    run_until(&mut t, &root, "why != ''");
+    assert_eq!(eval(&root, "why + ' ' + anim.playState + ' ' + m.getAnimations().length"), "AbortError idle 0");
+}
+
+#[test]
+fn simultaneous_transitions_list_by_property_name() {
+    // WPT css-transitions Element-getAnimations: one style change event's transitions are listed
+    // by property name (Chrome), whatever order the `all` shorthand's longhands come in.
+    let (_t, root) = transition_page("#s { transform: translate(0px); opacity: 0; border-width: 0px; border-style: solid }");
+    eval(&root, "globalThis.s = el('s'); getComputedStyle(s).transform; 0");
+    assert_eq!(
+        eval(
+            &root,
+            "s.style.transition = 'all 100s'; s.style.transform = 'translate(100px)'; s.style.opacity = '1'; s.style.borderWidth = '1px';
+             s.getAnimations().map(a => a.transitionProperty).join(' ')"
+        ),
+        "border-bottom-width border-left-width border-right-width border-top-width opacity transform"
+    );
+}
+
+#[test]
+fn a_color_change_transitions_color_only_and_vertical_align_keeps_its_name() {
+    // WPT css-transitions properties-value-*: `transition: all` on a `color` change runs `color`
+    // alone (the `currentcolor` longhands keep one computed value), and a `vertical-align` length
+    // transition is named `vertical-align` (Chrome's longhand; Stylo's `baseline-shift`).
+    let (mut t, root) = transition_page("#v { color: red; vertical-align: 1px; transition: all 20ms }");
+    eval(&root, "globalThis.v = el('v'); getComputedStyle(v).color; 0");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(30)));
+    eval(&root, "v.style.color = 'blue'; v.style.verticalAlign = '10px'; getComputedStyle(v).color; 0");
+    run_until(&mut t, &root, "log.filter(e => e.startsWith('transitionend')).length >= 2");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
+    assert_eq!(
+        eval(&root, "log.filter(e => e.startsWith('transitionend')).sort().join(' ')"),
+        "transitionend:color:v transitionend:vertical-align:v"
+    );
+}
+
+#[test]
+fn a_reversed_transition_is_shortened_by_how_far_it_got() {
+    // WPT css-transitions CSSTransition-currentTime: reversing a transition seeked to 50s of 100s
+    // (`ease-in`) runs for 100s times its eased progress there.
+    let (_t, root) = transition_page("#r { height: 10px }");
+    assert_eq!(
+        eval(
+            &root,
+            "globalThis.r = el('r'); r.style.left = '0px'; getComputedStyle(r).transitionProperty;
+             r.style.transition = 'left 100s ease-in'; r.style.left = '100px';
+             const first = r.getAnimations()[0]; first.currentTime = 50000;
+             const portion = first.effect.getComputedTiming().progress;
+             r.style.left = '0px';
+             const reversed = r.getAnimations()[0];
+             String(Math.abs(reversed.effect.getComputedTiming().activeDuration - 100000 * portion) < 1)"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn an_interrupting_transition_starts_from_the_current_value() {
+    // css-transitions-1 §3: a transition interrupting a running one starts from its current value
+    // (here 50px, half way through a linear 0px → 100px), not from the before-change style (100px).
+    // (In one page task, whose clock stands still: a test's `eval` runs outside any task, where
+    // the read sampled the live clock a few ms after the new transition started.)
+    let (mut t, root) = transition_page("#r { height: 10px }");
+    eval(
+        &root,
+        "globalThis.r = el('r'); globalThis.result = '';
+         setTimeout(() => { try {
+           r.style.left = '0px'; getComputedStyle(r).transitionProperty;
+           r.style.transition = 'left 100s linear'; r.style.left = '100px';
+           r.getAnimations()[0].currentTime = 50000;
+           r.style.left = '200px';
+           const next = r.getAnimations();
+           result = next.length + ' ' + next[0].effect.getKeyframes()[0].left + ' ' + getComputedStyle(r).left;
+         } catch (e) { result = 'threw ' + e; } }); 0",
+    );
+    run_until(&mut t, &root, "result != ''");
+    assert_eq!(eval(&root, "result"), "1 50px 50px");
+}
+
+#[test]
+fn a_transition_whose_current_value_is_the_after_change_value_is_canceled() {
+    // css-transitions-1 §3: when the running transition's current value already is the new
+    // after-change value, it is canceled and no transition starts.
+    let (_t, root) = transition_page("#r { height: 10px }");
+    assert_eq!(
+        eval(
+            &root,
+            "globalThis.r = el('r'); r.style.left = '0px'; getComputedStyle(r).transitionProperty;
+             r.style.transition = 'left 100s linear'; r.style.left = '100px';
+             globalThis.first = r.getAnimations()[0]; first.currentTime = 50000;
+             r.style.left = '50px';
+             r.getAnimations().length + ' ' + first.playState + ' ' + getComputedStyle(r).left"
+        ),
+        "0 idle 50px"
     );
 }
 
@@ -1229,4 +1381,73 @@ fn a_pseudo_element_transitions_with_its_pseudo_element_in_the_events() {
     assert_eq!(listed, "CSSTransition:::before");
     let width: f64 = eval(&root, "parseFloat(getComputedStyle(a, '::before').width)").parse().unwrap();
     assert!((100.0..200.0).contains(&width), "under way: {width}");
+}
+
+#[test]
+fn dynamic_range_limit_interpolates_the_three_weights_on_sdr() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const name = 'dynamic-range-limit';
+        const box = document.body.appendChild(document.createElement('div'));
+        const read = () => getComputedStyle(box).getPropertyValue(name);
+        const start = 'dynamic-range-limit-mix(constrained 90%, standard 10%)';
+        const end = 'dynamic-range-limit-mix(no-limit 10%, standard 90%)';
+        box.style.setProperty(name, start);
+        const first = read();
+        box.style.transition = name + ' 100s steps(2, jump-end) -50s';
+        box.style.setProperty(name, end);
+        const middle = read();
+        const running = box.getAnimations().some(a => a instanceof CSSTransition && a.transitionProperty === name);
+        box.style.transition = 'none';
+        const last = read();
+        const animation = box.animate([{dynamicRangeLimit: 'no-limit'}, {dynamicRangeLimit: 'standard'}],
+                                      {duration: 1000, fill: 'both'});
+        animation.pause();
+        animation.currentTime = 250;
+        const quarter = read();
+        animation.cancel();
+        [first, middle, running, last, quarter, read()].join('|')
+    "#);
+    assert_eq!(actual, concat!(
+        "dynamic-range-limit-mix(standard 10%, constrained 90%)|",
+        "dynamic-range-limit-mix(standard 50%, constrained 45%, no-limit 5%)|true|",
+        "dynamic-range-limit-mix(standard 90%, no-limit 10%)|",
+        "dynamic-range-limit-mix(standard 25%, no-limit 75%)|",
+        "dynamic-range-limit-mix(standard 90%, no-limit 10%)"
+    ));
+}
+
+#[test]
+fn computed_font_relative_lengths_follow_the_sampled_transition() {
+    let (_thread, realm) = page();
+    let values = eval(&realm, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        el.style.cssText = 'font-size:10px;line-height:10px;width:max(290px,20lh);padding-top:3em';
+        const read = () => {
+            const style = getComputedStyle(el);
+            return [style.width, style.paddingTop].join(',');
+        };
+        const initial = read();
+        el.style.transition = 'line-height 100s steps(2, jump-end) -50s, font-size 100s steps(2, jump-end) -50s';
+        el.style.fontSize = '20px';
+        el.style.lineHeight = '20px';
+        const sampled = read();
+        const active = el.getAnimations().map(a => a.transitionProperty).sort().join(',');
+        el.style.transition = 'none';
+        [initial, sampled, active, read()].join('|')
+    "#);
+    assert_eq!(values, "290px,30px|300px,45px|font-size,line-height|400px,60px");
+}
+
+/// A color extrapolated to a huge progress (2^31, through the interpolation tests' easing) clips
+/// to the end color: its weights `(1 - p, p)` are kept at f64 precision, where f32 cancelled them
+/// to (-2^31, 2^31) and the mix kept the start color (WPT css/filter-effects
+/// `animation/filter-interpolation-002`).
+#[test]
+fn a_color_extrapolated_to_a_huge_progress_clips_to_the_end_color() {
+    let (_thread, root) = page();
+    let b = (8.0 * 2147483648.0 - 1.0) / 6.0;
+    eval(&root, &format!("document.head.appendChild(document.createElement('style')).textContent = '@keyframes c {{ from {{ color: blue; filter: drop-shadow(20px 10px blue) }} to {{ color: green; filter: drop-shadow(20px 10px green) }} }} #t {{ animation: c 100s -50s cubic-bezier(0, {b}, 1, {b}) paused }}'; document.body.innerHTML = '<div id=t></div>'; 0"));
+    assert_eq!(eval(&root, "getComputedStyle(t).color"), "rgb(0, 255, 0)");
+    assert_eq!(eval(&root, "getComputedStyle(t).filter"), "drop-shadow(rgb(0, 255, 0) 20px 10px 0px)");
 }

@@ -10,6 +10,8 @@ pub(super) struct Options {
     pub margin: [Margin; 4],
     pub margin_text: String,
     pub thresholds: Vec<f64>,
+    /// Pixels each scroll container's clip is expanded by (only the lazy-load observation).
+    pub scroll_margin: f64,
 }
 impl Margin {
     fn pixels(self, width: f64) -> f64 {
@@ -119,5 +121,18 @@ pub(super) fn parse(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>) -> JsRe
     if get("trackVisibility")?.to_bool() {
         return Err(JsError::dom("NotSupportedError", "IntersectionObserver visibility tracking is not implemented"));
     }
-    Ok(Options { root, margin, margin_text, thresholds })
+    Ok(Options { root, margin, margin_text, thresholds, scroll_margin: 0.0 })
+}
+
+/// HTML's lazy load root margin, as Chromium's (1250 px around the viewport and each
+/// scroll container on the way).
+pub(super) fn lazy_load() -> Options {
+    const MARGIN: f64 = 1250.0;
+    Options {
+        root: None,
+        margin: [Margin { value: MARGIN, percent: false }; 4],
+        margin_text: String::new(),
+        thresholds: vec![0.0],
+        scroll_margin: MARGIN,
+    }
 }

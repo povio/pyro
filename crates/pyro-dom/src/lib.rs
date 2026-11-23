@@ -4,14 +4,19 @@
 
 pub mod animation;
 mod attr_node;
+mod blob_hyperlinks;
+pub use blob_hyperlinks::BlobOriginRegistration;
+pub mod canvas_color;
 pub mod color_well;
 pub mod computed;
 pub mod direction;
 pub mod dom;
 pub mod error;
+pub mod fragment_filter;
 pub mod events;
 mod flow_font;
 pub mod font_face;
+pub mod focus_group;
 mod focus_nav;
 pub mod forms;
 pub(crate) mod gecko_only;
@@ -20,16 +25,18 @@ pub mod iframe;
 mod labels;
 mod window_names;
 pub mod image;
+mod image_map;
 pub mod cssom;
 pub mod custom;
 mod internals;
 mod moving;
 mod nonce;
-pub use nonce::CspPolicy;
+pub use nonce::{CspPolicy, PendingStyleChecks};
 pub mod picture;
 pub mod prescan;
 mod details;
 mod top_layer;
+pub mod html_in_canvas;
 pub mod inner_text;
 pub mod layout;
 pub mod live_iterator;
@@ -42,12 +49,17 @@ pub mod parse;
 pub mod script;
 pub mod select;
 mod select_query;
+mod selectedcontent;
 pub mod serialize;
 mod slots;
 pub mod snapshot;
 pub mod style;
 pub mod stylo;
+pub mod svg_aspect_ratio;
 pub mod svg_geometry;
+pub mod svg_string_list;
+pub mod svg_point_list;
+mod template_patch;
 pub mod text_metrics;
 pub mod upgrade;
 pub mod viewport_meta;
@@ -57,11 +69,11 @@ pub mod xml;
 pub mod xpath;
 
 pub use dom::{attr_name_hash, position, CollectionWatch, Dom, FrameDocument, FrameTable, ScriptName};
-pub use top_layer::PopoverStack;
+pub use top_layer::{PopoverStack, PopoverType};
 pub use window_names::window_name_hash;
 pub use error::{DomError, DomErrorKind, DomResult};
 pub use node::{
-    shadow_flags, Atom, Attr, AttrNodeData, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
+    shadow_flags, Atom, Attr, AttrNodeData, ControlState, CustomDefinitionOwner, RegistryAssociation, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode,
 };
 
 pub use markup5ever::{LocalName, Namespace, Prefix, QualName};

@@ -1,0 +1,20 @@
+{
+  "target": [
+    "dom/nodes/Document-characterSet-normalization-1.html",
+    "dom/nodes/Document-characterSet-normalization-2.html",
+    "encoding/single-byte-decoder-iframe.window.html",
+    "encoding/single-byte-decoder.any.html?TextDecoder",
+    "encoding/single-byte-decoder.any.html?XMLHttpRequest",
+    "encoding/unsupported-labels.window.html"
+  ],
+  "guards": [
+    "encoding/api-replacement-encodings.any.html",
+    "encoding/api-replacement-encodings.any.worker.html",
+    "encoding/bom-handling.html",
+    "encoding/json-document-utf8.html",
+    "encoding/replacement-encodings.any.html",
+    "encoding/replacement-encodings.any.worker.html",
+    "html/semantics/embedded-content/the-iframe-element/iframe-load-event.html",
+    "html/semantics/embedded-content/the-iframe-element/iframe_remove_src.html"
+  ]
+}

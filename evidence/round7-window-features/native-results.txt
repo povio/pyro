@@ -1,0 +1,18 @@
+running 4 tests
+test window_features::tests::separators_aliases_and_last_value_win ... ok
+test window_features::tests::saturates_coordinates_and_preserves_omission ... ok
+test window_features::tests::boolean_values_and_popup_controls ... ok
+test window_features::tests::protocol_reports_enabled_chrome_and_explicit_geometry ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 88 filtered out; finished in 0.00s
+running 1 test
+test popups::named_noopener_creates_a_fresh_context_with_the_requested_name ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 543 filtered out; finished in 0.08s
+running 1 test
+test popups::popup_keeps_its_opener_and_a_copy_of_the_session_storage ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 543 filtered out; finished in 0.06s
+running 1 test
+test popups::stand_in_storage_before_the_page_exists_is_the_popups_area ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 543 filtered out; finished in 0.06s
+running 1 test
+test popups::broadcast_channel_reaches_same_origin_documents_of_the_browser_context ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 543 filtered out; finished in 0.06s

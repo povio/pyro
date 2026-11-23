@@ -2702,7 +2702,7 @@ impl BaseDocument {
             // `multicol-span-all-010`, `-017`.)
             let contained = !b.transform.0.is_empty()
                 || b.slow_clone_perspective() != style::values::computed::Perspective::None
-                || b.slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT)
+                || b.used_containment().intersects(Contain::LAYOUT | Contain::PAINT)
                 || !style.get_effects().filter.0.is_empty();
             // pyro: an inline split by block-level boxes (block-in-inline) carries them too
             // (WPT css-multicol `spanner-in-child-after-parallel-flow-003`).
@@ -3208,7 +3208,7 @@ impl BaseDocument {
                 // § 3.3.)
                 let contains_layout = style
                     .get_box()
-                    .slow_clone_contain()
+                    .used_containment()
                     .contains(style::values::specified::box_::Contain::LAYOUT);
                 // (A first child's `break-before` is its parent's, CSS Fragmentation 3 § 3.1, except
                 // that it does not leave a box of layout containment: then none, CSS Contain 2
@@ -3217,7 +3217,7 @@ impl BaseDocument {
                     && node.primary_styles().is_some_and(|parent| {
                         parent
                             .get_box()
-                            .slow_clone_contain()
+                            .used_containment()
                             .contains(style::values::specified::box_::Contain::LAYOUT)
                     });
                 if (forces(style.get_box().break_before) && !first_in_contained)
@@ -3519,7 +3519,7 @@ fn fragmentable_as(node: &crate::Node, style: &ComputedValues, multicol_ok: bool
         return false;
     }
     // pyro: a box of size containment is monolithic (CSS Contain 2 § 3.1).
-    if box_style.slow_clone_contain().contains(style::values::specified::box_::Contain::SIZE) {
+    if box_style.used_containment().contains(style::values::specified::box_::Contain::SIZE) {
         return false;
     }
     // pyro: so is one of a writing mode orthogonal to its parent's (an orthogonal flow is not
@@ -3555,7 +3555,7 @@ fn held_whole(node: &crate::Node, style: &ComputedValues) -> bool {
     let scrolls = |o: Overflow| !matches!(o, Overflow::Visible | Overflow::Clip);
     scrolls(box_style.overflow_x)
         || scrolls(box_style.overflow_y)
-        || box_style.slow_clone_contain().contains(style::values::specified::box_::Contain::SIZE)
+        || box_style.used_containment().contains(style::values::specified::box_::Contain::SIZE)
 }
 
 #[cfg(test)]

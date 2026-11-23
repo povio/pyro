@@ -4,12 +4,11 @@
 // module object: { EventSource }.
 (native => {
   'use strict';
-  const { resolve, connect, cancel } = native;
+  const { resolve, connect, cancel, message } = native;
   const apply = Reflect.apply;
   const ET = EventTarget;
   const dispatch = ET.prototype.dispatchEvent;
   const addListener = ET.prototype.addEventListener;
-  const ME = MessageEvent;
   const Ev = Event;
   const DE = DOMException;
   // Captured now: a page's fake timers installed later do not stall reconnection.
@@ -185,7 +184,7 @@
       const type = this.#type || 'message';
       this.#data = '';
       this.#type = '';
-      this.#fire(new ME(type, { data, origin: this.#origin, lastEventId: this.#lastEventId }));
+      message(this, type, data, this.#origin, this.#lastEventId);
     }
   }
 

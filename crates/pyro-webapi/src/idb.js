@@ -18,7 +18,6 @@
   const hasOwn = (o, k) => O.prototype.hasOwnProperty.call(o, k);
   const isArray = A.isArray, apply = Reflect.apply, stringify = JSON.stringify, parse = JSON.parse;
   const fromCharCode = String.fromCharCode;
-  const addListener = ET.prototype.addEventListener;
   const AB = ArrayBuffer, U8 = Uint8Array, DV = DataView, isView = AB.isView;
   const getter = (proto, key) => descriptor(proto, key).get;
   const abLength = getter(AB.prototype, 'byteLength');
@@ -33,7 +32,15 @@
   const token = Symbol('IndexedDB');
   const illegal = () => new TE('Illegal constructor');
   const fail = (name, message) => new DE(message, name);
-  const tag = (C, name) => defineProperty(C.prototype, tagKey, { value: name, configurable: true });
+  // Class syntax supplies the IDL getters and operations. Web IDL makes
+  // string-named members enumerable; the constructor and symbols stay hidden.
+  function enumerableMembers(holder, names) {
+    for (let i = 0; i < names.length; i++) defineProperty(holder, names[i], { enumerable: true });
+  }
+  function tag(C, name, ...members) {
+    enumerableMembers(C.prototype, members);
+    defineProperty(C.prototype, tagKey, { value: name, configurable: true });
+  }
   const domString = (v) => `${v}`;
 
   // ---- Keys ----
@@ -122,7 +129,7 @@
       for (let i = 0; i < bytes.length; i++) out += HEX[bytes[i] >>> 4] + HEX[bytes[i] & 15];
       return out + '!';
     }
-    if (isArray(input)) {
+    if (N.isArrayKeyObject(input)) {
       if (!seen) seen = new Set();
       if (seen.has(input)) return undefined;
       seen.add(input);
@@ -153,7 +160,7 @@
     if (t === '3') {
       let out = '', units = [];
       while (s[st.i] !== '!') {
-        units.push(parseInt(s.slice(st.i, st.i + 4), 16));
+        own(units, units.length, parseInt(s.slice(st.i, st.i + 4), 16));
         st.i += 4;
         if (units.length === 4096) {
           out += apply(fromCharCode, null, units);
@@ -166,14 +173,14 @@
     if (t === '4') {
       const bytes = [];
       while (s[st.i] !== '!') {
-        bytes.push(parseInt(s.slice(st.i, st.i + 2), 16));
+        own(bytes, bytes.length, parseInt(s.slice(st.i, st.i + 2), 16));
         st.i += 2;
       }
       st.i++;
       return new U8(bytes).buffer;
     }
     const out = [];
-    while (s[st.i] !== '!') out.push(decodeAt(s, st));
+    while (s[st.i] !== '!') own(out, out.length, decodeAt(s, st));
     st.i++;
     return out;
   }
@@ -213,7 +220,7 @@
     #upperValue;
     #lowerOpen;
     #upperOpen;
-    constructor(t, lower, upper, lowerOpen, upperOpen) {
+    constructor(t = undefined, lower, upper, lowerOpen, upperOpen) {
       if (t !== token) throw illegal();
       this.#lower = lower;
       this.#upper = upper;
@@ -263,7 +270,8 @@
       return new IDBKeyRange(token, l, u, !!lowerOpen, !!upperOpen);
     }
   }
-  tag(IDBKeyRange, 'IDBKeyRange');
+  enumerableMembers(IDBKeyRange, ['only', 'lowerBound', 'upperBound', 'bound']);
+  tag(IDBKeyRange, 'IDBKeyRange', 'lower', 'upper', 'lowerOpen', 'upperOpen', 'includes');
   function inRange([lower, upper, lowerOpen, upperOpen], key) {
     if (lower !== null && (key < lower || (lowerOpen && key === lower))) return false;
     if (upper !== null && (key > upper || (upperOpen && key === upper))) return false;
@@ -318,8 +326,12 @@
     for (const id of path.split('.')) {
       if (typeof value === 'string' && id === 'length') value = value.length;
       else if (isArray(value) && id === 'length') value = value.length;
-      else if (value === null || typeof value !== 'object' || !hasOwn(value, id)) return FAIL;
-      else value = value[id];
+      else if (value === null || typeof value !== 'object') return FAIL;
+      else if (hasOwn(value, id)) value = value[id];
+      else if (id === 'size' || id === 'type' || id === 'name' || id === 'lastModified') {
+        value = N.blobKeyPath(value, id);
+        if (value === undefined) return FAIL;
+      } else return FAIL;
     }
     return value;
   }
@@ -365,7 +377,7 @@
   let listOf;
   class DOMStringList {
     #list;
-    constructor(t, list) {
+    constructor(t = undefined, list) {
       if (t !== token) throw illegal();
       this.#list = list;
       for (let i = 0; i < list.length; i++) defineProperty(this, i, { value: list[i], enumerable: true });
@@ -381,20 +393,21 @@
       return this.#list[+index >>> 0] ?? null;
     }
     contains(string) {
+      if (!arguments.length) throw new TE("Failed to execute 'contains' on 'DOMStringList': 1 argument required.");
       return this.#list.includes(domString(string));
     }
     [iteratorKey]() {
       return this.#list.values();
     }
   }
-  tag(DOMStringList, 'DOMStringList');
+  tag(DOMStringList, 'DOMStringList', 'length', 'item', 'contains');
   const sortedList = (names) => new DOMStringList(token, [...names].sort());
 
   class IDBRecord {
     #key;
     #primaryKey;
     #value;
-    constructor(t, key, primaryKey, value) {
+    constructor(t = undefined, key, primaryKey, value) {
       if (t !== token) throw illegal();
       this.#key = key;
       this.#primaryKey = primaryKey;
@@ -410,38 +423,45 @@
       return this.#value;
     }
   }
-  tag(IDBRecord, 'IDBRecord');
+  tag(IDBRecord, 'IDBRecord', 'key', 'primaryKey', 'value');
 
   // ---- Event handler attributes ----
-  const HANDLERS = new WeakMap();
-  function handlers(C, ...types) {
-    for (const type of types) {
-      defineProperty(C.prototype, 'on' + type, {
-        configurable: true,
-        enumerable: true,
-        get() {
-          if (!(this instanceof C)) throw new TE('Illegal invocation');
-          const h = HANDLERS.get(this);
-          return (h && h[type]) ?? null;
-        },
-        set(v) {
-          if (!(this instanceof C)) throw new TE('Illegal invocation');
-          let h = HANDLERS.get(this);
-          if (!h) HANDLERS.set(this, (h = {}));
-          const fresh = !(type in h);
-          h[type] = typeof v === 'function' || (typeof v === 'object' && v !== null) ? v : null;
-          if (fresh) {
-            const self = this;
-            apply(addListener, this, [
-              type,
-              function (event) {
-                const f = h[type];
-                if (typeof f === 'function') return apply(f, self, [event]);
-              },
-            ]);
-          }
-        },
+  // The host EventTarget owns this state: same-origin realms borrowing an
+  // accessor see the same handler, and a forged prototype carries no brand.
+  function initHandlerState(target, state) {
+    state.assign = assignHandler;
+    N.handlerState(target, state);
+  }
+  function assignHandler(target, h, type, value) {
+    const previous = h[type] ?? null;
+    const next = typeof value === 'function' || (typeof value === 'object' && value !== null) ? value : null;
+    h[type] = next;
+    if (previous === null && next !== null) {
+      // Install from the target's realm even when another realm's setter is
+      // borrowed. A replacement keeps the registration in its current position.
+      N.setHandler(target, type, event => {
+        if (apply(h[type], target, [event]) === false) N.cancelEvent(event);
       });
+    } else if (previous !== null && next === null) {
+      N.setHandler(target, type, null);
+    }
+  }
+  function handlers(C, brand, ...types) {
+    function state(receiver) {
+      const h = N.handlerState(receiver);
+      if (!h || !h[brand]) throw new TE('Illegal invocation');
+      return h;
+    }
+    for (let i = 0; i < types.length; i++) {
+      const type = types[i], name = 'on' + type;
+      const accessors = {
+        get [name]() { return state(this)[type] ?? null; },
+        set [name](v) {
+          const h = state(this);
+          h.assign(this, h, type, v);
+        },
+      };
+      defineProperty(C.prototype, name, descriptor(accessors, name));
     }
   }
 
@@ -463,7 +483,7 @@
       return this.#newVersion;
     }
   }
-  tag(IDBVersionChangeEvent, 'IDBVersionChangeEvent');
+  tag(IDBVersionChangeEvent, 'IDBVersionChangeEvent', 'oldVersion', 'newVersion');
   const versionEvent = (type, oldVersion, newVersion) =>
     new IDBVersionChangeEvent(type, { oldVersion, newVersion });
   const plainEvent = (type, bubbles, cancelable) => new EV(type, { bubbles, cancelable });
@@ -485,7 +505,7 @@
     let list = waiters.get(name);
     if (!list) {
       waiters.set(name, (list = []));
-      N.watch(name, true);
+      storage.watch(name, true);
     }
     list.push(fn);
   }
@@ -493,7 +513,7 @@
     const list = waiters.get(name);
     if (!list) return;
     waiters.delete(name);
-    N.watch(name, false);
+    storage.watch(name, false);
     for (const fn of list) fn();
   }
   const wakeLocal = (name) => post(() => runWaiters(name));
@@ -502,9 +522,10 @@
   let requestState;
   class IDBRequest extends ET {
     #s;
-    constructor(t) {
+    constructor(t = undefined, open = false) {
       if (t !== token) throw illegal();
       super();
+      initHandlerState(this, { __proto__: null, request: true, open });
       this.#s = { done: false, result: undefined, error: null, source: null, tx: null };
     }
     static {
@@ -530,15 +551,15 @@
       return this.#s.done ? 'done' : 'pending';
     }
   }
-  tag(IDBRequest, 'IDBRequest');
-  handlers(IDBRequest, 'success', 'error');
+  tag(IDBRequest, 'IDBRequest', 'result', 'error', 'source', 'transaction', 'readyState');
+  handlers(IDBRequest, 'request', 'success', 'error');
   class IDBOpenDBRequest extends IDBRequest {
-    constructor(t) {
-      super(t);
+    constructor(t = undefined) {
+      super(t, true);
     }
   }
   tag(IDBOpenDBRequest, 'IDBOpenDBRequest');
-  handlers(IDBOpenDBRequest, 'blocked', 'upgradeneeded');
+  handlers(IDBOpenDBRequest, 'open', 'blocked', 'upgradeneeded');
 
   const succeed = (s, result) => {
     s.done = true;
@@ -551,15 +572,38 @@
     s.error = error;
   };
 
+  // Default-factory database names are strings. A named bucket uses
+  // canonical address objects, so an author's name can never collide with
+  // another generation or the default factory's open queues and waiters.
+  // Both paths use this realm's single set of branded IDB interfaces.
+  let storage = N;
+  function enableBucketRouting() {
+    if (storage !== N) return;
+    storage = Object.create(null);
+    for (const operation of [
+      'watch', 'reserve', 'busy', 'release', 'version', 'schema', 'connect', 'disconnect', 'others', 'notify',
+      'lock', 'beginUpgrade', 'commit', 'abort', 'deleteDb', 'createStore', 'deleteStore', 'renameStore',
+      'createIndex', 'deleteIndex', 'renameIndex', 'records', 'indexAdd', 'nextKey', 'bumpKey', 'put',
+      'getRecord', 'getAll', 'count', 'deleteRange', 'clear', 'seek',
+    ]) {
+      storage[operation] = (address, ...args) => typeof address === 'string'
+        ? N[operation](address, ...args)
+        : address.backend[operation](address.name, ...args);
+    }
+  }
+  const live = address => typeof address === 'string' || address.backend.isLive();
+  const publicName = address => typeof address === 'string' ? address : address.name;
+
   // ---- Connections ----
   const conns = [];
   function loadMeta(name) {
     const meta = new Map();
-    for (const [store, kp, ai, indexes] of N.schema(name)) {
-      const m = { name: store, keyPath: parse(kp), ai, indexes: new Map(), deleted: false };
+    for (const [store, kp, ai, indexes] of storage.schema(name)) {
+      const m = { name: store, backingName: store, backingIndexes: new Set(), keyPath: parse(kp), ai, indexes: new Map(), deleted: false };
       for (const [index, ikp, unique, multiEntry] of indexes) {
-        m.indexes.set(index, { name: index, keyPath: parse(ikp), unique, multiEntry, deleted: false });
+        m.indexes.set(index, { name: index, backingName: index, keyPath: parse(ikp), unique, multiEntry, deleted: false });
       }
+      for (const im of m.indexes.values()) m.backingIndexes.add(im);
       meta.set(store, m);
     }
     return meta;
@@ -567,7 +611,7 @@
   function connect(name, version) {
     const c = {
       name,
-      id: N.connect(name),
+      id: storage.connect(name),
       version,
       meta: loadMeta(name),
       closePending: false,
@@ -585,24 +629,26 @@
     c.closed = true;
     const i = conns.indexOf(c);
     if (i >= 0) conns.splice(i, 1);
-    N.disconnect(c.name, c.id);
+    storage.disconnect(c.name, c.id);
     wakeLocal(c.name);
+    forgetAddress(c.name);
   }
-  const othersOpen = (name, self) => conns.some((o) => o.name === name && o !== self) || N.others(name) > 0;
+  const othersOpen = (name, self) => conns.some((o) => o.name === name && o !== self) || storage.others(name) > 0;
 
   let connection;
   class IDBDatabase extends ET {
     #c;
-    constructor(t, c) {
+    constructor(t = undefined, c) {
       if (t !== token) throw illegal();
       super();
+      initHandlerState(this, { __proto__: null, database: true });
       this.#c = c;
     }
     static {
       connection = (d) => d.#c;
     }
     get name() {
-      return this.#c.name;
+      return publicName(this.#c.name);
     }
     get version() {
       return this.#c.version;
@@ -624,8 +670,8 @@
       if (ai && (keyPath === '' || isArray(keyPath))) {
         throw fail('InvalidAccessError', 'The autoIncrement option was set but the keyPath option was empty or an array.');
       }
-      N.createStore(c.name, name, stringify(keyPath), ai);
-      const m = { name, keyPath, ai, indexes: new Map(), deleted: false };
+      enqueueSchema(x, () => storage.createStore(c.name, name, stringify(keyPath), ai));
+      const m = { name, backingName: name, backingIndexes: new Set(), keyPath, ai, indexes: new Map(), deleted: false };
       c.meta.set(name, m);
       x.created.push(m);
       return storeHandle(x, m);
@@ -638,10 +684,9 @@
       if (x.state !== 'active') throw fail('TransactionInactiveError', 'The transaction is not active.');
       const m = c.meta.get(name);
       if (!m) throw fail('NotFoundError', 'The specified object store was not found.');
-      N.deleteStore(c.name, name);
+      enqueueSchema(x, () => storage.deleteStore(c.name, name));
       c.meta.delete(name);
-      m.deleted = true;
-      for (const im of m.indexes.values()) im.deleted = true;
+      markStoreDeleted(m);
     }
     transaction(storeNames, mode = undefined, options = undefined) {
       if (!arguments.length) throw new TE("Failed to execute 'transaction' on 'IDBDatabase': 1 argument required.");
@@ -657,7 +702,7 @@
       }
       const c = this.#c;
       if (c.upgrade) throw fail('InvalidStateError', 'A version change transaction is running.');
-      if (c.closePending) throw fail('InvalidStateError', 'The database connection is closing.');
+      if (c.closePending || !live(c.name)) throw fail('InvalidStateError', 'The database connection is closing.');
       const scope = [...new Set(names)].sort();
       for (const n of scope) {
         if (!c.meta.has(n)) throw fail('NotFoundError', 'One of the specified object stores was not found.');
@@ -676,17 +721,19 @@
       }
     }
   }
-  tag(IDBDatabase, 'IDBDatabase');
-  handlers(IDBDatabase, 'abort', 'close', 'error', 'versionchange');
+  tag(IDBDatabase, 'IDBDatabase', 'name', 'version', 'objectStoreNames', 'createObjectStore', 'deleteObjectStore',
+    'transaction', 'close');
+  handlers(IDBDatabase, 'database', 'abort', 'close', 'error', 'versionchange');
 
   // ---- Transactions ----
   const txs = [];
   let txOf;
   class IDBTransaction extends ET {
     #x;
-    constructor(t, x) {
+    constructor(t = undefined, x) {
       if (t !== token) throw illegal();
       super();
+      initHandlerState(this, { __proto__: null, transaction: true });
       this.#x = x;
     }
     static {
@@ -733,8 +780,9 @@
       abortTx(x, null);
     }
   }
-  tag(IDBTransaction, 'IDBTransaction');
-  handlers(IDBTransaction, 'abort', 'complete', 'error');
+  tag(IDBTransaction, 'IDBTransaction', 'objectStoreNames', 'mode', 'durability', 'db', 'error', 'objectStore',
+    'commit', 'abort');
+  handlers(IDBTransaction, 'transaction', 'abort', 'complete', 'error');
 
   function newTransaction(c, scope, mode, durability, upgrade) {
     const x = {
@@ -744,7 +792,14 @@
       mode,
       durability,
       upgrade,
-      state: 'active',
+      phase: 'active',
+      creationTurn: upgrade ? undefined : N.scriptTurn(),
+      get state() {
+        return this.phase === 'active' && this.creationTurn !== undefined && this.creationTurn !== N.scriptTurn() ? 'inactive' : this.phase;
+      },
+      set state(value) {
+        this.phase = value;
+      },
       started: false,
       inflight: false,
       queue: [],
@@ -762,6 +817,7 @@
     if (!upgrade) {
       // Inactive once the creating task is over.
       post(() => {
+        x.creationTurn = undefined;
         if (x.state === 'active') x.state = 'inactive';
         pump(x);
       });
@@ -782,19 +838,30 @@
           (y.upgrade || ((y.mode !== 'readonly' || x.mode !== 'readonly') && overlaps(x, y)));
       }
       if (blocked) continue;
-      if (!N.lock(x.conn.name, x.id, x.scope, x.mode !== 'readonly')) {
-        waitFor(x.conn.name, tryStart);
+      if (!live(x.conn.name)) {
+        abortTx(x, fail('UnknownError', 'The storage bucket no longer exists.'));
+        continue;
+      }
+      try {
+        if (!storage.lock(x.conn.name, x.id, x.scope, x.mode !== 'readonly')) {
+          waitFor(x.conn.name, tryStart);
+          continue;
+        }
+      } catch (error) {
+        if (live(x.conn.name)) throw error;
+        abortTx(x, error);
         continue;
       }
       x.started = true;
       pump(x);
     }
   }
-  function finish(x) {
+  function finish(x, committed) {
     x.state = 'finished';
     const i = txs.indexOf(x);
     if (i >= 0) txs.splice(i, 1);
     x.conn.txs.delete(x);
+    post(() => finishedEvent(x, committed ? 'complete' : 'abort', committed));
     tryStart();
     if (!x.upgrade) maybeClose(x.conn);
   }
@@ -807,9 +874,27 @@
       commitTx(x);
     }
   }
+  function enqueueSchema(x, op) {
+    x.queue.push({ request: null, op });
+    pump(x);
+  }
   function execute(x) {
     if (x.state === 'finished') {
       x.inflight = false;
+      return;
+    }
+    while (x.queue.length && !x.queue[0].request) {
+      try {
+        x.queue.shift().op();
+      } catch (error) {
+        x.inflight = false;
+        abortTx(x, error);
+        return;
+      }
+    }
+    if (!x.queue.length) {
+      x.inflight = false;
+      pump(x);
       return;
     }
     const r = x.queue.shift();
@@ -827,41 +912,53 @@
       e: error ? plainEvent('error', true, true) : plainEvent('success', false, false),
       a: (notCanceled, threw) => {
         x.inflight = false;
-        if (x.state === 'active') x.state = 'inactive';
+        if (x.state === 'active') {
+          x.state = 'inactive';
+          if (threw) return abortTx(x, fail('AbortError', 'An exception was thrown in an event handler.'));
+        }
         if (x.state === 'finished') return;
-        if (threw) abortTx(x, fail('AbortError', 'An exception was thrown in an event handler.'));
-        else if (error && notCanceled) abortTx(x, error);
+        if (error && notCanceled) abortTx(x, error);
         else pump(x);
       },
     };
   }
   function commitTx(x) {
     x.state = 'committing';
-    N.commit(x.conn.name, x.id);
-    finish(x);
-    post(() => finishedEvent(x, 'complete', true));
+    try {
+      storage.commit(x.conn.name, x.id);
+    } catch (error) {
+      abortTx(x, error);
+      return;
+    }
+    finish(x, true);
   }
   function abortTx(x, error) {
     if (x.state === 'finished') return;
-    if (x.started) N.abort(x.conn.name, x.id);
+    if (x.started) storage.abort(x.conn.name, x.id);
     x.error = error;
     if (x.upgrade) revertUpgrade(x);
     for (const r of x.queue.splice(0)) {
+      if (!r.request) continue;
       failed(requestState(r.request), fail('AbortError', 'The transaction was aborted, so the request cannot be fulfilled.'));
       post(() => ({ t: r.request, e: plainEvent('error', true, true) }));
     }
-    finish(x);
-    post(() => finishedEvent(x, 'abort', false));
+    finish(x, false);
   }
   // `complete` or `abort`. An upgrade no longer runs while its listeners do
   // (the open request keeps its transaction until after them).
   function finishedEvent(x, type, committed) {
-    if (x.upgrade) x.conn.upgrade = null;
+    if (x.upgrade) {
+      x.conn.upgrade = null;
+      post(() => finishOpen(x, committed));
+    }
     return {
       t: x.obj,
       e: plainEvent(type, !committed, false),
       a: () => {
-        if (x.upgrade) upgradeFinished(x, committed);
+        if (x.upgrade) {
+          requestState(x.openItem.request).tx = null;
+          maybeClose(x.conn);
+        }
       },
     };
   }
@@ -881,17 +978,17 @@
       }
       c.meta.set(name, m);
     }
-    for (const m of x.created) {
-      if (!x.snapshot.stores.some(([s]) => s === m)) {
-        m.deleted = true;
-        for (const im of m.indexes.values()) im.deleted = true;
-      }
-    }
+    for (const store of x.created) markStoreDeleted(store);
     for (const im of x.createdIndexes || []) im.deleted = true;
     c.closePending = true;
   }
 
   // ---- Object stores ----
+  function markStoreDeleted(store) {
+    store.deleted = true;
+    for (const index of store.indexes.values()) index.deleted = true;
+    store.indexes.clear();
+  }
   let storeOf;
   function storeHandle(x, m) {
     let h = x.handles.get(m);
@@ -934,19 +1031,19 @@
   function storeRecord(h, value, key, noOverwrite) {
     const m = h.m, x = h.x, name = x.conn.name;
     if (key === undefined) {
-      const n = N.nextKey(name, m.name, x.id);
+      const n = storage.nextKey(name, m.backingName);
       if (n < 0) throw fail('ConstraintError', 'The key generator has reached its maximum value.');
       key = numberKey(n);
       if (m.keyPath !== null) inject(value, m.keyPath, n);
-    } else if (m.ai && key[0] === '1') {
-      N.bumpKey(name, m.name, x.id, decodeKey(key));
     }
     const idx = [];
-    for (const im of m.indexes.values()) idx.push([im.name, indexKeys(im, value)]);
-    const code = N.put(name, m.name, x.id, key, value, idx, noOverwrite);
+    for (const im of m.backingIndexes) idx.push([im.backingName, indexKeys(im, value)]);
+    const code = storage.put(name, m.backingName, x.id, key, value, idx, noOverwrite);
     if (code === 1) throw fail('ConstraintError', 'Key already exists in the object store.');
     if (code === 2) throw fail('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.');
-    return decodeKey(key);
+    const primaryKey = decodeKey(key);
+    if (m.ai && key[0] === '1') storage.bumpKey(name, m.backingName, x.id, primaryKey);
+    return primaryKey;
   }
   function addOrPut(store, args, noOverwrite, what) {
     if (!args.length) throw new TE(`Failed to execute '${what}' on 'IDBObjectStore': 1 argument required.`);
@@ -993,9 +1090,9 @@
     if (index) indexCheck(index);
     else check(h, false);
     const range = toRange(a.query, false);
-    const name = index ? index.im.name : null;
     return request(h.x, source, () => {
-      const flat = N.getAll(h.x.conn.name, h.m.name, name, ...range, a.count, a.dir, kind !== 1);
+      const name = index ? index.im.backingName : null;
+      const flat = storage.getAll(h.x.conn.name, h.m.backingName, name, ...range, a.count, a.dir, kind !== 1);
       const out = [];
       for (let i = 0; i < flat.length; i += 3) {
         if (kind === 0) out.push(flat[i + 2]);
@@ -1005,11 +1102,27 @@
       return out;
     });
   }
+  function requestOperations(proto, owners, names) {
+    const operations = O.create(null);
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i], original = proto[name];
+      operations[name] = original;
+      const method = { [name]() {
+        const owner = owners.get(this);
+        if (!owner) throw new TE('Illegal invocation');
+        return apply(owner[name], this, arguments);
+      } }[name];
+      defineProperty(method, 'length', { value: original.length });
+      defineProperty(proto, name, { value: method });
+    }
+    return operations;
+  }
   class IDBObjectStore {
     #h;
-    constructor(t, h) {
+    constructor(t = undefined, h) {
       if (t !== token) throw illegal();
       this.#h = h;
+      N.storeOperations.set(this, storeOperations);
     }
     static {
       storeOf = (s) => s.#h;
@@ -1022,7 +1135,10 @@
       upgradeCheck(h, h.m.deleted);
       if (h.m.name === name) return;
       if (c.meta.has(name)) throw fail('ConstraintError', 'An object store with the specified name already exists.');
-      N.renameStore(c.name, h.m.name, name);
+      enqueueSchema(h.x, () => {
+        storage.renameStore(c.name, h.m.backingName, name);
+        h.m.backingName = name;
+      });
       c.meta.delete(h.m.name);
       h.m.name = name;
       c.meta.set(name, h.m);
@@ -1053,7 +1169,7 @@
       check(h, true);
       const range = toRange(query, true);
       return request(h.x, this, () => {
-        N.deleteRange(h.x.conn.name, h.m.name, h.x.id, ...range);
+        storage.deleteRange(h.x.conn.name, h.m.backingName, h.x.id, ...range);
         return undefined;
       });
     }
@@ -1061,7 +1177,7 @@
       const h = this.#h;
       check(h, true);
       return request(h.x, this, () => {
-        N.clear(h.x.conn.name, h.m.name, h.x.id);
+        storage.clear(h.x.conn.name, h.m.backingName, h.x.id);
         return undefined;
       });
     }
@@ -1071,7 +1187,7 @@
       check(h, false);
       const range = toRange(query, true);
       return request(h.x, this, () => {
-        const r = N.getRecord(h.x.conn.name, h.m.name, null, ...range, true);
+        const r = storage.getRecord(h.x.conn.name, h.m.backingName, null, ...range, true);
         return r ? r[2] : undefined;
       });
     }
@@ -1081,7 +1197,7 @@
       check(h, false);
       const range = toRange(query, true);
       return request(h.x, this, () => {
-        const r = N.getRecord(h.x.conn.name, h.m.name, null, ...range, false);
+        const r = storage.getRecord(h.x.conn.name, h.m.backingName, null, ...range, false);
         return r ? decodeKey(r[1]) : undefined;
       });
     }
@@ -1098,7 +1214,7 @@
       const h = this.#h;
       check(h, false);
       const range = toRange(query, false);
-      return request(h.x, this, () => N.count(h.x.conn.name, h.m.name, null, ...range));
+      return request(h.x, this, () => storage.count(h.x.conn.name, h.m.backingName, null, ...range));
     }
     openCursor(query = undefined, dir = undefined) {
       return openCursor(this, this.#h, null, query, dir, false);
@@ -1129,18 +1245,19 @@
       if (isArray(keyPath) && multiEntry) {
         throw fail('InvalidAccessError', 'The keyPath argument was an array and the multiEntry option is true.');
       }
-      N.createIndex(c.name, h.m.name, name, stringify(keyPath), unique, multiEntry);
-      const im = { name, keyPath, unique, multiEntry, deleted: false };
+      const im = { name, backingName: name, keyPath, unique, multiEntry, deleted: false };
       h.m.indexes.set(name, im);
       (x.createdIndexes || (x.createdIndexes = [])).push(im);
-      const rows = N.records(c.name, h.m.name);
-      let ok = true;
-      for (let i = 0; i < rows.length && ok; i += 2) {
-        ok = N.indexAdd(c.name, h.m.name, name, rows[i], indexKeys(im, rows[i + 1]));
-      }
-      if (!ok) {
-        post(() => abortTx(x, fail('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.')));
-      }
+      enqueueSchema(x, () => {
+        storage.createIndex(c.name, h.m.backingName, name, stringify(keyPath), unique, multiEntry);
+        const rows = storage.records(c.name, h.m.backingName);
+        for (let i = 0; i < rows.length; i += 2) {
+          if (!storage.indexAdd(c.name, h.m.backingName, name, rows[i], indexKeys(im, rows[i + 1]))) {
+            throw fail('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.');
+          }
+        }
+        h.m.backingIndexes.add(im);
+      });
       return indexHandle(this, h, im);
     }
     deleteIndex(name) {
@@ -1150,12 +1267,20 @@
       upgradeCheck(h, h.m.deleted);
       const im = h.m.indexes.get(name);
       if (!im) throw fail('NotFoundError', 'The specified index was not found.');
-      N.deleteIndex(h.x.conn.name, h.m.name, name);
+      enqueueSchema(h.x, () => {
+        storage.deleteIndex(h.x.conn.name, h.m.backingName, name);
+        h.m.backingIndexes.delete(im);
+      });
       h.m.indexes.delete(name);
       im.deleted = true;
     }
   }
-  tag(IDBObjectStore, 'IDBObjectStore');
+  tag(IDBObjectStore, 'IDBObjectStore', 'name', 'keyPath', 'indexNames', 'transaction', 'autoIncrement', 'put',
+    'add', 'delete', 'clear', 'get', 'getKey', 'getAll', 'getAllKeys', 'getAllRecords', 'count', 'openCursor',
+    'openKeyCursor', 'index', 'createIndex', 'deleteIndex');
+
+  const storeOperations = requestOperations(IDBObjectStore.prototype, N.storeOperations,
+    ['put', 'add', 'delete', 'clear', 'get', 'getKey', 'getAll', 'getAllKeys', 'getAllRecords', 'count', 'openCursor', 'openKeyCursor']);
 
   // ---- Indexes ----
   let indexOf;
@@ -1173,9 +1298,10 @@
   }
   class IDBIndex {
     #d;
-    constructor(t, d) {
+    constructor(t = undefined, d) {
       if (t !== token) throw illegal();
       this.#d = d;
+      N.indexOperations.set(this, indexOperations);
     }
     static {
       indexOf = (i) => i.#d;
@@ -1188,7 +1314,10 @@
       upgradeCheck(h, d.im.deleted || h.m.deleted);
       if (d.im.name === name) return;
       if (h.m.indexes.has(name)) throw fail('ConstraintError', 'An index with the specified name already exists.');
-      N.renameIndex(h.x.conn.name, h.m.name, d.im.name, name);
+      enqueueSchema(h.x, () => {
+        storage.renameIndex(h.x.conn.name, h.m.backingName, d.im.backingName, name);
+        d.im.backingName = name;
+      });
       h.m.indexes.delete(d.im.name);
       d.im.name = name;
       h.m.indexes.set(name, d.im);
@@ -1213,7 +1342,7 @@
       indexCheck(d);
       const range = toRange(query, true);
       return request(d.h.x, this, () => {
-        const r = N.getRecord(d.h.x.conn.name, d.h.m.name, d.im.name, ...range, true);
+        const r = storage.getRecord(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range, true);
         return r ? r[2] : undefined;
       });
     }
@@ -1223,7 +1352,7 @@
       indexCheck(d);
       const range = toRange(query, true);
       return request(d.h.x, this, () => {
-        const r = N.getRecord(d.h.x.conn.name, d.h.m.name, d.im.name, ...range, false);
+        const r = storage.getRecord(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range, false);
         return r ? decodeKey(r[1]) : undefined;
       });
     }
@@ -1240,7 +1369,7 @@
       const d = this.#d;
       indexCheck(d);
       const range = toRange(query, false);
-      return request(d.h.x, this, () => N.count(d.h.x.conn.name, d.h.m.name, d.im.name, ...range));
+      return request(d.h.x, this, () => storage.count(d.h.x.conn.name, d.h.m.backingName, d.im.backingName, ...range));
     }
     openCursor(query = undefined, dir = undefined) {
       return openCursor(this, this.#d.h, this.#d, query, dir, false);
@@ -1249,7 +1378,11 @@
       return openCursor(this, this.#d.h, this.#d, query, dir, true);
     }
   }
-  tag(IDBIndex, 'IDBIndex');
+  tag(IDBIndex, 'IDBIndex', 'name', 'objectStore', 'keyPath', 'multiEntry', 'unique', 'get', 'getKey', 'getAll',
+    'getAllKeys', 'getAllRecords', 'count', 'openCursor', 'openKeyCursor');
+
+  const indexOperations = requestOperations(IDBIndex.prototype, N.indexOperations,
+    ['get', 'getKey', 'getAll', 'getAllKeys', 'getAllRecords', 'count', 'openCursor', 'openKeyCursor']);
 
   // ---- Cursors ----
   function openCursor(source, h, index, query, dir, keyOnly) {
@@ -1279,10 +1412,10 @@
   }
   // "Iterate a cursor".
   function iterate(c, key, primaryKey, count) {
-    const r = N.seek(
+    const r = storage.seek(
       c.h.x.conn.name,
-      c.h.m.name,
-      c.im ? c.im.name : null,
+      c.h.m.backingName,
+      c.im ? c.im.backingName : null,
       ...c.range,
       c.dir,
       c.key ?? null,
@@ -1323,7 +1456,7 @@
   }
   class IDBCursor {
     #c;
-    constructor(t, c) {
+    constructor(t = undefined, c) {
       if (t !== token) throw illegal();
       this.#c = c;
     }
@@ -1404,15 +1537,16 @@
       cursorWrite(c);
       const pk = c.pk;
       return request(c.h.x, this, () => {
-        N.deleteRange(c.h.x.conn.name, c.h.m.name, c.h.x.id, pk, pk, false, false);
+        storage.deleteRange(c.h.x.conn.name, c.h.m.backingName, c.h.x.id, pk, pk, false, false);
         return undefined;
       });
     }
   }
-  tag(IDBCursor, 'IDBCursor');
+  tag(IDBCursor, 'IDBCursor', 'source', 'direction', 'key', 'primaryKey', 'request', 'advance', 'continue',
+    'continuePrimaryKey', 'update', 'delete');
   class IDBCursorWithValue extends IDBCursor {
     #v;
-    constructor(t, c) {
+    constructor(t = undefined, c) {
       super(t, c);
       this.#v = c;
     }
@@ -1420,10 +1554,15 @@
       return this.#v.value;
     }
   }
-  tag(IDBCursorWithValue, 'IDBCursorWithValue');
+  tag(IDBCursorWithValue, 'IDBCursorWithValue', 'value');
 
   // ---- Opening and deleting databases ----
   const queues = new Map();
+  function forgetAddress(key) {
+    if (typeof key !== 'string' && !queues.has(key) && !waiters.has(key) && !conns.some(c => c.name === key)) {
+      key.owner.delete(key.name);
+    }
+  }
   function enqueue(item) {
     let q = queues.get(item.name);
     if (!q) queues.set(item.name, (q = []));
@@ -1434,9 +1573,19 @@
     const q = queues.get(name);
     q.shift();
     if (q.length) post(() => run(q[0]));
-    else queues.delete(name);
+    else {
+      queues.delete(name);
+      forgetAddress(name);
+    }
   }
-  const run = (item) => (item.kind === 'open' ? runOpen(item) : runDelete(item));
+  function run(item) {
+    try {
+      if (live(item.name)) return item.kind === 'open' ? runOpen(item) : runDelete(item);
+    } catch (error) {
+      if (live(item.name)) throw error;
+    }
+    return bucketOpenFailed(item);
+  }
   const retry = (item) => waitFor(item.name, () => post(() => run(item)));
   function settle(item, event) {
     return {
@@ -1447,8 +1596,8 @@
   }
   function runOpen(item) {
     const name = item.name;
-    if (N.busy(name)) return retry(item);
-    const current = N.version(name);
+    if (storage.busy(name)) return retry(item);
+    const current = storage.version(name);
     const version = item.version === undefined ? (current > 0 ? current : 1) : item.version;
     const s = requestState(item.request);
     if (current > version) {
@@ -1460,7 +1609,7 @@
       succeed(s, c.db);
       return settle(item, plainEvent('success', false, false));
     }
-    if (!N.reserve(name)) return retry(item);
+    if (!storage.reserve(name)) return retry(item);
     const old = current < 0 ? 0 : current;
     item.conn = connect(name, old);
     item.old = old;
@@ -1475,7 +1624,7 @@
         post(() => (o.closePending ? undefined : { t: o.db, e: versionEvent('versionchange', old, version) }));
       }
     }
-    N.notify(item.name, old, version);
+    storage.notify(item.name, old, version);
     post(() => {
       if (!othersOpen(item.name, item.conn)) return proceed(item);
       waitClosed(item);
@@ -1488,7 +1637,18 @@
       else post(() => proceed(item));
     });
   }
-  const proceed = (item) => (item.kind === 'open' ? upgrade(item) : deleteNow(item));
+  function bucketOpenFailed(item) {
+    failed(requestState(item.request), fail('AbortError', 'The storage bucket no longer exists.'));
+    return settle(item, plainEvent('error', true, true));
+  }
+  function proceed(item) {
+    try {
+      if (live(item.name)) return item.kind === 'open' ? upgrade(item) : deleteNow(item);
+    } catch (error) {
+      if (live(item.name)) throw error;
+    }
+    return bucketOpenFailed(item);
+  }
   // "Run an upgrade transaction".
   function upgrade(item) {
     const c = item.conn, name = item.name;
@@ -1499,7 +1659,7 @@
       stores: [...c.meta.values()].map((m) => [m, m.name, [...m.indexes.values()].map((im) => [im, im.name])]),
     };
     c.upgrade = x;
-    N.beginUpgrade(name, x.id, item.version);
+    storage.beginUpgrade(name, x.id, item.version);
     c.version = item.version;
     x.started = true;
     const s = requestState(item.request);
@@ -1518,43 +1678,39 @@
     };
   }
   // After the upgrade transaction's complete or abort event.
-  function upgradeFinished(x, committed) {
+  function finishOpen(x, committed) {
     const item = x.openItem, c = x.conn, s = requestState(item.request);
-    maybeClose(c);
-    post(() => {
-      s.tx = null;
-      N.release(item.name);
-      if (committed && !c.closePending) {
-        succeed(s, c.db);
-        return settle(item, plainEvent('success', false, false));
-      }
-      failed(s, fail('AbortError', committed ? 'The connection was closed.' : 'The version change transaction was aborted.'));
-      return settle(item, plainEvent('error', true, true));
-    });
+    storage.release(item.name);
+    if (committed && !c.closePending) {
+      succeed(s, c.db);
+      return settle(item, plainEvent('success', false, false));
+    }
+    failed(s, fail('AbortError', committed ? 'The connection was closed.' : 'The version change transaction was aborted.'));
+    return settle(item, plainEvent('error', true, true));
   }
   function runDelete(item) {
     const name = item.name;
-    if (N.busy(name)) return retry(item);
-    const current = N.version(name);
+    if (storage.busy(name)) return retry(item);
+    const current = storage.version(name);
     const s = requestState(item.request);
     if (current < 0) {
       succeed(s, undefined);
       return settle(item, versionEvent('success', 0, null));
     }
-    if (!N.reserve(name)) return retry(item);
+    if (!storage.reserve(name)) return retry(item);
     item.old = current;
     versionChange(item, current, null);
   }
   function deleteNow(item) {
-    N.deleteDb(item.name);
-    N.release(item.name);
+    storage.deleteDb(item.name);
+    storage.release(item.name);
     succeed(requestState(item.request), undefined);
     return settle(item, versionEvent('success', item.old, null));
   }
   function databaseName(name) {
     return domString(name);
   }
-  function open(name, version, argc) {
+  function open(name, version, argc, address) {
     name = databaseName(name);
     let v;
     if (argc > 1 && version !== undefined) {
@@ -1562,12 +1718,13 @@
       if (v === 0) throw new TE("Failed to execute 'open' on 'IDBFactory': The version provided must not be 0.");
     }
     const r = new IDBOpenDBRequest(token);
-    enqueue({ kind: 'open', name, version: v, request: r });
+    enqueue({ kind: 'open', name: address ? address(name) : name, version: v, request: r });
     return r;
   }
-  function deleteDatabase(name) {
+  function deleteDatabase(name, address) {
+    name = databaseName(name);
     const r = new IDBOpenDBRequest(token);
-    enqueue({ kind: 'delete', name: databaseName(name), request: r });
+    enqueue({ kind: 'delete', name: address ? address(name) : name, request: r });
     return r;
   }
   function cmp(a, b) {
@@ -1581,7 +1738,38 @@
     if (c && !c.closePending) post(() => (c.closePending ? undefined : { t: c.db, e: versionEvent('versionchange', oldVersion, newVersion) }));
   }
 
+  function bucket(backend) {
+    enableBucketRouting();
+    const addresses = new Map();
+    const address = name => {
+      let value = addresses.get(name);
+      if (!value) {
+        value = {name, backend, owner: addresses};
+        addresses.set(name, value);
+      }
+      return value;
+    };
+    return {
+      open: (name, version, argc) => open(name, version, argc, address),
+      deleteDatabase: name => deleteDatabase(name, address),
+      cmp,
+      wake: (kind, name, conn, oldVersion, newVersion) =>
+        wake(kind, kind === 0 ? address(name) : undefined, conn, oldVersion, newVersion),
+      retire() {
+        for (const c of [...conns]) {
+          if (typeof c.name === 'string' || c.name.backend !== backend) continue;
+          c.closePending = true;
+          for (const x of [...c.txs]) abortTx(x, fail('UnknownError', 'The storage bucket was deleted.'));
+          maybeClose(c);
+          post(() => ({t: c.db, e: plainEvent('close', false, false)}));
+        }
+        for (const key of addresses.values()) runWaiters(key);
+        addresses.clear();
+      },
+    };
+  }
   return {
+    bucket,
     step,
     wake,
     open,

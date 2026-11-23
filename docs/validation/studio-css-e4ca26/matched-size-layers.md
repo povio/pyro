@@ -1,0 +1,5 @@
+# Matching keywords in layered image sizes
+
+Source `cdcdccfa`, parent `001704c4` (`outlineauto`). On WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`, the parent treated even identical `contain` or `cover` values as incompatible. That prevented numeric layers in the same list from interpolating. Keep identical keywords constant; different keyword variants still fail to combine. The upstream vendor patch passed forward and reverse reconstruction.
+
+On 8,082 matched CSS URLs the candidate gained both background-size animation pages: 20 names for interpolation and 10 for composition. No previous strict page or named pass disappeared. Mismatched keyword cases, parsing, and mask-size controls were retained. The main set now has 5,702 strict pages and 181,397 named passes; stable Chrome 158.0.8127.37 has 6,950 and 182,963. Directional gaps are 1,526 pages / 7,464 names Chrome-only and 278 / 5,898 LP-only. LP had 11 timeouts and one hang; Chrome had 10 and one. The 41 supplemental URLs were unchanged (LP 27 / 577; Chrome 35 / 619); 39 other URLs remain withheld and unscored. Exact outcomes and differences are the adjacent `matchedsize` artifacts.

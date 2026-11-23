@@ -1,0 +1,55 @@
+{
+  "version": "158.0.8127.37",
+  "results": {
+    "local": {
+      "quadBrand": true,
+      "pointBrand": true,
+      "readonlyBrand": true,
+      "quadAlias": true,
+      "pointAlias": false,
+      "ordinaryAlias": true,
+      "values": true,
+      "mutable": false
+    },
+    "channel": {
+      "quadBrand": true,
+      "pointBrand": true,
+      "readonlyBrand": true,
+      "quadAlias": true,
+      "pointAlias": false,
+      "ordinaryAlias": true,
+      "values": true,
+      "mutable": false
+    },
+    "worker": {
+      "quadBrand": true,
+      "pointBrand": true,
+      "readonlyBrand": true,
+      "quadAlias": true,
+      "pointAlias": false,
+      "ordinaryAlias": true,
+      "values": true,
+      "mutable": false
+    },
+    "history": {
+      "quadBrand": true,
+      "pointBrand": true,
+      "readonlyBrand": true,
+      "quadAlias": true,
+      "pointAlias": false,
+      "ordinaryAlias": true,
+      "values": true,
+      "mutable": false
+    },
+    "idb": {
+      "quadBrand": true,
+      "pointBrand": true,
+      "readonlyBrand": true,
+      "quadAlias": true,
+      "pointAlias": false,
+      "ordinaryAlias": true,
+      "values": true,
+      "mutable": false
+    }
+  }
+}

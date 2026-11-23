@@ -176,7 +176,26 @@ impl Default for NameCache {
     }
 }
 
+/// HTML attributes reflecting a single invoker target.
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub enum InvokerTarget {
+    InterestFor,
+    CommandFor,
+    PopoverTarget,
+}
+
+impl InvokerTarget {
+    fn name(self) -> &'static str {
+        match self {
+            Self::InterestFor => "interestfor",
+            Self::CommandFor => "commandfor",
+            Self::PopoverTarget => "popovertarget",
+        }
+    }
+}
+
 pub struct Dom {
+    pub(crate) blob_hyperlinks: Option<Box<crate::blob_hyperlinks::BlobHyperlinks>>,
     /// Process-unique id (caches keyed by DOM identity and `version`).
     uid: u64,
     slots: Vec<Slot>,
@@ -223,6 +242,9 @@ pub struct Dom {
     /// A `<canvas>` element was created: loaded images keep their bytes
     /// for canvas drawing (`Dom::canvas_seen`).
     pub(crate) canvas_seen: bool,
+    /// HTML-in-Canvas: a `content` attribute of `drawable` was given to an element of a DOM with
+    /// a canvas, by the parser or `setAttribute` (`Dom::drawable_canvas_seen`).
+    pub(crate) drawable_canvas_seen: bool,
     /// An SVG `<animate>` element was created: until then the page has no
     /// SMIL animations to look for (`Dom::smil_seen`).
     pub(crate) smil_seen: bool,
@@ -238,12 +260,19 @@ pub struct Dom {
     /// What each `version` bump changed, for caches that can update
     /// selectively (style invalidation). Bounded: see `changes_since`.
     journal: Vec<(u64, Change)>,
-    /// The content height of the responsively embedded document each iframe shows (by slot), for the
-    /// renderer (`set_frame_content_height`, snapshot `data-pyro-frame-content-height`).
-    pub(crate) frame_content_heights: rustc_hash::FxHashMap<u32, f32>,
+    /// The content size (width, height) of the responsively embedded document each iframe shows (by
+    /// slot), for the renderer (`set_frame_content_size`, snapshot `data-pyro-frame-content-size`).
+    pub(crate) frame_content_sizes: rustc_hash::FxHashMap<u32, (f32, f32)>,
     /// pyro: the user agent's pan and zoom of an `<svg>` (`SVGSVGElement.currentTranslate` and
     /// `currentScale`): its translation and scale, when not the identity.
+    pub(crate) svg_points: rustc_hash::FxHashMap<u32, std::rc::Weak<crate::svg_point_list::PointLists>>,
+    pub(crate) svg_numbers: rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<&'static str, std::rc::Weak<crate::svg_point_list::NumberLists>>>,
+    pub(crate) svg_lengths: rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<&'static str, std::rc::Weak<crate::svg_point_list::LengthLists>>>,
+    pub(crate) svg_strings: rustc_hash::FxHashMap<(u32, crate::svg_string_list::StringListAttribute), Vec<String>>,
     pub(crate) svg_pans: rustc_hash::FxHashMap<u32, (f64, f64, f64)>,
+    /// Trusted Types' [[ScriptText]] of the `<script>` elements that have one (`Dom::script_text`),
+    /// by slot.
+    pub(crate) script_texts: rustc_hash::FxHashMap<u32, Box<str>>,
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
     /// scroll position (`set_frame_documents`, snapshot `srcdoc` + `data-pyro-frame-*`).
     pub(crate) frame_documents: rustc_hash::FxHashMap<u32, FrameDocument>,
@@ -264,7 +293,10 @@ pub struct Dom {
     /// never reads styles pays nothing.
     style_snapshots: std::cell::RefCell<Option<StyleSnapshots>>,
     /// Custom element names whose definitions disable shadow roots.
-    shadow_disabled: Vec<Box<str>>,
+    shadow_disabled: Vec<(Option<NodeId>, RegistryAssociation, LocalName, LocalName)>,
+    scoped_registry_docs: rustc_hash::FxHashMap<u64, Vec<(u64, NodeId)>>,
+    registry_associations: rustc_hash::FxHashMap<u32, RegistryAssociation>,
+    custom_definition_owners: rustc_hash::FxHashMap<u32, CustomDefinitionOwner>,
     /// Shadow roots ever attached (selective style invalidation does not
     /// model slot assignment, so consumers fall back to full invalidation).
     shadow_roots: u32,
@@ -274,6 +306,31 @@ pub struct Dom {
     pub(crate) mutation: MutationState,
     /// Ranges to adjust on mutation (`crate::live_range`); empty when none exists.
     pub(crate) live_ranges: Vec<std::rc::Weak<crate::live_range::LiveRange>>,
+    /// Only controls with registered ranges have an entry. Weak references
+    /// let unobserved ranges die independently of their control.
+    pub(crate) value_ranges: rustc_hash::FxHashMap<u32, Vec<std::rc::Weak<crate::forms::OpaqueRange>>>,
+    /// An `<input>` whose type change left the value content attribute to
+    /// set (value mode to default mode), set once the type mutation is queued.
+    pub(crate) pending_input_value_attr: Option<(u32, String)>,
+    /// A `<selectedcontent>` was created: the select steps of
+    /// `crate::selectedcontent` run (none before, at no cost).
+    pub(crate) selectedcontent_seen: bool,
+    /// A `<select>` was created: the selectedness steps of insertions and
+    /// removals (`Dom::options_after_insert`) run (none before).
+    pub(crate) select_seen: bool,
+    /// An `<input>` was created: radios joining a group by insertion uncheck
+    /// the rest of it (`Dom::radio_joined_group`; none before).
+    pub(crate) input_seen: bool,
+    /// `replace_all` is removing children whose options it already handled
+    /// (`Dom::options_before_remove_children`).
+    pub(crate) options_batch_removal: bool,
+    /// `crate::selectedcontent` is cloning into a selectedcontent: its own
+    /// mutations start no update.
+    pub(crate) selectedcontent_updating: bool,
+    /// Updates queued for a microtask (`run_selectedcontent_updates`): a
+    /// select whose options were removed or moved (`false`), or a moved
+    /// selectedcontent (`true`).
+    pub(crate) selectedcontent_pending: Vec<(NodeId, bool)>,
     pub(crate) live_iterators: Vec<std::rc::Weak<crate::live_iterator::LiveIterator>>,
     /// The document whose window a node was created for, by node slot: for
     /// the nodes that moved to a document of another window, and for the
@@ -289,8 +346,13 @@ pub struct Dom {
     pub(crate) reactions: crate::custom::ReactionQueue,
     /// `ElementInternals` state (`internals`).
     pub(crate) internals: crate::internals::InternalsStore,
+    /// Explicitly reflected invoker targets. Generation-checked handles are weak.
+    invoker_targets: rustc_hash::FxHashMap<(u32, InvokerTarget), NodeId>,
     /// Modal dialogs and showing popovers (`top_layer`).
     pub(crate) top_layer: crate::top_layer::TopLayer,
+    /// pyro: the scopes of active element-scoped view transitions, and whether each keeps its
+    /// size (`Dom::set_view_transition_scope`).
+    pub(crate) view_transition_scopes: rustc_hash::FxHashMap<NodeId, bool>,
     /// Queued `<details>` toggles and whether accordions are in use.
     pub(crate) details: crate::details::DetailsState,
     /// Nonces hidden from content attributes (`nonce`).
@@ -329,6 +391,7 @@ impl Dom {
     pub fn new() -> Self {
         static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Dom {
+            blob_hyperlinks: None,
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             slots: Vec::new(),
             walk: Vec::new(),
@@ -346,8 +409,13 @@ impl Dom {
             removals: 0,
             removal_log: VecDeque::new(),
             journal: Vec::new(),
-            frame_content_heights: Default::default(),
+            frame_content_sizes: Default::default(),
+            svg_points: Default::default(),
+            svg_numbers: Default::default(),
+            svg_lengths: Default::default(),
+            svg_strings: Default::default(),
             svg_pans: Default::default(),
+            script_texts: Default::default(),
             frame_documents: Default::default(),
             snapshot_nonces: Default::default(),
             sheet_policies: Default::default(),
@@ -356,17 +424,29 @@ impl Dom {
             journal_floor: 0,
             style_snapshots: Default::default(),
             shadow_disabled: Vec::new(),
+            scoped_registry_docs: Default::default(),
+            registry_associations: Default::default(),
+            custom_definition_owners: Default::default(),
             shadow_roots: 0,
             pending_inline_handlers: Vec::new(),
             base_seen: false,
             viewport_meta_version: 0,
             media_seen: false,
             canvas_seen: false,
+            drawable_canvas_seen: false,
             smil_seen: false,
             inline_transitions_seen: false,
             media: Default::default(),
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
+            value_ranges: Default::default(),
+            pending_input_value_attr: None,
+            selectedcontent_seen: false,
+            select_seen: false,
+            input_seen: false,
+            options_batch_removal: false,
+            selectedcontent_updating: false,
+            selectedcontent_pending: Vec::new(),
             live_iterators: Vec::new(),
             creation_docs: Default::default(),
             upgrades: Default::default(),
@@ -376,7 +456,9 @@ impl Dom {
             iframes: Default::default(),
             reactions: Default::default(),
             internals: Default::default(),
+            invoker_targets: Default::default(),
             top_layer: Default::default(),
+            view_transition_scopes: Default::default(),
             details: Default::default(),
             nonces: Default::default(),
             natural_sizes: Default::default(),
@@ -464,6 +546,12 @@ impl Dom {
     /// Whether a `<canvas>` element was ever created in this DOM.
     pub fn canvas_seen(&self) -> bool {
         self.canvas_seen
+    }
+    /// HTML-in-Canvas: whether a `<canvas content=drawable>` may exist: an element was ever given
+    /// `content=drawable` (ASCII case-insensitive) by the parser or `setAttribute` in this DOM.
+    /// Until then a document has no drawable canvas to fire `paint` events at.
+    pub fn drawable_canvas_seen(&self) -> bool {
+        self.drawable_canvas_seen
     }
     /// Whether an SVG `<animate>` element was ever created in this DOM.
     pub fn smil_seen(&self) -> bool {
@@ -642,6 +730,17 @@ impl Dom {
     /// The changes no `note` refines: everything may have changed.
     fn bump_style_text(&mut self) {
         self.style_text_revision = self.style_text_revision.wrapping_add(1);
+    }
+
+    /// pyro: CSP blocked or allowed the HTML `<style>` `i`'s sheet: its sheet text (empty or its
+    /// own) differs, as after a text change, without a new sheet object.
+    pub(crate) fn style_csp_changed(&mut self, i: u32) {
+        let revision = self.style_text_revision.wrapping_add(1);
+        if let NodeKind::Element(e) = &mut self.n_mut(i).kind {
+            e.style_text_revision = revision;
+        }
+        self.style_text_revision = revision;
+        self.bump();
     }
 
     /// `change` changed the children of an HTML `<style>`, or a child's
@@ -845,7 +944,9 @@ impl Dom {
 
     /// Parser allocation: no collection candidate (node is linked at once).
     pub(crate) fn alloc_raw(&mut self, kind: NodeKind, owner_doc: u32) -> u32 {
-        self.alloc(kind, owner_doc)
+        let i = self.alloc(kind, owner_doc);
+        self.capture_hyperlink_blob(i);
+        i
     }
     pub(crate) fn link_raw(&mut self, node: u32, parent: u32, before: u32) {
         if before != NIL && !self.live_ranges.is_empty() {
@@ -912,6 +1013,8 @@ impl Dom {
             DocumentKind::Xml => "application/xml",
         };
         let data = DocumentData {
+            has_global_registry: false,
+            preferred_sheet_name: None,
             raster_budget: Default::default(),
             kind,
             quirks: QuirksMode::NoQuirks,
@@ -935,6 +1038,8 @@ impl Dom {
             activated: NIL,
             focus_visible: false,
             design_mode: false,
+            style_with_css: false,
+            default_paragraph_separator: "div",
             document_element: NIL,
             head: NIL,
             body: NIL,
@@ -943,7 +1048,9 @@ impl Dom {
             header_referrer_policy: None,
             layout_client: None,
             responsive_embedded: false,
+            responsive_embedding_policy: None,
             content_language: None,
+            pragma_language: None,
         };
         let idx = self.alloc(NodeKind::Document(Box::new(data)), NIL);
         // A document owns itself, and is connected.
@@ -956,6 +1063,27 @@ impl Dom {
     /// HTML `document.designMode` of `doc`: whether the whole document is editable.
     pub fn design_mode(&self, doc: NodeId) -> bool {
         self.check(doc).ok().is_some_and(|i| matches!(&self.n(i).kind, NodeKind::Document(d) if d.design_mode))
+    }
+
+    pub fn set_style_with_css(&mut self, doc: NodeId, css: bool) -> DomResult<()> {
+        let i = self.check(doc)?;
+        let NodeKind::Document(d) = &mut self.n_mut(i).kind else { return Err(DomError::Type("not a document")) };
+        d.style_with_css = css;
+        Ok(())
+    }
+
+    pub fn set_paragraph_separator(&mut self, doc: NodeId, value: &str) -> DomResult<bool> {
+        let tag = if value.eq_ignore_ascii_case("div") {
+            "div"
+        } else if value.eq_ignore_ascii_case("p") {
+            "p"
+        } else {
+            return Ok(false);
+        };
+        let i = self.check(doc)?;
+        let NodeKind::Document(d) = &mut self.n_mut(i).kind else { return Err(DomError::Type("not a document")) };
+        d.default_paragraph_separator = tag;
+        Ok(true)
     }
 
     /// Sets `doc`'s `designMode` (`on`).
@@ -983,7 +1111,7 @@ impl Dom {
     pub fn set_document_active(&mut self, doc: NodeId, active: bool) -> DomResult<()> {
         let i = self.check(doc)?;
         match &mut self.n_mut(i).kind {
-            NodeKind::Document(d) => d.active = active,
+            NodeKind::Document(d) => { d.active = active; d.has_global_registry |= active; }
             _ => return Err(DomError::Type("not a document")),
         }
         if active {
@@ -1063,14 +1191,29 @@ impl Dom {
             return;
         }
         let Some(e) = n.element() else { return };
+        // HTML "Content language state": the pragma-set default language, kept after the
+        // element is removed.
+        if e.attr_local(&local_name!("http-equiv")).is_some_and(|v| v.trim().eq_ignore_ascii_case("content-language")) {
+            let lang = e
+                .attr_local(&local_name!("content"))
+                .filter(|v| !v.contains(','))
+                .and_then(|v| v.split_ascii_whitespace().next())
+                .map(Box::<str>::from);
+            if let Some(lang) = lang {
+                let doc = n.owner_doc;
+                self.doc_data_mut(doc).pragma_language = Some(lang);
+                self.bump();
+            }
+            return;
+        }
         // HTML "Content security policy state" of a `<meta http-equiv>` child of the head: its
-        // policy joins the document's (only its Trusted Types directives are kept).
+        // policy joins the document's CSP list.
         if e.attr_local(&local_name!("http-equiv")).is_some_and(|v| v.eq_ignore_ascii_case("content-security-policy")) {
             let doc = n.owner_doc;
             let in_head = self.doc_data(doc).head != NIL && n.parent == self.doc_data(doc).head;
             if let (true, Some(content)) = (in_head, e.attr_local(&local_name!("content")).map(str::to_owned)) {
                 let doc = self.id_of(doc);
-                self.add_csp_policies(doc, &content, false);
+                self.add_csp_policies(doc, &content, false, true);
             }
             return;
         }
@@ -1078,9 +1221,11 @@ impl Dom {
         // (Blink `HTMLMetaElement::ProcessContent`; WPT css-sizing `responsive-iframe/*`)
         if e.attr_local(&local_name!("name")).is_some_and(|name| name.eq_ignore_ascii_case("responsive-embedded-sizing")) {
             let doc = n.owner_doc;
+            let content = e.attr_local(&local_name!("content")).map(Box::<str>::from);
             let d = self.doc_data_mut(doc);
             if d.body == NIL && !d.responsive_embedded {
                 d.responsive_embedded = true;
+                d.responsive_embedding_policy = content;
                 self.viewport_meta_version += 1;
             }
             return;
@@ -1172,20 +1317,26 @@ impl Dom {
         self.document_data(doc).ok()?.viewport_meta.as_ref()
     }
 
-    /// The content height of the document `iframe` shows when that document is responsively embedded
-    /// (`None`: it is not), which the render snapshot gives the renderer: an iframe of `frame-sizing:
-    /// content-height` takes it as its natural height (css-sizing-4).
-    pub fn set_frame_content_height(&mut self, iframe: NodeId, height: Option<f32>) {
+    /// The content size (width, height) of the document `iframe` shows when that document is
+    /// responsively embedded (`None`: it is not), which the render snapshot gives the renderer: an
+    /// iframe of `frame-sizing: content-height` (`content-width`, or a logical value) takes it as its
+    /// natural size on that axis (css-sizing-4).
+    pub fn set_frame_content_size(&mut self, iframe: NodeId, size: Option<(f32, f32)>) {
         let Ok(i) = self.check(iframe) else { return };
-        if self.frame_content_heights.get(&i).copied() == height {
+        if self.frame_content_sizes.get(&i).copied() == size {
             return;
         }
-        match height {
-            Some(height) => self.frame_content_heights.insert(i, height),
-            None => self.frame_content_heights.remove(&i),
+        match size {
+            Some(size) => self.frame_content_sizes.insert(i, size),
+            None => self.frame_content_sizes.remove(&i),
         };
         self.bump();
         self.note(Change::State(i));
+    }
+
+    /// The size [`Dom::set_frame_content_size`] gave `iframe`, if any.
+    pub fn frame_content_size(&self, iframe: NodeId) -> Option<(f32, f32)> {
+        self.check(iframe).ok().and_then(|i| self.frame_content_sizes.get(&i).copied())
     }
 
     /// pyro: the pan and zoom (`currentTranslate` x and y, `currentScale`) of the `<svg>` `svg`.
@@ -1321,32 +1472,43 @@ impl Dom {
         self.note(Change::State(i));
     }
 
-    /// [`Dom::set_frame_content_height`] for all iframes at once: those not in `heights` have none.
+    /// [`Dom::set_frame_content_size`] for all iframes at once: those not in `sizes` have none.
     /// `scope`: as for [`Dom::set_frame_documents`].
-    pub fn set_frame_content_heights(&mut self, scope: &[NodeId], heights: &[(NodeId, f32)]) {
-        let keep: Vec<u32> = heights.iter().filter_map(|&(iframe, _)| self.check(iframe).ok()).collect();
+    pub fn set_frame_content_sizes(&mut self, scope: &[NodeId], sizes: &[(NodeId, (f32, f32))]) {
+        let keep: Vec<u32> = sizes.iter().filter_map(|&(iframe, _)| self.check(iframe).ok()).collect();
         let in_scope = self.scope_indices(scope);
         let stale: Vec<u32> = self
-            .frame_content_heights
+            .frame_content_sizes
             .keys()
             .copied()
             .filter(|i| !keep.contains(i) && self.in_frame_scope(*i, &in_scope))
             .collect();
         for i in stale {
-            self.frame_content_heights.remove(&i);
+            self.frame_content_sizes.remove(&i);
             if self.slot_live(i) {
                 self.bump();
                 self.note(Change::State(i));
             }
         }
-        for &(iframe, height) in heights {
-            self.set_frame_content_height(iframe, Some(height));
+        for &(iframe, size) in sizes {
+            self.set_frame_content_size(iframe, Some(size));
         }
     }
 
     /// Whether `doc` opted in to responsive embedded sizing (`DocumentData::responsive_embedded`).
     pub fn is_responsively_embedded(&self, doc: NodeId) -> bool {
         self.document_data(doc).is_ok_and(|d| d.responsive_embedded)
+    }
+
+    /// The `content` of the `<meta name="responsive-embedded-sizing">` that opted `doc` in (its
+    /// `allow-origins=` list), if it did and the element had one.
+    pub fn responsive_embedding_policy(&self, doc: NodeId) -> Option<&str> {
+        self.document_data(doc).ok().filter(|d| d.responsive_embedded)?.responsive_embedding_policy.as_deref()
+    }
+
+    /// Whether `doc` has a body yet (its parser, or a script, inserted one).
+    pub fn has_body(&self, doc: NodeId) -> bool {
+        self.document_data(doc).is_ok_and(|d| d.body != NIL)
     }
 
     /// Bumped whenever a document's viewport `<meta>` changes.
@@ -1404,6 +1566,15 @@ impl Dom {
     }
     /// Makes `doc` an XML or HTML document of `content_type` (a navigation
     /// whose response decided it) decoded as `charset`.
+    /// Sets `doc`'s `contentType` (a media document's is its resource's MIME type).
+    pub fn set_content_type(&mut self, doc: NodeId, content_type: &str) -> DomResult<()> {
+        let i = self.check(doc)?;
+        if let NodeKind::Document(d) = &mut self.n_mut(i).kind {
+            d.content_type = content_type.into();
+        }
+        Ok(())
+    }
+
     pub fn set_document_kind(
         &mut self,
         doc: NodeId,
@@ -1486,18 +1657,102 @@ impl Dom {
         }
     }
 
+    fn implicit_registry(&self, node: u32) -> RegistryAssociation {
+        let doc = self.n(node).owner_doc;
+        if self.doc_data(doc).has_global_registry { RegistryAssociation::Default } else { RegistryAssociation::Null }
+    }
+
+    pub(crate) fn registry_idx(&self, node: u32) -> RegistryAssociation {
+        self.registry_associations.get(&node).copied().unwrap_or_else(|| self.implicit_registry(node))
+    }
+
+    pub(crate) fn set_registry_idx(&mut self, node: u32, registry: RegistryAssociation) {
+        if registry == self.implicit_registry(node) {
+            if !self.registry_associations.is_empty() { self.registry_associations.remove(&node); }
+        } else {
+            self.registry_associations.insert(node, registry);
+        }
+    }
+
+    pub fn registry_association(&self, node: NodeId) -> DomResult<RegistryAssociation> {
+        Ok(self.registry_idx(self.check(node)?))
+    }
+
+    pub fn set_registry_association(&mut self, node: NodeId, registry: RegistryAssociation) -> DomResult<()> {
+        let node = self.check(node)?;
+        self.set_registry_idx(node, registry);
+        Ok(())
+    }
+
+    pub fn live_scoped_registries(&self) -> FxHashSet<u64> {
+        self.registry_associations.values().copied()
+            .chain(self.custom_definition_owners.values().map(|d| d.registry))
+            .chain(self.upgrades.pending_creations.values().copied())
+            .filter_map(|association| match association {
+                RegistryAssociation::Scoped(id) => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The order belongs to the registry across documents, even if an embedder
+    /// keeps those documents in different DOM arenas.
+    pub fn note_scoped_registry_document(&mut self, registry: u64, doc: NodeId) -> DomResult<()> {
+        self.check(doc)?;
+        self.note_registry_connection(registry, doc);
+        Ok(())
+    }
+
+    fn note_registry_connection(&mut self, registry: u64, doc: NodeId) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let documents = self.scoped_registry_docs.entry(registry).or_default();
+        if !documents.iter().any(|(_, known)| *known == doc) {
+            documents.push((NEXT.fetch_add(1, Ordering::Relaxed), doc));
+        }
+    }
+
+    /// Called once the registry has no live wrapper or DOM references.
+    pub fn forget_scoped_registry(&mut self, registry: u64) {
+        self.scoped_registry_docs.remove(&registry);
+        self.forget_registry_definitions(RegistryAssociation::Scoped(registry), None);
+        self.shadow_disabled.retain(|(_, association, _, _)| *association != RegistryAssociation::Scoped(registry));
+    }
+
+    pub fn scoped_registry_documents(&self, registry: u64) -> Vec<(u64, NodeId)> {
+        self.scoped_registry_docs.get(&registry).cloned().unwrap_or_default()
+    }
+
+    pub fn custom_definition_owner(&self, el: NodeId) -> DomResult<Option<CustomDefinitionOwner>> {
+        Ok(self.custom_definition_owners.get(&self.check(el)?).copied())
+    }
+
+    pub fn set_custom_definition_owner(&mut self, el: NodeId, owner: CustomDefinitionOwner) -> DomResult<()> {
+        let i = self.check(el)?;
+        self.custom_definition_owners.insert(i, owner);
+        Ok(())
+    }
+
+    pub fn shadow_including_nodes(&self, root: NodeId) -> DomResult<Vec<NodeId>> {
+        Ok(self.shadow_including_subtree(self.check(root)?).into_iter().map(|i| self.id_of(i)).collect())
+    }
+
     /// Creates an element without name validation (parser / internal use).
     pub fn create_element_raw(&mut self, doc: NodeId, name: QualName) -> DomResult<NodeId> {
         let owner = self.owner_for(doc)?;
         let is_template = name.ns == ns!(html) && name.local == local_name!("template");
         self.base_seen |= name.local == local_name!("base");
         match name.local {
-            local_name!("audio") | local_name!("video") => self.media_seen = true,
+            local_name!("audio") | local_name!("video") | local_name!("track") => self.media_seen = true,
             local_name!("canvas") => self.canvas_seen = true,
+            local_name!("select") => self.select_seen = true,
+            local_name!("input") => self.input_seen = true,
             local_name!("animate") if name.ns == ns!(svg) => self.smil_seen = true,
             _ => {}
         }
+        self.selectedcontent_seen |= name.ns == ns!(html) && &*name.local == "selectedcontent";
         let idx = self.alloc_raw(NodeKind::Element(Box::new(ElementData::new(name))), owner);
+        self.set_registry_idx(idx, self.registry_idx(owner));
         if is_template {
             let inert = self.inert_doc_for(owner);
             let frag = self.alloc(NodeKind::Fragment(FragmentData::new(idx, None, 0)), inert);
@@ -1647,22 +1902,14 @@ impl Dom {
                     | "p"
                     | "section"
                     | "span"
-            ) || (el.name.local.contains('-')
-                && !matches!(
-                    &*el.name.local,
-                    "annotation-xml"
-                        | "color-profile"
-                        | "font-face"
-                        | "font-face-src"
-                        | "font-face-uri"
-                        | "font-face-format"
-                        | "font-face-name"
-                        | "missing-glyph"
-                )));
+            ) || is_valid_custom_element_name(&el.name.local));
         if !valid_host {
             return Err(DomError::new(DomErrorKind::NotSupported, "This element does not support attachShadow"));
         }
-        if self.shadow_disabled.iter().any(|name| **name == *el.name.local) {
+        if self.shadow_disabled.iter().any(|(doc, registry, name, local)| {
+            *local == el.name.local && (name == local || el.is_value.as_ref() == Some(name))
+                && *registry == self.registry_idx(h) && doc.is_none_or(|d| d == self.id_of(self.n(h).owner_doc))
+        }) {
             return Err(DomError::new(
                 DomErrorKind::NotSupported,
                 "attachShadow() is disabled by disabledFeatures static field",
@@ -1712,6 +1959,7 @@ impl Dom {
         }
         let owner = self.n(h).owner_doc;
         let sr = self.alloc(NodeKind::Fragment(FragmentData::new(h, Some(mode), flags)), owner);
+        self.set_registry_idx(sr, self.registry_idx(owner));
         let tree = self.shadow_root_flags_for(h);
         self.n_mut(sr).set_tree_flags(tree);
         self.n_mut(h).element_mut().unwrap().shadow_root = sr;
@@ -1728,7 +1976,11 @@ impl Dom {
             return None;
         }
         let id = self.id_of(h);
-        self.attach_shadow_with(id, mode, flags | shadow_flags::DECLARATIVE).ok().map(|sr| sr.idx)
+        let flags = flags | shadow_flags::DECLARATIVE | shadow_flags::AVAILABLE_TO_INTERNALS;
+        let sr = self.attach_shadow_with(id, mode, flags).ok()?.idx;
+        let registry = if flags & shadow_flags::KEEP_REGISTRY_NULL != 0 { RegistryAssociation::Null } else { self.registry_idx(self.n(h).owner_doc) };
+        self.set_registry_idx(sr, registry);
+        Some(sr)
     }
 
     /// `shadow_flags` of a shadow root (0 for anything else).
@@ -1740,9 +1992,77 @@ impl Dom {
         })
     }
 
+    /// The reflected element, before interest activation resolves its shadow reference target.
+    pub fn interest_for_element(&self, invoker: NodeId) -> DomResult<Option<NodeId>> {
+        self.invoker_target(invoker, InvokerTarget::InterestFor)
+    }
+
+    pub fn set_interest_for_element(&mut self, invoker: NodeId, target: Option<NodeId>) -> DomResult<()> {
+        self.set_invoker_target(invoker, InvokerTarget::InterestFor, target)
+    }
+
+    pub fn invoker_target(&self, invoker: NodeId, attr: InvokerTarget) -> DomResult<Option<NodeId>> {
+        let element = self.element(invoker)?;
+        if let Some(&target) = self.invoker_targets.get(&(invoker.idx, attr)) {
+            return Ok(self.root_node(target, false).ok()
+                .filter(|root| self.shadow_including_contains(*root, invoker)).map(|_| target));
+        }
+        let Some(id) = element.attr(attr.name()).filter(|id| !id.is_empty()) else { return Ok(None) };
+        let root = self.root_idx(invoker.idx);
+        if self.n(root).element().and_then(|el| el.id()) == Some(id) {
+            return Ok(Some(self.id_of(root)));
+        }
+        Ok(self.opt_id(self.first_by_id(root, id)))
+    }
+
+    pub fn set_invoker_target(&mut self, invoker: NodeId, attr: InvokerTarget, target: Option<NodeId>) -> DomResult<()> {
+        if let Some(target) = target {
+            self.element(target)?;
+            self.set_attribute_ns(invoker, None, attr.name(), "")?;
+            // Setting the content attribute clears its explicit target, even
+            // on a same-value write. Install the new reference after that step.
+            self.invoker_targets.insert((invoker.idx, attr), target);
+        } else {
+            self.remove_attribute_ns(invoker, None, attr.name())?;
+        }
+        Ok(())
+    }
+
+    pub fn shadow_reference_target(&self, id: NodeId) -> DomResult<Option<&str>> {
+        let i = self.check(id)?;
+        match &self.n(i).kind {
+            NodeKind::Fragment(f) if f.shadow.is_some() => Ok(f.reference_target.as_deref()),
+            _ => Err(DomError::Type("not a shadow root")),
+        }
+    }
+
+    pub fn set_shadow_reference_target(&mut self, id: NodeId, target: Option<&str>) -> DomResult<()> {
+        let i = self.check(id)?;
+        match &mut self.n_mut(i).kind {
+            NodeKind::Fragment(f) if f.shadow.is_some() => {
+                if f.reference_target.as_deref() != target {
+                    f.reference_target = target.map(LocalName::from);
+                    // Live labels and form collections can change without a tree mutation.
+                    self.bump();
+                    if self.internals.faces != 0 {
+                        self.refresh_all_faces();
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(DomError::Type("not a shadow root")),
+        }
+    }
+
     /// A custom element name defined with `disabledFeatures: ["shadow"]`.
     pub fn disable_shadow_for(&mut self, name: &str) {
-        self.shadow_disabled.push(name.into());
+        self.shadow_disabled.push((None, RegistryAssociation::Default, name.into(), name.into()));
+    }
+
+    pub fn disable_shadow_for_registry(&mut self, doc: NodeId, registry: RegistryAssociation, name: &str, local: &LocalName) {
+        let doc = (registry == RegistryAssociation::Default).then_some(doc);
+        let key = (doc, registry, LocalName::from(name), local.clone());
+        if !self.shadow_disabled.contains(&key) { self.shadow_disabled.push(key); }
     }
 
     /// HTML "scripting is enabled" for the nodes of `doc`: set for a document
@@ -2598,7 +2918,10 @@ impl Dom {
         let old_prev = self.n(node).prev;
         let old_next = self.n(node).next;
         self.resources_before_move(node);
+        self.media_before_move(node);
         self.options_before_remove(node);
+        let moved_selectedcontents =
+            if self.selectedcontent_seen { self.selectedcontents_before_move(node) } else { Vec::new() };
         if !self.live_ranges.is_empty() {
             self.ranges_before_remove(node);
         }
@@ -2615,6 +2938,7 @@ impl Dom {
         self.link(node, parent, child);
         self.slots_after_move(old_parent, parent, node);
         self.resources_after_move(node, old_parent);
+        self.media_after_move(node);
         self.bump_tree();
         self.note(Change::Inserted(parent, node));
         self.announce_named_items(node);
@@ -2623,6 +2947,9 @@ impl Dom {
         }
         self.queue_child_list(old_parent, &[], &[node], old_prev, old_next);
         self.queue_child_list(parent, &[node], &[], new_prev, child);
+        if self.selectedcontent_seen {
+            self.selectedcontent_after_move(node, moved_selectedcontents);
+        }
     }
 
     /// The shadow-including root: a shadow root's host's root, recursively.
@@ -2729,8 +3056,16 @@ impl Dom {
             n if matches!(self.n(n).kind, NodeKind::Fragment(_)) => self.child_idx_iter(n).collect(),
             n => vec![n],
         };
+        // Replace all removes the children at once: their options keep the
+        // selectedness they had before it, not one a removal of an earlier
+        // child gave them.
+        let batch = self.select_seen && !removed.is_empty() && self.options_before_remove_children(p);
+        self.options_batch_removal |= batch;
         for &c in &removed {
             self.remove(c, true);
+        }
+        if batch {
+            self.options_batch_removal = false;
         }
         if n != NIL {
             self.insert(n, p, NIL, true);
@@ -2802,9 +3137,19 @@ impl Dom {
                 self.hide_nonces(k);
             }
         }
+        if self.select_seen {
+            self.options_after_insert(nodes, parent);
+        }
+        if self.selectedcontent_seen {
+            self.selectedcontent_after_insert(nodes, parent, connected);
+        }
+        if self.input_seen {
+            self.radios_after_insert(nodes, connected);
+        }
     }
 
     fn link(&mut self, node: u32, parent: u32, before: u32) {
+        let old_value = self.tracked_textarea_value(parent);
         let prev = if before == NIL { self.n(parent).last_child } else { self.n(before).prev };
         {
             let n = self.n_mut(node);
@@ -2829,11 +3174,22 @@ impl Dom {
         }
         self.n_mut(parent).add_child_count();
         self.tree_linked(node);
+        self.update_tracked_textarea(old_value);
+        if !self.registry_associations.is_empty() && self.is_connected_idx(node) && !self.is_fragment_parse_host(self.n(node).owner_doc) {
+            let mut i = node;
+            while i != NIL {
+                if let Some(&RegistryAssociation::Scoped(registry)) = self.registry_associations.get(&i) {
+                    self.note_registry_connection(registry, self.id_of(self.n(i).owner_doc));
+                }
+                i = self.next_shadow_including(i, node);
+            }
+        }
     }
 
     /// Every unlink (DOM, parsers, moves) goes through here and every link
     /// through `link`, which keep `tree_scope`'s flags and id maps.
     fn unlink(&mut self, node: u32) {
+        let old_value = self.tracked_textarea_value(self.n(node).parent);
         self.tree_unlinking(node);
         let (parent, prev, next) = {
             let n = self.n(node);
@@ -2859,6 +3215,7 @@ impl Dom {
         let w = &mut self.walk[node as usize];
         w.parent = NIL;
         w.next = NIL;
+        self.update_tracked_textarea(old_value);
     }
 
     fn remove(&mut self, node: u32, suppress: bool) {
@@ -2866,6 +3223,9 @@ impl Dom {
         debug_assert!(parent != NIL);
         let prev = self.n(node).prev;
         let next = self.n(node).next;
+        if !self.value_ranges.is_empty() && self.is_connected_idx(node) {
+            self.disconnect_subtree_value_ranges(node);
+        }
         self.resources_before_remove(node);
         self.picture_images_changed(parent, node);
         self.options_before_remove(node);
@@ -2943,7 +3303,38 @@ impl Dom {
         let mut held = 0u32;
         while let Some(i) = stack.pop() {
             if self.n(i).owner_doc == old {
+                let registry = self.registry_idx(i);
+                let element = self.n(i).element().is_some();
+                let shadow_flags = match &self.n(i).kind {
+                    NodeKind::Fragment(f) if f.shadow.is_some() => Some(f.flags),
+                    _ => None,
+                };
+                let registry = if self.is_fragment_parse_host(old) && !self.is_inert_doc(doc) {
+                    // Fragment parser nodes already have their semantic registry;
+                    // moving them out of our temporary owner is not DOM adoption.
+                    registry
+                } else if matches!(registry, RegistryAssociation::Scoped(_)) {
+                    registry
+                } else if element {
+                    let parent = self.n(i).parent;
+                    let source = if registry == RegistryAssociation::Null && parent != NIL
+                        && !matches!(&self.n(parent).kind, NodeKind::Fragment(f) if f.shadow.is_none()) {
+                        self.registry_idx(parent)
+                    } else {
+                        self.registry_idx(doc)
+                    };
+                    source.effective_global()
+                } else if let Some(flags) = shadow_flags {
+                    if registry == RegistryAssociation::Null && flags & shadow_flags::KEEP_REGISTRY_NULL != 0 {
+                        RegistryAssociation::Null
+                    } else {
+                        self.registry_idx(doc).effective_global()
+                    }
+                } else {
+                    registry
+                };
                 self.n_mut(i).owner_doc = doc;
+                if element || shadow_flags.is_some() { self.set_registry_idx(i, registry); }
                 moved += 1;
                 held += u32::from(self.n(i).ext_refs > 0);
                 if let Some(from) = created_in {
@@ -2952,6 +3343,9 @@ impl Dom {
                 // Inline `on*` handlers compile in the new document (a clone
                 // of template contents had none in its inert one).
                 self.note_inline_handlers(i);
+                // pyro: and its `style` attribute is checked against the new document's CSP
+                // (Chrome re-runs the attribute's change steps on a document move).
+                self.note_inline_style(i);
                 let contents = self.n(i).element().map_or(NIL, |e| e.template_contents);
                 if contents != NIL {
                     templates.push(contents);
@@ -3082,6 +3476,14 @@ impl Dom {
     }
 
     pub fn clone_node(&mut self, node: NodeId, deep: bool, doc: Option<NodeId>) -> DomResult<NodeId> {
+        let fallback = match doc {
+            Some(d) => self.registry_association(d)?,
+            None => RegistryAssociation::Null,
+        };
+        self.clone_node_with_registry(node, deep, doc, fallback)
+    }
+
+    pub fn clone_node_with_registry(&mut self, node: NodeId, deep: bool, doc: Option<NodeId>, fallback: RegistryAssociation) -> DomResult<NodeId> {
         let n = self.check(node)?;
         let d = match doc {
             Some(d) => self.check(d)?,
@@ -3093,11 +3495,11 @@ impl Dom {
         if matches!(&self.n(n).kind, NodeKind::Fragment(f) if f.shadow.is_some()) {
             return Err(DomError::new(DomErrorKind::NotSupported, "ShadowRoot nodes are not clonable."));
         }
-        let c = self.clone_idx(n, d, deep)?;
+        let c = self.clone_idx(n, d, deep, fallback)?;
         Ok(self.id_of(c))
     }
 
-    fn clone_idx(&mut self, n: u32, doc: u32, deep: bool) -> DomResult<u32> {
+    fn clone_idx(&mut self, n: u32, doc: u32, deep: bool, fallback: RegistryAssociation) -> DomResult<u32> {
         let copy = match &self.n(n).kind {
             NodeKind::Document(d) => {
                 let (kind, url, ct, q) = (d.kind, d.url.clone(), d.content_type.clone(), d.quirks);
@@ -3108,6 +3510,9 @@ impl Dom {
                     dd.quirks = q;
                     dd.allow_declarative_shadow_roots = allow_dsd;
                 }
+                if let registry @ RegistryAssociation::Scoped(_) = self.registry_idx(n) {
+                    self.set_registry_idx(nd, registry);
+                }
                 nd
             }
             NodeKind::Element(e) => {
@@ -3115,20 +3520,36 @@ impl Dom {
                 let attrs = e.attr_state();
                 let control = e.control.as_ref().map(|c| {
                     // Clone steps copy value/checkedness for input elements.
-                    Box::new(ControlState { selection: (0, 0), ..(**c).clone() })
+                    Box::new(ControlState {
+                        selection: (0, 0),
+                        selectedcontent_option: None,
+                        // `<output>` has no cloning steps: a clone's default value is its text.
+                        output_default_override: None,
+                        ..(**c).clone()
+                    })
                 });
                 // HTML script cloning steps: "already started" is copied.
                 let started = e.flags & crate::node::element_flags::SCRIPT_ALREADY_STARTED;
                 // DOM "clone a single node": the copy has the same is value.
                 let is_value = e.is_value.clone();
+                let registry = match self.registry_idx(n) {
+                    RegistryAssociation::Null => fallback,
+                    other => other,
+                };
+                let registry = if registry == RegistryAssociation::Default { self.registry_idx(doc).effective_global() } else { registry };
                 let id = self.create_element_raw(self.id_of(doc), name)?;
+                self.set_registry_idx(id.idx, registry);
                 let el = self.n_mut(id.idx).element_mut().unwrap();
                 el.is_value = is_value;
                 el.set_attr_state(attrs);
                 el.control = control;
                 el.flags |= started;
+                self.capture_hyperlink_blob(id.idx);
                 self.resummarize(id.idx);
                 self.note_inline_handlers(id.idx);
+                // pyro: a copy of a `style` attribute CSP blocked declares nothing either (Chrome
+                // copies the element's empty inline style); a clone is not checked again.
+                self.copy_style_attribute_block(n, id);
                 id.idx
             }
             NodeKind::Text(s) => {
@@ -3167,7 +3588,7 @@ impl Dom {
         if deep {
             let kids: Vec<u32> = self.child_idx_iter(n).collect();
             for k in kids {
-                let kc = self.clone_idx(k, child_doc, true)?;
+                let kc = self.clone_idx(k, child_doc, true, fallback)?;
                 self.link(kc, copy, NIL);
             }
             // Template contents are cloned too (HTML "cloning steps").
@@ -3177,7 +3598,7 @@ impl Dom {
                 let inert = self.n(dst_tc).owner_doc;
                 let kids: Vec<u32> = self.child_idx_iter(src_tc).collect();
                 for k in kids {
-                    let kc = self.clone_idx(k, inert, true)?;
+                    let kc = self.clone_idx(k, inert, true, RegistryAssociation::Null)?;
                     self.link(kc, dst_tc, NIL);
                 }
             }
@@ -3185,12 +3606,19 @@ impl Dom {
         // A clonable shadow tree comes along, even in a shallow clone.
         let src_sr = self.n(n).element().map_or(NIL, |e| e.shadow_root);
         if src_sr != NIL {
-            if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, .. }) = self.n(src_sr).kind {
+            if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, ref reference_target, .. }) = self.n(src_sr).kind {
                 if flags & shadow_flags::CLONABLE != 0 {
+                    let reference_target = reference_target.clone();
                     let dst_sr = self.new_shadow_root(copy, mode, flags & !shadow_flags::AVAILABLE_TO_INTERNALS);
+                    if let NodeKind::Fragment(f) = &mut self.n_mut(dst_sr).kind {
+                        f.reference_target = reference_target;
+                    }
+                    let registry = self.registry_idx(src_sr);
+                    let registry = if registry == RegistryAssociation::Default { self.registry_idx(doc).effective_global() } else { registry };
+                    self.set_registry_idx(dst_sr, registry);
                     let kids: Vec<u32> = self.child_idx_iter(src_sr).collect();
                     for k in kids {
-                        let kc = self.clone_idx(k, doc, true)?;
+                        let kc = self.clone_idx(k, doc, true, RegistryAssociation::Null)?;
                         self.link(kc, dst_sr, NIL);
                     }
                 }
@@ -3369,6 +3797,36 @@ impl Dom {
         Ok(())
     }
 
+    /// Set both the CSSOM serialization and the style parser's backing in one DOM mutation.
+    pub fn set_cssom_inline_style(&mut self, id: NodeId, canonical: String, semantic: Option<String>) -> DomResult<()> {
+        self.set_cssom_inline_style_with_typed_values(id, canonical, semantic, None)
+    }
+
+    pub fn set_cssom_inline_style_with_typed_values(
+        &mut self, id: NodeId, canonical: String, semantic: Option<String>, typed: Option<crate::stylo::declarations::TypedStyleValues>,
+    ) -> DomResult<()> {
+        let (i, el) = self.el(id)?;
+        let local = local_name!("style");
+        let slot = el.attrs.iter().position(|a| a.name.local == local && a.name.ns == ns!());
+        let backing = (semantic.is_some() || typed.is_some()).then(|| {
+            std::sync::Arc::new(crate::node::InlineStyleBacking { semantic, typed })
+        });
+        let semantic_only = el.semantic_style != backing && slot.is_some_and(|k| *el.attrs[k].value == *canonical);
+        // pyro: a CSSOM write is no `style` attribute CSP checks (as Chrome).
+        self.cssom_style_write(id, |dom| match slot {
+            Some(k) => dom.change_attr(i, k, &canonical),
+            None => dom.append_attr(i, QualName::new(None, ns!(), local.clone()), &canonical),
+        });
+        let el = self.n_mut(i).element_mut().unwrap();
+        el.semantic_style = backing;
+        el.checked_style_backing = true;
+        if semantic_only {
+            self.bump();
+            self.note(Change::attr(i, &QualName::new(None, ns!(), local)));
+        }
+        Ok(())
+    }
+
     /// Sets the attribute in no namespace named `local`, as a reflected IDL
     /// attribute does (`className`, `id`, `slot`): the name is a valid,
     /// lowercase atom already, so nothing is validated, lowercased or looked up.
@@ -3418,13 +3876,75 @@ impl Dom {
     /// follows.
     pub(crate) fn edit_attrs<R>(&mut self, i: u32, name: &QualName, f: impl FnOnce(&mut ElementData) -> R) -> R {
         let plain = name.ns == ns!();
+        if plain && !self.invoker_targets.is_empty() {
+            let attr = match &*name.local {
+                "interestfor" => Some(InvokerTarget::InterestFor),
+                "commandfor" => Some(InvokerTarget::CommandFor),
+                "popovertarget" => Some(InvokerTarget::PopoverTarget),
+                _ => None,
+            };
+            if let Some(attr) = attr { self.invoker_targets.remove(&(i, attr)); }
+        }
+        if plain && !self.svg_strings.is_empty() {
+            if let Some(kind) = crate::svg_string_list::StringListAttribute::from_name(&name.local) {
+                self.svg_strings.remove(&(i, kind));
+            }
+        }
+        let tracked_input = plain && self.value_ranges.contains_key(&i)
+            && self.html_local(i) == Some(&local_name!("input"));
+        let old_range_type = (tracked_input && name.local == local_name!("type")).then(|| self.input_type_idx(i));
+        let type_change = (plain && name.local == local_name!("type") && self.html_local(i) == Some(&local_name!("input")))
+            .then(|| self.input_type_before_change(i));
+        let old_range_value = (tracked_input && name.local == local_name!("value"))
+            .then(|| self.value(self.id_of(i)).ok()).flatten();
+        let track_href = self.blob_hyperlinks.is_some() && name.local == local_name!("href") && (plain || name.ns == ns!(xlink));
         let el = self.n_mut(i).element_mut().expect("element");
         let old_id = (plain && name.local == local_name!("id")).then(|| el.id_atom().cloned());
         let old_for = (plain && name.local == local_name!("for") && el.is_html() && el.name.local == local_name!("label"))
             .then(|| el.attr_local(&local_name!("for")).map(Box::<str>::from));
+        let old_href = if track_href { crate::blob_hyperlinks::hyperlink_href(el).map(Box::<str>::from) } else { None };
         let r = f(el);
+        if plain && name.local == local_name!("disabled") && el.is_html() && el.name.local == local_name!("link") {
+            el.link_explicitly_enabled = el.attr_local(&name.local).is_none();
+        }
         debug_assert!(el.derived_in_step());
         let base = plain && name.local == local_name!("href") && el.is_html() && el.name.local == local_name!("base");
+        if track_href && old_href.as_deref() != crate::blob_hyperlinks::hyperlink_href(el) {
+            self.capture_hyperlink_blob(i);
+        }
+        if let Some(old) = old_range_type {
+            let new_type = self.input_type_idx(i);
+            if old != new_type {
+                if new_type.supports_value_ranges() {
+                    self.replace_all_value_ranges(i);
+                } else {
+                    self.disconnect_value_ranges(i);
+                }
+            }
+        }
+        if let Some(old) = old_range_value {
+            if self.value(self.id_of(i)).is_ok_and(|value| value != old) {
+                self.replace_all_value_ranges(i);
+            }
+        }
+        if let Some(before) = type_change {
+            self.input_type_changed(i, before);
+        }
+        if plain && &*name.local == "points" && !self.svg_points.is_empty() {
+            if let Some(lists) = self.svg_points.get(&i).and_then(std::rc::Weak::upgrade) {
+                lists.attribute_changed(self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
+            }
+        }
+        if plain && !self.svg_numbers.is_empty() {
+            if let Some(lists) = self.svg_numbers.get(&i).and_then(|attrs| attrs.get(&*name.local)).and_then(std::rc::Weak::upgrade) {
+                lists.attribute_changed(&name.local, self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
+            }
+        }
+        if plain && !self.svg_lengths.is_empty() {
+            if let Some(lists) = self.svg_lengths.get(&i).and_then(|attrs| attrs.get(&*name.local)).and_then(std::rc::Weak::upgrade) {
+                lists.attribute_changed(self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
+            }
+        }
         if plain && name.local == local_name!("class") {
             self.resummarize(i);
         }
@@ -3438,7 +3958,75 @@ impl Dom {
             let doc = self.n(i).owner_doc;
             self.html_base_changed(doc);
         }
+        if plain && matches!(&*name.local, "title" | "type") && self.n(i).in_document_tree() {
+            self.note_preferred_style(i);
+        }
         r
+    }
+
+    /// pyro: whether a `<style>` (HTML or SVG) with this `type` attribute is CSS and makes a sheet
+    /// (HTML "update a style block"): no type, the empty string, or ASCII case-insensitively
+    /// `text/css`, nothing else (no whitespace around it, no parameters).
+    pub fn style_type_is_css(kind: Option<&str>) -> bool {
+        kind.is_none_or(|kind| kind.is_empty() || kind.eq_ignore_ascii_case("text/css"))
+    }
+
+    /// pyro: whether `owner`, if it is a `<style>` element (HTML or SVG), has a type that makes no
+    /// sheet ([`Dom::style_type_is_css`]); false for anything else.
+    pub fn style_type_not_css(&self, owner: NodeId) -> bool {
+        let Ok(node) = self.node(owner) else { return false };
+        let Some(element) = node.element() else { return false };
+        (element.is_html() || element.name.ns == ns!(svg))
+            && element.name.local == local_name!("style")
+            && !Self::style_type_is_css(element.attr("type"))
+    }
+
+    pub(crate) fn note_preferred_style(&mut self, idx: u32) {
+        let node = self.n(idx);
+        let Some(element) = node.element() else { return };
+        if !element.is_html() || element.name.local != local_name!("style") || !Self::style_type_is_css(element.attr("type"))
+        {
+            return;
+        }
+        self.note_preferred_sheet_name(idx);
+    }
+
+    pub fn note_preferred_link_sheet(&mut self, link: NodeId) {
+        let Ok(idx) = self.check(link) else { return };
+        let node = self.n(idx);
+        let Some(element) = node.element() else { return };
+        if !node.in_document_tree() || !element.is_html() || element.name.local != local_name!("link")
+            || element.link_explicitly_enabled || element.attr("disabled").is_some()
+            || element.attr("rel").is_none_or(|rel| rel.split_ascii_whitespace().any(|token| token.eq_ignore_ascii_case("alternate")))
+        {
+            return;
+        }
+        self.note_preferred_sheet_name(idx);
+    }
+
+    fn note_preferred_sheet_name(&mut self, idx: u32) {
+        let node = self.n(idx);
+        let doc = node.owner_doc;
+        if self.doc_data(doc).preferred_sheet_name.is_none() {
+            let title = node.element().and_then(|el| el.attr("title")).filter(|title| !title.is_empty()).map(Into::into);
+            self.doc_data_mut(doc).preferred_sheet_name = title;
+        }
+    }
+
+    pub(crate) fn sheet_outside_preferred_set(&self, owner: NodeId) -> bool {
+        let Ok(node) = self.node(owner) else { return false };
+        let Some(element) = node.element() else { return false };
+        if !element.is_html() || !matches!(&*element.name.local, "style" | "link")
+            || !node.in_document_tree() || element.link_explicitly_enabled {
+            return false;
+        }
+        let title = element.attr("title").filter(|title| !title.is_empty());
+        let preferred = self.doc_data(node.owner_doc).preferred_sheet_name.as_deref();
+        if element.name.local == local_name!("link") && element.attr("rel").is_some_and(|rel|
+            rel.split_ascii_whitespace().any(|token| token.eq_ignore_ascii_case("alternate"))) {
+            return title.is_none() || title != preferred;
+        }
+        title.is_some() && preferred.is_some() && title != preferred
     }
 
     pub(crate) fn change_attr(&mut self, i: u32, k: usize, value: &str) {
@@ -3446,7 +4034,16 @@ impl Dom {
         let name = el.attrs[k].name.clone();
         let old = self.edit_attrs(i, &name, |el| el.replace_attr_value(k, value.into()));
         if *old != *value {
+            if name.ns == ns!() && name.local == local_name!("style") {
+                let el = self.n_mut(i).element_mut().unwrap();
+                el.semantic_style = None;
+                el.checked_style_backing = false;
+            }
             self.note_style_attr(i, &name, Some(&old));
+        }
+        // pyro: CSP checks every write of a `style` attribute (Chrome: also an unchanged value).
+        if name.ns == ns!() && name.local == local_name!("style") {
+            self.note_inline_style(i);
         }
         if *old == *value {
             // Same value: still an attribute mutation (records, XPath
@@ -3476,6 +4073,9 @@ impl Dom {
         self.note_style_attr(i, &name, None);
         let attr = Attr { name: name.clone(), value: value.into() };
         self.edit_attrs(i, &name, |el| el.push_attr(attr));
+        if name.ns == ns!() && name.local == local_name!("style") {
+            self.note_inline_style(i);
+        }
         self.bump_tree();
         self.note(Change::attr(i, &name));
         self.queue_attribute(i, &name, None);
@@ -3516,7 +4116,13 @@ impl Dom {
     }
     fn remove_attr_at(&mut self, i: u32, k: usize) {
         let name = self.n(i).element().unwrap().attrs[k].name.clone();
-        let attr = self.edit_attrs(i, &name, |el| el.remove_attr(k));
+        let attr = self.edit_attrs(i, &name, |el| {
+            if name.ns == ns!() && name.local == local_name!("style") {
+                el.semantic_style = None;
+                el.checked_style_backing = false;
+            }
+            el.remove_attr(k)
+        });
         if !self.attr_nodes.is_empty() {
             self.attr_removed(i, &attr.name, &attr.value);
         }
@@ -3554,6 +4160,18 @@ impl Dom {
     }
 
     // ----- names -------------------------------------------------------
+
+    /// Applies the validated qualified name's prefix after synchronous
+    /// construction. Shared tag-name strings are keyed by prefix and local name.
+    pub fn set_element_prefix(&mut self, id: NodeId, prefix: Option<Prefix>) -> DomResult<()> {
+        let index = self.check(id)?;
+        let el = self.n_mut(index).element_mut().ok_or(DomError::Type("not an element"))?;
+        if el.name.prefix != prefix {
+            el.name.prefix = prefix;
+            self.bump_tree();
+        }
+        Ok(())
+    }
 
     /// `Element.tagName` / `nodeName` for elements.
     pub fn tag_name(&self, id: NodeId) -> DomResult<String> {
@@ -3766,6 +4384,7 @@ impl Dom {
         let s = self.n(i).kind.char_data().ok_or(DomError::Type("not character data"))?;
         let (a, b) = utf16_range(s, offset, count)?;
         let old = s.to_owned();
+        let old_value = self.tracked_textarea_value(self.n(i).parent);
         self.n_mut(i).kind.char_data_mut().unwrap().replace_range(a..b, data);
         if self.n(i).kind.char_data() == Some(old.as_str()) {
             // Unchanged text: a mutation for observers and XPath iterators
@@ -3779,6 +4398,7 @@ impl Dom {
             let count = count.min(utf16_len(&old) - offset);
             self.ranges_after_replace_data(i, offset, count, utf16_len(data));
         }
+        self.update_tracked_textarea(old_value);
         self.queue_character_data(i, &old);
         self.resources_after_text(i);
         Ok(())
@@ -3862,7 +4482,7 @@ impl Dom {
         }
         Ok(())
     }
-    fn following_skipping(&self, idx: u32, root: u32) -> u32 {
+    pub(crate) fn following_skipping(&self, idx: u32, root: u32) -> u32 {
         let mut cur = idx;
         while cur != root && cur != NIL {
             if self.n(cur).next != NIL {
@@ -4246,8 +4866,33 @@ impl Dom {
     }
 
     fn free_slot(&mut self, i: u32, component_root: u32) {
+        self.forget_hyperlink_blob(i);
+        if !self.value_ranges.is_empty() { self.disconnect_value_ranges(i); }
+        if !self.invoker_targets.is_empty() {
+            for attr in [InvokerTarget::InterestFor, InvokerTarget::CommandFor, InvokerTarget::PopoverTarget] {
+                self.invoker_targets.remove(&(i, attr));
+            }
+        }
         let owner = self.n(i).owner_doc;
+        if !self.svg_points.is_empty() { self.svg_points.remove(&i); }
+        if !self.svg_numbers.is_empty() { self.svg_numbers.remove(&i); }
+        if !self.script_texts.is_empty() { self.script_texts.remove(&i); }
+        if !self.svg_lengths.is_empty() { self.svg_lengths.remove(&i); }
+        if !self.registry_associations.is_empty() { self.registry_associations.remove(&i); }
+        if !self.custom_definition_owners.is_empty() { self.custom_definition_owners.remove(&i); }
+        if !self.svg_strings.is_empty() {
+            use crate::svg_string_list::StringListAttribute;
+            self.svg_strings.remove(&(i, StringListAttribute::RequiredExtensions));
+            self.svg_strings.remove(&(i, StringListAttribute::SystemLanguage));
+        }
         if owner == i {
+            let doc = self.id_of(i);
+            self.forget_registry_definitions(RegistryAssociation::Default, Some(doc));
+            self.scoped_registry_docs.retain(|_, docs| {
+                docs.retain(|(_, known)| *known != doc);
+                !docs.is_empty()
+            });
+            self.shadow_disabled.retain(|(owner, _, _, _)| *owner != Some(doc));
             self.snapshot_nonces.get_mut().remove(&i);
         }
         let inert = match &self.n(i).kind {
@@ -4459,6 +5104,25 @@ pub fn is_valid_element_local_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':' | '_') || c >= '\u{80}')
 }
 
+/// HTML "valid custom element name".
+pub fn is_valid_custom_element_name(name: &str) -> bool {
+    const RESERVED: &[&str] = &[
+        "annotation-xml",
+        "color-profile",
+        "font-face",
+        "font-face-src",
+        "font-face-uri",
+        "font-face-format",
+        "font-face-name",
+        "missing-glyph",
+    ];
+    name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name.contains('-')
+        && is_valid_element_local_name(name)
+        && !name.chars().any(|c| c.is_ascii_uppercase())
+        && !RESERVED.contains(&name)
+}
+
 /// DOM "valid attribute local name".
 pub fn is_valid_attribute_local_name(name: &str) -> bool {
     !name.is_empty() && !name.contains(|c: char| c.is_ascii_whitespace() || matches!(c, '\0' | '/' | '=' | '>'))
@@ -4623,6 +5287,7 @@ mod walk_tests {
 /// and its viewport's scroll position (CSS px).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrameDocument {
+    pub document_url: Option<String>,
     pub html: String,
     pub url: String,
     pub scroll: (f64, f64),
@@ -4652,6 +5317,7 @@ impl FrameDocument {
         let mut h = rustc_hash::FxHasher::default();
         self.html.hash(&mut h);
         self.url.hash(&mut h);
+        self.document_url.hash(&mut h);
         self.client.hash(&mut h);
         self.sheets.hash(&mut h);
         for (index, frame) in &self.frames.entries {

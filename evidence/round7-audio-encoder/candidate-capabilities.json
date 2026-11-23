@@ -1,0 +1,93 @@
+{
+  "surface": "function",
+  "mono": {
+    "supported": true,
+    "config": {
+      "bitrateMode": "variable",
+      "codec": "opus",
+      "numberOfChannels": 1,
+      "sampleRate": 48000
+    }
+  },
+  "stereo": {
+    "supported": true,
+    "config": {
+      "bitrateMode": "variable",
+      "codec": "opus",
+      "numberOfChannels": 2,
+      "sampleRate": 48000
+    }
+  },
+  "44k1": {
+    "supported": true,
+    "config": {
+      "bitrateMode": "variable",
+      "codec": "opus",
+      "numberOfChannels": 2,
+      "sampleRate": 44100
+    }
+  },
+  "six": {
+    "supported": false,
+    "config": {
+      "bitrateMode": "variable",
+      "codec": "opus",
+      "numberOfChannels": 6,
+      "sampleRate": 48000
+    }
+  },
+  "sixteen": {
+    "supported": false,
+    "config": {
+      "bitrateMode": "variable",
+      "codec": "opus",
+      "numberOfChannels": 16,
+      "sampleRate": 48000
+    }
+  },
+  "aac": {
+    "supported": false,
+    "config": {
+      "bitrateMode": "variable",
+      "codec": "mp4a.40.2",
+      "numberOfChannels": 2,
+      "sampleRate": 48000
+    }
+  },
+  "pcm": {
+    "supported": false,
+    "config": {
+      "bitrateMode": "variable",
+      "codec": "pcm-s16",
+      "numberOfChannels": 2,
+      "sampleRate": 48000
+    }
+  },
+  "unknown": {
+    "supported": false,
+    "config": {
+      "bitrateMode": "variable",
+      "codec": "unknown",
+      "numberOfChannels": 2,
+      "sampleRate": 48000
+    }
+  },
+  "dtx": {
+    "supported": true,
+    "config": {
+      "bitrateMode": "variable",
+      "codec": "opus",
+      "numberOfChannels": 1,
+      "opus": {
+        "application": "audio",
+        "format": "opus",
+        "frameDuration": 20000,
+        "packetlossperc": 0,
+        "signal": "auto",
+        "usedtx": true,
+        "useinbandfec": false
+      },
+      "sampleRate": 48000
+    }
+  }
+}

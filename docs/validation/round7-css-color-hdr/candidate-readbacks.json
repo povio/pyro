@@ -1,0 +1,48 @@
+{
+  "version": {
+    "Browser": "Chrome/124.0.6367.29",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "V8-Version": "",
+    "WebKit-Version": "",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:61051/"
+  },
+  "rows": [
+    {
+      "value": "standard",
+      "supports": true,
+      "specified": "standard",
+      "computed": "standard"
+    },
+    {
+      "value": "dynamic-range-limit-mix(standard 100%)",
+      "supports": true,
+      "specified": "dynamic-range-limit-mix(standard 100%)",
+      "computed": "standard"
+    },
+    {
+      "value": "dynamic-range-limit-mix(standard 0%, no-limit 0%)",
+      "supports": true,
+      "specified": "dynamic-range-limit-mix(standard 0%, no-limit 0%)",
+      "computed": "no-limit"
+    },
+    {
+      "value": "dynamic-range-limit-mix(dynamic-range-limit-mix(standard 0%, no-limit 0%) 50%, no-limit 50%)",
+      "supports": true,
+      "specified": "dynamic-range-limit-mix(dynamic-range-limit-mix(standard 0%, no-limit 0%) 50%, no-limit 50%)",
+      "computed": "no-limit"
+    },
+    {
+      "value": "dynamic-range-limit-mix(standard 0%, no-limit 100%)",
+      "supports": true,
+      "specified": "dynamic-range-limit-mix(standard 0%, no-limit 100%)",
+      "computed": "no-limit"
+    },
+    {
+      "value": "dynamic-range-limit-mix(standard 25%, no-limit 75%)",
+      "supports": true,
+      "specified": "dynamic-range-limit-mix(standard 25%, no-limit 75%)",
+      "computed": "dynamic-range-limit-mix(standard 25%, no-limit 75%)"
+    }
+  ]
+}

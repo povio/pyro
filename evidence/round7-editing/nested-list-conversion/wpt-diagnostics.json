@@ -1,0 +1,716 @@
+{
+  "[[\"insertorderedlist\",\"\"]] \"f[oo<br>b]ar<br>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"f[oo<br>b]ar<br>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ol><li>foo</li><li>bar</li></ol>baz\" but got \"<ol><li>foo<br>bar<br>baz</li></ol>\""
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"f[oo<br>b]ar<br>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"f[oo<br>b]ar<br>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"[foo<ol><li>bar]</ol>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"[foo<ol><li>bar]</ol>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ol><li>foo</li><li>bar</li></ol>baz\" but got \"<ol><li>foo<ol></ol>baz</li><li>bar</li></ol>\""
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"[foo<ol><li>bar]</ol>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"[foo<ol><li>bar]</ol>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>[bar</ol>baz]\" queryCommandState(\"insertorderedlist\") before": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>[bar</ol>baz]\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>[bar</ol>baz]\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>[bar</ol>baz]\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ol><li>foo</li><li>bar</li></ol>baz\" but got \"<ol><li>foo<ul></ul>baz</li><li>bar</li></ol>\""
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>[bar</ol><ul><li>baz]</ul>quz\" queryCommandState(\"insertorderedlist\") before": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>[bar</ol><ul><li>baz]</ul>quz\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>[bar</ol><ul><li>baz]</ul>quz\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>[bar</ol><ul><li>baz]</ul>quz\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>\" queryCommandState(\"insertorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>\" queryCommandState(\"insertorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>foo<ol><li>b[ar</ol><li>b]az</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul><li>baz</ul>\" queryCommandState(\"insertorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul><li>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul><li>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul><li>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<li>[bar]<ul><li>baz</ul><li>quz</ul>\" queryCommandState(\"insertorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<li>[bar]<ul><li>baz</ul><li>quz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<li>[bar]<ul><li>baz</ul><li>quz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<li>[bar]<ul><li>baz</ul><li>quz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ol><li>foo<ol><li>bar</li></ol></li></ol><ul><li>baz</li></ul>\" but got \"<ul><ol><li>foo<ul></ul></li><li>bar</li></ol><"
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul>baz</ul>\" queryCommandState(\"insertorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<ul><li>bar</ul>[baz]</ul>\" queryCommandState(\"insertorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<ul><li>bar</ul>[baz]</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<ul><li>bar</ul>[baz]</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<ul><li>bar</ul>[baz]</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ol><li>foo<ol><li>bar</li></ol>baz</li></ol>\" but got \"<ul><ol><li>foo<ul></ul>baz</li><li>bar</li></ol></ul>\""
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul><ol><li>baz</ol>quz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul><ol><li>baz</ol>quz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ol><li>foo</li><li>bar</li><li>baz</li></ol>quz\" but got \"<ol><li>foo<ul></ul><ol><li>baz</li></ol>quz</li><li>bar</li><"
+    },
+    "head": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul><ol><li>baz</ol>quz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul><ol><li>baz</ol>quz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"f[oo<br>b]ar<br>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"f[oo<br>b]ar<br>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ul><li>foo</li><li>bar</li></ul>baz\" but got \"<ul><li>foo<br>bar<br>baz</li></ul>\""
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"f[oo<br>b]ar<br>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"f[oo<br>b]ar<br>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"[foo<ol><li>bar]</ol>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"[foo<ol><li>bar]</ol>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ul><li>foo</li><li>bar</li></ul>baz\" but got \"<ul><li>foo<ol></ol>baz</li><li>bar</li></ul>\""
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"[foo<ol><li>bar]</ol>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"[foo<ol><li>bar]</ol>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul>baz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ul><li>foo</li><li>bar</li></ul>baz\" but got \"<ul><li>foo<ul></ul>baz</li><li>bar</li></ul>\""
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"foo<ul><li>[bar</ul>baz]\" queryCommandState(\"insertunorderedlist\") before": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"foo<ul><li>[bar</ul>baz]\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"foo<ul><li>[bar</ul>baz]\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"foo<ul><li>[bar</ul>baz]\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"foo<ul><li>[bar</ul><ol><li>baz]</ol>quz\" queryCommandState(\"insertunorderedlist\") before": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"foo<ul><li>[bar</ul><ol><li>baz]</ol>quz\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"foo<ul><li>[bar</ul><ol><li>baz]</ol>quz\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"foo<ul><li>[bar</ul><ol><li>baz]</ol>quz\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol><li>baz</ol>\" queryCommandState(\"insertunorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol><li>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol><li>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol><li>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<li>[bar]<ol><li>baz</ol><li>quz</ol>\" queryCommandState(\"insertunorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<li>[bar]<ol><li>baz</ol><li>quz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<li>[bar]<ol><li>baz</ol><li>quz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<li>[bar]<ol><li>baz</ol><li>quz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ul><li>foo<ul><li>bar</li></ul></li></ul><ol><li>baz</li></ol>\" but got \"<ol><ul><li>foo<ol></ol></li><li>bar</li></ul><"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertunorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol><li>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol>baz</ol>\" queryCommandState(\"insertunorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<ol><li>bar</ol>[baz]</ol>\" queryCommandState(\"insertunorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<ol><li>bar</ol>[baz]</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<ol><li>bar</ol>[baz]</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<ol><li>bar</ol>[baz]</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ul><li>foo<ul><li>bar</li></ul>baz</li></ul>\" but got \"<ol><ul><li>foo<ol></ol>baz</li><li>bar</li></ul></ol>\""
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertunorderedlist\") after": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo<ol><li>bar]</ol>baz</ol>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertunorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertunorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul><li>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") after": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") after",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>foo<ul><li>b[ar</ul><li>b]az</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertunorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"div\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertunorderedlist\") before": {
+    "base": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "head": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    },
+    "chrome": {
+      "name": "[[\"defaultparagraphseparator\",\"p\"],[\"insertunorderedlist\",\"\"]] \"<ul><li>[foo<ul><li>bar]</ul>baz</ul>\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected true but got false"
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"foo<ol><li>bar</ol><ul><li>[baz</ul>quz]\" queryCommandState(\"insertunorderedlist\") before": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"foo<ol><li>bar</ol><ul><li>[baz</ul>quz]\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Fail",
+      "msg": "assert_equals: Wrong result returned expected false but got true"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"foo<ol><li>bar</ol><ul><li>[baz</ul>quz]\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"foo<ol><li>bar</ol><ul><li>[baz</ul>quz]\" queryCommandState(\"insertunorderedlist\") before",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "[[\"insertunorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul><ol><li>baz</ol>quz\" compare innerHTML": {
+    "base": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul><ol><li>baz</ol>quz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<ul><li>foo</li><li>bar</li></ul><ol><li>baz</li></ol>quz\" but got \"<ul><li>foo<ul></ul><ol><li>baz</li></ol>quz</li><li>"
+    },
+    "head": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul><ol><li>baz</ol>quz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "chrome": {
+      "name": "[[\"insertunorderedlist\",\"\"]] \"[foo<ul><li>bar]</ul><ol><li>baz</ol>quz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    }
+  }
+}

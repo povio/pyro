@@ -122,10 +122,14 @@ fn palette_mix_mixes_entry_by_entry() {
             "style='font-palette: palette-mix(in srgb, --A 25%, --B 75%)'",
             "style='font-palette: palette-mix(in srgb, --P1, --P1)'",
             "style='font-palette: --P1'",
+            "style='font-palette: palette-mix(in srgb, --B 75%, --A, --A)'",
+            "style='font-palette: palette-mix(--A 0%, --B 0%)'",
         ],
     );
     let inked = |band: &[[u8; 4]]| band.iter().filter(|p| p[..3] != [255, 255, 255]).count();
     assert!(count(&b[0], [100, 0, 100]) * 10 > inked(&b[0]) * 9, "50% each");
     assert!(count(&b[1], [50, 0, 150]) * 10 > inked(&b[1]) * 9, "25% and 75%");
     assert_eq!(b[2], b[3], "a palette mixed with itself");
+    assert_eq!(b[4], b[1], "unspecified weights divide the remaining 25% equally");
+    assert_eq!(inked(&b[5]), 0, "zero total weight produces transparent entries");
 }

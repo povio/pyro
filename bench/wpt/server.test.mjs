@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverCrashtests } from './crashtest.mjs';
-import { NEEDS_H2, discoverReftests, serverFor } from './lib.mjs';
+import { NEEDS_H2, discover, discoverReftests, serverFor } from './lib.mjs';
 
 test('reftests and crashtests gate under wptserve with testdriver; testharness pages under serve.mjs', () => {
   expect(serverFor('reftest')).toEqual({ server: 'wptserve', testdriver: true });
@@ -17,6 +17,27 @@ test('reftests and crashtests gate under wptserve with testdriver; testharness p
   expect(serverFor('reftest', 'static')).toEqual({ server: 'static', testdriver: false });
   expect(serverFor('crashtest', 'static', true)).toEqual({ server: 'static', testdriver: false });
   expect(() => serverFor('reftest', 'h2o')).toThrow();
+});
+
+test('testharness discovery reads UTF-16 markup with either byte order mark', () => {
+  const markup = Buffer.from('\ufeff<script src="/resources/testharness.js"></script>', 'utf16le');
+  const wpt = checkout({ 'css/little.html': markup, 'css/big.html': Buffer.from(markup).swap16() });
+  try {
+    expect(discover(wpt, ['css']).tests.map(test => test.url).sort()).toEqual(['css/big.html', 'css/little.html']);
+  } finally {
+    fs.rmSync(wpt, { recursive: true, force: true });
+  }
+});
+
+test('worker discovery expands classic globals and query variants only when requested', () => {
+  const wpt = checkout({ 'css/a.any.js': '// META: global=worker\n// META: variant=?x', 'css/b.any.js': '', 'css/c.worker.js': '' });
+  try {
+    const urls = options => discover(wpt, ['css'], options).tests.map(test => test.url).sort();
+    expect(urls({ wptserve: true })).toEqual(['css/b.any.html']);
+    expect(urls({ wptserve: true, workerGlobals: true })).toEqual(['css/a.any.serviceworker.html?x', 'css/a.any.sharedworker.html?x', 'css/a.any.worker.html?x', 'css/b.any.html', 'css/b.any.worker.html', 'css/c.worker.html']);
+  } finally {
+    fs.rmSync(wpt, { recursive: true, force: true });
+  }
 });
 
 function checkout(files) {

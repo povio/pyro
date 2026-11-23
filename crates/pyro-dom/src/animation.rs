@@ -9,6 +9,9 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+/// Offset, declared timing, composition and property values (name, computed, underlying).
+pub type CssKeyframeStep = (f64, Option<String>, Option<String>, Vec<(String, String, String)>);
+
 /// How a keyframe's value combines with the value underneath it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Composite {
@@ -170,9 +173,136 @@ pub enum TransitionValue {
     Style(crate::timing::StyleSnapshot),
 }
 
+/// Absolute inset transition endpoints are already computed layout lengths. CSS
+/// keyframes instead interpolate their specified expressions before range limiting.
+fn bounded_transition_inset(
+    property: style::properties::PropertyDeclarationId,
+    style: &style::properties::ComputedValues,
+) -> Option<style::properties::animated_properties::AnimationValue> {
+    use style::properties::{LonghandId as L, PropertyDeclarationId::Longhand};
+    use style::properties::animated_properties::AnimationValue;
+    use style::values::computed::{CSSPixelLength, LengthPercentage};
+    use style::values::generics::position::GenericInset;
+
+    let pos = style.get_position();
+    let inset = match property {
+        Longhand(L::Left) => &pos.left,
+        Longhand(L::Right) => &pos.right,
+        Longhand(L::Top) => &pos.top,
+        Longhand(L::Bottom) => &pos.bottom,
+        _ => return None,
+    };
+    let GenericInset::LengthPercentage(lp) = inset else { return None };
+    let px = lp.to_length()?.px();
+    let bounded = crate::layout::bounded_layout_px(px);
+    if px == bounded {
+        return None;
+    }
+    let inset = GenericInset::LengthPercentage(LengthPercentage::new_length(CSSPixelLength::new(bounded)));
+    Some(match property {
+        Longhand(L::Left) => AnimationValue::Left(inset),
+        Longhand(L::Right) => AnimationValue::Right(inset),
+        Longhand(L::Top) => AnimationValue::Top(inset),
+        Longhand(L::Bottom) => AnimationValue::Bottom(inset),
+        _ => unreachable!(),
+    })
+}
+
+/// Whether `style`'s value in anchor slot `slot` (`left`, `right`, `top`, `bottom`, `width`,
+/// `height`, `min-width`, `min-height`, `max-width`, `max-height`) has an `anchor()` or
+/// `anchor-size()`, which layout resolves ([`crate::style::StyleEngine::anchor_used`]).
+pub fn anchor_slot_queries(style: &style::properties::ComputedValues, slot: usize) -> bool {
+    use style::values::computed::length::{MaxSize, Size};
+    use style::values::computed::position::Inset;
+    let pos = style.get_position();
+    let inset = |v: &Inset| matches!(v, Inset::AnchorFunction(_) | Inset::AnchorSizeFunction(_) | Inset::AnchorContainingCalcFunction(_));
+    let size = |v: &Size| matches!(v, Size::AnchorSizeFunction(_) | Size::AnchorContainingCalcFunction(_));
+    let max = |v: &MaxSize| matches!(v, MaxSize::AnchorSizeFunction(_) | MaxSize::AnchorContainingCalcFunction(_));
+    match slot {
+        0 => inset(&pos.left),
+        1 => inset(&pos.right),
+        2 => inset(&pos.top),
+        3 => inset(&pos.bottom),
+        4 => size(&pos.width),
+        5 => size(&pos.height),
+        6 => size(&pos.min_width),
+        7 => size(&pos.min_height),
+        8 => max(&pos.max_width),
+        9 => max(&pos.max_height),
+        _ => false,
+    }
+}
+
+/// `style` with the `anchor()`/`anchor-size()` values of the anchor slots `slots` picks
+/// ([`anchor_slot_queries`]) replaced by their used px `px`: the computed values a CSS transition
+/// runs between, as Chrome computes `anchor()` to px before it transitions (WPT css-anchor-position
+/// `anchor-transition-*`). `None`: nothing to replace.
+pub fn with_anchor_px(
+    style: &crate::timing::StyleSnapshot,
+    px: &[Option<f32>; 10],
+    slots: impl Fn(usize) -> bool,
+) -> Option<crate::timing::StyleSnapshot> {
+    use style::properties::animated_properties::AnimationValue;
+    use style::values::computed::length::{MaxSize, Size};
+    use style::values::computed::position::Inset;
+    use style::values::computed::{CSSPixelLength, LengthPercentage};
+    use style::values::generics::NonNegative;
+    let mut out: Option<style::properties::ComputedValues> = None;
+    for (slot, px) in px.iter().enumerate() {
+        let Some(px) = *px else { continue };
+        if !slots(slot) || !anchor_slot_queries(style, slot) {
+            continue;
+        }
+        let lp = LengthPercentage::new_length(CSSPixelLength::new(px));
+        let value = match slot {
+            0 => AnimationValue::Left(Inset::LengthPercentage(lp)),
+            1 => AnimationValue::Right(Inset::LengthPercentage(lp)),
+            2 => AnimationValue::Top(Inset::LengthPercentage(lp)),
+            3 => AnimationValue::Bottom(Inset::LengthPercentage(lp)),
+            4 => AnimationValue::Width(Size::LengthPercentage(NonNegative(lp))),
+            5 => AnimationValue::Height(Size::LengthPercentage(NonNegative(lp))),
+            6 => AnimationValue::MinWidth(Size::LengthPercentage(NonNegative(lp))),
+            7 => AnimationValue::MinHeight(Size::LengthPercentage(NonNegative(lp))),
+            8 => AnimationValue::MaxWidth(MaxSize::LengthPercentage(NonNegative(lp))),
+            9 => AnimationValue::MaxHeight(MaxSize::LengthPercentage(NonNegative(lp))),
+            _ => continue,
+        };
+        value.set_longhand_in_style(out.get_or_insert_with(|| (**style).clone()));
+    }
+    out.map(style::servo_arc::Arc::new)
+}
+
+pub(crate) fn transition_endpoint_value(
+    physical: style::properties::PropertyDeclarationId,
+    style: &style::properties::ComputedValues,
+) -> Option<style::properties::animated_properties::AnimationValue> {
+    use style::properties::animated_properties::AnimationValue;
+    bounded_transition_inset(physical, style).or_else(|| AnimationValue::from_computed_values(physical, style))
+}
+
+/// Serialize the same computed endpoint for transition creation, interruption and keyframes.
+pub(crate) fn transition_endpoint_css(
+    property: style::properties::PropertyDeclarationId,
+    style: &style::properties::ComputedValues,
+) -> String {
+    use style::properties::PropertyDeclarationId::Longhand;
+    let physical = match property {
+        Longhand(id) => Longhand(id.to_physical(style.writing_mode)),
+        custom => custom,
+    };
+    let Some(inset) = bounded_transition_inset(physical, style) else {
+        return style.computed_value_to_string(property);
+    };
+    let mut bounded = style.clone();
+    inset.set_longhand_in_style(&mut bounded);
+    bounded.computed_value_to_string(physical)
+}
+
 /// The value of `longhand` a CSS transition from the style `before` to `after` gives at iteration
 /// progress `progress` (before `easing`, CSS text; `None`: `ease`; `before_flag` for step easings).
 /// Values that do not interpolate flip halfway; a transform's ends are the ends' own lists.
+/// `au_per_dev_px`: the device's app units per device pixel, which an interpolated border-like
+/// width snaps to.
 pub fn transition_value(
     longhand: &str,
     before: &crate::timing::StyleSnapshot,
@@ -180,23 +310,28 @@ pub fn transition_value(
     progress: f64,
     before_flag: bool,
     easing: Option<&str>,
+    au_per_dev_px: i32,
 ) -> Option<TransitionValue> {
     use style::properties::animated_properties::AnimationValue;
     use style::properties::PropertyDeclarationId;
-    use style::values::animated::{Animate, Procedure};
-    use style::values::generics::easing::BeforeFlag;
+    use style::values::animated::Procedure;
     let id = crate::stylo::property_id(longhand)?;
-    let PropertyDeclarationId::Longhand(id) = id.as_shorthand().err()? else { return None };
-    let physical = PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode));
-    let from = AnimationValue::from_computed_values(physical, before)?;
-    let to = AnimationValue::from_computed_values(physical, after)?;
-    let eased = match easing_function(easing.unwrap_or("ease")) {
-        Some(f) => {
-            let flag = if before_flag { BeforeFlag::Set } else { BeforeFlag::Unset };
-            f.calculate_output(progress, flag, 1e-7)
+    let eased = eased_progress(progress, before_flag, easing.unwrap_or("ease"));
+    let id = match id.as_shorthand().err()? {
+        PropertyDeclarationId::Longhand(id) => id,
+        custom => {
+            let from = AnimationValue::from_computed_values(custom, before)?;
+            let to = AnimationValue::from_computed_values(custom, after)?;
+            let value = from.animate_with_size_policy(&to, Procedure::Interpolate { progress: eased }, false)
+                .unwrap_or_else(|_| if eased < 0.5 { from } else { to });
+            let mut text = String::new();
+            value.uncompute().to_css(&mut text).ok()?;
+            return Some(TransitionValue::Text(text));
         }
-        None => progress,
     };
+    let physical = PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode));
+    let from = transition_endpoint_value(physical, before)?;
+    let to = transition_endpoint_value(physical, after)?;
     // `display` to or from `none` shows the other value throughout, `none` only at its end
     // (css-display-4 §2.1, Stylo's `Animate for Display`, which the discrete path skips).
     if longhand == "display" {
@@ -222,7 +357,7 @@ pub fn transition_value(
     } else if eased == 1.0 && own_end(after) {
         to.clone()
     } else {
-        match from.animate(&to, Procedure::Interpolate { progress: eased }) {
+        match from.animate_with_size_policy(&to, Procedure::Interpolate { progress: eased }, after.slow_clone_interpolate_size() == style::values::computed::InterpolateSize::AllowKeywords) {
             // A transform interpolation Stylo defers (a matrix it cannot decompose) is discrete,
             // as in Chromium.
             Ok(v) if matches!(id, style::properties::LonghandId::Transform) && defers_matrix(&v) => discrete(),
@@ -252,13 +387,53 @@ pub fn transition_value(
             let v = style.get_svg().stop_opacity.clamp(0.0, 1.0);
             style.mutate_svg().set_stop_opacity(v);
         }
+        // A border-like width is snapped as a border width after interpolation (down to whole
+        // device pixels, a non-zero one to at least one), as the cascade snaps a specified one and
+        // as Chromium snaps an animated one (css-values-4 § snap a length as a border width).
+        L::BorderTopWidth => {
+            let v = style.get_border().border_top_width.snapped(au_per_dev_px);
+            style.mutate_border().set_border_top_width(v);
+        }
+        L::BorderRightWidth => {
+            let v = style.get_border().border_right_width.snapped(au_per_dev_px);
+            style.mutate_border().set_border_right_width(v);
+        }
+        L::BorderBottomWidth => {
+            let v = style.get_border().border_bottom_width.snapped(au_per_dev_px);
+            style.mutate_border().set_border_bottom_width(v);
+        }
+        L::BorderLeftWidth => {
+            let v = style.get_border().border_left_width.snapped(au_per_dev_px);
+            style.mutate_border().set_border_left_width(v);
+        }
+        L::OutlineWidth => {
+            let v = style.get_outline().outline_width.snapped(au_per_dev_px);
+            style.mutate_outline().set_outline_width(v);
+        }
+        L::ColumnRuleWidth => {
+            let v = style.get_column().column_rule_width.map(|w| w.snapped(au_per_dev_px));
+            style.mutate_column().set_column_rule_width(v);
+        }
+        L::RowRuleWidth => {
+            let v = style.get_column().row_rule_width.map(|w| w.snapped(au_per_dev_px));
+            style.mutate_column().set_row_rule_width(v);
+        }
         _ => {}
     }
     Some(TransitionValue::Style(style::servo_arc::Arc::new(style)))
 }
 
+/// `progress` (an effect's iteration progress, with its before flag `before`) through easing
+/// `easing` (CSS text; not one: linear), as a transition's timing function gives it (its "current
+/// portion").
+pub fn eased_progress(progress: f64, before: bool, easing: &str) -> f64 {
+    use style::values::generics::easing::BeforeFlag;
+    let flag = if before { BeforeFlag::Set } else { BeforeFlag::Unset };
+    easing_function(easing).map_or(progress, |function| function.calculate_output(progress, flag, 1e-7))
+}
+
 /// A computed easing from CSS text; `None`: not one.
-fn easing_function(text: &str) -> Option<style::values::computed::TimingFunction> {
+pub(crate) fn easing_function(text: &str) -> Option<style::values::computed::TimingFunction> {
     use style::properties::PropertyDeclaration;
     use style::values::computed::ToComputedValue as _;
     let url = crate::stylo::url_data();
@@ -273,6 +448,13 @@ fn easing_function(text: &str) -> Option<style::values::computed::TimingFunction
         PropertyDeclaration::AnimationTimingFunction(v) => v.0.iter().next().map(|f| f.to_computed_value_without_context()),
         _ => None,
     })
+}
+
+/// The physical property corresponding to a longhand in a given writing mode.
+pub fn physical_property(name: &str, style: &crate::timing::StyleSnapshot) -> Option<&'static str> {
+    let id = crate::stylo::property_id(name)?;
+    let style::properties::PropertyDeclarationId::Longhand(id) = id.as_shorthand().err()? else { return None };
+    Some(id.to_physical(style.writing_mode).name())
 }
 
 /// The longhands of the shorthand `name` (`None`: a longhand, `all` or unknown).
@@ -306,11 +488,9 @@ pub fn with_longhand_of(
 
 /// Whether `longhand` has the same computed value in the styles `a` and `b`.
 pub fn same_computed_value(longhand: &str, a: &crate::timing::StyleSnapshot, b: &crate::timing::StyleSnapshot) -> bool {
-    use style::properties::PropertyDeclarationId;
     let Some(id) = crate::stylo::property_id(longhand) else { return false };
-    let Some(PropertyDeclarationId::Longhand(id)) = id.as_shorthand().err() else { return false };
-    let id = PropertyDeclarationId::Longhand(id);
-    a.computed_value_to_string(id) == b.computed_value_to_string(id)
+    let Some(id) = id.as_shorthand().err() else { return false };
+    transition_endpoint_css(id, a) == transition_endpoint_css(id, b)
 }
 
 /// Whether an interpolated transform is one Stylo defers (`interpolatematrix()`,

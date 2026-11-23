@@ -363,16 +363,8 @@ impl ElementCx<'_, '_> {
                 ElementClip::shape(oval(center, rx, ry), Fill::NonZero)
             }
             GenericBasicShape::Polygon(polygon) => {
-                let mut path = BezPath::new();
-                for (i, coord) in polygon.coordinates.iter().enumerate() {
-                    let point = Point::new(ox + resolve_lp(&coord.0, w), oy + resolve_lp(&coord.1, h));
-                    if i == 0 {
-                        path.move_to(point);
-                    } else {
-                        path.line_to(point);
-                    }
-                }
-                path.close_path();
+                let path = blitz_dom::shape_path::polygon_path(polygon.coordinates.iter().map(|coord|
+                    Point::new(ox + resolve_lp(&coord.0, w), oy + resolve_lp(&coord.1, h))), resolve_lp(&polygon.round.0, 0.0));
                 ElementClip::shape(path, fill_rule(polygon.fill))
             }
             GenericBasicShape::Rect(inset_rect) => {
@@ -644,9 +636,7 @@ pub(super) mod svg_reference {
     pub(in crate::render) fn local_reference(dom: &BaseDocument, url: &ComputedUrl) -> Option<NodeId> {
         let url = url.url()?;
         let fragment = url.fragment()?;
-        let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
-        let target = document(url.as_str());
-        if target != document(dom.url().as_str()) && target != document(dom.base_url().as_str()) {
+        if !dom.is_document_url(url) {
             return None;
         }
         dom.get_element_by_id(&percent_decode(fragment))

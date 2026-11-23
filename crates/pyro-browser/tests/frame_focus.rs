@@ -85,7 +85,9 @@ fn removal_and_navigation_invalidate_targets_without_restoring_parent_input() {
     assert_eq!(t.browser.focused_frame(page).unwrap().id, t.browser.page(page).unwrap().main_frame.id);
     assert_eq!(eval(&r, "document.activeElement.tagName+':'+a.value"), "BODY:");
     t.browser.checkpoint();
-    assert!(current.page_dom.unwrap().is_disposed());
+    // A removed frame's document is detached and its window lingers while anything holds it, as a
+    // navigated frame's (above; dba597871: it answers `parent`/`top` with null), not disposed.
+    assert!(current.page_dom.unwrap().is_detached());
 }
 
 #[test]

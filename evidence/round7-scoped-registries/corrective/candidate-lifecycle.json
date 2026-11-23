@@ -1,0 +1,17 @@
+[
+  [
+    "retained scoped definitions after normal frame removal",
+    [
+      true,
+      true,
+      true
+    ]
+  ],
+  [
+    "detached foreign host receives a later shadow flag",
+    [
+      true,
+      "NotSupportedError"
+    ]
+  ]
+]

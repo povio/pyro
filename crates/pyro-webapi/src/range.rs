@@ -1,4 +1,4 @@
-//! Range, StaticRange and Selection (minimal). Range boundary points are live:
+//! Range, StaticRange, OpaqueRange and Selection. Range boundary points are live:
 //! `pyro_dom::live_range` adjusts them as the tree changes. A node from another
 //! page's `Dom` can't be a boundary point here: comparison methods treat it as
 //! a different root, the setters report NotSupportedError.
@@ -10,6 +10,7 @@ use pyro_dom::{position, Dom, NodeId, NodeType};
 use pyro_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::collections::NodeHold;
+use crate::editing;
 use crate::node::{node_arg, wrap_node, Node};
 use crate::page::PageDom;
 use crate::util::*;
@@ -186,14 +187,84 @@ fn before_after(r: &RangeData, s: &Scope<'_>, a: &Args<'_>, start: bool, after: 
     set_point(r, parent, if after { idx + 1 } else { idx }, start)
 }
 
+/// Render just the selected cells, retaining empty column positions. Lists
+/// and other block content provide line breaks in place of a cell separator.
+fn selected_table_text(page: &PageDom, dom: &Dom, start: Point, end: Point) -> Option<String> {
+    use crate::editing;
+    let whole = (start.0 == end.0 && end.1.checked_sub(start.1) == Some(1))
+        .then(|| dom.child_at(start.0, start.1).ok().flatten()).flatten()
+        .filter(|&n| dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "table"));
+    let table = if let Some(table) = whole { table } else {
+        let first = editing::enclosing_html(dom, start.0, &["table"])?;
+        if editing::enclosing_html(dom, end.0, &["table"]) != Some(first)
+            || editing::enclosing_html(dom, start.0, &["td", "th"]) == editing::enclosing_html(dom, end.0, &["td", "th"]) {
+            return None;
+        }
+        first
+    };
+    let layout = page.layout();
+    if !matches!(layout.computed_style_value(dom, table, "display").as_str(), "table" | "inline-table") { return None; }
+    let mut out = String::new();
+    if whole.is_some() && dom.prev_sibling(table).ok()?.is_some() { out.push('\n'); }
+    let mut previous = None;
+    for cell in dom.descendants(table).ok()? {
+        if !dom.element(cell).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "td" | "th")) { continue; }
+        if editing::enclosing_html(dom, cell, &["table"]) != Some(table) { continue; }
+        if compare_boundary_points_dom(dom, (cell, editing::len(dom, cell)), start) < 0
+            || compare_boundary_points_dom(dom, (cell, 0), end) > 0 { continue; }
+        let row = dom.parent_element(cell).ok()??;
+        if layout.computed_style_value(dom, cell, "display") != "table-cell"
+            || !editing::rendered(page, dom, row) { continue; }
+        let visible = editing::rendered(page, dom, cell);
+        let first = dom.first_child(cell).ok()?;
+        let last = dom.last_child(cell).ok()?;
+        let block_child = |n| dom.element(n).is_ok() &&
+            matches!(layout.computed_style_value(dom, n, "display").as_str(), "block" | "table" | "list-item");
+        if let Some((prior_row, breaks)) = previous {
+            if prior_row != row || breaks > 0 {
+                if !out.ends_with('\n') { out.push('\n'); }
+                if breaks == 2 { out.push('\n'); }
+            } else {
+                out.push('\t');
+                if visible && first.is_some_and(block_child) { out.push('\n'); }
+            }
+        }
+        if visible {
+            // Interior cells use the same rendered contents as innerText.
+            if !dom.contains(cell, start.0).ok()? && !dom.contains(cell, end.0).ok()? {
+                out.push_str(&dom.inner_text(layout.style(), cell).ok()?);
+            } else {
+                for node in dom.descendants(cell).ok()? {
+                    if !editing::is_text(dom, node) || !editing::rendered(page, dom, node) { continue; }
+                    let len = editing::len(dom, node);
+                    if compare_boundary_points_dom(dom, (node, len), start) <= 0
+                        || compare_boundary_points_dom(dom, (node, 0), end) >= 0 { continue; }
+                    let from = if node == start.0 { start.1 } else { 0 };
+                    let to = if node == end.0 { end.1 } else { len };
+                    out.push_str(&dom.substring_data(node, from, to.saturating_sub(from)).ok()?);
+                }
+            }
+        }
+        let breaks = if visible && last.is_some_and(block_child) {
+            if last.is_some_and(|n| editing::local(dom, n) == "p") { 2 } else { 1 }
+        } else if visible && last.is_some_and(|n| editing::local(dom, n) == "br") { 1 } else { 0 };
+        previous = Some((row, breaks));
+    }
+    if whole.is_some() { out.push('\n'); }
+    Some(out)
+}
+
 /// Text content of the range (Range.toString()).
-fn range_text(r: &RangeData) -> JsResult<String> {
+fn range_text(r: &RangeData, rendered: bool) -> JsResult<String> {
     let page = r.page();
     let (sn, so, en, eo) = points(r);
     let dom = page.dom.borrow();
     let root = dom.root_node(sn, false).js()?;
     if root != dom.root_node(en, false).js()? {
         return Ok(String::new());
+    }
+    if rendered {
+        if let Some(text) = selected_table_text(&page, &dom, (sn, so), (en, eo)) { return Ok(text); }
     }
     let mut out = String::new();
     for n in std::iter::once(root).chain(dom.descendants(root).js()?) {
@@ -208,6 +279,12 @@ fn range_text(r: &RangeData) -> JsResult<String> {
         }
         let start = if n == sn { so } else { 0 };
         let end = if n == en { eo } else { len };
+        if rendered && start == 0 && end == len {
+            if let Some(character) = dom.math_auto_text(page.layout().style(), n) {
+                out.push(character);
+                continue;
+            }
+        }
         out.push_str(&dom.substring_data(n, start, end.saturating_sub(start)).js()?);
     }
     Ok(out)
@@ -215,7 +292,7 @@ fn range_text(r: &RangeData) -> JsResult<String> {
 
 // ----- content methods (DOM "clone the contents", "extract", "delete") -----
 
-fn common_ancestor(dom: &Dom, a: NodeId, b: NodeId) -> JsResult<NodeId> {
+pub(crate) fn common_ancestor(dom: &Dom, a: NodeId, b: NodeId) -> JsResult<NodeId> {
     let mut cur = Some(a);
     while let Some(c) = cur {
         if dom.contains(c, b).js()? {
@@ -277,7 +354,7 @@ fn clone_substring(dom: &mut Dom, node: NodeId, from: u32, to: u32) -> JsResult<
 
 /// "Clone the contents" or, with `extract`, "extract" of `s..e`, leaving
 /// the boundary points to the caller.
-fn contents(dom: &mut Dom, s: Point, e: Point, extract: bool) -> JsResult<NodeId> {
+pub(crate) fn contents(dom: &mut Dom, s: Point, e: Point, extract: bool) -> JsResult<NodeId> {
     let doc = dom.node_document(s.0).js()?;
     let frag = dom.create_fragment(doc).js()?;
     if s == e {
@@ -362,7 +439,7 @@ fn contained_roots(dom: &Dom, s: Point, e: Point, out: &mut Vec<NodeId>) -> JsRe
 }
 
 /// "Delete the contents" of `s..e`; returns the point to collapse to.
-fn delete_contents(dom: &mut Dom, s: Point, e: Point) -> JsResult<Point> {
+pub(crate) fn delete_contents(dom: &mut Dom, s: Point, e: Point) -> JsResult<Point> {
     if s == e {
         return Ok(s);
     }
@@ -518,7 +595,7 @@ impl JsClass for Range {
             r.page.dom.borrow_mut().set_live_range(&d.live, r.live.start(), r.live.end()).js()?;
             Ok(s.wrap::<Range>(d, None)?.value())
         });
-        def.pure_method("toString", 0, |s, r, _a| Ok(s.string(&range_text(r)?)));
+        def.pure_method("toString", 0, |s, r, _a| Ok(s.string(&range_text(r, false)?)));
         def.method("detach", 0, |s, _r, _a| Ok(s.undefined()));
         def.pure_method("compareBoundaryPoints", 2, |s, r, a| {
             a.require(2, "Range.compareBoundaryPoints")?;
@@ -599,13 +676,11 @@ impl JsClass for Range {
             let ctx = {
                 let dom = page.dom.borrow();
                 let sn = points(r).0;
-                if dom.node_type(sn).js()? == NodeType::Element {
-                    sn
-                } else {
-                    dom.parent_element(sn)
-                        .js()?
-                        .or(dom.body(page.document()).js()?)
-                        .ok_or_else(|| JsError::Type("no context element".into()))?
+                match dom.node_type(sn).js()? {
+                    NodeType::Text | NodeType::CDataSection | NodeType::Comment => {
+                        dom.parent_element(sn).js()?.unwrap_or(sn)
+                    }
+                    _ => sn,
                 }
             };
             let frag = pyro_dom::parse::parse_contextual_fragment(&mut page.dom.borrow_mut(), ctx, &html).js()?;
@@ -614,7 +689,7 @@ impl JsClass for Range {
         def.method("getBoundingClientRect", 0, |s, r, _a| crate::layout_api::range_rect(s, &r.page(), points(r)));
         def.method("getClientRects", 0, |s, r, _a| {
             let rect = crate::layout_api::range_rect(s, &r.page(), points(r))?;
-            Ok(s.array(&[rect])?.value())
+            crate::canvas::rect_list(s, &r.page(), &[rect])
         });
         def.method("deleteContents", 0, |s, r, _a| {
             let mut dom = r.page.dom.borrow_mut();
@@ -676,14 +751,24 @@ fn static_point(
 }
 
 impl StaticRangeData {
+    pub(crate) fn from_points(page: &Rc<PageDom>, start: Point, end: Point) -> JsResult<Self> {
+        Ok(Self {
+            start: NodeHold::new(page, start.0)?,
+            start_offset: start.1,
+            end: NodeHold::new(page, end.0)?,
+            end_offset: end.1,
+        })
+    }
+
     /// Its boundary points.
     pub(crate) fn points(&self) -> ((NodeId, u32), (NodeId, u32)) {
         ((self.start.id, self.start_offset), (self.end.id, self.end_offset))
     }
 }
 
-/// DOM `AbstractRange`: the boundary points both `Range` (live) and `StaticRange` have. Its
-/// members read the receiver as either.
+/// DOM `AbstractRange`: the boundary points `Range` (live), `StaticRange` and `OpaqueRange` have.
+/// The containers read a `Range` or `StaticRange` receiver (WPT dom.idl and dom/idlharness keep
+/// them on AbstractRange); `OpaqueRange` hides them (below).
 pub struct AbstractRange;
 impl JsClass for AbstractRange {
     const NAME: &'static str = "AbstractRange";
@@ -691,25 +776,49 @@ impl JsClass for AbstractRange {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.getter_this("startContainer", |s, _d, this| {
-            let (page, (start, _), _) = abstract_points(s, this)?;
+            let (page, (start, _), _) = node_range_points(s, this)?;
             Ok(wrap_node(s, &page, start)?.value())
         });
-        def.getter_this("startOffset", |s, _d, this| Ok(s.number(abstract_points(s, this)?.1.1 as f64)));
+        def.getter_this("startOffset", |s, _d, this| Ok(s.number(abstract_offsets(s, this)?.0 as f64)));
         def.getter_this("endContainer", |s, _d, this| {
-            let (page, _, (end, _)) = abstract_points(s, this)?;
+            let (page, _, (end, _)) = node_range_points(s, this)?;
             Ok(wrap_node(s, &page, end)?.value())
         });
-        def.getter_this("endOffset", |s, _d, this| Ok(s.number(abstract_points(s, this)?.2.1 as f64)));
-        def.getter_this("collapsed", |s, _d, this| {
-            let (_, start, end) = abstract_points(s, this)?;
-            Ok(s.boolean(start == end))
+        def.getter_this("endOffset", |s, _d, this| Ok(s.number(abstract_offsets(s, this)?.1 as f64)));
+        def.getter_this("collapsed", |s, _d, this| Ok(s.boolean(abstract_offsets(s, this)?.2)));
+    }
+}
+
+fn abstract_offsets(s: &Scope<'_>, this: Object<'_>) -> JsResult<(u32, u32, bool)> {
+    if let Some(range) = s.unwrap::<OpaqueRange>(this.value()) {
+        let (start, end) = range.offsets();
+        return Ok((start, end, start == end));
+    }
+    let (_, start, end) = node_range_points(s, this)?;
+    Ok((start.1, end.1, start == end))
+}
+
+pub(crate) struct OpaqueRange;
+impl JsClass for OpaqueRange {
+    const NAME: &'static str = "OpaqueRange";
+    type Data = Rc<pyro_dom::forms::OpaqueRange>;
+    type Parent = AbstractRange;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|_data| &());
+        // An OpaqueRange exposes no nodes: its containers read undefined
+        // (WPT dom/ranges/tentative/OpaqueRange-basic.html).
+        def.getter("startContainer", |s, _range| Ok(s.undefined()));
+        def.getter("endContainer", |s, _range| Ok(s.undefined()));
+        def.method("disconnect", 0, |s, range, _| {
+            range.disconnect();
+            Ok(s.undefined())
         });
     }
 }
 
 /// The page and boundary points of a `Range` or `StaticRange` receiver.
 #[allow(clippy::type_complexity)]
-fn abstract_points(s: &Scope<'_>, this: Object<'_>) -> JsResult<(Rc<PageDom>, (NodeId, u32), (NodeId, u32))> {
+fn node_range_points(s: &Scope<'_>, this: Object<'_>) -> JsResult<(Rc<PageDom>, (NodeId, u32), (NodeId, u32))> {
     if let Some(r) = s.unwrap::<Range>(this.value()) {
         let (a, b, c, d) = points(&r);
         return Ok((r.page(), (a, b), (c, d)));
@@ -786,6 +895,25 @@ fn selection_range_object<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Val
 
 /// Whether `node` is in the page's document (the selection ignores nodes
 /// of other trees).
+/// A script selection wholly inside an independent rich editing host moves
+/// focus there from its containing editor. Install the range first so the
+/// focusing steps observe it and do not initialize a new collapsed caret.
+fn focus_nested_selection_host(page: &Rc<PageDom>, anchor: Point, focus: Point) {
+    let dom = page.dom.borrow();
+    let Some(active) = dom.focused(page.document()).ok().flatten() else { return };
+    let Some(outer) = editing::editing_host(&dom, active) else { return };
+    let Some(inner) = editing::editing_host(&dom, anchor.0) else { return };
+    if inner == outer || !dom.contains(outer, inner).unwrap_or(false)
+        || editing::editing_host(&dom, focus.0) != Some(inner) || editing::plaintext_at(&dom, inner) { return; }
+    drop(dom);
+    crate::input::focus_element(page, inner);
+}
+
+fn set_script_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
+    editing::set_selection(page, anchor, focus);
+    focus_nested_selection_host(page, anchor, focus);
+}
+
 fn in_document(page: &PageDom, node: NodeId) -> bool {
     let dom = page.dom.borrow();
     dom.is_connected(node).unwrap_or(false) && dom.node_document(node).ok() == Some(page.document())
@@ -809,6 +937,84 @@ fn point_arg(
         return Err(JsError::dom("IndexSizeError", format!("There is no child at offset {off}.")));
     }
     Ok((node, off))
+}
+
+// Boundary points in a common tree can use the ordinary Range comparison.
+// Across trees, each shadow subtree comes before the light children of its host.
+pub(crate) fn composed_order(dom: &Dom, a: Point, b: Point) -> JsResult<i8> {
+    let a_root = dom.root_node(a.0, false).js()?;
+    let b_root = dom.root_node(b.0, false).js()?;
+    if a_root == b_root {
+        return compare_points_in(dom, a, b);
+    }
+    let path = |mut root, mut point| -> JsResult<Vec<(NodeId, Point)>> {
+        let mut path = vec![(root, point)];
+        while let Some(host) = dom.fragment_host(root).js()? {
+            point = (host, 0);
+            root = dom.root_node(host, false).js()?;
+            path.push((root, point));
+        }
+        Ok(path)
+    };
+    let a_path = path(a_root, a)?;
+    let b_path = path(b_root, b)?;
+    let ((common_root, a_point), (_, b_point)) = a_path.iter().rev().zip(b_path.iter().rev())
+        .take_while(|(left, right)| left.0 == right.0)
+        .last().ok_or_else(wrong_document)?;
+    let order = compare_points_in(dom, *a_point, *b_point)?;
+    if order == 0 {
+        return Ok(i8::from(b_root != *common_root) - i8::from(a_root != *common_root));
+    }
+    Ok(order)
+}
+
+fn rescope_point(dom: &Dom, mut point: Point, end: bool, allowed: &[NodeId]) -> JsResult<Point> {
+    loop {
+        let root = dom.root_node(point.0, false).js()?;
+        let Some(host) = dom.fragment_host(root).js()? else { return Ok(point) };
+        if allowed.contains(&root) {
+            return Ok(point);
+        }
+        let parent = dom.parent(host).js()?.ok_or_else(wrong_document)?;
+        point = (parent, dom.index_in_parent(host).js()? + u32::from(end));
+    }
+}
+
+fn composed_ranges<'s>(s: &Scope<'s>, page: &Rc<PageDom>, options: Value<'s>) -> JsResult<Value<'s>> {
+    let mut allowed = Vec::new();
+    if !options.is_null() && !options.is_undefined() {
+        let options = options.as_object().ok_or_else(|| JsError::Type("Expected GetComposedRangesOptions".into()))?;
+        let roots = options.get_atom("shadowRoots")?;
+        if !roots.is_undefined() {
+            let local = page.clone();
+            let roots = s.convert_sequence(roots, "Selection.getComposedRanges", move |s, value| {
+                let root = s.unwrap::<crate::node::ShadowRoot>(value)
+                    .ok_or_else(|| JsError::Type("shadowRoots must contain ShadowRoot objects".into()))?;
+                if Rc::ptr_eq(&local.dom, &root.page().dom) {
+                    Ok(Some(NodeHold::new(&local, root.id)?))
+                } else {
+                    Ok(None)
+                }
+            })?;
+            let dom = page.dom.borrow();
+            for root in roots.iter().flatten() {
+                let mut root = root.id;
+                while !allowed.contains(&root) {
+                    allowed.push(root);
+                    let Some(host) = dom.fragment_host(root).js()? else { break };
+                    root = dom.root_node(host, false).js()?;
+                }
+            }
+        }
+    }
+    let Some((a, b)) = crate::editing::composed_points(page) else { return Ok(s.array(&[])?.value()) };
+    let (start, end) = {
+        let dom = page.dom.borrow();
+        let (start, end) = if composed_order(&dom, a, b)? > 0 { (b, a) } else { (a, b) };
+        (rescope_point(&dom, start, false, &allowed)?, rescope_point(&dom, end, true, &allowed)?)
+    };
+    let data = StaticRangeData::from_points(page, start, end)?;
+    Ok(s.array(&[s.wrap::<StaticRange>(data, None)?.value()])?.value())
 }
 
 fn node_or_null<'s>(s: &Scope<'s>, page: &Rc<PageDom>, n: Option<NodeId>) -> JsResult<Value<'s>> {
@@ -835,19 +1041,28 @@ impl JsClass for Selection {
                 Some(_) => "Range",
             }))
         });
-        def.getter("isCollapsed", |s, sel| Ok(s.boolean(editing::selection(&sel.page).is_none_or(|(a, f)| a == f))));
-        def.getter("anchorNode", |s, sel| node_or_null(s, &sel.page, editing::selection(&sel.page).map(|(a, _)| a.0)));
-        def.getter("anchorOffset", |s, sel| Ok(s.number(editing::selection(&sel.page).map_or(0, |(a, _)| a.1) as f64)));
-        def.getter("focusNode", |s, sel| node_or_null(s, &sel.page, editing::selection(&sel.page).map(|(_, f)| f.0)));
-        def.getter("focusOffset", |s, sel| Ok(s.number(editing::selection(&sel.page).map_or(0, |(_, f)| f.1) as f64)));
+        def.getter("isCollapsed", |s, sel| Ok(s.boolean(editing::legacy_endpoints(&sel.page).is_none_or(|(a, f)| a == f))));
+        def.getter("anchorNode", |s, sel| node_or_null(s, &sel.page, editing::legacy_endpoints(&sel.page).map(|(a, _)| a.0)));
+        def.getter("anchorOffset", |s, sel| Ok(s.number(editing::legacy_endpoints(&sel.page).map_or(0, |(a, _)| a.1) as f64)));
+        def.getter("focusNode", |s, sel| node_or_null(s, &sel.page, editing::legacy_endpoints(&sel.page).map(|(_, f)| f.0)));
+        def.getter("focusOffset", |s, sel| Ok(s.number(editing::legacy_endpoints(&sel.page).map_or(0, |(_, f)| f.1) as f64)));
         def.getter("direction", |s, sel| {
             Ok(s.string(match editing::selection(&sel.page) {
                 None => "none",
-                Some((a, f)) if a == f => "none",
-                Some((a, f)) if editing::compare(&sel.page, a, f) <= 0 => "forward",
+                Some((a, f)) if a == f => match sel.page.selection.borrow().as_ref().and_then(|s| s.retained_backward) {
+                    Some(true) => "backward",
+                    Some(false) => "forward",
+                    None => "none",
+                },
+                Some((a, f)) if {
+                    let dom = sel.page.dom.borrow();
+                    editing::inside_select(&dom, a.0) && editing::inside_select(&dom, f.0)
+                } => "none",
+                Some((a, f)) if composed_order(&sel.page.dom.borrow(), a, f)? <= 0 => "forward",
                 Some(_) => "backward",
             }))
         });
+        def.method("getComposedRanges", 0, |s, sel, args| composed_ranges(s, &sel.page, args.get(0)));
         def.method("getRangeAt", 1, |s, sel, a| {
             if editing::selection(&sel.page).is_none() || to_u32(a.get(0)).ok() != Some(0) {
                 return Err(JsError::dom("IndexSizeError", "The index provided is not a valid range index."));
@@ -860,7 +1075,10 @@ impl JsClass for Selection {
             };
             // A range of another tree is ignored, and so is a second range.
             let (start, end) = (r.live.start(), r.live.end());
-            if !Rc::ptr_eq(&r.page, &sel.page)
+            // A range created in another same-origin frame can have both
+            // live endpoints moved into this document. Compare the arena
+            // before looking up node IDs, then check the endpoints below.
+            if !Rc::ptr_eq(&r.page.dom, &sel.page.dom)
                 || !in_document(&sel.page, start.0)
                 || !in_document(&sel.page, end.0)
                 || editing::selection(&sel.page).is_some()
@@ -870,6 +1088,7 @@ impl JsClass for Selection {
             let owner = r.owner.clone();
             drop(r);
             editing::set_selection_range(&sel.page, owner, Some((s.realm_id(), pyro_js::Persistent::new(s, a.get(0)))));
+            focus_nested_selection_host(&sel.page, start, end);
             Ok(s.undefined())
         });
         def.method("removeAllRanges", 0, |s, sel, _a| {
@@ -899,7 +1118,7 @@ impl JsClass for Selection {
             }
             let p = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.collapse")?;
             if in_document(&sel.page, p.0) {
-                editing::set_selection(&sel.page, p, p);
+                set_script_selection(&sel.page, p, p);
             }
             Ok(s.undefined())
         });
@@ -910,7 +1129,7 @@ impl JsClass for Selection {
             }
             let p = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.setPosition")?;
             if in_document(&sel.page, p.0) {
-                editing::set_selection(&sel.page, p, p);
+                set_script_selection(&sel.page, p, p);
             }
             Ok(s.undefined())
         });
@@ -918,14 +1137,14 @@ impl JsClass for Selection {
             let Some((start, _)) = editing::selection_range(&sel.page) else {
                 return Err(JsError::dom("InvalidStateError", "There is no selection to collapse."));
             };
-            editing::set_selection(&sel.page, start, start);
+            set_script_selection(&sel.page, start, start);
             Ok(s.undefined())
         });
         def.method("collapseToEnd", 0, |s, sel, _a| {
             let Some((_, end)) = editing::selection_range(&sel.page) else {
                 return Err(JsError::dom("InvalidStateError", "There is no selection to collapse."));
             };
-            editing::set_selection(&sel.page, end, end);
+            set_script_selection(&sel.page, end, end);
             Ok(s.undefined())
         });
         def.method("selectAllChildren", 1, |s, sel, a| {
@@ -938,7 +1157,7 @@ impl JsClass for Selection {
                 dom.child_count(node).js()? as u32
             };
             if in_document(&sel.page, node) {
-                editing::set_selection(&sel.page, (node, 0), (node, children));
+                set_script_selection(&sel.page, (node, 0), (node, children));
             }
             Ok(s.undefined())
         });
@@ -947,7 +1166,7 @@ impl JsClass for Selection {
             let anchor = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.setBaseAndExtent")?;
             let focus = point_arg(s, &sel.page, a.get(2), a.get(3), "Selection.setBaseAndExtent")?;
             if in_document(&sel.page, anchor.0) && in_document(&sel.page, focus.0) {
-                editing::set_selection(&sel.page, anchor, focus);
+                set_script_selection(&sel.page, anchor, focus);
             }
             Ok(s.undefined())
         });
@@ -960,7 +1179,11 @@ impl JsClass for Selection {
                 return Err(JsError::dom("InvalidStateError", "There is no selection to extend."));
             };
             let focus = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.extend")?;
-            editing::set_selection(&sel.page, anchor, focus);
+            let same_root = {
+                let dom = sel.page.dom.borrow();
+                dom.root_node(anchor.0, false).js()? == dom.root_node(focus.0, false).js()?
+            };
+            set_script_selection(&sel.page, if same_root { anchor } else { focus }, focus);
             Ok(s.undefined())
         });
         def.pure_method("containsNode", 1, |s, sel, a| {
@@ -974,14 +1197,25 @@ impl JsClass for Selection {
                 let r = RangeData::new(&sel.page, start.0)?;
                 set_point(&r, start.0, start.1, true)?;
                 set_point(&r, end.0, end.1, false)?;
-                Ok(s.string(&range_text(&r)?))
+                Ok(s.string(&range_text(&r, true)?))
             }
             None => Ok(s.string("")),
         });
         def.method("deleteFromDocument", 0, |s, sel, _a| {
-            if let Some((start, end)) = editing::selection_range(&sel.page) {
-                let to = delete_contents(&mut sel.page.dom.borrow_mut(), start, end)?;
-                editing::set_selection(&sel.page, to, to);
+            if let Some((anchor, focus)) = editing::legacy_endpoints(&sel.page) {
+                // A composed selection may span roots even when its live
+                // Range is collapsed. Deletion operates on that live Range.
+                if anchor != focus {
+                    let (start, end) = if editing::compare(&sel.page, anchor, focus) > 0 {
+                        (focus, anchor)
+                    } else {
+                        (anchor, focus)
+                    };
+                    let to = delete_contents(&mut sel.page.dom.borrow_mut(), start, end)?;
+                    sel.page.typing_values.take();
+                    editing::retarget_selection(&sel.page, to, to);
+                }
+                editing::track_composed_caret(&sel.page);
             }
             Ok(s.undefined())
         });
@@ -1002,6 +1236,7 @@ pub fn get_selection<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<AbstractRange>();
+    engine.register::<OpaqueRange>();
     engine.register::<Range>();
     engine.register::<StaticRange>();
     engine.register::<Selection>();

@@ -1,0 +1,182 @@
+[
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.html",
+    "name": "Deactivation of new transactions happens at end of invocation",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.html",
+    "name": "New transactions are deactivated before next task",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.html",
+    "name": "New transactions are not deactivated until after the microtask checkpoint",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.html",
+    "name": "New transactions from microtask are deactivated before next task",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.html",
+    "name": "New transactions from microtask are still active through the microtask checkpoint",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.serviceworker.html",
+    "name": "Deactivation of new transactions happens at end of invocation",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.serviceworker.html",
+    "name": "New transactions are deactivated before next task",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.serviceworker.html",
+    "name": "New transactions are not deactivated until after the microtask checkpoint",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.serviceworker.html",
+    "name": "New transactions from microtask are deactivated before next task",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.serviceworker.html",
+    "name": "New transactions from microtask are still active through the microtask checkpoint",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.sharedworker.html",
+    "name": "Deactivation of new transactions happens at end of invocation",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.sharedworker.html",
+    "name": "New transactions are deactivated before next task",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.sharedworker.html",
+    "name": "New transactions are not deactivated until after the microtask checkpoint",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.sharedworker.html",
+    "name": "New transactions from microtask are deactivated before next task",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.sharedworker.html",
+    "name": "New transactions from microtask are still active through the microtask checkpoint",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.worker.html",
+    "name": "Deactivation of new transactions happens at end of invocation",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.worker.html",
+    "name": "New transactions are deactivated before next task",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.worker.html",
+    "name": "New transactions are not deactivated until after the microtask checkpoint",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.worker.html",
+    "name": "New transactions from microtask are deactivated before next task",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-deactivation-timing.any.worker.html",
+    "name": "New transactions from microtask are still active through the microtask checkpoint",
+    "occurrence": 1,
+    "parent": "Pass",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  }
+]

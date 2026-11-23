@@ -1,0 +1,14 @@
+{
+  "owner": [
+    true,
+    false
+  ],
+  "peer": [
+    true,
+    false
+  ],
+  "otherContext": [
+    false,
+    true
+  ]
+}

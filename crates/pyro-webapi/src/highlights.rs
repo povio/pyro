@@ -356,29 +356,13 @@ pub fn apply_fragment_directive(page: &Rc<PageDom>, directives: &str) {
         let hay = haystack(&dom, page.document(), &inline);
         parsed.iter().filter_map(|d| hay.matches(d)).collect()
     };
-    // pyro: the ancestor revealing algorithm (HTML): a `hidden=until-found` element around the
-    // text gets `beforematch` and loses its `hidden`, so the text shows (WPT css-pseudo
+    // pyro: the ancestor revealing algorithm (HTML) runs on each match's ends: a
+    // `hidden=until-found` element around the text gets `beforematch` and loses its `hidden`,
+    // and a closed `<details>` around it opens, so the text shows (WPT css-pseudo
     // `target-text-010`).
-    let mut reveal = Vec::new();
-    {
-        let dom = page.dom.borrow();
-        for &((start, _), (end, _)) in &found {
-            for node in [start, end] {
-                let mut current = Some(node);
-                while let Some(id) = current {
-                    if dom.element(id).is_ok_and(|e| e.attr("hidden").is_some_and(|v| v.eq_ignore_ascii_case("until-found")))
-                        && !reveal.contains(&id)
-                    {
-                        reveal.push(id);
-                    }
-                    current = dom.parent(id).ok().flatten();
-                }
-            }
-        }
-    }
-    for id in reveal {
-        crate::input::fire_simple(page, id, "beforematch", true, false);
-        let _ = page.dom.borrow_mut().remove_attribute(id, "hidden");
+    for &((start, _), (end, _)) in &found {
+        crate::layout_api::reveal_ancestors(page, start);
+        crate::layout_api::reveal_ancestors(page, end);
     }
     let mut ranges = Vec::new();
     for (start, end) in found {

@@ -113,7 +113,9 @@ impl JsClass for Response {
             construct(s, None, Origin::Script, status, status_text, headers, Some(Bytes::from(json)))
         });
         def.getter("url", |s, d| {
-            Ok(s.string(if d.origin != Origin::Network || opaque(d.head.kind) { "" } else { d.head.url.as_str() }))
+            // An opaque filtered response has an empty URL list; an opaque-redirect one keeps it.
+            let empty = d.origin != Origin::Network || d.head.kind == ResponseKind::Opaque;
+            Ok(s.string(if empty { "" } else { d.head.url.as_str() }))
         });
         def.getter("status", |s, d| Ok(s.number(f64::from(status_of(d)))));
         def.getter("statusText", |s, d| {
@@ -133,37 +135,23 @@ impl JsClass for Response {
                 (Origin::Network, ResponseKind::OpaqueRedirect) => "opaqueredirect",
             }))
         });
-        def.getter("body", |s, d| {
-            if d.body.is_null() {
-                return Ok(s.null());
-            }
-            let existing = hidden(s, d, STREAM)?;
-            if !existing.is_undefined() {
-                return Ok(existing);
-            }
-            let page = crate::target::page_of(s)?;
-            let source = s.wrap::<BodySource>(
-                StreamData { body: d.body.clone(), used: d.used.clone(), opened: Cell::new(false) },
-                None,
-            )?;
-            d.source_made.set(true);
-            let read = source.get_atom("read")?;
-            let cancel = source.get_atom("cancel")?;
-            let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
-            let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
-            let owner = realm.scope()?;
-            let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
-            s.set_hidden(wrapper, STREAM, stream)?;
-            Ok(stream)
-        });
+        def.getter("body", |s, d| body_stream(s, d));
         def.getter("headers", |s, d| hidden(s, d, HEADERS));
         def.getter("bodyUsed", |s, d| Ok(s.boolean(d.used.get() || stream_state(s, d)?.1)));
-        def.method("text", 0, |s, d, _| consume(s, d, ReadKind::Text));
-        def.method("json", 0, |s, d, _| consume(s, d, ReadKind::Json));
-        def.method("arrayBuffer", 0, |s, d, _| consume(s, d, ReadKind::ArrayBuffer));
-        def.method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
-        def.method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
-        def.method("formData", 0, |s, d, _| consume(s, d, ReadKind::FormData));
+        def.promise_method("text", 0, |s, d, _| consume(s, d, ReadKind::Text));
+        def.promise_method("json", 0, |s, d, _| consume(s, d, ReadKind::Json));
+        def.promise_method("arrayBuffer", 0, |s, d, _| consume(s, d, ReadKind::ArrayBuffer));
+        def.promise_method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
+        def.promise_method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
+        def.promise_method("formData", 0, |s, d, _| consume(s, d, ReadKind::FormData));
+        def.method("textStream", 0, |s, d, _| {
+            let (locked, disturbed) = stream_state(s, d)?;
+            if d.used.get() || locked || disturbed {
+                return Err(JsError::Type("Response body has already been consumed".into()));
+            }
+            let stream = body_stream(s, d)?;
+            crate::fetch::text_stream(s, stream)
+        });
         def.method("clone", 0, |s, d, _| {
             let (locked, disturbed) = stream_state(s, d)?;
             if d.used.get() || locked || disturbed {
@@ -171,7 +159,8 @@ impl JsClass for Response {
             }
             if d.script_stream.get() {
                 let page = crate::target::page_of(s)?;
-                let pair = crate::streams::helper(s, &page, "tee", &[hidden(s, d, STREAM)?])?;
+                let clone_chunk = crate::structured_clone::realm_clone(s)?;
+                let pair = crate::streams::helper(s, &page, "cloneBody", &[hidden(s, d, STREAM)?, clone_chunk.value()])?;
                 let pair = pair.as_object().ok_or_else(|| JsError::Type("tee".into()))?;
                 let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
                 let owner = realm.scope()?;
@@ -188,13 +177,51 @@ impl JsClass for Response {
                 let current = hidden(s, d, HEADERS)?;
                 let pairs = s.unwrap::<Headers>(current).map(|h| h.pairs()).unwrap_or_default();
                 let headers = HeadersData::from_pairs(pairs, d.origin == Origin::Error);
-                return wrap_script(s, None, d.origin, d.head.clone(), d.body.clone(), headers);
+                // Its own copy of the bytes: the two bodies' streams read
+                // independently (one native body has one stream cursor).
+                let body = if d.body.is_null() {
+                    d.body.clone()
+                } else {
+                    Body::constructed(s, Some(d.body.constructed_bytes()), d.body.mime.borrow().clone())
+                };
+                return wrap_script(s, None, d.origin, d.head.clone(), body, headers);
             }
             let signal = hidden(s, d, SIGNAL)?;
             wrap(s, &d.head, d.body.clone(), d.credentials, Some(signal))
         });
     }
 }
+
+/// `response.body`: null, or the one stream this Response hands out (made on
+/// first use over the native body).
+fn body_stream<'s>(s: &Scope<'s>, d: &ResponseData) -> JsResult<Value<'s>> {
+    if d.body.is_null() {
+        return Ok(s.null());
+    }
+    let existing = hidden(s, d, STREAM)?;
+    if !existing.is_undefined() {
+        return Ok(existing);
+    }
+    let page = crate::target::page_of(s)?;
+    let source = s.wrap::<BodySource>(
+        StreamData { body: d.body.clone(), used: d.used.clone(), opened: Cell::new(false) },
+        None,
+    )?;
+    d.source_made.set(true);
+    let read = source.get_atom("read")?;
+    let cancel = source.get_atom("cancel")?;
+    let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
+    if d.used.get() {
+        // text()/json()/... already read the body: its stream is unusable.
+        crate::streams::helper(s, &page, "markConsumed", &[stream])?;
+    }
+    let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+    let owner = realm.scope()?;
+    let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
+    s.set_hidden(wrapper, STREAM, stream)?;
+    Ok(stream)
+}
+
 fn status_of(d: &ResponseData) -> u16 {
     if d.origin == Origin::Error || (d.origin == Origin::Network && opaque(d.head.kind)) {
         0
@@ -209,8 +236,7 @@ fn is_null_body_status(status: u16) -> bool {
 
 /// `ResponseInit`: status (200..=599, default 200), statusText (reason-phrase
 /// characters only), headers. `set-cookie`/`set-cookie2` are dropped (the
-/// "response" guard forbids them); later `headers.set('set-cookie')` on a
-/// script response is not filtered (documented gap).
+/// "response" guard forbids them, as it does later writes: `wrap_script`).
 fn parse_init(s: &Scope<'_>, init: Value<'_>) -> JsResult<(u16, String, HeadersData)> {
     let get = |key: &str| -> JsResult<Value<'_>> {
         match init.as_object() {
@@ -306,6 +332,7 @@ fn wrap_script<'s>(
         Some(nt) => s.wrap_new::<Response>(data, nt, Some(id))?,
         None => s.wrap::<Response>(data, Some(id))?,
     };
+    let headers = if origin == Origin::Script { headers.guard_response() } else { headers };
     let headers = s.wrap::<Headers>(headers, None)?;
     s.set_hidden(wrapper, HEADERS, headers.value())?;
     Ok(wrapper.value())
@@ -352,29 +379,39 @@ fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<V
         deferred.reject(s, JsError::Type("Response body has already been consumed".into()).to_value(s))?;
         return Ok(promise);
     }
+    let headers = if matches!(kind, ReadKind::Blob | ReadKind::FormData) {
+        // As they are now: a Blob's type and FormData's MIME type come from the headers when the
+        // method is called (Chrome), not from changes made while the body is read.
+        hidden(s, data, HEADERS).ok().and_then(|v| s.unwrap::<Headers>(v).map(|h| HeadersData::from_pairs(h.pairs(), true)))
+    } else {
+        None
+    };
     if data.script_stream.get() {
         let page = crate::target::page_of(s)?;
         let name = match kind {
-            ReadKind::FormData => {
-                return Err(JsError::Type("formData() is not supported on a stream body".into()));
-            }
+            ReadKind::FormData | ReadKind::Blob => "package",
             ReadKind::Text => "text",
             ReadKind::Json => "json",
             // A script's stream has no pieces to share: its bytes, in a buffer.
             ReadKind::ArrayBuffer | ReadKind::Chunks => "arrayBuffer",
             ReadKind::Bytes => "bytes",
-            ReadKind::Blob => "blob",
         };
         data.used.set(true);
-        let args = [hidden(s, data, STREAM)?, s.string(name), s.string(&data.body.mime.borrow())];
+        let package = if name == "package" {
+            s.function("packageBody", move |s, _, args| {
+                let bytes = crate::encoding::buffer_source_bytes(s, args.get(0))?
+                    .ok_or_else(|| JsError::Type("Expected body bytes".into()))?;
+                crate::fetch::package_body(s, kind, bytes, headers.as_ref())
+            })?
+            .value()
+        } else {
+            s.undefined()
+        };
+        let args = [hidden(s, data, STREAM)?, s.string(name), package];
         return crate::streams::helper(s, &page, "consume", &args);
     }
     let used = if data.body.is_null() { false } else { data.used.replace(true) };
-    if matches!(kind, ReadKind::Blob | ReadKind::FormData) {
-        let pairs = hidden(s, data, HEADERS).ok().and_then(|h| s.unwrap::<Headers>(h).map(|h| h.pairs())).unwrap_or_default();
-        data.body.refresh_mime(&pairs, matches!(kind, ReadKind::Blob));
-    }
-    data.body.read(s, kind, used)
+    data.body.read(s, kind, used, headers)
 }
 pub(crate) fn wrap<'s>(
     s: &Scope<'s>,
@@ -415,6 +452,35 @@ pub(crate) fn read_for_cache<'s>(s: &Scope<'s>, response: Value<'_>) -> JsResult
         return Ok(s.null());
     }
     consume(s, &data, ReadKind::Chunks)
+}
+
+/// The checks WebAssembly's "compile a potential WebAssembly response" makes of `response`
+/// before its bytes compile (WebAssembly Web API, for `compileStreaming` and
+/// `instantiateStreaming`, named by `method`): a Response, whose `Content-Type` is
+/// `application/wasm`, CORS-same-origin and of an ok status, else a TypeError. A promise of its
+/// body as an ArrayBuffer, as `arrayBuffer()` gives it (rejected when the body was used).
+pub(crate) fn read_for_wasm<'s>(s: &Scope<'s>, response: Value<'_>, method: Value<'_>) -> JsResult<Value<'s>> {
+    let method = method.to_string()?;
+    let fail = |reason: &str| JsError::Type(format!("Failed to execute '{method}' on 'WebAssembly': {reason}").into());
+    let data = s.unwrap::<Response>(response).ok_or_else(|| fail("Argument 0 must be a Response or a promise of one"))?;
+    let headers = hidden(s, &data, HEADERS).ok().and_then(|v| s.unwrap::<Headers>(v).map(|h| h.clone()));
+    let content_type = headers
+        .and_then(|h| h.pairs().into_iter().find(|(name, _)| name == "content-type"))
+        .map(|(_, value)| value);
+    // The header value with HTTP tabs and spaces trimmed, no parameters allowed.
+    let wasm = content_type
+        .as_deref()
+        .is_some_and(|v| v.trim_matches(|c| c == ' ' || c == '\t').eq_ignore_ascii_case("application/wasm"));
+    if !wasm {
+        return Err(fail("Incorrect response MIME type. Expected 'application/wasm'."));
+    }
+    if data.origin == Origin::Network && opaque(data.head.kind) {
+        return Err(fail("The response is not CORS-same-origin"));
+    }
+    if !(200..300).contains(&status_of(&data)) {
+        return Err(fail("HTTP status code is not ok"));
+    }
+    consume(s, &data, ReadKind::ArrayBuffer)
 }
 
 /// A response read back from a cache (`cache_storage`): its stored type
@@ -544,7 +610,7 @@ impl JsClass for BodySource {
         });
         def.method("cancel", 0, |s, d, _a| {
             if d.open() {
-                d.body.cancel_stream();
+                d.body.cancel_consumer_stream();
             }
             let deferred = s.deferred()?;
             deferred.resolve(s, s.undefined())?;

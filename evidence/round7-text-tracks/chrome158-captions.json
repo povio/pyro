@@ -1,0 +1,95 @@
+{
+  "values": {
+    "available": [
+      "function",
+      "function",
+      "function",
+      "undefined"
+    ],
+    "program": [
+      true,
+      1,
+      true,
+      "captions",
+      "Program",
+      "en",
+      "hidden"
+    ],
+    "cues": [
+      2,
+      true,
+      true,
+      true,
+      true,
+      "Hi & salut",
+      "Alice",
+      "Hi",
+      "fr"
+    ],
+    "detached": "Hi & salut",
+    "removed": [
+      1,
+      true
+    ],
+    "firstEvent": "load",
+    "first": {
+      "state": 2,
+      "identity": [
+        true,
+        true
+      ],
+      "cues": [
+        [
+          "a",
+          1.25,
+          3.75,
+          "<v Speaker><b>Hello</b> &amp; <lang fr>salut</lang></v>",
+          "Hello & salut"
+        ],
+        [
+          "b",
+          5,
+          6,
+          "Later",
+          "Later"
+        ]
+      ]
+    },
+    "secondEvent": "load",
+    "second": {
+      "state": 2,
+      "identity": [
+        true,
+        true
+      ],
+      "cues": [
+        [
+          "replacement",
+          7.5,
+          9.125,
+          "Second caption",
+          "Second caption"
+        ]
+      ]
+    },
+    "events": [
+      [
+        "addtrack",
+        false
+      ],
+      [
+        "addtrack",
+        true
+      ],
+      [
+        "removetrack",
+        true
+      ]
+    ],
+    "finalLength": 1
+  },
+  "requests": [
+    "/a.vtt",
+    "/b.vtt"
+  ]
+}

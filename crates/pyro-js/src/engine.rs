@@ -177,6 +177,9 @@ pub(crate) struct EngineInner {
     retired_members: RefCell<Vec<RetiredMembers>>,
     /// Realms that linger (`Realm::linger`) until their global object dies.
     pub(crate) lingering: RefCell<Vec<Rc<RealmInner>>>,
+    /// The embedder's wake for the VM's deferred work ([`Engine::set_deferred_work_waker`]),
+    /// boxed twice so the engine hands JavaScriptCore one stable thin pointer.
+    deferred_waker: RefCell<Option<Box<DeferredWaker>>>,
     /// Garbage collections seen, for sweeping the realms' interned strings.
     pub(crate) collections: crate::interned::Collections,
     /// The property hooks' switches (see [`class::HookState`]).
@@ -652,6 +655,14 @@ impl EngineInner {
                     clear(self.group);
                 }
             }
+            // No callback runs once this returns (JavaScriptCore calls it under the lock that
+            // unregistering takes), so the waker can go.
+            if self.deferred_waker.borrow().is_some() {
+                if let Some(set) = sys::spi::get().set_deferred_work_callback {
+                    set(self.group, None, std::ptr::null_mut());
+                }
+            }
+            drop(self.deferred_waker.take());
             sys::JSGlobalContextRelease(self.root);
             sys::JSContextGroupRelease(self.group);
         }
@@ -685,6 +696,16 @@ impl EngineInner {
     }
 }
 
+/// What [`Engine::set_deferred_work_waker`] keeps.
+type DeferredWaker = Box<dyn Fn() + Send + Sync>;
+
+/// Patch 0040's deferred work callback; `info` is the engine's [`DeferredWaker`].
+unsafe extern "C" fn deferred_work_wake(info: *mut std::ffi::c_void) {
+    // SAFETY: `info` is the waker `set_deferred_work_waker` registered, alive until unregistered.
+    let wake = unsafe { &*(info as *const DeferredWaker) };
+    wake();
+}
+
 impl Drop for EngineInner {
     fn drop(&mut self) {
         self.shutdown();
@@ -703,12 +724,17 @@ pub(crate) struct CallbackTls {
     /// realm whose script is running, which the embedder reads as the
     /// incumbent realm (`window.postMessage`'s source). See [`entry_realm`].
     pub entry: Cell<sys::JSContextRef>,
+    creation_turn_observed: Cell<bool>,
+    creation_turn: Cell<u64>,
 }
 
 thread_local! {
     static CURRENT: RefCell<Weak<EngineInner>> = const { RefCell::new(Weak::new()) };
     static CALLBACK: CallbackTls =
-        const { CallbackTls { depth: Cell::new(0), terminating: Cell::new(false), entry: Cell::new(std::ptr::null()) } };
+        const { CallbackTls {
+            depth: Cell::new(0), terminating: Cell::new(false), entry: Cell::new(std::ptr::null()),
+            creation_turn_observed: Cell::new(false), creation_turn: Cell::new(1),
+        } };
     /// Asked at each watchdog poll while JavaScript runs on this thread;
     /// returning true terminates it (see [`Engine::set_interrupt_check`]).
     static INTERRUPT_CHECK: RefCell<Option<Rc<dyn Fn() -> bool>>> = const { RefCell::new(None) };
@@ -728,8 +754,22 @@ impl EntryGuard {
 impl Drop for EntryGuard {
     #[inline]
     fn drop(&mut self) {
-        callback_tls().entry.set(self.0);
+        let tls = callback_tls();
+        tls.entry.set(self.0);
+        if self.0.is_null() && tls.creation_turn_observed.replace(false) {
+            tls.creation_turn.set(tls.creation_turn.get().wrapping_add(1));
+        }
     }
+}
+
+/// Identifies the current outer script invocation, including its JSC microtask checkpoint.
+pub fn script_entry_turn() -> Option<u64> {
+    let tls = callback_tls();
+    if tls.entry.get().is_null() {
+        return None;
+    }
+    tls.creation_turn_observed.set(true);
+    Some(tls.creation_turn.get())
 }
 
 /// The realm of the innermost script evaluation or native-to-JavaScript call
@@ -830,6 +870,7 @@ impl Engine {
             member_payloads: RefCell::new(Vec::new()),
             retired_members: RefCell::new(Vec::new()),
             lingering: RefCell::new(Vec::new()),
+            deferred_waker: RefCell::new(None),
             collections: crate::interned::Collections::new(),
             hook_state: class::HookState::default(),
             held: RefCell::new(crate::persistent::HeldValues::default()),
@@ -1162,6 +1203,38 @@ impl Engine {
     /// the GC marks its CodeBlock, which reaches that code's global object: a
     /// helper that tiered up shortly before its page closed keeps the closed realm
     /// alive through every collection in between. No-op on the system framework.
+    /// Patch 0040: `wake` is called whenever the VM schedules deferred work (the settling of
+    /// `WebAssembly.compile`, `instantiate` and their streaming forms, finished on a compilation
+    /// thread), from any thread and with JavaScriptCore locks held: it may only wake this engine's
+    /// loop, which then calls [`Engine::run_deferred_work`] between tasks. It is also called once
+    /// here, on this thread, for work a recycled engine holds from before. Replaces an earlier
+    /// waker. False (and nothing set) on an engine without the patch, whose deferred work only
+    /// a WTF run loop would run.
+    pub fn set_deferred_work_waker(&self, wake: impl Fn() + Send + Sync + 'static) -> bool {
+        let Some(set) = sys::spi::get().set_deferred_work_callback else { return false };
+        let waker: Box<DeferredWaker> = Box::new(Box::new(wake));
+        let info = &*waker as *const DeferredWaker as *mut std::ffi::c_void;
+        // SAFETY: the group is alive and used by this thread; `info` stays valid until the
+        // callback is replaced or removed (shutdown), the previous one only after this call.
+        unsafe { set(self.inner.group, Some(deferred_work_wake), info) };
+        // A recycled engine may hold work scheduled before this waker existed, whose notification
+        // went to the previous one: one wake now lets the new loop run it.
+        waker();
+        *self.inner.deferred_waker.borrow_mut() = Some(waker);
+        true
+    }
+
+    /// Runs the VM's ready deferred work (promise reactions included), as a task of its own: call
+    /// it between tasks with no JavaScript of this thread on the stack. True while work is still
+    /// pending; false without patch 0040.
+    pub fn run_deferred_work(&self) -> bool {
+        match sys::spi::get().run_deferred_work {
+            // SAFETY: the group is alive and used by this thread only.
+            Some(run) => unsafe { run(self.inner.group) },
+            None => false,
+        }
+    }
+
     fn complete_jit_plans(&self, wait: bool) {
         if let Some(f) = sys::spi::get().complete_jit_plans {
             // SAFETY: the group is alive and used by this thread only.
@@ -1490,12 +1563,22 @@ impl Engine {
                     unsafe { f(inner.group()) };
                 }
             }
+            // Patch 0040: the VM's deferred work (DeferredWorkTimer, which an embedder runs: some
+            // of it queued for the closed pages, some by the collections here) runs before each
+            // collection, as JavaScriptCore's own run loop would run it. Left queued, a closed
+            // page's global stayed alive (measured: one extra global on every recycled engine's
+            // second client; doWork also ends the VM's synchronous execution, which lets go of
+            // what weak reads kept for it), and the engine was never proven clean again.
+            self.run_deferred_work();
             self.collect_and_finalize(true);
             counts = self.heap_counts();
             if inner.pending_finalizers() == 0 && counts.is_some_and(|c| c.globals <= clean.globals) {
                 break;
             }
         }
+        // (And what the last collection queued: the next client's loop is only woken for work
+        // scheduled once this has run, JavaScriptCore keeping its timer set till then.)
+        self.run_deferred_work();
         let counts = counts.ok_or("no heap statistics")?;
         if inner.pending_finalizers() != 0 {
             return Err("finalizers still pending");
@@ -1777,6 +1860,15 @@ pub fn configure_process() {
                 std::env::set_var(name, value);
                 PROCESS_DEFAULTS.lock().unwrap_or_else(|e| e.into_inner()).push(name);
             }
+        }
+        // The pinned typed loader identifies text imports separately from
+        // JavaScript. Enable JSC's import-attribute parser for that type.
+        // The untyped system loader cannot make this distinction.
+        if unsafe { sys::modules::pyro_jsc_typed_modules_available() } == 1
+            && std::env::var_os("JSC_useImportText").is_none()
+        {
+            std::env::set_var("JSC_useImportText", "true");
+            PROCESS_DEFAULTS.lock().unwrap_or_else(|e| e.into_inner()).push("JSC_useImportText");
         }
         // Freed pages leave the resident set (patched JSC): macOS keeps
         // `madvise`d pages resident until it needs them, so a process that

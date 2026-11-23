@@ -1,0 +1,6 @@
+   The x attribute, on getting, must return the scaled x-coordinate of the left border edge of the
+first box associated with the element, relative to the initial containing block origin, ignoring any
+transforms that apply to the element and its ancestors, or zero if there is no box.
+   The y attribute, on getting, must return the scaled y-coordinate of the top border edge of the
+first box associated with the element, relative to the initial containing block origin, ignoring any
+transforms that apply to the element and its ancestors, or zero if there is no box.

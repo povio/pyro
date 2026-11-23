@@ -14,7 +14,6 @@ use crate::derives::*;
     MallocSizeOf,
     PartialEq,
     SpecifiedValueInfo,
-    ToCss,
     ToShmem,
     ToTyped,
     Serialize,
@@ -110,6 +109,49 @@ pub enum StepPosition {
     JumpBoth,
     Start,
     End,
+}
+
+// pyro: written by hand (as `#[derive(ToCss)]` with the variants' `#[css]` attributes wrote it) so
+// that a `cubic-bezier()`'s numbers serialize inside `EasingSerialization`: for reparsing they keep
+// full precision ([`crate::values::serialize_specified_dimension`]).
+impl<Integer: style_traits::ToCss, Number: style_traits::ToCss, LinearStops: style_traits::ToCss> style_traits::ToCss
+    for TimingFunction<Integer, Number, LinearStops>
+{
+    fn to_css<W>(&self, dest: &mut style_traits::CssWriter<W>) -> std::fmt::Result
+    where
+        W: std::fmt::Write,
+    {
+        use std::fmt::Write as _;
+        match self {
+            Self::Keyword(keyword) => keyword.to_css(dest),
+            Self::CubicBezier { x1, y1, x2, y2 } => {
+                let _easing = crate::values::EasingSerialization::enter();
+                dest.write_str("cubic-bezier(")?;
+                x1.to_css(dest)?;
+                dest.write_str(", ")?;
+                y1.to_css(dest)?;
+                dest.write_str(", ")?;
+                x2.to_css(dest)?;
+                dest.write_str(", ")?;
+                y2.to_css(dest)?;
+                dest.write_char(')')
+            },
+            Self::Steps(intervals, position) => {
+                dest.write_str("steps(")?;
+                intervals.to_css(dest)?;
+                if !is_end(position) {
+                    dest.write_str(", ")?;
+                    position.to_css(dest)?;
+                }
+                dest.write_char(')')
+            },
+            Self::LinearFunction(stops) => {
+                dest.write_str("linear(")?;
+                stops.to_css(dest)?;
+                dest.write_char(')')
+            },
+        }
+    }
 }
 
 #[inline]

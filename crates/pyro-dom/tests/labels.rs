@@ -381,3 +381,60 @@ fn random_mutations_agree_with_the_walk() {
     }
     check(&dom, d, &[sr]);
 }
+
+#[test]
+fn nested_reference_targets_associate_labels_in_shadow_including_order() {
+    let (dom, document) = doc("<label id=a for=host></label><div id=host></div><label id=c for=host></label>");
+    let mut dom = dom.borrow_mut();
+    let host = one(&dom, document, "#host");
+    let outer = dom.attach_shadow(host, ShadowRootMode::Closed).unwrap();
+    let inner_host = dom.create_element(document, "div").unwrap();
+    dom.set_attribute(inner_host, "id", "inner").unwrap();
+    dom.append_child(outer, inner_host).unwrap();
+    let inner = dom.attach_shadow(inner_host, ShadowRootMode::Open).unwrap();
+    let b = dom.create_element(document, "label").unwrap();
+    let input = dom.create_element(document, "input").unwrap();
+    dom.set_attribute(input, "id", "control").unwrap();
+    dom.append_child(b, input).unwrap();
+    dom.append_child(inner, b).unwrap();
+    let a = one(&dom, document, "#a");
+    let c = one(&dom, document, "#c");
+    dom.set_shadow_reference_target(outer, Some("inner")).unwrap();
+    dom.set_shadow_reference_target(inner, Some("control")).unwrap();
+    assert_eq!(dom.labels(input).unwrap(), [a, b, c]);
+    assert_eq!(dom.labeled_control(a).unwrap(), Some(input));
+    assert_eq!(dom.retarget_node(input, document), Some(host));
+    dom.set_shadow_reference_target(inner, Some("missing")).unwrap();
+    assert_eq!(dom.labels(input).unwrap(), [b]);
+    assert_eq!(dom.resolve_reference_target(host).unwrap(), None);
+}
+
+#[test]
+fn external_form_controls_require_connection_and_retarget_to_the_host() {
+    let (dom, document) = doc("<section><button form=host></button><div id=host></div></section>");
+    let mut dom = dom.borrow_mut();
+    let section = one(&dom, document, "section");
+    let parent = dom.parent(section).unwrap().unwrap();
+    let button = one(&dom, section, "button");
+    let host = one(&dom, section, "#host");
+    let shadow = dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+    let form = dom.create_element(document, "form").unwrap();
+    let input = dom.create_element(document, "input").unwrap();
+    dom.set_attribute(form, "id", "f").unwrap();
+    dom.append_child(form, input).unwrap();
+    dom.append_child(shadow, form).unwrap();
+    dom.set_shadow_reference_target(shadow, Some("f")).unwrap();
+    assert_eq!(dom.form_owner(button).unwrap(), Some(form));
+    assert_eq!(dom.retarget_node(form, document), Some(host));
+    assert_eq!(dom.owned_form_elements(form).unwrap(), [button, input]);
+    dom.remove_child(parent, section).unwrap();
+    assert_eq!(dom.form_owner(button).unwrap(), None);
+    assert_eq!(dom.form_owner(input).unwrap(), Some(form));
+    assert_eq!(dom.owned_form_elements(form).unwrap(), [input]);
+    // A disconnected control's form attribute is not looked up: it keeps its
+    // nearest ancestor form (HTML "reset the form owner"; f09e4e33e, WPT
+    // forms/form-control-infrastructure/form_attribute.html), even with an ID
+    // that names no form.
+    dom.set_attribute(input, "form", "nope").unwrap();
+    assert_eq!(dom.form_owner(input).unwrap(), Some(form));
+}

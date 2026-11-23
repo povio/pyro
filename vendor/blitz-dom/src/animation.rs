@@ -32,6 +32,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use blitz_traits::node_id::NodeId;
+use style::computed_value_flags::ComputedValueFlags;
 use style::context::{CascadeInputs, SharedStyleContext, StyleContext, ThreadLocalStyleContext};
 use style::dom::{TElement, TNode};
 use style::global_style_data::GLOBAL_STYLE_DATA;
@@ -50,7 +51,7 @@ use style::stylesheets::layer_rule::LayerOrder;
 use style::stylesheets::CssRuleType;
 use style::stylist::RuleInclusion;
 use style::traversal_flags::TraversalFlags;
-use style::values::animated::{Animate, Procedure};
+use style::values::animated::Procedure;
 use style::values::computed::TimingFunction;
 use style::values::generics::easing::BeforeFlag;
 use style::Atom;
@@ -271,6 +272,15 @@ pub(crate) struct SampledAnimations {
 }
 
 impl SampledAnimations {
+    /// A font arrival can change computed keyframes while rules and parent identity stay the same.
+    pub(crate) fn invalidate_bases(&mut self) {
+        for element in self.elements.values_mut() {
+            element.base = None;
+            element.pseudos = Default::default();
+        }
+        self.pending |= !self.is_empty();
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.elements.is_empty()
     }
@@ -326,6 +336,7 @@ struct BaseKey {
     /// The parent's style (inherited values), compared by address.
     parent: usize,
     base_style: ServoArc<ComputedValues>,
+    siblings: SiblingDependency,
     /// pyro: the keyframes are a `::before`/`::after`'s (with the originating element's style):
     /// their values cascade as the pseudo-element's, inheriting from the element.
     pseudo: Option<(style::selector_parser::PseudoElement, ServoArc<ComputedValues>)>,
@@ -334,11 +345,41 @@ struct BaseKey {
 /// An effect's keyframes resolved against the element's base style.
 #[derive(Default)]
 struct Resolved {
+    /// Sibling position used while computing a keyframe, if any frame depended on it.
+    siblings: SiblingDependency,
+    allow_size_keywords: bool,
     frames: Vec<ResolvedFrame>,
     /// The properties the keyframes set, with their base (underlying) value.
     properties: Vec<(OwnedPropertyDeclarationId, Option<AnimationValue>)>,
     /// The easing of the neutral keyframes made where 0% or 100% is missing.
     implicit_easing: Option<TimingFunction>,
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+struct SiblingDependency {
+    index: Option<u32>,
+    count: Option<u32>,
+}
+
+impl SiblingDependency {
+    fn capture(flags: ComputedValueFlags, node: &Node, caches: &mut style::context::TreeCountingCaches) -> Self {
+        if !flags.intersects(ComputedValueFlags::tree_counting_function_flags()) {
+            return Self::default();
+        }
+        let position = caches.get_or_compute(&node);
+        Self {
+            index: flags.contains(ComputedValueFlags::USES_SIBLING_INDEX).then_some(position.sibling_index),
+            count: flags.contains(ComputedValueFlags::USES_SIBLING_COUNT).then_some(position.sibling_count),
+        }
+    }
+
+    fn is_current(self, node: &Node, caches: &mut style::context::TreeCountingCaches) -> bool {
+        if self == Self::default() {
+            return true;
+        }
+        let position = caches.get_or_compute(&node);
+        self.index.is_none_or(|i| i == position.sibling_index) && self.count.is_none_or(|c| c == position.sibling_count)
+    }
 }
 
 struct ResolvedFrame {
@@ -350,6 +391,76 @@ struct ResolvedFrame {
 }
 
 impl BaseDocument {
+    /// Compute CSS animation declarations for script without changing playback.
+    pub fn css_animation_frames(&self, id: NodeId, name: &str) -> Option<Vec<(f64, Option<String>, Option<String>, Vec<(String, String, String)>)>> {
+        use style_traits::ToCss;
+        let node = self.nodes.get(id)?;
+        let primary = node.primary_styles()?.clone();
+        let _scope = crate::stylo::LayoutThreadScope::enter();
+        let guard = self.guard.read();
+        let shared = SharedStyleContext {
+            traversal_flags: TraversalFlags::empty(), stylist: &self.stylist, options: GLOBAL_STYLE_DATA.options.clone(),
+            guards: StylesheetGuards::same(&guard), visited_styles_enabled: false, animations: self.animations.clone(),
+            current_time_for_animations: 0.0, snapshot_map: &self.snapshots,
+            registered_speculative_painters: &crate::stylo::RegisteredPaintersImpl,
+        };
+        let name = Atom::from(name);
+        let animation = match animation_name_scope(self, node) {
+            Some(scope) => self.stylist.lookup_keyframes_scoped(&name, scope, node),
+            None => self.stylist.lookup_keyframes(&name, node),
+        }?;
+        let mut thread = ThreadLocalStyleContext::new();
+        let mut context = StyleContext { shared: &shared, thread_local: &mut thread };
+        let tree = self.stylist.rule_tree();
+        let base_rules = tree.remove_animation_rules(primary.rules());
+        let base = if base_rules == *primary.rules() { primary } else { cascade(node, &mut context, base_rules.clone(), &primary) };
+        let mut frames = Vec::new();
+        for step in &animation.steps {
+            let KeyframesStepValue::Declarations { block } = &step.value else { continue };
+            let specified = block.read_with(&guard);
+            let mut easing = None;
+            let mut composite = None;
+            for declaration in specified.normal_declaration_iter() {
+                match declaration {
+                    PropertyDeclaration::AnimationTimingFunction(v) => easing = v.0.first().map(|f| f.to_computed_value_without_context().to_css_string()),
+                    PropertyDeclaration::AnimationComposition(v) => composite = v.0.first().map(|c| c.to_css_string()),
+                    _ => {}
+                }
+            }
+            let block = keyframe_block(specified, &base);
+            let ids: Vec<_> = block.normal_declaration_iter().map(|d| d.id().to_owned()).collect();
+            if ids.is_empty() && easing.is_none() && composite.is_none() { continue; }
+            let locked = ServoArc::new(self.guard.wrap(block));
+            let rules = tree.update_rule_at_level(CascadeLevel::new(CascadeOrigin::Animations), LayerOrder::root(),
+                Some(locked.borrow_arc()), &base_rules, &shared.guards, &mut false).unwrap_or_else(|| base_rules.clone());
+            let computed = cascade(node, &mut context, rules, &base);
+            let values = ids.into_iter().map(|id| {
+                let id = id.as_borrowed();
+                (id.name().into_owned(), computed.computed_value_to_string(id), base.computed_value_to_string(id))
+            }).collect();
+            frames.push((f64::from(step.start_offset.percentage.0), easing, composite, values));
+        }
+        Some(frames)
+    }
+
+    pub(crate) fn animated_marker_style(
+        &self, node: &Node, primary: &ServoArc<ComputedValues>, base: Option<&ServoArc<ComputedValues>>,
+    ) -> Option<ServoArc<ComputedValues>> {
+        let block = node.element_data()?.sampled_marker.as_ref()?;
+        let guard = self.guard.read();
+        let guards = StylesheetGuards::same(&guard);
+        let tree = self.stylist.rule_tree();
+        let path = base.map_or_else(|| tree.root(), |style| style.rules());
+        let rules = tree.update_rule_at_level(CascadeLevel::new(CascadeOrigin::Animations), LayerOrder::root(),
+            Some(block.borrow_arc()), path, &guards, &mut false)?;
+        let inputs = CascadeInputs {
+            rules: Some(rules), flags: base.map_or_else(Default::default, |style| style.flags.for_cascade_inputs()),
+            ..Default::default()
+        };
+        Some(self.stylist.compute_pseudo_element_style_with_inputs(inputs, &style::selector_parser::PseudoElement::Marker,
+            &guards, Some(primary), Some(node)))
+    }
+
     pub(crate) fn sample_transition_style(&self, origin: NodeId, parent: NodeId, pseudo: style::selector_parser::PseudoElement, style: ServoArc<ComputedValues>, samples: &[(usize,f64)], generated: Option<&(Atom,String)>, budget: &mut usize) -> Option<ServoArc<ComputedValues>> {
         if samples.is_empty() { return Some(style); }
         use style_traits::ToCss;
@@ -364,7 +475,7 @@ impl BaseDocument {
         };
         let mut thread = ThreadLocalStyleContext::new();
         let mut context = StyleContext { shared: &shared, thread_local: &mut thread };
-        let base = BaseKey { rules: style.rules().clone(), parent: 0, base_style: style.clone(), pseudo: Some((pseudo.clone(), primary.clone())) };
+        let base = BaseKey { rules: style.rules().clone(), parent: 0, base_style: style.clone(), siblings: SiblingDependency::default(), pseudo: Some((pseudo.clone(), primary.clone())) };
         let ui = style.get_ui();
         let mut state = ElementState::default();
         let mut easings = FxHashMap::default();
@@ -623,7 +734,7 @@ impl BaseDocument {
                 let same_base = element
                     .base
                     .as_ref()
-                    .is_some_and(|b| b.rules == rules && b.parent == parent);
+                    .is_some_and(|b| b.rules == rules && b.parent == parent && b.siblings.is_current(node, &mut context.thread_local.tree_counting_caches));
                 if !same_base {
                     let base_style = if rules == *style.rules() {
                         style.clone()
@@ -633,10 +744,18 @@ impl BaseDocument {
                     element.base = Some(BaseKey {
                         rules,
                         parent,
+                        siblings: SiblingDependency::capture(base_style.flags, node, &mut context.thread_local.tree_counting_caches),
                         base_style,
                         pseudo: None,
                     });
                     element.resolved.clear();
+                }
+                let mut still_current = |(_, resolved): &(Keyframes, Resolved)| {
+                    resolved.siblings.is_current(node, &mut context.thread_local.tree_counting_caches)
+                };
+                element.resolved.retain(&mut still_current);
+                for ps in &mut element.pseudos {
+                    ps.resolved.retain(&mut still_current);
                 }
                 let base = element.base.clone().unwrap();
                 let effects: Vec<Keyframes> = element.effects.all().map(|e| e.keyframes.clone()).collect();
@@ -667,13 +786,14 @@ impl BaseDocument {
                     let rules = shared.stylist.rule_tree().remove_animation_rules(pseudo_style.rules());
                     let parent = &*style as *const ComputedValues as usize;
                     let ps = &mut element.pseudos[i];
-                    if !ps.base.as_ref().is_some_and(|b| b.rules == rules && b.parent == parent) {
+                    if !ps.base.as_ref().is_some_and(|b| b.rules == rules && b.parent == parent && b.siblings.is_current(node, &mut context.thread_local.tree_counting_caches)) {
                         let base_style = if rules == *pseudo_style.rules() {
                             pseudo_style.clone()
                         } else {
                             cascade_pseudo(node, &mut context, rules.clone(), &pseudo_style, pseudo, &style)
                         };
-                        ps.base = Some(BaseKey { rules, parent, base_style, pseudo: Some((pseudo.clone(), style.clone())) });
+                        let siblings = SiblingDependency::capture(base_style.flags, node, &mut context.thread_local.tree_counting_caches);
+                        ps.base = Some(BaseKey { rules, parent, siblings, base_style, pseudo: Some((pseudo.clone(), style.clone())) });
                         ps.resolved.clear();
                     }
                     let base = ps.base.clone().unwrap();
@@ -716,7 +836,14 @@ impl BaseDocument {
             })
         };
         let (animations, transitions) = (block(sampled.animations), block(sampled.transitions));
-        let marker = block(sampled.marker);
+        let marker = block(sampled.marker.map(|mut values| {
+            let restriction = style::selector_parser::PseudoElement::Marker.property_restriction();
+            values.retain(|property, _| match property.as_borrowed() {
+                PropertyDeclarationId::Longhand(id) => id.flags().contains(restriction),
+                PropertyDeclarationId::Custom(..) => true,
+            });
+            values
+        }));
         let backdrop = block(sampled.backdrop);
         let [(before_a, before_t), (after_a, after_t)] = sampled.pseudos;
         let pseudos = [(block(before_a), block(before_t)), (block(after_a), block(after_t))];
@@ -1117,6 +1244,7 @@ fn resolve<'a>(
     }
     let rule_tree = shared.stylist.rule_tree();
     let guards = &shared.guards;
+    let mut frame_flags = ComputedValueFlags::empty();
     let resolved_frames = frames
         .into_iter()
         .map(|(offset, easing, composite, block)| {
@@ -1147,6 +1275,7 @@ fn resolve<'a>(
                     Some((pseudo, primary)) => cascade_pseudo(node, context, rules, &base.base_style, pseudo, primary),
                     None => cascade(node, context, rules, &base.base_style),
                 };
+                frame_flags |= style.flags;
                 for i in ids {
                     values[i] =
                         AnimationValue::from_computed_values(properties[i].0.as_borrowed(), &style);
@@ -1161,6 +1290,8 @@ fn resolve<'a>(
         })
         .collect();
     Resolved {
+        siblings: SiblingDependency::capture(frame_flags, node, &mut context.thread_local.tree_counting_caches),
+        allow_size_keywords: base.base_style.slow_clone_interpolate_size() == style::values::computed::InterpolateSize::AllowKeywords,
         frames: resolved_frames,
         properties,
         implicit_easing,
@@ -1286,7 +1417,7 @@ fn sample_property(
         };
         match underlying {
             Some(u) => u
-                .animate(value, procedure)
+                .animate_with_size_policy(value, procedure, resolved.allow_size_keywords)
                 .unwrap_or_else(|_| value.clone()),
             None => value.clone(),
         }
@@ -1357,27 +1488,16 @@ fn sample_property(
     Some(
         start
             .value
-            .animate(
+            .animate_with_size_policy(
                 &end.value,
                 Procedure::Interpolate {
                     progress: transformed,
                 },
+                resolved.allow_size_keywords,
             )
-            .unwrap_or_else(|_| match (&start.value, &end.value) {
-                // pyro: `display` to or from `none` shows the other value throughout, `none` only
-                // at its end (css-display-4 §2.1; Stylo's `Animate for Display`, which the
-                // discrete path skips).
-                (AnimationValue::Display(a), AnimationValue::Display(b)) if a.is_none() != b.is_none() => {
-                    let other = if b.is_none() { transformed < 1.0 } else { transformed <= 0.0 };
-                    if other {
-                        start.value.clone()
-                    } else {
-                        end.value.clone()
-                    }
-                }
-                _ if transformed < 0.5 => start.value.clone(),
-                _ => end.value.clone(),
-            }),
+            // (`display` to or from `none` interpolates in Stylo's `Animate for Display`, on with
+            // `layout.css.display-animations.enabled`, `document.rs` `init_stylo_prefs`.)
+            .unwrap_or_else(|_| if transformed < 0.5 { start.value.clone() } else { end.value.clone() }),
     )
 }
 

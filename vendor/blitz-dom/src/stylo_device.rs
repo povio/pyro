@@ -70,11 +70,13 @@ pub(crate) fn make_device(
     viewport: &Viewport,
     layout_size: Option<(f32, f32)>,
     media_type: MediaType,
+    environment: crate::MediaEnvironment,
     font_ctx: Arc<Mutex<FontContext>>,
 ) -> Device {
     let (width, height) = layout_size.unwrap_or_else(|| viewport.logical_size());
     let viewport_size = euclid::Size2D::new(width, height);
-    let device_size = euclid::Size2D::new(width, height) * viewport.scale();
+    let screen = environment.screen.map(|(w, h)| (w as f32, h as f32)).unwrap_or((width, height));
+    let device_size = euclid::Size2D::new(screen.0, screen.1) * viewport.scale();
     let device_pixel_ratio = euclid::Scale::new(viewport.scale());
 
     let mut pointer = match viewport.input.pointer {
@@ -100,6 +102,7 @@ pub(crate) fn make_device(
                 ColorScheme::Dark => PrefersColorScheme::Dark,
             },
             primary_pointer_capabilities: pointer,
+            prefers_reduced_motion: environment.reduced_motion,
             all_pointer_capabilities: pointer,
         },
     )

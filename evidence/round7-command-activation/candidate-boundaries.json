@@ -1,0 +1,146 @@
+{
+  "command": {
+    "inside": [
+      [
+        "root",
+        "inside",
+        false
+      ],
+      [
+        "target",
+        "inside",
+        false
+      ]
+    ],
+    "same": [
+      [
+        "root",
+        "target",
+        false
+      ],
+      [
+        "target",
+        "target",
+        false
+      ]
+    ],
+    "outside": [
+      [
+        "root",
+        "host",
+        false
+      ],
+      [
+        "target",
+        "host",
+        false
+      ]
+    ],
+    "outsidePeer": [
+      [
+        "host",
+        "other",
+        true
+      ],
+      [
+        "root",
+        "other",
+        true
+      ],
+      [
+        "target",
+        "other",
+        true
+      ]
+    ],
+    "null": [
+      [
+        "host",
+        "null",
+        true
+      ],
+      [
+        "root",
+        "null",
+        true
+      ],
+      [
+        "target",
+        "null",
+        true
+      ]
+    ]
+  },
+  "toggle": {
+    "inside": [
+      [
+        "root",
+        "inside",
+        false
+      ],
+      [
+        "target",
+        "inside",
+        false
+      ]
+    ],
+    "same": [
+      [
+        "root",
+        "target",
+        false
+      ],
+      [
+        "target",
+        "target",
+        false
+      ]
+    ],
+    "outside": [
+      [
+        "root",
+        "host",
+        false
+      ],
+      [
+        "target",
+        "host",
+        false
+      ]
+    ],
+    "outsidePeer": [
+      [
+        "host",
+        "other",
+        true
+      ],
+      [
+        "root",
+        "other",
+        true
+      ],
+      [
+        "target",
+        "other",
+        true
+      ]
+    ],
+    "null": [
+      [
+        "host",
+        "null",
+        true
+      ],
+      [
+        "root",
+        "null",
+        true
+      ],
+      [
+        "target",
+        "null",
+        true
+      ]
+    ]
+  }
+}

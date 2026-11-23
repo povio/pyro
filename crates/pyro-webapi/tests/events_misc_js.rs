@@ -344,3 +344,76 @@ fn beforeunload_asks_through_the_handler_return_value_and_return_value() {
     assert!(!lifecycle::before_unload(&e.page));
     assert_eq!(eval(r, "seen.join()"), ",false");
 }
+
+#[test]
+fn cookie_changes_deliver_trusted_frozen_lists_after_the_mutation() {
+    let e = env("<body></body>");
+    *e.page.net.borrow_mut() = Some(pyro_net::NetClient::new(Default::default()).unwrap());
+    assert_eq!(
+        eval(&e.main, r#"
+            const initial = [{name:'theme',value:'light'}];
+            const synthetic = new CookieChangeEvent('change', {changed: initial, bubbles:true});
+            initial[0].value = 'replaced';
+            [synthetic instanceof Event, synthetic.isTrusted, synthetic.bubbles,
+             synthetic.changed === synthetic.changed, Object.isFrozen(synthetic.changed),
+             synthetic.changed[0].value, synthetic.deleted.length].join('|')
+        "#),
+        "true|false|true|true|true|light|0"
+    );
+    assert_eq!(
+        eval(&e.main, r#"
+            const log = [];
+            cookieStore.onchange = event => log.push([
+                event instanceof CookieChangeEvent, event.isTrusted, event.target === cookieStore,
+                event.changed.map(c => c.name + '=' + c.value).join(','),
+                event.deleted.map(c => [c.name, 'value' in c].join(':')).join(','), Object.isFrozen(event.deleted)
+            ].join('|'));
+            document.cookie = 'theme=dark; path=/';
+            log.length
+        "#),
+        "0"
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "log.join()"), "true|true|true|theme=dark||true");
+    assert_eq!(eval(&e.main, "document.cookie = 'theme=; max-age=0; path=/'; log.length"), "1");
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "log[1]"), "true|true|true||theme:false|true");
+}
+
+#[test]
+fn cookie_change_listener_registered_after_mutation_in_the_same_turn_receives_the_event() {
+    let e = crate::support::network::Env::new("https://cookie.test/app");
+    assert_eq!(
+        e.eval(r#"
+            document.cookie = 'early=before-first-getter; path=/; secure';
+            const changes = [];
+            cookieStore.addEventListener('change', e => {
+                changes.push([e.isTrusted, e.target === cookieStore, e.changed[0].name, e.changed[0].value].join('|'));
+            });
+            changes.length
+        "#),
+        "0"
+    );
+    e.until("changes.length === 1");
+    assert_eq!(e.eval("changes.join()"), "true|true|early|before-first-getter");
+}
+
+#[test]
+fn cookie_changes_to_one_name_in_a_turn_dispatch_separate_ordered_events() {
+    let e = crate::support::network::Env::new("https://cookie.test/app");
+    assert_eq!(
+        e.eval(r#"
+            document.cookie = 'style=blue; path=/; secure';
+            const records = [];
+            cookieStore.addEventListener('change', event => {
+                records.push(event.changed.map(cookie => cookie.value).join(','));
+            });
+            document.cookie = 'style=blue; path=/';
+            document.cookie = 'style=green; path=/';
+            records.length
+        "#),
+        "0"
+    );
+    e.until("records.length === 3");
+    assert_eq!(e.eval("records.join('|')"), "blue|blue|green");
+}

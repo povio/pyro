@@ -150,7 +150,8 @@ impl Node {
     pub fn light_sibling_element(&self, offset: i64) -> Option<Option<&Node>> {
         self.assigned_slot_id()?;
         let index_of = |node: &Node| -> Option<i64> {
-            node.element_data()?.attrs.state(LIGHT_INDEX_ATTR).and_then(|value| value.parse().ok())
+            let value = node.element_data()?.attrs.state(LIGHT_INDEX_ATTR)?;
+            value.split_once('/').map_or(value, |(index, _)| index).parse().ok()
         };
         let index = index_of(self)?;
         // The flat-tree neighbour in the same slot, when it is the light-tree one (assigned nodes

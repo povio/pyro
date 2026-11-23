@@ -2157,7 +2157,7 @@ pub(crate) fn build_table_context(doc: &mut BaseDocument, table_root_node_id: No
     };
     style.grid_template_rows = row_tracks(&rows, gutter);
     // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
-    style.collapsed_rows = rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
+    style.collapsed_rows = collapsed_rows(doc, &rows);
     style.collapsed_columns = collapsed_columns(doc, &columns);
     // pyro: a `<col>`'s width has the halves of the collapsed borders beside its column in it (CSS 2.1
     // § 17.6.2, as Chromium): in uniform gutters, which hold the borders whole, the track is that much
@@ -3087,7 +3087,7 @@ fn update_rows(doc: &mut BaseDocument, table: NodeId, ctx: &mut TableContext) ->
     };
     ctx.style.grid_template_rows = row_tracks(&ctx.rows, gutter);
     // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
-    ctx.style.collapsed_rows = ctx.rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
+    ctx.style.collapsed_rows = collapsed_rows(doc, &ctx.rows);
     ctx.style.collapsed_columns = collapsed_columns(doc, &ctx.columns);
     if boxes_changed {
         let (before, after) = (doc.nodes[table].before(), doc.nodes[table].after());
@@ -3183,6 +3183,15 @@ fn collapsed_columns(doc: &BaseDocument, columns: &[TableColumn]) -> Vec<u16> {
         })
         .map(|(i, _)| i as u16)
         .collect()
+}
+
+fn collapsed_rows(doc: &BaseDocument, rows: &[TableRow]) -> Vec<u16> {
+    rows.iter().enumerate().filter_map(|(index, row)| {
+        let group_collapsed = row.group.and_then(|group| doc.nodes[group].primary_styles()).is_some_and(|style| {
+            style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
+        });
+        (row.collapsed || group_collapsed).then_some(index as u16)
+    }).collect()
 }
 
 fn push_columns(
@@ -4655,6 +4664,23 @@ fn table_cell_relative_offset(
 }
 
 impl BaseDocument {
+    /// pyro: how far relative positioning moves table row or row group `node_id` (and, with it,
+    /// its cells): its own offset and, for a row, its row group's ([`table_part_relative_offset`]).
+    /// `None` when neither is relatively positioned.
+    pub fn table_part_offset(&self, node_id: NodeId) -> Option<taffy::Point<f32>> {
+        let table = table_of(self, node_id);
+        // (A row's group as Blitz moves its cells: its parent when that is a row group.)
+        let group = row_group_of(self, node_id);
+        let mut offset: Option<taffy::Point<f32>> = None;
+        for (part, parent) in [(Some(node_id), group.or(table)), (group, table)] {
+            let Some(own) = part.and_then(|part| table_part_relative_offset(self, part, parent)) else { continue };
+            let sum = offset.get_or_insert(taffy::Point::ZERO);
+            sum.x += own.x;
+            sum.y += own.y;
+        }
+        offset
+    }
+
     /// pyro: the row group and row (`[group, row]`) of table cell `cell_id`, from its table's
     /// context; `None` for a node that is no cell of a table laid out.
     pub fn table_cell_parts(&self, cell_id: NodeId) -> Option<[Option<NodeId>; 2]> {

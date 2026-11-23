@@ -60,6 +60,12 @@ pub struct PopupState {
     /// `window.open` ran (HTML creates it synchronously), until the embedder
     /// turns it into the popup page (`PopupTicket::take_prebuilt`).
     prebuilt: RefCell<Option<Box<dyn std::any::Any>>>,
+    /// The sandboxing flags the popup's documents take from its creator (HTML "popup sandboxing
+    /// flag set"), as the embedder encodes them; 0 for none.
+    sandbox: Cell<u32>,
+    /// The embedder's id of the child frame whose document opened the popup by following a link
+    /// or submitting a form (None: the top-level frame, or `window.open`, which records it itself).
+    opener_child: Cell<Option<u64>>,
 }
 
 impl std::fmt::Debug for PopupState {
@@ -97,6 +103,8 @@ impl PopupTicket {
             page: RefCell::new(Weak::new()),
             opener_cleared: Cell::new(false),
             prebuilt: RefCell::new(None),
+            sandbox: Cell::new(0),
+            opener_child: Cell::new(None),
         });
         (Rc::new(Self(state.clone())), state)
     }
@@ -113,6 +121,22 @@ impl PopupTicket {
     /// The browsing context name the popup was opened with ("" for `_blank`).
     pub fn name(&self) -> &str {
         &self.0.name
+    }
+
+    /// The popup sandboxing flag set the embedder recorded for the popup (0: none).
+    pub fn sandbox_bits(&self) -> u32 {
+        self.0.sandbox.get()
+    }
+    pub fn set_sandbox_bits(&self, bits: u32) {
+        self.0.sandbox.set(bits);
+    }
+
+    /// The child frame of the opener page that opened the popup (`PopupState::opener_child`).
+    pub fn opener_child(&self) -> Option<u64> {
+        self.0.opener_child.get()
+    }
+    pub fn set_opener_child(&self, child: Option<u64>) {
+        self.0.opener_child.set(child);
     }
 
     /// The session storage namespace the popup page must use.
@@ -170,6 +194,9 @@ impl Eq for PopupTicket {}
 pub enum PopupCommand {
     Close,
     Navigate(String),
+    /// A named-window navigation initiated by window.open, with its caller's
+    /// referrer source and policy captured before the navigation task runs.
+    OpenNamed { url: String, referrer: Option<String>, policy: pyro_net::ReferrerPolicy },
 }
 
 #[derive(Clone)]
@@ -317,10 +344,10 @@ impl PopupData {
     /// `popup.postMessage(message, targetOrigin, transfer)`: structured
     /// clone in the opener, delivered as a task in the popup's document.
     fn post_message<'s>(&self, s: &Scope<'s>, a: &Args<'s>) -> JsResult<()> {
-        let sender = self.opener_origin().unwrap_or_else(|| "null".into());
+        let sender = self.page.origin_key();
         // Matched by origin key: an opaque opener's "/" reaches only a popup of that same opaque
         // origin (its initial about:blank), not one that navigated to another opaque origin.
-        let (message, wanted, options) = crate::window_message::post_message_args(s, a, &self.page.origin_key())?;
+        let (message, wanted, options) = crate::window_message::post_message_args(s, a, &sender)?;
         // Clone even when the message will be dropped (errors are reported
         // regardless of the target).
         let message = crate::structured_clone::encode_message(s, message, options)?;
@@ -343,7 +370,15 @@ pub(crate) fn deliver_message(page: &Rc<PageDom>, message: crate::structured_clo
         }
         let (Some(window), Some(realm)) = (page.window_target(), page.main_world_realm()) else { return };
         let Ok(scope) = realm.scope() else { return };
-        crate::message_channel::fire_wire_message(&scope, &page, window, &message, origin);
+        // HTML "window post message steps": `source` is the poster's WindowProxy as the popup sees
+        // it, i.e. the popup's `window.opener` (null once the opener is gone or was cleared).
+        let popup = Rc::downgrade(&page);
+        let source: crate::event::MessageSource =
+            Rc::new(move |s: &Scope<'_>| match popup.upgrade().and_then(|p| p.hooks()) {
+                Some(hooks) => hooks.opener_window(s),
+                None => Ok(s.null()),
+            });
+        crate::message_channel::fire_wire_message_from(&scope, &page, window, &message, Some(origin), Some(source));
     }));
 }
 
@@ -517,4 +552,22 @@ fn navigate_arg<'s>(s: &Scope<'s>, d: &PopupData, url: Value<'s>) -> JsResult<Va
 pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<PopupWindow>();
     engine.register::<PopupLocation>();
+}
+
+/// A link or form of `page` targeting window name `name` (HTML "rules for choosing a navigable":
+/// an existing navigable of that name), when `page` opened a popup of that name that is still open
+/// (`window.open(url, name)`): that popup navigates to `url`, as `window.open` with the same name
+/// does. False when there is none, and the caller opens a new window.
+pub fn navigate_named_popup(page: &Rc<PageDom>, name: &str, url: &str) -> bool {
+    let popup = page.popups.borrow().iter().find(|(n, p)| n.as_str() == name && !p.is_closed()).map(|(_, p)| p.clone());
+    let Some(popup) = popup else { return false };
+    page.popup_command(
+        popup,
+        PopupCommand::OpenNamed {
+            url: url.to_owned(),
+            referrer: page.client_referrer().map(Into::into),
+            policy: page.referrer_policy(),
+        },
+    );
+    true
 }

@@ -1,0 +1,52 @@
+{
+  "surface": [
+    "function",
+    "function"
+  ],
+  "coordinates": [
+    3,
+    20,
+    75.5906,
+    10,
+    10,
+    25
+  ],
+  "identity": [
+    true,
+    true,
+    true,
+    true,
+    false,
+    true
+  ],
+  "mutation": [
+    "20%",
+    40,
+    "20%",
+    "20% 2cm 1em"
+  ],
+  "readonly": [
+    "NoModificationAllowedError",
+    "NoModificationAllowedError",
+    "IndexSizeError",
+    "TypeError"
+  ],
+  "insert": [
+    false,
+    true,
+    "3cm",
+    2
+  ],
+  "remove": [
+    false,
+    "3cm",
+    "4 3cm"
+  ],
+  "reparse": [
+    false,
+    "1px",
+    "20%",
+    2
+  ],
+  "invalid": 0
+}

@@ -612,6 +612,9 @@ impl TreeCountingCaches {
     /// Look up the tree-counting function values for the given element. If the element and
     /// its parent node are not cached, the values are computed and stored.
     pub fn get_or_compute(&mut self, element_context: &dyn ElementContext) -> TreeCountingResult {
+        if let Some(position) = element_context.original_sibling_position() {
+            return position;
+        }
         let (Some(target), Some(parent)) = (
             element_context.opaque_element(),
             element_context.opaque_parent(),

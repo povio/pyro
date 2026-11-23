@@ -112,6 +112,9 @@ pub struct ElementData {
     /// pyro: this box (an element or a `::before`/`::after`) shows the gradient its `content` is
     /// in place of content, as an image without a natural size (`util::content_gradient`).
     pub content_gradient: bool,
+    /// pyro: an ordinary MathML fraction's bar, as its last layout placed it: its top (from the
+    /// border box's top) and thickness, CSS px (`layout::math`). `None` without one.
+    pub math_fraction_bar: Option<[f32; 2]>,
 
     /// Parley text layout (elements with inline inner display mode only)
     pub inline_layout_data: Option<Box<TextLayout>>,
@@ -210,6 +213,7 @@ pub struct ElementData {
 #[derive(Debug, Clone)]
 pub struct LayoutData {
     pub cache: Cache,
+    pub(crate) calc_size_inputs: [Option<(Option<f32>, Option<f32>, f32, Option<f32>)>; 2],
     pub unrounded_layout: Layout,
     pub final_layout: Layout,
     pub(crate) scrollbar_size_limit: Option<taffy::Size<f32>>,
@@ -248,10 +252,18 @@ pub struct LayoutData {
     /// pyro: what this node's parent grid last gave it as a subgrid (css-grid-2 §9; Taffy's
     /// `LayoutGridContainer::set_subgrid_context`): its tracks there, their line names and sizes.
     pub subgrid: Option<Box<taffy::SubgridContext<style::Atom>>>,
-    /// pyro: the last remembered size of its content box (CSS px), the size it had when last
-    /// laid out with its contents: what `contain-intrinsic-size: auto <length>` sizes it as
-    /// while its contents are skipped (CSS Sizing 4 § 5.1).
-    pub remembered_size: Option<(f32, f32)>,
+    /// pyro: the last remembered size of its content box (CSS px), logical and per axis
+    /// (`[inline, block]`): the size it had at the last rendering update (before its
+    /// ResizeObserver callbacks) in each axis whose `contain-intrinsic-size` has `auto`, while it
+    /// did not skip its contents. What that `auto` sizes it as while its contents are skipped
+    /// (CSS Sizing 4 § 5.1, `BaseDocument::record_remembered_sizes`).
+    pub remembered_size: [Option<f32>; 2],
+    /// pyro: the border-box size the scope of an element-scoped view transition keeps until its
+    /// update callback is done (physical and unrounded, CSS px):
+    /// its size from before the transition (pyro-dom's
+    /// `view-transition-contain` state token; css-view-transitions-2 size containment with the
+    /// last remembered size, which its computed style does not show).
+    pub view_transition_size: Option<taffy::Size<f32>>,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -262,6 +274,7 @@ impl LayoutData {
     pub const fn new() -> Self {
         Self {
             cache: Cache::new(),
+            calc_size_inputs: [None; 2],
             unrounded_layout: Layout::new(),
             scrollbar_size_limit: None,
             final_layout: Layout::new(),
@@ -276,7 +289,8 @@ impl LayoutData {
             table_baseline_offset: 0.0,
             columns: None,
             subgrid: None,
-            remembered_size: None,
+            remembered_size: [None; 2],
+            view_transition_size: None,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }
@@ -453,6 +467,7 @@ impl Clone for ElementData {
             image_broken: self.image_broken,
             image_failed: self.image_failed,
             content_gradient: self.content_gradient,
+            math_fraction_bar: None,
             reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
             list_item_data: self.list_item_data.clone(),
@@ -567,7 +582,9 @@ impl ElementData {
             .map(|value: &str| Atom::from(value));
         let classes = attrs
             .iter()
-            .find(|attr| &attr.name.local == "class")
+            // pyro: only the `class` attribute in no namespace gives classes (an XHTML-namespaced
+            // `xhtml:class` does not; WPT css/selectors/old-tests `css3-modsel-171`).
+            .find(|attr| &attr.name.local == "class" && attr.name.ns == markup5ever::ns!())
             .map(|attr| parse_classes(&attr.value))
             .unwrap_or_default();
 
@@ -592,6 +609,7 @@ impl ElementData {
             image_broken: false,
             image_failed: false,
             content_gradient: false,
+            math_fraction_bar: None,
             reference_images: ThinVec::new(),
 
             stylo_element_data: Default::default(),
@@ -767,6 +785,14 @@ impl ElementData {
         }
     }
 
+    /// pyro: an HTML-in-Canvas canvas: a `<canvas>` whose `content` attribute is `drawable`
+    /// (ASCII case-insensitive). Its children are laid out (`BaseDocument::layout_drawable_canvas_children`)
+    /// but not painted in place (blitz-paint `render_element_clipped`).
+    pub fn is_drawable_canvas(&self) -> bool {
+        self.name.local == local_name!("canvas")
+            && self.attr(local_name!("content")).is_some_and(|value| value.eq_ignore_ascii_case("drawable"))
+    }
+
     pub fn canvas_data(&self) -> Option<&CanvasData> {
         match &self.special_data {
             SpecialElementData::Canvas(data) => Some(data),
@@ -921,8 +947,14 @@ impl ElementData {
                 })
     }
 
+    /// Inline CSS for the cascade. The ordinary attribute keeps its CSSOM serialization.
+    pub(crate) fn inline_declarations(&self) -> Option<&str> {
+        let reflected = self.attr(local_name!("style"))?;
+        Some(self.attrs.state("inline-declarations").unwrap_or(reflected))
+    }
+
     pub fn flush_style_attribute(&mut self, guard: &SharedRwLock, url_extra_data: &UrlExtraData) {
-        self.style_attribute = self.attr(local_name!("style")).map(|style_str| {
+        self.style_attribute = self.inline_declarations().map(|style_str| {
             ServoArc::new(guard.wrap(parse_style_attribute(
                 style_str,
                 url_extra_data,

@@ -321,6 +321,11 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/kurbo_css/css_box.rs`: radii of the padding and content boxes that overflow their box are scaled to fit it
     (Blink's `FloatRoundedRect::AdjustRadii`), their centres in the inner box's corners: the padding curve of a box
     with one large corner (`border-radius: 100% 0 0 0`) left the box, and the border's inner edge with it.
+    Superseded for such boxes (round-7 reftest fixes): a box whose inner radii overflow keeps round `corner_curvature`, so
+    its inner edges are `ContouredRect`s parallel to the border, cut by their box, as Blink's `ContouredInnerBorder`
+    (`with_corner_curvature`; boxes derived with `contoured_like`, outlines, outer shadows, clip margins, stay plain
+    rounded rects); `CssBox::inset_contour` gives the same for the bleed-avoiding background box and a no-blur inset
+    shadow's hole (spread >= 0) of a contoured box, whose radii `CssBox::new` scaled before.
     `border.rs`: a uniform solid border is stroked as a `kurbo::RoundedRect` only when its radii fit one (kurbo
     clamps a radius to half the smaller side, which such a corner exceeds: it was drawn with a much smaller one).
   - `src/gradient.rs` (`to_peniko_gradient`), `src/render/background.rs` (`uniform_gradient_color`): a gradient's
@@ -860,7 +865,8 @@ Covered by `crates/pyro-render/tests/selection_highlight.rs`.
   CPAL table marks so (else palette 0); a `<dashed-ident>` is the last `@font-palette-values` rule of that name
   whose `font-family` names the run's font (the `@font-face` family it was loaded under, or an installed font's
   own name): its `base-palette` (an index the font does not have is palette 0) with its `override-colors`;
-  `palette-mix()` mixes two palettes entry by entry in its colour space (`mix_many`). Covered by
+  `palette-mix()` mixes one or more palettes entry by entry in its colour space (`mix_many`), applying
+  the alpha multiplier for totals below 100%. Covered by
   `crates/pyro-render/tests/font_palette.rs`.
 
 - `src/text.rs`: decoration thickness and offset percentages are of the element's font size where a face's
@@ -1157,3 +1163,9 @@ text split by position, not by the box's edge. Covered by `crates/pyro-render/te
   whose stacking context is further up is still not painted (it would need the root's transform before the root
   paints). WPT css-contain `contain-layout-016`, `contain-paint-020`; test
   `a_negative_z_index_inline_box_paints_over_its_stacking_contexts_background` (pyro-render).
+
+## MathML fraction bars
+
+`draw_math_fraction_bar` fills the bar an ordinary `<mfrac>`'s layout recorded (`ElementData::math_fraction_bar`,
+blitz-dom `layout/math.rs`) across the fraction's content box in its `color`, after its content image and before
+its children (Chromium's `MathMLPainter::PaintFractionBar`). Tests: `crates/pyro-render/tests/mathml_fraction.rs`.

@@ -76,6 +76,11 @@ fn unavailable() -> JsError {
     JsError::Type("Web Animations are unavailable".into())
 }
 
+pub(crate) fn validate_event_animation<'s>(s: &Scope<'s>, value: Value<'s>, transition: bool) -> JsResult<()> {
+    call(module(s, &page_of(s)?)?, "validateEventAnimation", &[value, s.boolean(transition)])?;
+    Ok(())
+}
+
 pub(crate) fn view_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Value<'s>, runs: Value<'s>) -> JsResult<Value<'s>> {
     call(module(s, page)?, "viewRuns", &[target, runs])
 }
@@ -112,6 +117,55 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.number(page.timeline_now_ms()))
     })?;
     natives.set_atom("now", now.value())?;
+    // Capture the native endpoints once when constructing the transition's script object.
+    // The object can outlive its run or lose its target.
+    let animation_frames = s.function("animationFrames", |s, _, args| {
+        let page = page_of(s)?;
+        let Some(el) = crate::node::opt_node_arg(s, args.get(0), "animationFrames")? else { return Ok(s.null()) };
+        let name = args.get(1).to_string()?;
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        let Some(steps) = layout.synced_geometry_source(&dom).and_then(|g| g.css_animation_frames(pyro_dom::snapshot::render_key(el), &name)) else {
+            return Ok(s.null());
+        };
+        let mut frames = Vec::with_capacity(steps.len());
+        for (offset, easing, composite, values) in steps {
+            let mut properties = Vec::with_capacity(values.len());
+            for (name, value, underlying) in values {
+                properties.push(s.array(&[s.string(&name), s.string(&value), s.string(&underlying)])?.value());
+            }
+            frames.push(s.array(&[s.number(offset), easing.as_deref().map_or_else(|| s.null(), |v| s.string(v)),
+                composite.as_deref().map_or_else(|| s.null(), |v| s.string(v)), s.array(&properties)?.value()])?.value());
+        }
+        Ok(s.array(&frames)?.value())
+    })?;
+    natives.set_atom("animationFrames", animation_frames.value())?;
+    let endpoints = s.function("transitionFrames", |s, _, args| {
+        let page = page_of(s)?;
+        let id = args.get(0).to_number()? as u64;
+        let mut frames = Vec::new();
+        if let Some(keyframes) = page.animation_events.transition_frames(id) {
+            for frame in &keyframes.frames {
+                let block = pyro_dom::stylo::declarations::DeclarationBlock::parse(&frame.declarations);
+                if let Some(property) = block.item(0) {
+                    frames.push(s.array(&[s.number(frame.offset), s.string(&property), s.string(&block.value(&property))])?.value());
+                }
+            }
+        }
+        Ok(s.array(&frames)?.value())
+    })?;
+    natives.set_atom("transitionFrames", endpoints.value())?;
+    let observed = std::cell::Cell::new(None);
+    let flush = s.function("flushPlayback", move |s, _this, _a| {
+        let page = page_of(s)?;
+        crate::animation_events::before_render(&page);
+        let generation = page.animation_events.generation.get();
+        if observed.replace(Some(generation)) != Some(generation) {
+            with_css_runs(s, &page)?;
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("flushPlayback", flush.value())?;
     // `fn` as a task of the page's event loop, `ms` from now.
     let schedule = s.function("schedule", |s, _this, a| {
         let ms = a.get(0).to_number()?;
@@ -150,6 +204,13 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(if pyro_dom::stylo::is_property(&name) { s.string(&name) } else { s.null() })
     })?;
     natives.set_atom("cssName", css_name.value())?;
+    let keyframe_value = s.function("keyframeValue", |s, _, args| {
+        let property = args.get(0).to_string()?;
+        let value = args.get(1).to_string()?;
+        Ok(pyro_dom::stylo::declarations::normalized_value(&property, &value)
+            .map_or_else(|| s.null(), |v| s.string(&v)))
+    })?;
+    natives.set_atom("keyframeValue", keyframe_value.value())?;
     let valid_pseudo = s.function("validViewPseudo", |s, _, args| {
         let text = args.get(0).to_string()?;
         Ok(s.boolean(text.len() <= 4096 && matches!(pyro_dom::stylo::parse_pseudo_arg(&text), pyro_dom::stylo::PseudoArg::Pseudo(_))))
@@ -233,8 +294,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
 /// `report`'s state: `[target, cssId (-1: none), keyframes, startTime,
 /// holdTime, playbackRate, timeline origin, delay, endDelay, fill,
 /// iterationStart, iterations, duration, direction, easing, composite, gone
-/// (1: shows nothing)]`, keyframes as `[offset, easing, composite,
-/// declarations]` each.
+/// (1: shows nothing), pseudo-element, scroll timeline, keyframes replaced (1: script replaced a
+/// CSS run's own keyframes)]`, keyframes as `[offset, easing, composite, declarations]` each.
 fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::ReportedState> {
     let at = |i: u32| o.get_index(i);
     let num = |i: u32| -> JsResult<f64> { at(i)?.to_number() };
@@ -304,6 +365,7 @@ fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::Re
                 })
             }
         },
+        replaced_keyframes: !at(19)?.is_nullish() && num(19)? != 0.0,
     })
 }
 
@@ -360,6 +422,7 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                     None => s.null(),
                     Some(pyro_dom::style::PseudoElement::Before) => s.string("::before"),
                     Some(pyro_dom::style::PseudoElement::After) => s.string("::after"),
+                    Some(pyro_dom::style::PseudoElement::Marker) => s.string("::marker"),
                 },
                 match &run.timeline {
                     Some((text, start, end)) => s.array(&[s.string(text), s.string(start), s.string(end)])?.value(),
@@ -371,6 +434,8 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                         .value(),
                     None => s.null(),
                 },
+                s.string(&run.keyframe_easing),
+                s.number(run.generation as f64),
             ])?
             .value(),
         );

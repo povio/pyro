@@ -1,0 +1,19 @@
+{
+  "base": "bdd2f16099bd1580b3252595dff1e4aeb6b53e2b",
+  "baseTree": "4ce870fe464f98fd384ce34ad56a64be6824ee8d",
+  "candidate": "52592f139eeebdf1d1163cf9bca47be546994662",
+  "candidateTree": "41f31f9ff91b3a305b5529adaf3669193f97191a",
+  "binaryInputSHA256": {
+    "base": "8b11bc493ec37b7282ee6febe9b53a147f07b8592617a5f8a51e023235c49107",
+    "candidate": "65ee12a5cb8b4054578bbe718626425b65686c5b72f4dbbd8a3c3479ac938557",
+    "selection": "e97e14c0ebd3350eb430b7402a3e4960cd5d361aea00f8ce0795695dac182350",
+    "runner": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+    "jsc": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029"
+  },
+  "independentQA": {
+    "changes.json": "a9865d24e6ea3c75399021152b6f5abb6656a39e7c784e04be2b7e33e75b9db9",
+    "head.json": "5b288bb714cbf0460c09901b02387d3f00377cd2fb909c72a3c63f15ef9c943a",
+    "probe.json": "1a1a7463dbab0fd0b3db67830ffdcd8a026141b5a63537a3faaf85764e0195d1",
+    "spec-probe.json": "aed83770242c0a60b389174336c19f007fb03b1e9cb6419e6e70b594e4209525"
+  }
+}

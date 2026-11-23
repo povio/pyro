@@ -366,6 +366,13 @@ fn focus_visible_follows_input_modality_and_active_tracks_the_press() {
         eval(r, "[getComputedStyle(t).color === 'rgb(1, 2, 3)', b.matches(':focus-visible')].join()"),
         "false,false"
     );
+    // A press on nothing focusable clears focus with no focus type: script focus after it
+    // shows the ring again (Chrome; WPT focus-visible-script-focus-006).
+    mouse(&e.page, input::MouseKind::Pressed, 400.0, 200.0, 1);
+    mouse(&e.page, input::MouseKind::Released, 400.0, 200.0, 0);
+    assert_eq!(eval(r, "document.activeElement === document.body"), "true");
+    eval(r, "c.focus()");
+    assert_eq!(eval(r, state), "c,true");
 }
 
 #[test]
@@ -653,4 +660,68 @@ fn manually_assigned_slots() {
     );
     // `slotchange` (in the mutation observer microtask): both slots changed.
     assert_eq!(eval(r, "[...new Set(log)].sort().join()"), "s1,s2");
+}
+
+/// A right or middle press activates `:active` until its release, as a left one does (Chrome;
+/// WPT css/selectors `active-observable`).
+#[test]
+fn a_non_primary_press_activates_active() {
+    let e = click_env();
+    let r = &e.main;
+    eval(r, "window.held = []; b.addEventListener('pointerdown', () => held.push(b.matches(':active')));");
+    for (button, bits) in [(input::MouseButton::Right, 2), (input::MouseButton::Middle, 4)] {
+        let m = |buttons| input::MouseInput { x: 10.0, y: 10.0, button, buttons, click_count: 1, ..Default::default() };
+        input::dispatch_mouse(&e.page, input::MouseKind::Pressed, &m(bits)).unwrap();
+        assert_eq!(eval(r, "b.matches(':active')"), "true", "{button:?} press");
+        input::dispatch_mouse(&e.page, input::MouseKind::Released, &m(0)).unwrap();
+        assert_eq!(eval(r, "b.matches(':active')"), "false", "{button:?} release");
+    }
+    assert_eq!(eval(r, "held.join()"), "true,true");
+}
+
+/// The boundary events of a move observe the new `:hover` state (Chrome; WPT css/selectors
+/// `hover-boundary-events`).
+#[test]
+fn boundary_events_see_the_new_hover_state() {
+    let e = env("<!DOCTYPE html><style>body{margin:0} div{position:absolute;width:50px;height:50px;top:0}</style>\
+         <body><div id=a style='left:0'></div><div id=b style='left:100px'></div></body>");
+    let r = &e.main;
+    mouse(&e.page, input::MouseKind::Moved, 10.0, 10.0, 0);
+    eval(
+        r,
+        "window.seen = []; const note = ev => seen.push(ev.type + ':' + a.matches(':hover') + ',' + b.matches(':hover')); \
+         for (const t of ['mouseout', 'mouseleave', 'pointerout']) a.addEventListener(t, note); \
+         for (const t of ['mouseover', 'mouseenter', 'pointerover']) b.addEventListener(t, note);",
+    );
+    mouse(&e.page, input::MouseKind::Moved, 110.0, 10.0, 0);
+    assert_eq!(
+        eval(r, "seen.join(' ')"),
+        "pointerout:false,true pointerover:false,true mouseout:false,true mouseleave:false,true mouseover:false,true mouseenter:false,true"
+    );
+}
+
+/// A label's click focuses its control as a mouse focus: a checkbox does not match
+/// `:focus-visible` (Chrome; WPT css/selectors `focus-visible-026`).
+#[test]
+fn a_label_click_focuses_its_checkbox_without_focus_visible() {
+    let e = env("<!DOCTYPE html><body><input type=checkbox id=c><label for=c id=l>label</label></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "l.click(); [document.activeElement === c, c.checked, c.matches(':focus-visible')].join()"),
+        "true,true,false"
+    );
+}
+
+/// A clicked button that becomes a text field while focused matches `:focus-visible`, as a
+/// clicked text field does (Chrome; WPT css/selectors `focus-visible-027`).
+#[test]
+fn a_focused_button_turned_text_field_matches_focus_visible() {
+    let e = env("<!DOCTYPE html><style>body{margin:0} input{position:absolute;left:0;top:0;width:50px;height:30px}</style>\
+         <body><input type=button id=i value=x></body>");
+    let r = &e.main;
+    mouse(&e.page, input::MouseKind::Pressed, 10.0, 10.0, 1);
+    mouse(&e.page, input::MouseKind::Released, 10.0, 10.0, 0);
+    assert_eq!(eval(r, "[document.activeElement === i, i.matches(':focus-visible')].join()"), "true,false");
+    assert_eq!(eval(r, "i.type = 'text'; i.matches(':focus-visible')"), "true");
+    assert_eq!(eval(r, "i.type = 'button'; i.matches(':focus-visible')"), "false");
 }

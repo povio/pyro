@@ -34,7 +34,7 @@ pub enum Prescanned {
     Stylesheet { href: String, crossorigin: Option<String> },
     /// `<link rel=preload href as>` (not a modulepreload).
     Preload { href: String, as_: Option<String>, crossorigin: Option<String> },
-    /// `<img src>` without `srcset` and outside `<picture>`.
+    /// An eager `<img src>` without `srcset` and outside `<picture>`.
     Image { src: String },
     /// The first `<base href>`: later URLs resolve against it.
     Base { href: String },
@@ -350,8 +350,10 @@ impl Prescan {
         } else if attr(attrs, "referrerpolicy").is_some() {
             // The element's request carries its own referrer policy, which a
             // speculative request (the document's) would not: left to the element.
-        } else if is("img") {
-            if self.picture_depth == 0 && attr(attrs, "srcset").is_none() {
+        } else if is("img") || is("image") {
+            // The HTML tree builder reprocesses <image> as <img>.
+            let lazy = attr(attrs, "loading").is_some_and(|value| value.eq_ignore_ascii_case("lazy"));
+            if !lazy && self.picture_depth == 0 && attr(attrs, "srcset").is_none() {
                 if let Some(src) = attr(attrs, "src").filter(|v| !v.trim().is_empty()) {
                     emit(Prescanned::Image { src: src.to_owned() });
                 }
@@ -393,10 +395,10 @@ impl Prescan {
         let Some(src) = attr(attrs, "src").filter(|v| !v.is_empty()) else { return };
         let module = match attr(attrs, "type") {
             Some(t) if !t.is_empty() => {
-                let t = t.trim().to_ascii_lowercase();
-                if t == "module" {
+                let raw = t.to_ascii_lowercase();
+                if raw == "module" {
                     true
-                } else if crate::script::is_javascript_mime(&t) {
+                } else if crate::script::is_javascript_mime(raw.trim_matches(|c: char| c.is_ascii_whitespace())) {
                     false
                 } else {
                     return;
@@ -431,7 +433,9 @@ impl Prescan {
             if enabled {
                 emit(Prescanned::Stylesheet { href: href.to_owned(), crossorigin });
             }
-        } else if has("preload") && !has("modulepreload") {
+        } else if has("preload") && !has("modulepreload") && attr(attrs, "imagesrcset").is_none() {
+            // An image preload with a source set fetches a candidate of it, not `href`: the
+            // element's own fetch decides.
             emit(Prescanned::Preload { href: href.to_owned(), as_: attr(attrs, "as").map(str::to_owned), crossorigin });
         }
     }
@@ -597,6 +601,15 @@ fn parse_tag(input: &str, from: usize) -> Option<(&str, Attrs<'_>, bool, usize)>
 /// "character reference state" in an attribute: a named reference without
 /// its semicolon followed by `=` or an alphanumeric is left alone).
 fn decode_attr(text: &str) -> Cow<'_, str> {
+    decode_references(text, true)
+}
+
+/// Decode references in WebVTT text or tag annotations, using HTML data-state rules.
+pub fn decode_webvtt_references(text: &str) -> Cow<'_, str> {
+    decode_references(text, false)
+}
+
+fn decode_references(text: &str, in_attribute: bool) -> Cow<'_, str> {
     if !text.contains('&') {
         return Cow::Borrowed(text);
     }
@@ -667,7 +680,7 @@ fn decode_attr(text: &str) -> Cow<'_, str> {
             Some((c1, c2, end)) => {
                 let next = b.get(end).copied();
                 let semicolon = b[end - 1] == b';';
-                if !semicolon && next.is_some_and(|c| c == b'=' || c.is_ascii_alphanumeric()) {
+                if in_attribute && !semicolon && next.is_some_and(|c| c == b'=' || c.is_ascii_alphanumeric()) {
                     out.push_str(&text[i..end]);
                 } else {
                     out.push(char::from_u32(c1).unwrap_or('\u{fffd}'));
@@ -709,6 +722,7 @@ mod tests {
             <script src="/s1.js"></script><script type="module" src="/mod.js" crossorigin="anonymous"></script>
             <script type="text/template" src="/no.js"></script><script nomodule src="/nm.js"></script>
             <script language="vbscript" src="/vb.js"></script><script language="JavaScript" src="/lang.js"></script>
+            <img src="/lazy.png" loading="LaZy"><img loading="eager" src="/eager.png">
             <img src="/i.png"><img src="/set.png" srcset="/set2x.png 2x"><img src=" ">"#,
         );
         assert_eq!(
@@ -720,9 +734,20 @@ mod tests {
                 script("/s1.js"),
                 Prescanned::Script { src: "/mod.js".into(), module: true, crossorigin: Some("anonymous".into()) },
                 script("/lang.js"),
+                Prescanned::Image { src: "/eager.png".into() },
                 Prescanned::Image { src: "/i.png".into() },
             ]
         );
+    }
+
+    #[test]
+    fn treats_image_as_img_only_in_html_content() {
+        let items = scan(
+            r#"<IMAGE src="/alias.png"><image loading="lazy" src="/lazy.png">
+            <svg><image src="/foreign.png"/></svg>
+            <picture><image src="/fallback.png"></picture>"#,
+        );
+        assert_eq!(items, [Prescanned::Image { src: "/alias.png".into() }]);
     }
 
     #[test]

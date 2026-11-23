@@ -1,0 +1,15 @@
+{
+  "surface": true,
+  "before": [
+    null,
+    ""
+  ],
+  "worker": [
+    "window",
+    "window"
+  ],
+  "after": [
+    "worker",
+    "worker"
+  ]
+}

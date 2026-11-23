@@ -15,6 +15,7 @@ use crate::{
     util::{dom_string, to_u32},
 };
 use bytes::Bytes;
+use data_url::mime::Mime;
 use delivery::Delivery;
 use pyro_dom::events::TargetKey;
 use pyro_js::{
@@ -32,6 +33,25 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+/// XHR send(): preserve the author's header verbatim unless a Document,
+/// USVString or URLSearchParams body needs an explicit non-UTF-8 charset
+/// corrected.
+fn normalize_utf8_charset(header: &mut HeaderValue) -> JsResult<()> {
+    let text: String = header.as_bytes().iter().copied().map(char::from).collect();
+    let Ok(mut mime) = text.parse::<Mime>() else { return Ok(()) };
+    let Some((_, charset)) = mime.parameters.iter_mut().find(|(name, _)| name == "charset") else { return Ok(()) };
+    if !charset.eq_ignore_ascii_case("utf-8") {
+        *charset = "UTF-8".into();
+        // Parameter names are ASCII case-insensitive; keep the first of
+        // each name even if the source used different capitalization.
+        let mut seen = rustc_hash::FxHashSet::default();
+        mime.parameters.retain(|(name, _)| seen.insert(name.clone()));
+        let bytes: Vec<u8> = mime.to_string().chars().map(|c| c as u8).collect();
+        *header = HeaderValue::from_bytes(&bytes).map_err(|_| JsError::Type("Invalid body MIME type".into()))?;
+    }
+    Ok(())
+}
 
 /// Independent XHR limits, with the same shape/defaults as fetch limits.
 pub type XhrLimits = crate::fetch::FetchLimits;
@@ -113,7 +133,7 @@ struct Xhr {
     timeout: Cell<u32>,
     timer: Cell<Option<f64>>,
     started: Cell<Option<Instant>>,
-    override_mime: RefCell<Option<String>>,
+    override_mime: RefCell<Option<Mime>>,
     text: RefCell<Option<body::Text>>,
     reported: Cell<usize>,
     visible_chunks: Cell<usize>,
@@ -125,6 +145,9 @@ struct Xhr {
     upload_listeners: Cell<bool>,
     upload_complete: Cell<bool>,
     upload_total: Cell<usize>,
+    /// The sent request's CSP guard (`connect-src`): what its redirect checks found is
+    /// reported when the request fails.
+    csp: RefCell<Option<Arc<pyro_net::csp::RequestCsp>>>,
 }
 impl Drop for Xhr {
     fn drop(&mut self) {
@@ -207,6 +230,7 @@ fn define_members<C: JsClass<Data = XhrData, Parent = EventTarget>>(def: &mut Cl
             upload_listeners: Cell::new(false),
             upload_complete: Cell::new(true),
             upload_total: Cell::new(0),
+            csp: RefCell::new(None),
         });
         page.xhr_state.instances.borrow_mut().insert(instance, Rc::downgrade(&state));
         let wrapper = s.wrap_new::<C>(XhrData { target, state }, nt, Some(identity))?;
@@ -355,7 +379,7 @@ fn define_members<C: JsClass<Data = XhrData, Parent = EventTarget>>(def: &mut Cl
         if d.state.ready.get() >= 3 {
             return Err(invalid("MIME type cannot change after loading"));
         }
-        *d.state.override_mime.borrow_mut() = Some(mime);
+        *d.state.override_mime.borrow_mut() = Some(mime.parse().unwrap_or_else(|_| Mime::new("application", "octet-stream")));
         Ok(s.undefined())
     });
     def.method("getResponseHeader", 1, |s, d, args| {
@@ -547,18 +571,33 @@ impl Xhr {
         let generation = self.generation.get();
         let mut request = self.request.borrow().as_ref().unwrap().clone();
         if !matches!(request.method, Method::GET | Method::HEAD) && !body.is_null() && !body.is_undefined() {
-            let (bytes, mime) = if let Some(form) = crate::form_data::multipart_body(s, body)? {
-                form
+            let (bytes, mime, utf8_text) = if let Some(document) = s.unwrap::<crate::node::Document>(body) {
+                let dom = document.page().dom.borrow();
+                let html = dom.document_data(document.id).map_err(crate::util::dom_err)?.kind == pyro_dom::DocumentKind::Html;
+                let text = if html { dom.inner_html(document.id) } else { dom.xml_serialize(document.id) }
+                    .map_err(crate::util::dom_err)?;
+                let mime = if html { "text/html;charset=UTF-8" } else { "application/xml;charset=UTF-8" };
+                (Bytes::from(text), mime.to_owned(), true)
+            } else if let Some((bytes, mime)) = crate::form_data::multipart_body(s, body)? {
+                (bytes, mime, false)
             } else if let Some(blob) = s.unwrap::<crate::file::Blob>(body) {
-                (blob.bytes.clone(), blob.mime.clone())
+                (blob.bytes.clone(), blob.mime.clone(), false)
             } else if let Some(params) = s.unwrap::<crate::url_search_params::URLSearchParams>(body) {
-                (Bytes::from(params.serialize()), "application/x-www-form-urlencoded;charset=UTF-8".into())
+                // The spec reconciles the charset only for Document and string
+                // bodies; Blink, Gecko and WebKit also do it for
+                // URLSearchParams, whose bytes are always UTF-8 (WPT
+                // xhr/send-usp, xhr/setrequestheader-content-type).
+                (Bytes::from(params.serialize()), "application/x-www-form-urlencoded;charset=UTF-8".into(), true)
             } else if let Some(bytes) = crate::encoding::buffer_source_bytes(s, body)? {
-                (Bytes::from(bytes), String::new())
+                (Bytes::from(bytes), String::new(), false)
             } else {
-                (Bytes::from(dom_string(body)?), "text/plain;charset=UTF-8".into())
+                (Bytes::from(dom_string(body)?), "text/plain;charset=UTF-8".into(), true)
             };
-            if !mime.is_empty() && !request.headers.contains_key(header::CONTENT_TYPE) {
+            if let Some(author_type) = request.headers.get_mut(header::CONTENT_TYPE) {
+                if utf8_text {
+                    normalize_utf8_charset(author_type)?;
+                }
+            } else if !mime.is_empty() {
                 request.headers.insert(
                     header::CONTENT_TYPE,
                     HeaderValue::from_str(&mime).map_err(|_| JsError::Type("Invalid body MIME type".into()))?,
@@ -572,7 +611,7 @@ impl Xhr {
         }
         let page = self.page()?;
         // Referrer "client": the document, under its referrer policy.
-        request.referrer = page.document_url_parsed();
+        request.referrer = page.client_referrer();
         request.referrer_policy = page.referrer_policy();
         let limits = page.xhr_state.limits.get();
         if page.xhr_state.jobs.borrow().len() >= limits.max_requests {
@@ -594,6 +633,10 @@ impl Xhr {
         page.apply_request_defaults(&mut request);
         crate::fetch::attach_blob(&page, &mut request);
         request.max_body = Some(limits.max_body_bytes);
+        // CSP `connect-src`: a blocked request fails as a network error (the client's).
+        let check = pyro_net::csp::CspRequest::new(request.url.clone(), pyro_net::csp::RequestDest::Empty);
+        request.csp = crate::csp::guard_request(&page, check, None);
+        *self.csp.borrow_mut() = request.csp.clone();
         let id = net.next_request_id();
         let wire = Arc::new(Mutex::new(Delivery::new(page.xhr_state.budget.clone())));
         *self.wire.borrow_mut() = Some(wire.clone());
@@ -721,9 +764,11 @@ impl Xhr {
             self.head.take();
             self.text.take();
             self.ready.set(4);
+            crate::csp::report_guard(page, self.csp.take().as_ref(), None);
             let name = if timed_out { "TimeoutError" } else { "NetworkError" };
             return Err(JsError::dom(name, format!("Failed to execute 'send': {reason}")));
         }
+        crate::csp::report_guard(page, self.csp.take().as_ref(), None);
         self.active.set(None);
         self.sent.set(false);
         self.ready.set(4);
@@ -814,6 +859,9 @@ impl Xhr {
     fn fail(&self, kind: &str) {
         if self.active.get().is_none() {
             return;
+        }
+        if let Some(page) = self.page.upgrade() {
+            crate::csp::report_guard(&page, self.csp.take().as_ref(), None);
         }
         let generation = self.generation.get();
         let _keep = self.stop();

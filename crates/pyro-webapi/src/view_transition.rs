@@ -94,7 +94,9 @@ impl Drop for Capture {
     }
 }
 
-fn admit(mut page: Rc<PageDom>, local_slots: usize) -> Option<Capture> {
+/// The top-level page above `page` and how many frames up it is, or `None` when a
+/// document on the way is detached or disposed (not fully active).
+fn top_page(mut page: Rc<PageDom>) -> Option<(Rc<PageDom>, usize)> {
     for depth in 0..64 {
         if page.is_detached() || page.is_disposed() { return None; }
         if page.hooks().is_some() {
@@ -104,15 +106,20 @@ fn admit(mut page: Rc<PageDom>, local_slots: usize) -> Option<Capture> {
                 crate::page::FrameContainer::Top => (),
             }
         }
-        let quota = page.transition_quota.borrow_mut().get_or_insert_with(Default::default).clone();
-        let mut used = quota.used.lock().unwrap();
-        let child = depth > 0;
-        if used.slots >= 16 || (child && (used.slots >= 12 || local_slots >= 4)) { return None; }
-        used.slots += 1;
-        drop(used);
-        return Some(Capture { reservation: Arc::new(Reservation { scope:true, child, quota, pixels: 0, work: 0 }), old: Default::default(), new: Default::default(), samples: Default::default(), tree: None });
+        return Some((page, depth));
     }
     None
+}
+
+fn admit(page: Rc<PageDom>, local_slots: usize) -> Option<Capture> {
+    let (page, depth) = top_page(page)?;
+    let quota = page.transition_quota.borrow_mut().get_or_insert_with(Default::default).clone();
+    let mut used = quota.used.lock().unwrap();
+    let child = depth > 0;
+    if used.slots >= 16 || (child && (used.slots >= 12 || local_slots >= 4)) { return None; }
+    used.slots += 1;
+    drop(used);
+    Some(Capture { reservation: Arc::new(Reservation { scope:true, child, quota, pixels: 0, work: 0 }), old: Default::default(), new: Default::default(), samples: Default::default(), tree: None })
 }
 
 pub(crate) static MODULE: crate::lazy_module::LazyModule = crate::lazy_module::LazyModule {
@@ -141,6 +148,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
             captures.get_or_insert_with(Default::default).insert(scope_key, record);
             return Ok(s.boolean(true));
         }
+        // The elements the other transitions captured: an element takes part in one transition at a
+        // time, so a scope's transition whose old state would capture one of them is skipped, with
+        // InvalidStateError (Chrome; WPT css-view-transitions `scoped/collision`).
+        let others: rustc_hash::FxHashSet<u64> = if old {
+            captures.as_ref().map(|map| map.iter().filter(|(k, _)| **k != scope_key).flat_map(|(_, r)| r.old.iter().chain(r.new.iter()).map(|b| b.key)).collect()).unwrap_or_default()
+        } else {
+            Default::default()
+        };
         let Some(record) = captures.as_mut().and_then(|map| map.get_mut(&scope_key)) else { return Ok(s.boolean(false)); };
         let Some(reservation) = Arc::get_mut(&mut record.reservation) else { return Ok(s.boolean(false)); };
         let prep = u64::from(page.dom.borrow().slot_count()) + 1;
@@ -154,8 +169,13 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
             layout.synced_geometry_source(&page.dom.borrow()).cloned()
         }) else { attempt.failed(work); return Ok(s.boolean(false)); };
         let Some(source) = source else { return Ok(s.boolean(true)); };
+        // An element scope (its own transition root) that cannot take layout containment (a
+        // non-atomic inline, `display: contents`, an internal table box but a cell) fails both of
+        // its captures (Chrome; WPT `scoped/element-scoped-containment-invalid-state`).
+        if scope.id == root.id && !source.layout_containment_eligible(key) { attempt.failed(work); return Ok(s.boolean(false)); }
         let result = source.capture_transition(key, old, attempt.pixels, &mut work);
         let Some(boxes) = result else { attempt.failed(work); return Ok(s.boolean(false)); };
+        if boxes.iter().any(|item| others.contains(&item.key)) { attempt.failed(work); return Ok(s.boolean(false)); }
         if old {
             reservation.pixels = boxes.iter().filter_map(|item| item.rgba.as_ref()).map(|img| img.len() as u64 / 4).sum();
             attempt.pixels -= reservation.pixels;
@@ -185,7 +205,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         let mut runs = Vec::new();
         for (index,pseudo, style) in styles {
             for run in pyro_dom::timing::AnimationTiming::from_transition_box(&style) {
-                runs.push(s.array(&[s.number(index as f64),s.number(run.index as f64),s.string(&pseudo), s.string(&run.name), s.number(run.delay_ms), s.number(run.duration_ms), s.number(run.iterations), s.string(&run.style.direction), s.string(&run.style.fill), s.string(run.style.easing.as_deref().unwrap_or("ease")), s.boolean(run.style.paused)])?.value());
+                runs.push(s.array(&[s.number(index as f64),s.number(run.index as f64),s.string(&pseudo), s.string(&run.name), s.number(run.delay_ms), s.number(run.duration_ms), s.number(run.iterations), s.string(&run.style.direction), s.string(&run.style.fill), s.string(&run.style.easing.as_deref().map_or_else(|| "ease".to_owned(), pyro_dom::timing::shown_easing)), s.boolean(run.style.paused)])?.value());
             }
         }
         let entries = s.array(&runs)?.value();
@@ -214,6 +234,26 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         Ok(s.boolean(success))
     })?;
     out.set_atom("sample",sample.value())?;
+    // Whether an update callback comes from a realm that is gone (a removed
+    // iframe's): it is not run and the transition aborts, as in Chrome.
+    let gone = s.function("callbackGone", |s, _, args| {
+        Ok(s.boolean(args.get(0).as_object().is_some_and(|callback| s.object_realm_gone(callback))))
+    })?;
+    out.set_atom("callbackGone", gone.value())?;
+    // The state of the scope of an element-scoped view transition (`Dom::set_view_transition_scope`):
+    // 0 none, 1 active, 2 active and keeping its size (until its update callback is done). A
+    // document scope has none.
+    let scope_state = s.function("scopeState", |s, _, args| {
+        let Some(scope) = s.unwrap::<crate::node::Node>(args.get(0)) else { return Ok(s.undefined()) };
+        let state = match args.get(1).to_number()? as u8 { 1 => Some(false), 2 => Some(true), _ => None };
+        let page = scope.page();
+        let mut dom = page.dom.borrow_mut();
+        if dom.node(scope.id).ok().is_some_and(|node| node.element().is_some()) {
+            dom.set_view_transition_scope(scope.id, state);
+        }
+        Ok(s.undefined())
+    })?;
+    out.set_atom("scopeState", scope_state.value())?;
     Ok(out)
 }
 
@@ -291,7 +331,8 @@ pub(crate) fn active<'s>(s: &Scope<'s>, node: &crate::node::NodeData) -> JsResul
 }
 
 /// `startViewTransition(callbackOptions)` on `scope` (a document, or an element for a scoped
-/// transition), whose `transitionRoot` is `root`.
+/// transition), whose `transitionRoot` is `root`. A document that is not fully active (a
+/// removed iframe's) returns a transition skipped with AbortError.
 pub(crate) fn start<'s>(
     s: &Scope<'s>,
     page: &Rc<PageDom>,
@@ -299,5 +340,6 @@ pub(crate) fn start<'s>(
     root: Value<'s>,
     arg: Value<'s>,
 ) -> JsResult<Value<'s>> {
-    MODULE.helper(s, page, "start", &[scope, root, arg, s.boolean(page.is_hidden())])
+    let inactive = top_page(page.clone()).is_none();
+    MODULE.helper(s, page, "start", &[scope, root, arg, s.boolean(page.is_hidden()), s.boolean(inactive)])
 }

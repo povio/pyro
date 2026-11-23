@@ -160,9 +160,11 @@ fn cross_origin_frames_message_each_other_and_navigate_through_location() {
             "globalThis.replies = []; addEventListener('message', e => replies.push([e.source === f.contentWindow, e.origin, e.data].join(':')));
              const w = f.contentWindow; w.postMessage('hi', 'https://b.test'); w.postMessage('lost', 'https://a.test');
              const err = (fn) => { try { fn(); return 'ok'; } catch (e) { return e.name; } };
-             [typeof w.postMessage, err(() => w.document), err(() => w.location.href), w[0], w.length].join()",
+             [typeof w.postMessage, err(() => w.document), err(() => w.location.href), err(() => w[0]), w.length].join()",
         ),
-        "function,SecurityError,SecurityError,,0"
+        // An index past the child windows is no cross-origin property: SecurityError
+        // (HTML CrossOriginPropertyFallback, bf322c830).
+        "function,SecurityError,SecurityError,SecurityError,0"
     );
     settle(&mut t);
     assert_eq!(eval(&child, "got.join('|')"), "true:https://a.test:hi");
@@ -285,4 +287,50 @@ fn history_state_is_structured_cloned() {
     );
     settle(&mut t);
     assert_eq!(eval(&root, "popped.join('|')"), "true:true:5");
+}
+
+#[test]
+fn geometry_serialization_preserves_quad_point_aliases_and_mutability() {
+    let (mut thread, _) = loaded(&["https://a.test/main"]);
+    let page = open_page(&mut thread, "https://a.test/main");
+    let realm = main_realm(&thread, page);
+    assert_eq!(eval(&realm, r#"
+        const quad = new DOMQuad({x:-0,y:NaN,z:Infinity,w:8});
+        const matrix = new DOMMatrixReadOnly([1,0,0,1,3,4]);
+        Object.defineProperty(quad, 'p2', {get(){throw Error('public getter invoked')}});
+        const input = [quad.p1, quad, matrix, quad];
+        const result = structuredClone(input);
+        const p = result[0];
+        [result[1] === result[3], result[1].p1 === p, p !== quad.p1,
+         p instanceof DOMPoint, Object.is(p.x,-0), Number.isNaN(p.y), p.z===Infinity, p.w===8,
+         result[2] instanceof DOMMatrixReadOnly, !(result[2] instanceof DOMMatrix),
+         result[2].is2D, result[2].e===3].every(Boolean)
+    "#), "true");
+}
+
+#[test]
+fn popup_message_origin_uses_the_sender_at_post_time() {
+    let (mut t, events) = loaded(&["https://a.test/main", "https://a.test/receiver"]);
+    let a = open_page(&mut t, "https://a.test/main");
+    let sender = main_realm(&t, a);
+    eval(&sender, "globalThis.receiver = open('/receiver', 'receiver')");
+    settle(&mut t);
+    let (opener, url, ticket) = events.last_popup();
+    let b = t.browser.create_page_in(DEFAULT_CONTEXT).unwrap();
+    t.browser.adopt_popup(b, opener, ticket);
+    t.browser.navigate(b, NavigateOpts::address_bar(&url)).unwrap();
+    settle(&mut t);
+    let receiver = main_realm(&t, b);
+    eval(&receiver, "let received; onmessage = e => { received = e; }");
+    eval(&sender, "receiver.postMessage('hello', '*')");
+    settle(&mut t);
+    assert_eq!(eval(&receiver, r#"
+        const real = Origin.from(received);
+        Object.defineProperty(received, 'origin', {value:'https://b.test'});
+        const synthetic = new MessageEvent('message', {origin:'https://a.test'});
+        let syntheticError;
+        try { Origin.from(synthetic); } catch (e) { syntheticError = e.name; }
+        [received.data, real.isSameOrigin(Origin.from('https://a.test')),
+         Origin.from(received).isSameOrigin(real), syntheticError].join(',')
+    "#), "hello,true,true,TypeError");
 }

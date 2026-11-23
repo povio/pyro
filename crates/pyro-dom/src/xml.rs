@@ -26,7 +26,7 @@ type Result<T> = std::result::Result<T, &'static str>;
 /// defined HTML's named character references (HTML, "Parsing XML documents"; Chromium and
 /// Firefox do the same): with one of them, `&nbsp;` is a no-break space instead of a fatal
 /// error. Many XHTML documents use them (most of WPT's CSS 2.1 tests).
-const HTML_ENTITY_PUBLIC_IDS: [&str; 9] = [
+const HTML_ENTITY_PUBLIC_IDS: [&str; 11] = [
     "-//W3C//DTD XHTML 1.0 Transitional//EN",
     "-//W3C//DTD XHTML 1.1//EN",
     "-//W3C//DTD XHTML 1.0 Strict//EN",
@@ -36,6 +36,8 @@ const HTML_ENTITY_PUBLIC_IDS: [&str; 9] = [
     "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN",
     "-//W3C//DTD MathML 2.0//EN",
     "-//WAPFORUM//DTD XHTML Mobile 1.0//EN",
+    "-//WAPFORUM//DTD XHTML Mobile 1.1//EN",
+    "-//WAPFORUM//DTD XHTML Mobile 1.2//EN",
 ];
 
 /// The text HTML's named character reference `&name;` stands for, one or two characters
@@ -100,8 +102,8 @@ fn push(nodes: &mut Vec<Prepared>, parent: Option<usize>, kind: NodeKind) -> Res
     nodes.push(Prepared { parent, kind });
     Ok(index)
 }
-fn text(nodes: &mut Vec<Prepared>, parent: Option<usize>, value: &str) -> Result<()> {
-    if parent.is_none() {
+fn text(nodes: &mut Vec<Prepared>, parent: Option<usize>, value: &str, fragment: bool) -> Result<()> {
+    if parent.is_none() && !fragment {
         return if value.chars().all(|c| matches!(c, ' ' | '\t' | '\r' | '\n')) {
             Ok(())
         } else {
@@ -159,6 +161,11 @@ fn prepare(source: &str) -> Result<Vec<Prepared>> {
 /// `scripting`: elements are parser-inserted and their scripts may run
 /// (a navigated XHTML document); otherwise they are inert.
 fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
+    read_nodes(source, scripting, None)
+}
+
+fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>) -> Result<Vec<Prepared>> {
+    let fragment = context.is_some();
     if source.len() > MAX_INPUT_BYTES {
         return Err("XML input limit exceeded");
     }
@@ -167,7 +174,7 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
     }
     let mut reader = Reader::from_str(source);
     reader.config_mut().check_comments = true;
-    let mut namespaces = NamespaceResolver::default();
+    let mut namespaces = context.unwrap_or_default();
     namespaces.set_max_namespace_bindings(256);
     let mut nodes = Vec::new();
     let mut stack = Vec::new();
@@ -184,7 +191,7 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
                 if stack.len() >= MAX_DEPTH {
                     return Err("XML depth limit exceeded");
                 }
-                if parent.is_none() {
+                if parent.is_none() && !fragment {
                     roots += 1;
                     if roots > 1 {
                         return Err("Multiple XML roots");
@@ -224,6 +231,8 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
                 let mut element = ElementData::new(name);
                 element.flags |=
                     if scripting { element_flags::PARSER_INSERTED } else { element_flags::SCRIPT_ALREADY_STARTED };
+                // The XML parser's scripts are not force async either.
+                element.script_force_async = false;
                 let mut expanded = FxHashSet::default();
                 for (key, value) in attributes {
                     let ns = if key.as_namespace_binding().is_some() {
@@ -252,24 +261,24 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
                 if value.as_ref().contains("]]>") {
                     return Err("Invalid XML text delimiter");
                 }
-                text(&mut nodes, parent, &value.xml10_content())?;
+                text(&mut nodes, parent, &value.xml10_content(), fragment)?;
             }
             Event::GeneralRef(value) => {
-                if parent.is_none() {
+                if parent.is_none() && !fragment {
                     return Err("Reference outside XML root");
                 }
                 if let Some(c) = value.resolve_char_ref().map_err(|_| "Invalid XML character reference")? {
                     if !xml_char(c) {
                         return Err("Invalid XML character reference");
                     }
-                    text(&mut nodes, parent, c.encode_utf8(&mut [0; 4]))?;
+                    text(&mut nodes, parent, c.encode_utf8(&mut [0; 4]), fragment)?;
                 } else {
                     let value = entity(value.as_ref(), html_entities).ok_or("Unknown XML entity")?;
-                    text(&mut nodes, parent, value)?;
+                    text(&mut nodes, parent, value, fragment)?;
                 }
             }
             Event::CData(value) => {
-                if parent.is_none() {
+                if parent.is_none() && !fragment {
                     return Err("CDATA outside XML root");
                 }
                 push(&mut nodes, parent, NodeKind::CData(value.xml10_content().into_owned()))?;
@@ -296,7 +305,7 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
                 )?;
             }
             Event::Decl(value) => {
-                if !first || value.version().map_err(|_| "Invalid XML declaration")? != "1.0" {
+                if fragment || !first || value.version().map_err(|_| "Invalid XML declaration")? != "1.0" {
                     return Err("Only XML 1.0 declarations are supported");
                 }
                 if let Some(standalone) = value.standalone() {
@@ -329,7 +338,11 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
                 }
             }
             Event::DocType(value) => {
-                if roots > 0 || parent.is_some() || nodes.iter().any(|n| matches!(n.kind, NodeKind::Doctype(_))) {
+                if fragment
+                    || roots > 0
+                    || parent.is_some()
+                    || nodes.iter().any(|n| matches!(n.kind, NodeKind::Doctype(_)))
+                {
                     return Err("Misplaced XML doctype");
                 }
                 let doctype = doctype(&value.xml10_content())?;
@@ -340,7 +353,7 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
         }
         first = false;
     }
-    if roots != 1 || !stack.is_empty() {
+    if (!fragment && roots != 1) || !stack.is_empty() {
         return Err("Missing or unclosed XML root");
     }
     Ok(nodes)
@@ -375,7 +388,8 @@ pub fn parse_bytes(
     }
     let nodes = prepare(&source).ok()?;
     let document = new_document(dom, url, content_type);
-    attach(dom, document, nodes);
+    let registry = dom.registry_idx(document.index());
+    attach(dom, document, nodes, registry);
     Some(document)
 }
 
@@ -501,6 +515,7 @@ impl Load {
             let (id, target) = create(dom, node.kind, owner);
             if self.live {
                 dom.note_inline_handlers(id);
+                dom.note_inline_style(id);
                 dom.append_parsed(id, parent);
             } else {
                 dom.link_raw(id, parent, NIL);
@@ -525,6 +540,7 @@ impl Load {
             dom.descendants(self.document).map(|d| d.map(|n| n.index()).collect()).unwrap_or_default();
         for i in elements {
             dom.note_inline_handlers(i);
+            dom.note_inline_style(i);
         }
         let top: Vec<u32> = dom.child_idx_iter(self.document.index()).collect();
         for node in top {
@@ -574,14 +590,74 @@ fn create(dom: &mut Dom, kind: NodeKind, owner: u32) -> (u32, u32) {
     (id, frag)
 }
 
-fn attach(dom: &mut Dom, document: NodeId, nodes: Vec<Prepared>) {
-    let owner = document.index();
+/// XML fragment parsing inherits the context element's in-scope bindings.
+pub(crate) fn parse_fragment(
+    dom: &mut Dom,
+    context: NodeId,
+    source: &str,
+    body_context: bool,
+) -> crate::DomResult<NodeId> {
+    use crate::{DomError, DomErrorKind};
+
+    let syntax = |message| DomError::new(DomErrorKind::Syntax, message);
+    let mut namespaces = NamespaceResolver::default();
+    namespaces.set_max_namespace_bindings(256);
+    let mut seen = FxHashSet::default();
+    let mut bind = |prefix, uri: &str| -> crate::DomResult<()> {
+        if seen.insert(prefix) {
+            namespaces.add(prefix, XmlNamespace(uri)).map_err(|_| syntax("Invalid XML namespace context"))?;
+        }
+        Ok(())
+    };
+    if body_context {
+        bind(PrefixDeclaration::Default, "http://www.w3.org/1999/xhtml")?;
+    } else {
+        // lookupNamespaceURI consults the element's own qualified name before
+        // its declarations, then searches ancestors. An empty declaration
+        // masks an ancestor's binding.
+        let mut ancestor = Some(context);
+        while let Some(id) = ancestor {
+            let element = dom.element(id)?;
+            if !element.name.ns.is_empty() {
+                bind(
+                    element.name.prefix.as_deref().map_or(PrefixDeclaration::Default, PrefixDeclaration::Named),
+                    &element.name.ns,
+                )?;
+            }
+            for attr in &element.attrs {
+                if &*attr.name.ns == XMLNS {
+                    let prefix = if attr.name.prefix.is_some() {
+                        PrefixDeclaration::Named(&attr.name.local)
+                    } else {
+                        PrefixDeclaration::Default
+                    };
+                    bind(prefix, &attr.value)?;
+                }
+            }
+            ancestor = dom.parent_element(id)?;
+        }
+    }
+    let nodes = read_nodes(source, false, Some(namespaces)).map_err(syntax)?;
+    let fragment = dom.create_fragment(dom.node_document(context)?)?;
+    let registry = dom.registry_association(context)?;
+    attach(dom, fragment, nodes, registry);
+    dom.upgrades_after_fragment_parse(fragment.index());
+    Ok(fragment)
+}
+
+fn attach(dom: &mut Dom, root: NodeId, nodes: Vec<Prepared>, registry: crate::RegistryAssociation) {
+    let root = root.index();
+    let owner = dom.n(root).owner_doc;
     // Per prepared node: where its children are linked and which document
     // owns them.
     let mut targets: Vec<(u32, u32)> = Vec::with_capacity(nodes.len());
     for node in nodes {
-        let (parent, child_owner) = node.parent.map_or((owner, owner), |index| targets[index]);
+        let (parent, child_owner) = node.parent.map_or((root, owner), |index| targets[index]);
         let (id, target) = create(dom, node.kind, child_owner);
+        if dom.n(id).element().is_some() {
+            let registry = if parent == root { registry } else { dom.registry_idx(parent) };
+            dom.set_registry_idx(id, registry);
+        }
         dom.link_raw(id, parent, NIL);
         targets.push((target, dom.n(target).owner_doc));
     }
@@ -602,7 +678,10 @@ pub fn parse_document(dom: &mut Dom, url: &str, source: &str, content_type: &str
     let prepared = prepare(source);
     let document = new_document(dom, url, content_type);
     match prepared {
-        Ok(nodes) => attach(dom, document, nodes),
+        Ok(nodes) => {
+            let registry = dom.registry_idx(document.index());
+            attach(dom, document, nodes, registry);
+        }
         Err(message) => parser_error(dom, document, message),
     }
     document
@@ -671,5 +750,56 @@ impl Dom {
             current = self.parent_element(id)?;
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod fragment_tests {
+    use super::*;
+    use crate::parse::{parse_contextual_fragment, parse_insertion_fragment};
+    use crate::DomErrorKind;
+
+    #[test]
+    fn fragment_uses_context_bindings_and_preserves_mixed_top_level_content() {
+        let mut dom = Dom::new();
+        let doc = parse_document(&mut dom, "about:blank", r#"<R xmlns="urn:a" xmlns:p="urn:p"><C/></R>"#, "text/xml");
+        let root = dom.document_element(doc).unwrap().unwrap();
+        let context = dom.first_child(root).unwrap().unwrap();
+        let frag =
+            parse_insertion_fragment(&mut dom, context, r#"a&amp;<p:X xmlns:p="urn:local"/><p:Y/><Z/><![CDATA[<t>]]>"#)
+                .unwrap();
+        let children: Vec<_> = dom.children(frag).unwrap().collect();
+        assert_eq!(children.len(), 5);
+        assert!(matches!(&dom.node(children[0]).unwrap().kind, NodeKind::Text(t) if t == "a&"));
+        for (&node, (ns, local)) in children[1..4].iter().zip([("urn:local", "X"), ("urn:p", "Y"), ("urn:a", "Z")]) {
+            let el = dom.element(node).unwrap();
+            assert_eq!((&*el.name.ns, &*el.name.local), (ns, local));
+            assert_eq!(dom.node_document(node).unwrap(), doc);
+        }
+        assert!(matches!(&dom.node(children[4]).unwrap().kind, NodeKind::CData(t) if t == "<t>"));
+    }
+
+    #[test]
+    fn ill_formed_fragments_leave_existing_children_intact() {
+        let mut dom = Dom::new();
+        let doc = parse_document(&mut dom, "about:blank", "<r><old/></r>", "text/xml");
+        let root = dom.document_element(doc).unwrap().unwrap();
+        let old = dom.first_child(root).unwrap();
+        for source in ["<new/><open>", "<p:x/>", "]]>", "<!DOCTYPE root>", "<?xml version='1.0'?>"] {
+            assert_eq!(parse_insertion_fragment(&mut dom, root, source).unwrap_err().kind(), Some(DomErrorKind::Syntax));
+            assert_eq!(dom.first_child(root).unwrap(), old);
+        }
+    }
+
+    #[test]
+    fn range_preserves_namespace_and_case_in_xml_documents() {
+        let mut dom = Dom::new();
+        let doc = parse_document(&mut dom, "about:blank", "<r/>", "text/xml");
+        let root = dom.document_element(doc).unwrap().unwrap();
+        let source = r#"<html xmlns="urn:foreign"><Body/></html>"#;
+        let frag = parse_contextual_fragment(&mut dom, root, source).unwrap();
+        let html = dom.first_child(frag).unwrap().unwrap();
+        assert_eq!(&*dom.element(html).unwrap().name.ns, "urn:foreign");
+        assert_eq!(dom.tag_name(dom.first_child(html).unwrap().unwrap()).unwrap(), "Body");
     }
 }

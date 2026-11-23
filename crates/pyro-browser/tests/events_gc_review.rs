@@ -516,6 +516,22 @@ fn computed_style_shape_matches_chrome() {
         ),
         "null,function,false,false,string,string,string,false,true,true,true,true,false"
     );
+    // The engine's longhands Chrome lacks are no properties: not listed, no attribute, and
+    // getPropertyValue answers "" (the engine still computes them).
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const d = document.createElement('div'); d.style.cssText = 'white-space-trim: discard-before'; document.body.append(d);
+               const cs = getComputedStyle(d), listed = Array.from(cs);
+               return [JSON.stringify(cs.getPropertyValue('line-clamp')), JSON.stringify(cs.getPropertyValue('mask-border-mode')),
+                       JSON.stringify(cs.getPropertyValue('mask-border')), JSON.stringify(cs.getPropertyValue('Line-Clamp')),
+                       listed.includes('line-clamp'), listed.includes('font-width'), listed.includes('font-stretch'),
+                       'maskBorderMode' in cs, 'fontWidth' in cs, cs.fontStretch,
+                       listed.length > 300, listed.every((n) => n.startsWith('--') || cs[n] === cs.getPropertyValue(n)),
+                       String(d.computedStyleMap().get('white-space-trim')), JSON.stringify(cs.getPropertyValue('white-space-trim'))].join(); })()"
+        ),
+        r#""","","","",false,false,true,false,false,100%,true,true,discard-before,"""#
+    );
     // Writes and removals throw as in Chrome, in sloppy code too.
     assert_eq!(
         eval(

@@ -1,0 +1,384 @@
+{
+  "version": "158.0.8127.37",
+  "started": "2026-11-22T08:13:33.353Z",
+  "runs": [
+    {
+      "file": "pcm.js",
+      "ms": 44,
+      "value": [
+        {
+          "length": 127,
+          "chunks": [
+            127
+          ],
+          "stereoAndRate": true,
+          "mismatches": 0,
+          "first": null
+        },
+        {
+          "length": 128,
+          "chunks": [
+            128
+          ],
+          "stereoAndRate": true,
+          "mismatches": 0,
+          "first": null
+        },
+        {
+          "length": 129,
+          "chunks": [
+            128,
+            1
+          ],
+          "stereoAndRate": true,
+          "mismatches": 0,
+          "first": null
+        },
+        {
+          "length": 4096,
+          "chunks": [
+            128,
+            256,
+            1152,
+            2560
+          ],
+          "stereoAndRate": true,
+          "mismatches": 0,
+          "first": null
+        },
+        {
+          "length": 65539,
+          "chunks": [
+            128,
+            256,
+            1152,
+            64003
+          ],
+          "stereoAndRate": true,
+          "mismatches": 0,
+          "first": null
+        }
+      ]
+    },
+    {
+      "file": "queue.js",
+      "ms": 13,
+      "value": {
+        "idle": [
+          "running",
+          128,
+          0
+        ],
+        "lengths": [
+          128,
+          256,
+          517
+        ],
+        "settled": [
+          "first",
+          "middle",
+          "last"
+        ],
+        "exhausted": "InvalidStateError",
+        "events": 1,
+        "finalBuffer": true,
+        "final": "closed",
+        "trace": [
+          [
+            "first",
+            "running"
+          ],
+          [
+            "middle",
+            "running"
+          ],
+          [
+            "complete",
+            "closed"
+          ],
+          [
+            "last",
+            "closed"
+          ]
+        ]
+      }
+    },
+    {
+      "file": "lifecycle.js",
+      "ms": 1,
+      "value": {
+        "pauses": [
+          [
+            "suspended",
+            384
+          ],
+          [
+            "suspended",
+            32768
+          ]
+        ],
+        "events": 1,
+        "sameBuffer": true,
+        "length": 65539,
+        "final": "closed",
+        "trace": [
+          [
+            "before",
+            "suspended",
+            0
+          ],
+          [
+            "start returned",
+            "running",
+            0
+          ],
+          [
+            "microtask",
+            "running",
+            0
+          ],
+          [
+            "statechange",
+            "running",
+            0
+          ],
+          [
+            "statechange",
+            "suspended",
+            384
+          ],
+          [
+            "resume fulfilled",
+            "running",
+            384
+          ],
+          [
+            "timer",
+            "running",
+            384
+          ],
+          [
+            "statechange",
+            "running",
+            384
+          ],
+          [
+            "statechange",
+            "suspended",
+            32768
+          ],
+          [
+            "resume fulfilled",
+            "running",
+            32768
+          ],
+          [
+            "statechange",
+            "running",
+            32768
+          ],
+          [
+            "complete",
+            "closed",
+            65664
+          ],
+          [
+            "render fulfilled",
+            "closed",
+            65664
+          ],
+          [
+            "statechange",
+            "closed",
+            65664
+          ]
+        ]
+      }
+    },
+    {
+      "file": "lifecycle.js",
+      "ms": 1,
+      "value": {
+        "pauses": [
+          [
+            "suspended",
+            384
+          ],
+          [
+            "suspended",
+            32768
+          ]
+        ],
+        "events": 1,
+        "sameBuffer": true,
+        "length": 65539,
+        "final": "closed",
+        "trace": [
+          [
+            "before",
+            "suspended",
+            0
+          ],
+          [
+            "start returned",
+            "running",
+            0
+          ],
+          [
+            "microtask",
+            "running",
+            0
+          ],
+          [
+            "statechange",
+            "running",
+            0
+          ],
+          [
+            "statechange",
+            "suspended",
+            384
+          ],
+          [
+            "resume fulfilled",
+            "running",
+            384
+          ],
+          [
+            "timer",
+            "running",
+            384
+          ],
+          [
+            "statechange",
+            "running",
+            384
+          ],
+          [
+            "statechange",
+            "suspended",
+            32768
+          ],
+          [
+            "resume fulfilled",
+            "running",
+            32768
+          ],
+          [
+            "statechange",
+            "running",
+            32768
+          ],
+          [
+            "complete",
+            "closed",
+            65664
+          ],
+          [
+            "render fulfilled",
+            "closed",
+            65664
+          ],
+          [
+            "statechange",
+            "closed",
+            65664
+          ]
+        ]
+      }
+    },
+    {
+      "file": "lifecycle.js",
+      "ms": 1,
+      "value": {
+        "pauses": [
+          [
+            "suspended",
+            384
+          ],
+          [
+            "suspended",
+            32768
+          ]
+        ],
+        "events": 1,
+        "sameBuffer": true,
+        "length": 65539,
+        "final": "closed",
+        "trace": [
+          [
+            "before",
+            "suspended",
+            0
+          ],
+          [
+            "start returned",
+            "running",
+            0
+          ],
+          [
+            "microtask",
+            "running",
+            0
+          ],
+          [
+            "statechange",
+            "running",
+            0
+          ],
+          [
+            "statechange",
+            "suspended",
+            384
+          ],
+          [
+            "resume fulfilled",
+            "running",
+            384
+          ],
+          [
+            "timer",
+            "running",
+            384
+          ],
+          [
+            "statechange",
+            "running",
+            384
+          ],
+          [
+            "statechange",
+            "suspended",
+            32768
+          ],
+          [
+            "resume fulfilled",
+            "running",
+            32768
+          ],
+          [
+            "statechange",
+            "running",
+            32768
+          ],
+          [
+            "complete",
+            "closed",
+            65664
+          ],
+          [
+            "render fulfilled",
+            "closed",
+            65664
+          ],
+          [
+            "statechange",
+            "closed",
+            65664
+          ]
+        ]
+      }
+    }
+  ],
+  "sourceDigest": "391cb66116e34ecce7f719b500c2bb1dd3be386c370efe5cfac5fd64ffb1e72e"
+}

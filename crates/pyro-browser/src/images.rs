@@ -25,9 +25,14 @@
 //!   size. SVG takes its size from numeric `width`/`height` on the root.
 //! - An empty `src` fires `error`; removing `src` clears the image. The
 //!   `<img>`'s own `srcset` (with `sizes`) selects the candidate for the
-//!   device pixel ratio (`pyro_dom::picture`). Not modelled:
-//!   `loading="lazy"` deferral (lazy images load eagerly), re-resolving a
+//!   device pixel ratio (`pyro_dom::picture`). Not modelled: re-resolving a
 //!   loaded `src` when a `<base>` is inserted later.
+//! - `loading="lazy"` (scripting enabled): the source is selected, the fetch
+//!   deferred until the image intersects the viewport (or a scroll
+//!   container) expanded by the lazy load margin
+//!   (`pyro_webapi::intersection_observer::lazy_load_intersects`), checked
+//!   from the first layout. A lazy image never delays `load`; switching to
+//!   eager fetches at once, still without delaying it.
 //! - An `<img>` child of a `<picture>` loads the first preceding `<source>`
 //!   whose `media` matches and whose `type` is an image type
 //!   (`pyro_dom::picture`). Moving, inserting or removing a `<source>` or the
@@ -65,6 +70,20 @@ struct Image {
     /// Whether the finished request gave an image (`load`) or not (`error`): what a restart of
     /// the same request fires again without fetching (HTML's list of available images).
     outcome: Option<bool>,
+}
+
+/// pyro: the lazy images and iframes a capture started ([`Browser::approve_lazy_content`]).
+#[derive(Default)]
+pub struct LazyStarted {
+    images: Vec<(FrameKey, NodeId)>,
+    frames: Vec<FrameKey>,
+}
+
+impl LazyStarted {
+    /// Nothing started.
+    pub fn is_empty(&self) -> bool {
+        self.images.is_empty() && self.frames.is_empty()
+    }
 }
 
 impl Images {
@@ -110,8 +129,11 @@ pub(crate) struct Images {
     /// Each lazy image's last `sizes="auto"` width while it was rendered: what `auto` stays when
     /// it stops being rendered.
     auto_widths: HashMap<NodeId, f64>,
-    /// The layout engine's sync stamp when the deferred images were last checked.
-    checked_at: Option<(u64, u64, u32, u32)>,
+    /// Deferred lazy images the lazy load check found intersecting: their next steps fetch.
+    approved: HashSet<NodeId>,
+    /// The observation stamp (DOM, style, viewport, scroll) and the window `load` state at
+    /// the last lazy load check.
+    lazy_checked: Option<(((u64, u64, u32, u32), u64), bool)>,
     generation: u64,
     /// Entry count at which those of collected elements are dropped (a
     /// finished request no longer pins its element, and `new Image()`
@@ -258,6 +280,23 @@ fn svg_size(body: &[u8]) -> Option<(f64, f64)> {
     Some((attr("width")?, attr("height")?))
 }
 
+/// CSP `object-src` for the rendered `<object>`/`<embed>` `node` that has a `type` and no URL
+/// (`dest`: its element), which fetches nothing: Chrome checks its plugin request anyway, the
+/// empty URL completed against the element's base URL (`'none'` and an empty source list block
+/// it, `'self'` allows it), violations at the element. Blocked or not, nothing loads: it shows
+/// its fallback content as before.
+fn object_without_url_csp(bindings: &Rc<PageDom>, node: NodeId, base: &str, dest: pyro_net::csp::RequestDest) {
+    let base = {
+        let dom = bindings.dom.borrow();
+        if !dom.get_attribute(node, "type").ok().flatten().is_some_and(|t| !t.trim().is_empty()) {
+            return;
+        }
+        crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.to_owned())
+    };
+    let Ok(url) = url::Url::parse(&base) else { return };
+    let _ = pyro_webapi::csp::check_request(bindings, pyro_net::csp::CspRequest::new(url, dest), Some(node));
+}
+
 /// Whether `node` is being rendered as of the last completed layout, never running layout: the
 /// full answer when that layout is current (a query then syncs nothing), else the engine's last
 /// answer; `None` when that layout has not seen `node` (inserted since) or cannot tell.
@@ -271,6 +310,32 @@ fn rendered_as_laid_out(layout: &pyro_dom::layout::Layout, dom: &pyro_dom::Dom, 
 impl Browser {
     pub(crate) fn image_event(&mut self, page: FrameKey, node: NodeId) {
         self.image_event_with(page, node, false);
+    }
+
+    /// An `<img>`'s insertion alone (no other mutation queued it): insertion is no relevant
+    /// mutation, so an image that already has a request for its `src` keeps it, even when the
+    /// document's base URL changed since (it is not resolved again; WPT
+    /// html/semantics/embedded-content/the-img-element/image-base-url.html). `srcset`,
+    /// `<picture>` and lazy images select again as before.
+    pub(crate) fn image_inserted(&mut self, page: FrameKey, node: NodeId) {
+        let keeps = self.doc(page).is_some_and(|state| {
+            let Some(bindings) = state.main_frame.page_dom.clone() else { return false };
+            let Some(entry) = state.images.entries.get(&node) else { return false };
+            let dom = bindings.dom.borrow();
+            let attr = |name: &str| dom.get_attribute(node, name).ok().flatten().map(str::to_owned);
+            let in_picture = dom
+                .parent(node)
+                .ok()
+                .flatten()
+                .is_some_and(|p| dom.element(p).is_ok_and(|e| &*e.name.local == "picture"));
+            attr("src").is_some_and(|src| src == entry.src)
+                && attr("srcset").is_none()
+                && attr("loading").is_none_or(|l| !l.eq_ignore_ascii_case("lazy"))
+                && !in_picture
+        });
+        if !keeps {
+            self.image_event_with(page, node, false);
+        }
     }
 
     /// [`Browser::image_event`]; `restart`: a relevant mutation, which starts a new request (and
@@ -291,7 +356,9 @@ impl Browser {
         drop(state);
         let (lazy, hidden, rendered_width, attr_width, auto_css_width) = {
             let dom = bindings.dom.borrow();
-            let lazy = dom.get_attribute(node, "loading").ok().flatten().is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
+            // HTML "will lazy load element steps": only with scripting enabled.
+            let lazy = !bindings.scripting_disabled()
+                && dom.get_attribute(node, "loading").ok().flatten().is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
             let connected = dom.is_connected(node).unwrap_or(false);
             // "Being rendered" from the last completed layout, never running layout here (this
             // runs per inserted image); its size only when that layout is current (free then).
@@ -353,14 +420,48 @@ impl Browser {
         } else {
             None
         };
-        // Not rendered as of the last layout (or detached): select now, fetch once rendered. Not
-        // in that layout yet (inserted since): fetched now, as an eager image.
-        let deferred_now = hidden;
+        // A lazy image waits for the lazy load check (`fetch_rendered_images`), which lets its
+        // next steps fetch once it intersects.
+        let approved = self.doc_mut(page).is_some_and(|mut p| p.images.approved.remove(&node));
+        let deferred_now = lazy && (hidden || !approved);
         let stored = self.doc_mut(page).and_then(|mut p| if deferred_now { None } else { p.images.deferred.remove(&node) });
+        // A lazy image, or one let go from deferral (`loading` became eager), never delays `load`.
+        let from_deferral = stored.is_some();
         let candidate = match stored {
             // `loading` stopped being lazy: the source selected while deferred is fetched.
             Some(selected) if !lazy && !restart => selected,
             _ => bindings.dom.borrow().picture_candidate_auto(node, &bindings.viewport(), auto_width),
+        };
+        // HTML "update the image data" step 6: an image in the list of available images is
+        // taken at once, before any lazy loading (WPT
+        // the-img-element/image-loading-lazy-use-list-of-available-images.html).
+        let deferred_now = deferred_now && {
+            let url = {
+                let dom = bindings.dom.borrow();
+                let selected = candidate.as_ref().map(|c| c.url.clone());
+                selected
+                    .or_else(|| dom.get_attribute(node, "src").ok().flatten().map(str::to_owned))
+                    .filter(|v| !v.trim().is_empty())
+                    .and_then(|v| {
+                        let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone());
+                        url::Url::parse(&base).ok()?.join(v.trim()).ok()
+                    })
+                    .map(String::from)
+            };
+            let one_x = candidate.as_ref().is_none_or(|c| c.density == 1.0);
+            let available = url.filter(|_| one_x).is_some_and(|url| {
+                let policy = crate::loader::element_referrer_policy(&bindings.dom.borrow(), node)
+                    .unwrap_or_else(|| bindings.referrer_policy());
+                let cors = image_cors(&bindings.dom.borrow(), node);
+                bindings.available_html_image(&url, cors, policy, url::Url::parse(&base).ok()).is_some()
+            });
+            if available {
+                // Taken now: a source selected while it was deferred is no longer waiting.
+                if let Some(mut p) = self.doc_mut(page) {
+                    p.images.deferred.remove(&node);
+                }
+            }
+            !available
         };
         if deferred_now {
             // Not rendered and lazy: select now, fetch once rendered (or eager).
@@ -487,7 +588,14 @@ impl Browser {
                 state.images.entries.remove(&node);
                 state.images.offers.retain(|(_, owner, ..)| *owner != node);
                 drop(state);
-                bindings.set_image_state(node, None, false);
+                // A source that does not parse is a broken current request: `complete` (it stays
+                // false until these steps ran, as HTML's await a stable state).
+                bindings.set_image_state(node, invalid.then(|| raw_src.as_deref().unwrap_or("")), false);
+                // Pending decode() calls settle (reject) now: the error task's resource_loaded
+                // settles none.
+                if invalid {
+                    bindings.settle_image_decodes(node);
+                }
                 bindings.keep_loading_image(node, false);
                 { let mut dom = bindings.dom.borrow_mut(); dom.set_natural_size(node, None); dom.set_reported_natural_size(node, None); }
                 if invalid {
@@ -520,7 +628,7 @@ impl Browser {
                     density,
                     generation,
                     pending: true,
-                    blocks_load: !loaded,
+                    blocks_load: !loaded && !lazy && !from_deferral,
                     cancel: None,
                     request_state,
                     outcome: None,
@@ -538,6 +646,32 @@ impl Browser {
             let Some(bindings) = weak.upgrade() else { return };
             b.finish_image(page, &loader, &bindings, node, generation, result, key);
         };
+        // CSP `img-src`; blocked, a network error. Its violations are at the document, as
+        // Chrome (WPT img-src-targeting). The guard checks the redirects, reported when the
+        // fetch ends.
+        let csp = match url::Url::parse(&url) {
+            Ok(parsed) => {
+                let check = pyro_net::csp::CspRequest::new(parsed, pyro_net::csp::RequestDest::Image);
+                match pyro_webapi::csp::check_request(&bindings, check, None) {
+                    Ok(guard) => guard,
+                    Err(_) => {
+                        let error = format!("{} {url}", pyro_webapi::csp::BLOCKED_BY_CSP);
+                        self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err(error), None));
+                        return;
+                    }
+                }
+            }
+            Err(_) => None,
+        };
+        let finish = {
+            let (bindings, guard) = (Rc::downgrade(&bindings), csp.clone());
+            move |b: &mut Browser, result, key| {
+                if let Some(bindings) = bindings.upgrade() {
+                    pyro_webapi::csp::report_guard(&bindings, guard.as_ref(), None);
+                }
+                finish(b, result, key)
+            }
+        };
         if url.starts_with("blob:") {
             let result = bindings
                 .blob_url(&url)
@@ -550,9 +684,14 @@ impl Browser {
                     immutable_local: false,
                     content_disposition: None,
                     header_csp: None,
+                    allow_csp_from: None,
                     refresh: None,
                     content_language: None,
+                    last_modified: None,
+                    reporting_endpoints: None,
+                    dictionary_links: Vec::new(),
                     referrer_policy: None,
+                    origin_agent_cluster: false,
                     sent_referrer: None,
                     timing: None,
                     partial: None,
@@ -568,6 +707,8 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
+            csp,
+            required_csp: None,
             parser_priority: false,
             credentials: None,
             post: None,
@@ -628,20 +769,26 @@ impl Browser {
         let mut decodable = false;
         let mut raster = None;
         let mut reported = None;
-        let outcome = result.ok().filter(|r| (200..300).contains(&r.status) && !r.body.is_empty()).and_then(|r| {
+        // As Chromium, a response whose body is an image is shown and fires `load` whatever its
+        // status (a 404 page that is an image); otherwise only a 2xx `image/*` one loads.
+        let outcome = result.ok().filter(|r| !r.body.is_empty()).and_then(|r| {
+            let ok_status = (200..300).contains(&r.status);
             let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
             if let Some((w, h)) = pyro_dom::image::dimensions(body) {
                 decodable = true;
                 raster = Some(r);
                 return Some(Some((w as f64, h as f64)));
             }
-            if r.mime == "image/svg+xml" || body.trim_ascii_start().starts_with(b"<svg") {
+            if r.mime == "image/svg+xml" || (ok_status && body.trim_ascii_start().starts_with(b"<svg")) {
                 decodable = true;
                 reported = svg_reported_size(body, density);
                 let size = svg_size(body);
                 // pyro: its bytes too, for a canvas that draws it (pyro-canvas rasterizes SVG).
                 raster = Some(r);
                 return Some(size);
+            }
+            if !ok_status {
+                return None;
             }
             decodable = !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp");
             r.mime.starts_with("image/").then_some(None)
@@ -778,6 +925,9 @@ impl Browser {
             }
         };
         drop(state);
+        if rendered && matches!(source, Source::None) {
+            object_without_url_csp(&bindings, node, &base, pyro_net::csp::RequestDest::Object);
+        }
         self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0);
     }
 
@@ -797,20 +947,31 @@ impl Browser {
         }
         let nodes: Vec<NodeId> = state.images.deferred.keys().copied().collect();
         let Some(bindings) = state.main_frame.page_dom.clone() else { return };
-        let checked = state.images.checked_at;
+        let loaded = state.main_frame.loaded;
+        let checked = state.images.lazy_checked;
         drop(state);
-        // Decided once per completed layout (this runs at every microtask checkpoint): the
-        // engine's answers change only when it syncs, and nothing here makes it sync. An image
-        // connected since that layout is not in it: it is fetched as an eager image.
-        let synced = bindings.layout().style().engine_sync_stamp();
-        let stamp_moved = synced != checked;
-        if let Some(mut p) = self.doc_mut(page) {
-            p.images.checked_at = synced;
+        // As Chrome, from the first layout (a lazy image never delays `load`, see
+        // `blocks_load`). Before `load` only from a layout that is already current: the check
+        // must not run layout at each checkpoint of a parse.
+        if !loaded {
+            let layout = bindings.layout();
+            let current = bindings.dom.try_borrow().is_ok_and(|dom| layout.style().engine_current(&dom));
+            if !current {
+                return;
+            }
+        }
+        // Checked again only when the DOM, style, viewport or a scroll offset changed (this
+        // runs at every microtask checkpoint).
+        let stamp = || (bindings.layout().observation_stamp(&bindings.dom.borrow()), loaded);
+        if checked == Some(stamp()) {
+            return;
         }
         for node in nodes {
-            let rendered = {
+            let connected = {
                 let dom = bindings.dom.borrow();
-                if !dom.is_alive(node) {
+                // Gone, or adopted into another document (which runs its own steps for it): no
+                // longer this document's to load.
+                if !dom.is_alive(node) || dom.node_document(node).ok() != Some(bindings.document()) {
                     drop(dom);
                     if let Some(mut p) = self.doc_mut(page) {
                         p.images.deferred.remove(&node);
@@ -818,15 +979,81 @@ impl Browser {
                     continue;
                 }
                 dom.is_connected(node).unwrap_or(false)
-                    && match rendered_as_laid_out(&bindings.layout(), &dom, node) {
-                        Some(rendered) => stamp_moved && rendered,
-                        None => true,
-                    }
             };
-            if rendered {
+            if connected && pyro_webapi::intersection_observer::lazy_load_intersects(&bindings, node) {
+                if let Some(mut p) = self.doc_mut(page) {
+                    p.images.approved.insert(node);
+                }
                 self.image_event_with(page, node, false);
             }
         }
+        // After the checks, which may have synced layout.
+        let stamp = stamp();
+        if let Some(mut p) = self.doc_mut(page) {
+            p.images.lazy_checked = Some(stamp);
+        }
+    }
+
+    /// pyro: deferred lazy images and iframes of `page`'s documents start loading before a
+    /// capture: every one for printing (Chrome loads lazy content to print), those near the
+    /// viewport for a screenshot (one taken right at `load` precedes the lazy load check).
+    /// What started, for [`Browser::lazy_loading`].
+    pub fn approve_lazy_content(&mut self, page: crate::PageId, all: bool) -> LazyStarted {
+        let mut started = LazyStarted::default();
+        let Some(host) = self.page(page).map(|p| p.frames.clone()) else { return started };
+        for key in host.keys() {
+            let Some((bindings, nodes)) = self.doc(key).and_then(|d| {
+                Some((d.main_frame.page_dom.clone()?, d.images.deferred.keys().copied().collect::<Vec<NodeId>>()))
+            }) else {
+                continue;
+            };
+            for node in nodes {
+                let connected = bindings.dom.borrow().is_connected(node).unwrap_or(false);
+                if !connected || !(all || pyro_webapi::intersection_observer::lazy_load_intersects(&bindings, node)) {
+                    continue;
+                }
+                if let Some(mut p) = self.doc_mut(key) {
+                    p.images.approved.insert(node);
+                }
+                self.image_event_with(key, node, false);
+                started.images.push((key, node));
+            }
+        }
+        let frames: Vec<FrameKey> = host.lazy_frames.borrow().iter().map(|(k, _)| *k).collect();
+        for key in frames {
+            let Some(frame) = host.frame(key) else { continue };
+            let Some(owner) = frame.owner else { continue };
+            let parent = self.doc(host.parent_key(key)).and_then(|d| d.main_frame.page_dom.clone());
+            if !(all || parent.is_some_and(|p| pyro_webapi::intersection_observer::lazy_load_intersects(&p, owner))) {
+                continue;
+            }
+            host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
+            host.lazy_approved.borrow_mut().push(key);
+            host.queue_attributes(key, frame.loader_id.clone());
+            started.frames.push(key);
+        }
+        started
+    }
+
+    /// pyro: whether what [`Browser::approve_lazy_content`] started still loads: one of its
+    /// images, or (`frames`) one of its iframes' attribute processing or navigation.
+    pub fn lazy_loading(&self, started: &LazyStarted, frames: bool) -> bool {
+        started.images.iter().any(|(key, node)| self.doc(*key).is_some_and(|d| d.images.entries.get(node).is_some_and(|i| i.pending)))
+            || (frames
+                && started.frames.iter().any(|key| {
+                    self.doc(*key).is_some_and(|d| d.pending_loader.is_some() || d.pending_frame_attributes > 0)
+                }))
+    }
+
+    /// pyro: whether a document of `page` still loads an image, or a frame's navigation or
+    /// attribute processing is pending (what a print of lazy content waits for).
+    pub fn content_loading(&self, page: crate::PageId) -> bool {
+        let Some(host) = self.page(page).map(|p| p.frames.clone()) else { return false };
+        host.keys().into_iter().any(|key| {
+            self.doc(key).is_some_and(|d| {
+                d.images.entries.values().any(|i| i.pending) || d.pending_loader.is_some() || d.pending_frame_attributes > 0
+            })
+        })
     }
 
     /// Remembers the `<object>`/`<embed>` `node`, not fetched while not being rendered.
@@ -880,10 +1107,9 @@ impl Browser {
             }
             if !rendered {
                 host.hidden_objects.borrow_mut().push((page, node));
-            } else if embed {
-                self.embed_event(page, node);
             } else {
-                self.object_event(page, node);
+                self.apply_same_document_url(page);
+                if embed { self.embed_event(page, node); } else { self.object_event(page, node); }
             }
         }
     }
@@ -923,6 +1149,9 @@ impl Browser {
             }
         };
         drop(state);
+        if rendered && matches!(source, Source::None) {
+            object_without_url_csp(&bindings, node, &base, pyro_net::csp::RequestDest::Embed);
+        }
         self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0);
     }
 
@@ -938,8 +1167,10 @@ impl Browser {
         let loaded = state.main_frame.loaded;
         let href = {
             let dom = bindings.dom.borrow();
+            // pyro: a pending `decode()` fetches a disconnected one too, as Chrome does.
             let connected = dom.is_connected(node).unwrap_or(false)
-                || dom.root_node(node, true).ok().is_some_and(|r| dom.is_connected(r).unwrap_or(false));
+                || dom.root_node(node, true).ok().is_some_and(|r| dom.is_connected(r).unwrap_or(false))
+                || bindings.has_pending_decode(node);
             connected
                 .then(|| {
                     dom.get_attribute(node, "href")
@@ -950,21 +1181,36 @@ impl Browser {
                 })
                 .flatten()
         };
-        let source = match href {
+        let source = match href.as_deref() {
             None => Source::None,
             Some(v) if v.trim().is_empty() => Source::None,
             Some(v) => {
                 let dom = bindings.dom.borrow();
-                url::Url::parse(&crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone()))
-                    .ok()
-                    .and_then(|b| b.join(v.trim()).ok())
-                    .map_or(Source::Invalid, |u| Source::Url(u.to_string()))
+                match crate::loader::node_base_url(&dom, node) {
+                    // HTML "encoding-parse a URL", as Chromium resolves SVG references: the query
+                    // in the document's encoding.
+                    Some(_) => url::Url::parse(&pyro_webapi::html::resolve_url(&dom, node, v.trim()))
+                        .map_or(Source::Invalid, |u| Source::Url(u.to_string())),
+                    None => url::Url::parse(&base)
+                        .ok()
+                        .and_then(|b| b.join(v.trim()).ok())
+                        .map_or(Source::Invalid, |u| Source::Url(u.to_string())),
+                }
             }
         };
         drop(state);
         // pyro: its `crossorigin` (a CORS settings attribute) is its request's mode, as an `<img>`'s.
         let cors = image_cors(&bindings.dom.borrow(), node);
         self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, true, cors);
+        // pyro: the attribute value the request is for, which `decode()` settles against.
+        if let Some(raw) = href {
+            if let Some(mut image) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.images.entries.get_mut(&node)))
+            {
+                if image.pending {
+                    image.src = raw;
+                }
+            }
+        }
     }
 
     /// Fetches `source` for `node`'s `load` / `error` events only (`<object>`,
@@ -1040,10 +1286,13 @@ impl Browser {
             let key = finish_key.borrow_mut().take();
             b.finish_object(page, &loader, &bindings, node, generation, result, image, key);
         };
-        if url.starts_with("blob:") {
-            let ok = bindings.blob_url(&url).is_some();
+        // An `<object>`'s about: URL (about:blank) is a document of its own, never fetched: it
+        // loads, as in Chromium (an SVG `<image>`'s is no image and fails).
+        let about = !image && url::Url::parse(&url).is_ok_and(|u| u.scheme() == "about");
+        if url.starts_with("blob:") || about {
+            let ok = about || bindings.blob_url(&url).is_some();
             self.scheduler().post(TaskSource::Networking, move |b| {
-                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, refresh: None, content_language: None, referrer_policy: None, sent_referrer: None, timing: None, partial: None, nosniff: false, opaque: false }) } else { Err("revoked or unknown blob URL".into()) })
+                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, allow_csp_from: None, refresh: None, content_language: None, last_modified: None, reporting_endpoints: None, dictionary_links: Vec::new(), referrer_policy: None, sent_referrer: None, origin_agent_cluster: false, timing: None, partial: None, nosniff: false, opaque: false }) } else { Err("revoked or unknown blob URL".into()) })
             });
             return;
         }
@@ -1053,6 +1302,8 @@ impl Browser {
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
+            csp: None,
+            required_csp: None,
             parser_priority: false,
             credentials: None,
             post: None,
@@ -1104,11 +1355,18 @@ impl Browser {
         let hold = entry._node.take();
         let url = entry.url.clone();
         let cors = entry.request_state.0;
+        let raw_src = entry.src.clone();
         drop(state);
         // pyro: an SVG `<image>`'s raster goes into the list of available images (a canvas draws
         // it from there), clean only for a CORS response or a non-opaque one of the document's
         // origin, as an `<img>`'s.
         if image {
+            // pyro: whether the request failed, so a canvas tells a broken `<image>` from one still
+            // loading (`PageDom::set_svg_image_broken`). Only a network error or a non-2xx status
+            // counts: `dimensions` knows no SVG (nor AVIF, ICO, ...), whose valid responses are
+            // images (WPT 2d.pattern.svgimage.zeroheight/zerowidth return null, not throw).
+            let decoded = result.as_ref().ok().is_some_and(|r| (200..300).contains(&r.status));
+            bindings.set_svg_image_broken(node, (!decoded).then_some(url.as_str()));
             if let Some(r) = result.as_ref().ok().filter(|r| (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES) {
                 if let Some((w, h)) = pyro_dom::image::dimensions(&r.body) {
                     let clean = cors != 0 || (!r.opaque && self.image_origin_clean(page, &r.url));
@@ -1185,6 +1443,10 @@ impl Browser {
                             || !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp"))
                 })
         });
+        // pyro: an SVG `<image>`'s request settles its `decode()` calls, as an `<img>`'s does.
+        if image {
+            bindings.image_loaded(node, &raw_src, ok);
+        }
         pyro_webapi::lifecycle::resource_loaded(bindings, node, ok);
         drop(hold);
         self.maybe_fire_load(page);

@@ -91,6 +91,44 @@ pub struct FrameInfo {
     pub unreachable_url: Option<String>,
 }
 
+/// A new top-level context starts with fresh target emulation settings; only
+/// the opener's window and screen geometry supplies its initial dimensions.
+pub(crate) fn popup_viewport(opener: &pyro_dom::media::Viewport) -> pyro_dom::media::Viewport {
+    pyro_dom::media::Viewport {
+        width: opener.width,
+        height: opener.height,
+        screen_width: opener.screen_width,
+        screen_height: opener.screen_height,
+        ..Default::default()
+    }
+}
+
+/// Fit the requested desktop window to its screen's available area. Keep the
+/// emulated screen independent of the smaller layout viewport of a popup.
+pub(crate) fn apply_window_features(
+    viewport: &mut pyro_dom::media::Viewport,
+    features: pyro_webapi::window_features::WindowFeatures,
+) -> (bool, i32, i32) {
+    let screen_width = viewport.screen_width.unwrap_or(viewport.width);
+    let screen_height = viewport.screen_height.unwrap_or(viewport.height);
+    // A headless surface has no native window decoration. Its smallest
+    // visible viewport is one CSS pixel, including under device emulation.
+    let dimension = |requested: i32, available: u32| (requested.max(1) as u32).min(available);
+    if let Some(width) = features.width {
+        viewport.screen_width = Some(screen_width);
+        viewport.width = dimension(width, screen_width);
+    }
+    if let Some(height) = features.height {
+        viewport.screen_height = Some(screen_height);
+        viewport.height = dimension(height, screen_height);
+    }
+    let position = |requested: Option<i32>, available: u32| {
+        (requested.unwrap_or(0).max(0) as u32).min(available) as i32
+    };
+    (features.is_popup, position(features.left, screen_width.saturating_sub(viewport.width)),
+        position(features.top, screen_height.saturating_sub(viewport.height)))
+}
+
 #[derive(Clone)]
 pub(crate) struct Settings {
     pub local: pyro_webapi::StorageNamespace,
@@ -99,6 +137,7 @@ pub(crate) struct Settings {
     pub session: pyro_webapi::StorageNamespace,
     pub net: Option<pyro_net::NetClient>,
     pub viewport: pyro_dom::media::Viewport,
+    pub window_chrome: (bool, i32, i32),
     pub user_agent: Option<pyro_webapi::UserAgentOverride>,
     pub extra_headers: pyro_net::http::HeaderMap,
     pub cache_disabled: bool,
@@ -161,11 +200,24 @@ pub fn realm_page(scope: &pyro_js::Scope<'_>) -> Option<PageId> {
 /// Frame keys of one page without a heap allocation for up to four frames.
 pub type FrameKeys = smallvec::SmallVec<[FrameKey; 4]>;
 
+enum InitialIframeLoad {
+    Navigate,
+    Suppressed,
+    Blank { url: url::Url, explicit: bool },
+}
+
+pub(crate) type LazyFrameStamp = (((u64, u64, u32, u32), u64), bool, bool);
+
 pub(crate) struct FrameHost {
     pub children: RefCell<BTreeMap<u64, DocumentState>>,
     pub root: RefCell<Frame>,
     root_nav: Rc<PageNav>,
     pub dom: pyro_dom::parse::DomRef,
+    pub(crate) cluster_group: Cell<pyro_webapi::AgentClusterGroup>,
+    /// The browsing context group's historical agent cluster key map (HTML § 7.1.4 "obtain a
+    /// similar-origin window agent"): per origin, whether its agent cluster is origin-keyed. Shared
+    /// by the pages of the group (a popup takes its opener's), as `cluster_group` is.
+    origin_keying: RefCell<OriginKeying>,
     pub settings: RefCell<Settings>,
     pub page: PageId,
     pub context: ContextId,
@@ -182,6 +234,9 @@ pub(crate) struct FrameHost {
     /// The page that opened this one as a popup with its opener kept
     /// (`Browser::adopt_popup`): the top-level window's `opener`.
     pub(crate) opener: RefCell<Option<std::rc::Weak<FrameHost>>>,
+    /// For a popup made by `window.open` (`prebuild_popup`): the frame of the opener page whose
+    /// document called it, which the popup's `opener` is (a child frame's window, not the top's).
+    pub(crate) opener_frame: Cell<Option<FrameKey>>,
     /// For such a popup, the ticket through which the opener's document
     /// reaches it (its `window.open` result is `event.source` there).
     pub(crate) popup: RefCell<Option<Rc<pyro_webapi::PopupTicket>>>,
@@ -190,6 +245,9 @@ pub(crate) struct FrameHost {
     /// inherit the creator's origin) take as theirs (HTML: a new top-level browsing context's
     /// initial document's environment comes from its creator's), not one computed as top-level.
     pub(crate) creator_secure: Cell<Option<bool>>,
+    /// For such a popup, its creator document's CSP when it was made, which its local-scheme
+    /// documents inherit (`Browser::local_scheme_csp`).
+    pub(crate) creator_csp: RefCell<Option<pyro_webapi::csp::InheritedCsp>>,
     /// The other pages sharing this page's DOM store: the popups it opened, and its opener's group
     /// (a popup takes its opener's store, see `prebuild_popup`). Their realms are siblings of this
     /// page's for node wrappers (`sibling_realms`).
@@ -208,9 +266,22 @@ pub(crate) struct FrameHost {
     /// `<object>`/`<embed>` elements not fetched because they were not being rendered: fetched
     /// once rendered (`Browser::fetch_rendered_objects`).
     pub(crate) hidden_objects: RefCell<Vec<(FrameKey, NodeId)>>,
+    /// Lazy iframes whose navigation waits for the lazy load check (`Browser::resume_lazy_frames`),
+    /// each with the parent's observation stamp, `load` state and laziness at its last check.
+    pub(crate) lazy_frames: RefCell<Vec<(FrameKey, Option<LazyFrameStamp>)>>,
+    /// Lazy iframes the check let go: their next attribute processing navigates.
+    pub(crate) lazy_approved: RefCell<Vec<FrameKey>>,
+    /// Lazy iframes navigated by something else (a link, `location`, a reload) while their
+    /// lazy load was pending: HTML clears their lazy load resumption steps, so it never runs.
+    pub(crate) lazy_cancelled: RefCell<Vec<FrameKey>>,
+    /// The frames whose attribute processing is navigating them now (such a navigation cancels
+    /// nothing; another frame's navigation meanwhile still does).
+    pub(crate) attribute_navigation: RefCell<Vec<FrameKey>>,
     /// The layout engine's sync stamp when the hidden objects were last checked.
     pub(crate) hidden_checked_at: Cell<Option<(u64, u64, u32, u32)>>,
 }
+type OriginKeying = Rc<RefCell<std::collections::HashMap<String, bool>>>;
+
 /// A popup page made when `window.open` ran, before the embedder creates the
 /// page: its frame tree with the initial about:blank document and realms
 /// (HTML creates that document synchronously, so the opener can script it at
@@ -223,6 +294,28 @@ pub(crate) struct PrebuiltPopup {
 }
 
 impl FrameHost {
+    /// HTML "obtain a similar-origin window agent": the first document of `origin` in the browsing
+    /// context group decides whether its agent cluster is origin-keyed (`requested`: it asked with
+    /// `Origin-Agent-Cluster: ?1` in a secure context); later documents of the origin keep it.
+    pub(crate) fn record_origin_keying(&self, origin: &str, requested: bool) {
+        let map = self.origin_keying.borrow().clone();
+        map.borrow_mut().entry(origin.to_owned()).or_insert(requested);
+    }
+
+    /// Whether `origin`'s agent cluster in this browsing context group is origin-keyed (an origin
+    /// no document recorded is site-keyed).
+    pub(crate) fn origin_keyed(&self, origin: &str) -> bool {
+        let map = self.origin_keying.borrow().clone();
+        let keyed = map.borrow().get(origin).copied().unwrap_or(false);
+        keyed
+    }
+
+    /// Joins `opener`'s browsing context group's key map (a popup adopted with its opener kept).
+    pub(crate) fn share_origin_keying(&self, opener: &FrameHost) {
+        let map = opener.origin_keying.borrow().clone();
+        *self.origin_keying.borrow_mut() = map;
+    }
+
     /// The popup page `window.open` asks for, made now in this page's
     /// context: a top-level frame whose initial about:blank document has the
     /// opener frame's origin and base URL and the session storage copied for
@@ -232,6 +325,7 @@ impl FrameHost {
         opener: FrameKey,
         session: pyro_webapi::StorageNamespace,
         name: String,
+        features: pyro_webapi::window_features::WindowFeatures,
     ) -> Result<PrebuiltPopup, JsError> {
         let from = self.frame(opener).ok_or(JsError::ContextDestroyed)?;
         let creator_secure = crate::window::frame_chain_secure(self, opener, &from.url);
@@ -260,7 +354,8 @@ impl FrameHost {
         let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
         let mut settings = self.settings.borrow().clone();
         settings.session = session;
-        settings.viewport = Default::default();
+        settings.viewport = popup_viewport(&settings.viewport);
+        settings.window_chrome = apply_window_features(&mut settings.viewport, features);
         settings.user_agent = None;
         settings.extra_headers = Default::default();
         let host = Rc::new(Self {
@@ -271,6 +366,8 @@ impl FrameHost {
             // adopted into the popup's (`w.document.body.appendChild(node)`), which a store of its
             // own could not hold (HTML: one browsing context group, one event loop).
             dom: self.dom.clone(),
+            cluster_group: Cell::new(self.cluster_group.get()),
+            origin_keying: RefCell::new(self.origin_keying.borrow().clone()),
             settings: RefCell::new(settings),
             page: id,
             context: self.context,
@@ -284,13 +381,19 @@ impl FrameHost {
             class: Cell::new(self.class.get()),
             // Its `window.opener` from the start (`Browser::adopt_popup` sets it again).
             opener: RefCell::new(Some(Rc::downgrade(self))),
+            opener_frame: Cell::new(Some(opener)),
             popup: RefCell::new(None),
             creator_secure: Cell::new(None),
+            creator_csp: RefCell::new(None),
             dom_peers: RefCell::new(Vec::new()),
             quiet_reinserts: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
+            lazy_frames: RefCell::new(Vec::new()),
+            lazy_approved: RefCell::new(Vec::new()),
+            lazy_cancelled: RefCell::new(Vec::new()),
+            attribute_navigation: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(id)),
         });
@@ -300,6 +403,16 @@ impl FrameHost {
         host.dom_peers.borrow_mut().push(Rc::downgrade(self));
         let key: FrameKey = id.into();
         let dom = bindings::create(&host, key, "about:blank", &frame.loader_id)?;
+        // HTML Window reuse: the popup's first same-origin document keeps this Window (what the
+        // opener put on it, `w.addEventListener("load", …)` included), as an iframe's does.
+        dom.set_reusable_window(true);
+        // CSP: its initial about:blank document, and the local-scheme documents it loads later
+        // (`window.open` of a `blob:` or `javascript:` URL), have its creator's policies.
+        if let Some(creator) = self.page_dom(opener) {
+            let inherited = pyro_webapi::csp::InheritedCsp::of(&creator);
+            inherited.apply(&dom);
+            *host.creator_csp.borrow_mut() = Some(inherited);
+        }
         // Nothing loads into it: it is complete as made (as in browsers).
         dom.set_ready_state(dom.document(), "complete");
         nav.commit_document("about:blank", HistoryHandling::Replace, Some((host.dom.clone(), dom.document())));
@@ -333,6 +446,8 @@ impl FrameHost {
             root: RefCell::new(root),
             root_nav: nav,
             dom: Rc::new(RefCell::new(pyro_dom::Dom::new())),
+            cluster_group: Cell::default(),
+            origin_keying: RefCell::default(),
             settings: RefCell::new(Settings {
                 local,
                 services,
@@ -340,6 +455,7 @@ impl FrameHost {
                 session: Default::default(),
                 net: browser.context_net(context).cloned(),
                 viewport: Default::default(),
+                window_chrome: Default::default(),
                 user_agent: None,
                 extra_headers: Default::default(),
                 cache_disabled: false,
@@ -358,13 +474,19 @@ impl FrameHost {
             retired: RefCell::new(Vec::new()),
             class: Cell::new(browser.engine.register::<Window>()),
             opener: RefCell::new(None),
+            opener_frame: Cell::new(None),
             popup: RefCell::new(None),
             creator_secure: Cell::new(None),
+            creator_csp: RefCell::new(None),
             dom_peers: RefCell::new(Vec::new()),
             quiet_reinserts: RefCell::new(Vec::new()),
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
+            lazy_frames: RefCell::new(Vec::new()),
+            lazy_approved: RefCell::new(Vec::new()),
+            lazy_cancelled: RefCell::new(Vec::new()),
+            attribute_navigation: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
@@ -533,7 +655,19 @@ impl FrameHost {
         loader::install_module_fetcher(self.sched.clone(), key, realm);
         self.push_realm(key, None, realm)?;
         // Bindings stay installed on the global; init scripts run again.
-        self.finish_realm(realm, key, &None, &[], &scripts)
+        self.finish_realm(realm, key, &None, &[], &scripts)?;
+        // A top-level frame's navigation clears its execution contexts for automation clients
+        // (CDP `Runtime.executionContextsCleared`): the kept realm is announced again as the new
+        // document's. A child frame's contexts are not cleared.
+        if key.child.is_none() {
+            self.emit(PageEvent::RealmCreated {
+                frame_id: frame.id,
+                realm: realm.id(),
+                world: None,
+                origin: frame.origin,
+            });
+        }
+        Ok(())
     }
     /// The frame's WindowProxy for its new main-world `realm`: the proxy of
     /// the frame's first document, which `realm` adopts, as browsers keep one
@@ -582,6 +716,7 @@ impl FrameHost {
                 scope.eval(crate::clock::DATE_SCRIPT, Some("pyro://internal/clock.js"), 1)?;
             }
             window::init_frame_indices(&scope, helpers.get_atom("accessor")?)?;
+            window::init_location_unforgeables(&scope, helpers)?;
         }
         loader::install_module_fetcher(self.sched.clone(), key, realm);
         Ok(())
@@ -641,7 +776,7 @@ impl FrameHost {
     /// The pending `<object>`/`<embed>` elements (not rendered when connected) that are rendered
     /// now get their child navigable; those no longer connected, or no longer showing a document,
     /// are dropped. HTML runs the element's steps again when its rendering changes.
-    pub fn connect_rendered_objects(self: &Rc<Self>) {
+    pub fn connect_rendered_objects(self: &Rc<Self>, mut before_connect: impl FnMut(FrameKey)) {
         if self.pending_objects.borrow().is_empty() {
             return;
         }
@@ -653,6 +788,7 @@ impl FrameHost {
             };
             if keep && self.owner(node).is_none() {
                 // Puts it back when it is still not rendered.
+                before_connect(parent);
                 let _ = self.connected(parent, &loader, node);
             }
         }
@@ -690,7 +826,12 @@ impl FrameHost {
         sandbox.scripts_disabled |= ancestor.sandbox.scripts_disabled;
         sandbox.automatic_features_blocked |= ancestor.sandbox.automatic_features_blocked;
         sandbox.popups_blocked |= ancestor.sandbox.popups_blocked;
-        if self.children.borrow().len() >= 128 {
+        sandbox.document_domain_blocked |= ancestor.sandbox.document_domain_blocked;
+        sandbox.forms_blocked |= ancestor.sandbox.forms_blocked;
+        sandbox.propagates_to_popups |= ancestor.sandbox.propagates_to_popups;
+        sandbox.downloads_blocked |= ancestor.sandbox.downloads_blocked;
+        // Blink's Page::kMaxNumberOfFrames: a page holds at most 1000 subframes.
+        if self.children.borrow().len() >= 1000 {
             return Err(JsError::Range("child frame limit reached".into()));
         }
         let mut depth = 0;
@@ -708,7 +849,9 @@ impl FrameHost {
         debug_assert_eq!(child_of_frame_id(&fid.0), Some(id));
         let lid = LoaderId(format!("{:032X}", self.next()));
         let origin = if sandbox.opaque { "null".into() } else { ancestor.origin.clone() };
-        let nav = PageNav::new(self.page, fid.clone(), self.sched.clone(), self.observer.clone());
+        let nav = PageNav::new_child(&self.root_nav, self.page, fid.clone(), self.sched.clone(), self.observer.clone());
+        // The container's referrer policy when the initial about:blank document's navigation began.
+        nav.snapshot_container_policy(crate::loader::element_referrer_policy(&self.dom.borrow(), node));
         let frame = Frame {
             id: fid.clone(),
             parent: Some(ancestor.id.clone()),
@@ -737,6 +880,7 @@ impl FrameHost {
                 main_frame: frame,
                 nav: nav.clone(),
                 pending_loader: None,
+                pending_frame_attributes: 0,
                 pending_cancel: None,
                 pending_script: None,
                 pending_planned: None,
@@ -746,14 +890,30 @@ impl FrameHost {
                 preloads: Default::default(),
                 refresh: Default::default(),
                 _owner_pin: Some(loader::ResourceNode { dom: self.dom.clone(), node }),
+                required_csp: None,
+                committing_required_csp: None,
+                committing_csp_sandbox: None,
+                csp_sandbox: None,
+                enforce_required_csp: None,
+                in_order_scripts: Default::default(),
             },
         );
         self.refresh_indices(parent);
         self.emit(PageEvent::FrameChildFrameCreated { parent: ancestor.id, frame_id: fid.clone() });
         let result = (|| {
             let dom = bindings::create(self, key, "about:blank", &lid)?;
+            if let Some(creator) = &ancestor.page_dom {
+                dom.inherit_initial_referrer(creator);
+                // CSP: the initial about:blank document has its parent's policies (a page that
+                // bypasses CSP has none to give).
+                pyro_webapi::csp::InheritedCsp::of(creator).apply(&dom);
+            }
+            // The initial empty Document is already complete, including during
+            // the interval before a non-blank src commits.
+            dom.set_ready_state(dom.document(), "complete");
             nav.commit_document("about:blank", HistoryHandling::Replace, Some((self.dom.clone(), dom.document())));
             nav.set_page_dom(&dom);
+            self.store_ancestor_origins(key);
             {
                 let mut children = self.children.borrow_mut();
                 let child = children.get_mut(&id).ok_or(JsError::ContextDestroyed)?;
@@ -789,7 +949,8 @@ impl FrameHost {
                 quiet.retain(|(_, page)| page.upgrade().is_some_and(|p| p.is_dispatching_load()));
                 quiet.iter().position(|(n, _)| *n == node).map(|i| quiet.remove(i)).is_some()
             };
-            if quiet {
+            let initial = self.initial_iframe_load(node, parent);
+            if quiet || matches!(initial, InitialIframeLoad::Suppressed) {
                 let mut children = self.children.borrow_mut();
                 if let Some(child) = children.get_mut(&id) {
                     if let Some(dom) = &child.main_frame.page_dom {
@@ -798,6 +959,28 @@ impl FrameHost {
                     child.main_frame.dom_content_loaded = true;
                     child.main_frame.loaded = true;
                 }
+            } else if let InitialIframeLoad::Blank { url, explicit } = initial {
+                // HTML "process the iframe attributes", initial insertion: run
+                // the iframe load event steps before returning to the inserter.
+                let (document, frame_id) = {
+                    let mut children = self.children.borrow_mut();
+                    let child = children.get_mut(&id).ok_or(JsError::ContextDestroyed)?;
+                    child.main_frame.dom_content_loaded = true;
+                    child.main_frame.loaded = true;
+                    child.main_frame.url = url.to_string();
+                    (child.main_frame.page_dom.clone().ok_or(JsError::ContextDestroyed)?, child.main_frame.id.clone())
+                };
+                if url.as_str() != "about:blank" { nav.update_initial_blank_url(url.as_str()); }
+                if explicit { document.note_blank_requested(); }
+                document.set_completely_loaded();
+                let timestamp = self.started.elapsed().as_secs_f64();
+                self.emit(PageEvent::FrameDomContentLoaded { frame_id: frame_id.clone(), loader_id: lid.clone(), timestamp });
+                self.emit(PageEvent::FrameLoaded { frame_id, loader_id: lid.clone(), timestamp });
+                nav.notify_timeline("navigation");
+                if let Some(parent_dom) = ancestor.page_dom {
+                    document.run_iframe_load(|| pyro_webapi::lifecycle::resource_loaded(&parent_dom, node, true));
+                }
+                self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| b.watch_network_idle(key, lid));
             } else {
                 self.queue_attributes(key, lid);
             }
@@ -807,6 +990,39 @@ impl FrameHost {
             self.detach(key);
         }
         result
+    }
+
+    /// HTML shared attribute processing, for an iframe's initial insertion.
+    fn initial_iframe_load(&self, node: NodeId, parent: FrameKey) -> InitialIframeLoad {
+        let dom = self.dom.borrow();
+        let Ok(el) = dom.element(node) else { return InitialIframeLoad::Navigate };
+        if !el.is_html() || &*el.name.local != "iframe" || el.attr("srcdoc").is_some() {
+            return InitialIframeLoad::Navigate;
+        }
+        let src = el.attr("src");
+        let url = src.filter(|raw| !raw.is_empty()).and_then(|raw| {
+            let base = crate::loader::node_base_url(&dom, node).and_then(|url| url::Url::parse(&url).ok());
+            url::Url::options().base_url(base.as_ref()).parse(raw).ok()
+        }).unwrap_or_else(|| url::Url::parse("about:blank").expect("static URL"));
+        let blank = url.scheme() == "about" && url.cannot_be_a_base() && url.path() == "blank";
+        // The ancestor check (an iframe showing an ancestor's URL loads nothing) leaves about:blank
+        // alone, as Chrome does (`FrameLoader::IsURLAllowed`): an about:blank iframe in an
+        // about:blank document fires its `load` (WPT dom/nodes/Document-base-url-not-live.window.html).
+        let mut ancestor = parent;
+        while !blank {
+            let address = self.nav(ancestor).map(|nav| nav.url());
+            if address.as_ref().is_some_and(|a| a.split('#').next() == url.as_str().split('#').next()) {
+                return InitialIframeLoad::Suppressed;
+            }
+            let next = self.parent_key(ancestor);
+            if next == ancestor { break; }
+            ancestor = next;
+        }
+        if blank {
+            InitialIframeLoad::Blank { url, explicit: src.is_some() }
+        } else {
+            InitialIframeLoad::Navigate
+        }
     }
 
     /// The documents of frame `key` and its descendants, the frame's first (pre-order).
@@ -822,7 +1038,31 @@ impl FrameHost {
         out
     }
     pub fn queue_attributes(&self, key: FrameKey, loader: LoaderId) {
-        self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| b.process_iframe_attributes(key, &loader));
+        let Some(id) = key.child else { return };
+        let parent = self.parent_key(key);
+        let mut children = self.children.borrow_mut();
+        let Some(child) = children.get_mut(&id) else { return };
+        child.pending_frame_attributes += 1;
+        // HTML "beginning navigation" snapshots the container's referrer policy now (its
+        // `location.ancestorOrigins` masking), not when the queued navigation runs.
+        let owner = child.main_frame.owner;
+        let nav = child.nav.clone();
+        drop(children);
+        if let Some(owner) = owner {
+            nav.snapshot_container_policy(crate::loader::element_referrer_policy(&self.dom.borrow(), owner));
+        }
+        // A `document.open()` on the frame's document from now on stops the navigation the
+        // attributes start (a javascript: src).
+        let stops = nav.stop_count();
+        nav.attributes_queued.set(nav.attributes_queued.get() + 1);
+        self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
+            if let Some(mut doc) = b.doc_mut(key) {
+                doc.pending_frame_attributes -= 1;
+                doc.nav.attributes_run.set(doc.nav.attributes_run.get() + 1);
+            }
+            b.process_iframe_attributes(key, &loader, stops);
+            b.maybe_fire_load(parent);
+        });
     }
     pub fn detach(self: &Rc<Self>, key: FrameKey) {
         self.invalidate_focus(key, true);
@@ -864,22 +1104,54 @@ impl FrameHost {
     pub fn has_retired(&self) -> bool {
         !self.retired.borrow().is_empty()
     }
+    /// Ends the frames removed from this page (`detach`). Their windows linger while script
+    /// still holds them, as a navigated child frame's do (`Realm::linger`): a removed iframe's
+    /// window answers `parent`/`top` with null instead of throwing.
     pub fn drain_retired(&self) {
+        self.drain_retired_with(true);
+    }
+    /// `drain_retired` for a page going away: the removed frames' realms end at once.
+    pub fn drain_retired_disposing(&self) {
+        self.drain_retired_with(false);
+    }
+    fn drain_retired_with(&self, linger: bool) {
         let retired = std::mem::take(&mut *self.retired.borrow_mut());
         for state in retired {
             let frame = state.main_frame;
             // pyro: what its layout loaded or waits for goes with it (`forget_document`).
             self.layout_bodies.forget_document(&crate::document_client(&frame));
+            let linger = linger && frame.page_dom.is_some();
             if let Some(dom) = &frame.page_dom {
-                dom.dispose();
-            }
-            for world in frame.realms {
-                window::cancel_timers(&world.realm);
-                if let Some(dom) = &frame.page_dom {
-                    pyro_webapi::lifecycle::realm_disposed(dom, world.realm.id());
+                if linger {
+                    dom.detach();
+                } else {
+                    dom.dispose();
                 }
-                world.realm.dispose();
+            }
+            let mut lingered = true;
+            for world in frame.realms {
+                if linger {
+                    window::release_roots(&world.realm);
+                } else {
+                    window::cancel_timers(&world.realm);
+                }
+                if let Some(dom) = &frame.page_dom {
+                    if linger {
+                        pyro_webapi::lifecycle::realm_detached(dom, world.realm.id());
+                    } else {
+                        pyro_webapi::lifecycle::realm_disposed(dom, world.realm.id());
+                    }
+                }
+                if !(linger && world.realm.linger()) {
+                    lingered = false;
+                    world.realm.dispose();
+                }
                 self.emit(PageEvent::RealmDestroyed { frame_id: frame.id.clone(), realm: world.realm.id() });
+            }
+            if linger && !lingered {
+                if let Some(dom) = &frame.page_dom {
+                    dom.dispose();
+                }
             }
             if let Some(dom) = &frame.page_dom {
                 let _ = dom.dom.borrow_mut().set_document_active(dom.document(), false);
@@ -944,18 +1216,100 @@ pub(crate) struct Sandbox {
     /// still follows a refresh, as Chrome does.
     pub automatic_features_blocked: bool,
     pub popups_blocked: bool,
+    /// The sandboxed navigation browsing context flag (any `sandbox` attribute): no navigating
+    /// an ancestor below the top-level one.
+    pub navigation_blocked: bool,
+    /// The sandboxed top-level navigation flags: neither `allow-top-navigation` nor
+    /// `allow-top-navigation-by-user-activation`.
+    pub top_navigation_blocked: bool,
+    /// Only `allow-top-navigation-by-user-activation`: the top-level one only with activation.
+    pub top_navigation_needs_activation: bool,
+    /// The sandboxed `document.domain` browsing context flag (any sandbox, even with
+    /// `allow-same-origin`): setting `document.domain` throws.
+    pub document_domain_blocked: bool,
+    /// The sandboxed forms browsing context flag (no `allow-forms`): no form submission.
+    pub forms_blocked: bool,
+    /// The sandbox propagates to auxiliary browsing contexts flag (no
+    /// `allow-popups-to-escape-sandbox`): popups take these flags.
+    pub propagates_to_popups: bool,
+    /// The sandboxed downloads browsing context flag (no `allow-downloads`): no download starts.
+    pub downloads_blocked: bool,
 }
 impl Sandbox {
     pub fn parse(value: Option<&str>) -> Self {
         let Some(value) = value else { return Self::default() };
         let tokens: Vec<_> = value.split_ascii_whitespace().collect();
         let scripts_disabled = !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-scripts"));
+        let top = tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-top-navigation"));
+        let top_by_activation =
+            tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-top-navigation-by-user-activation"));
         Self {
             opaque: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-same-origin")),
             scripts_disabled,
             automatic_features_blocked: scripts_disabled,
             popups_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-popups")),
+            navigation_blocked: true,
+            top_navigation_blocked: !top && !top_by_activation,
+            top_navigation_needs_activation: !top && top_by_activation,
+            document_domain_blocked: true,
+            forms_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-forms")),
+            propagates_to_popups: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-popups-to-escape-sandbox")),
+            downloads_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-downloads")),
         }
+    }
+
+    /// The flags as `PopupTicket` sandbox bits (0: nothing sandboxed).
+    pub fn to_bits(self) -> u32 {
+        [
+            self.opaque,
+            self.scripts_disabled,
+            self.automatic_features_blocked,
+            self.popups_blocked,
+            self.navigation_blocked,
+            self.top_navigation_blocked,
+            self.top_navigation_needs_activation,
+            self.document_domain_blocked,
+            self.forms_blocked,
+            self.propagates_to_popups,
+            self.downloads_blocked,
+        ]
+        .iter()
+        .enumerate()
+        .fold(0, |bits, (i, &set)| if set { bits | 1 << i } else { bits })
+    }
+    pub fn from_bits(bits: u32) -> Self {
+        let set = |i: u32| bits & (1 << i) != 0;
+        Self {
+            opaque: set(0),
+            scripts_disabled: set(1),
+            automatic_features_blocked: set(2),
+            popups_blocked: set(3),
+            navigation_blocked: set(4),
+            top_navigation_blocked: set(5),
+            top_navigation_needs_activation: set(6),
+            document_domain_blocked: set(7),
+            forms_blocked: set(8),
+            propagates_to_popups: set(9),
+            downloads_blocked: set(10),
+        }
+    }
+
+    /// The flags of a `Content-Security-Policy` `sandbox` directive in `csp` (enforced policies,
+    /// comma-separated; directives semicolon-separated), if it has one: those of a `sandbox`
+    /// attribute with the directive's tokens (CSP 3 § 6.3.2.1).
+    /// Each enforced policy's flags apply: a document with several policies gets their union
+    /// (the first `sandbox` directive of a policy counts, as CSP ignores duplicates).
+    pub fn from_csp(csp: &str) -> Option<Self> {
+        csp.split(',')
+            .filter_map(|policy| {
+                policy.split(';').find_map(|directive| {
+                    let directive = directive.trim();
+                    let (name, value) =
+                        directive.split_once(|c: char| c.is_ascii_whitespace()).unwrap_or((directive, ""));
+                    name.eq_ignore_ascii_case("sandbox").then(|| Self::parse(Some(value)))
+                })
+            })
+            .reduce(|a, b| Self::from_bits(a.to_bits() | b.to_bits()))
     }
 }
 impl Browser {
@@ -989,9 +1343,36 @@ impl FrameHost {
     /// The iframe a navigation `target` from `source` names, if `source` may
     /// navigate it: its own subtree first, then same-origin frames of the page
     /// (a simplified "find a navigable by target name").
+    /// HTML "the rules for choosing a navigable" for `_parent` and `_top` (ASCII
+    /// case-insensitive) from frame `source`: `Some(Some(target))` when it may navigate that
+    /// navigable, `Some(None)` when sandboxing forbids it (HTML "allowed by sandboxing to
+    /// navigate"), None for any other name. A top-level frame is its own parent and top.
+    pub fn ancestor_target(&self, source: FrameKey, name: &str, user_activation: bool) -> Option<Option<FrameKey>> {
+        let top = name.eq_ignore_ascii_case("_top");
+        if !top && !name.eq_ignore_ascii_case("_parent") {
+            return None;
+        }
+        let target = if top { FrameKey::from(self.page) } else { self.parent_key(source) };
+        if target == source {
+            return Some(Some(source));
+        }
+        let Some(sandbox) = self.with_frame(source, |f| f.sandbox) else { return Some(None) };
+        let allowed = if target.child.is_none() {
+            !sandbox.top_navigation_blocked && (!sandbox.top_navigation_needs_activation || user_activation)
+        } else {
+            !sandbox.navigation_blocked
+        };
+        Some(allowed.then_some(target))
+    }
     pub fn named_frame(&self, source: FrameKey, name: &str) -> Option<FrameKey> {
         if ["", "_blank", "_self", "_parent", "_top"].iter().any(|k| name.eq_ignore_ascii_case(k)) {
             return None;
+        }
+        // HTML "choose a navigable": the current navigable itself when its target name is
+        // `name` (WPT scroll-to-fragid-from-link-is-synchronous: `<a target>` naming the
+        // window's own name navigates it, a fragment at once).
+        if self.with_frame(source, |f| f.name == name) == Some(true) {
+            return Some(source);
         }
         let named: Vec<_> = self
             .children
@@ -1018,9 +1399,75 @@ impl FrameHost {
             .find(|&&key| in_subtree(key))
             .or_else(|| named.iter().find(|&&key| self.same_origin(source, key)))
             .copied()
+            // The page's root frame (the top-level window) by its name, which every frame of
+            // the page may target as its ancestor.
+            .or_else(|| {
+                let root = FrameKey::from(self.page);
+                (root != source && self.with_frame(root, |f| f.name == name) == Some(true)).then_some(root)
+            })
+    }
+    /// HTML "ancestor origins list" of the document frame `key` just committed, kept for its
+    /// `location.ancestorOrigins`: its parent document's origin, then the parent document's own
+    /// list. A container `referrerpolicy` that hides the parent ([`crate::nav::masks_ancestor_origin`],
+    /// as snapshotted when the navigation began, else the attribute now) makes it "null", and the
+    /// entries of the parent's list right after it that have its origin too. A top-level document's
+    /// list is empty.
+    pub(crate) fn store_ancestor_origins(&self, key: FrameKey) {
+        let Some(nav) = self.nav(key) else { return };
+        let Some(frame) = self.frame(key) else { return };
+        let Some(parent) = frame.parent.as_ref().and_then(|id| self.key(id)) else {
+            nav.set_ancestor_origins(Vec::new());
+            return;
+        };
+        let Some(embedder) = self.frame(parent).map(|f| f.origin) else { return };
+        let parent_list = self.nav(parent).map(|n| n.ancestor_origins()).unwrap_or_default();
+        let policy = match nav.committed_container_policy() {
+            Some(snapshot) => snapshot,
+            None => frame.owner.and_then(|owner| crate::loader::element_referrer_policy(&self.dom.borrow(), owner)),
+        };
+        let masked = policy.is_some_and(|p| crate::nav::masks_ancestor_origin(p, &embedder, &frame.origin));
+        let mut list = Vec::with_capacity(parent_list.len() + 1);
+        if masked {
+            // Every occurrence of the embedder's origin in the parent's list is masked too.
+            list.push("null".to_owned());
+            list.extend(parent_list.into_iter().map(|o| if o == embedder { "null".to_owned() } else { o }));
+        } else {
+            list.push(embedder);
+            list.extend(parent_list);
+        }
+        nav.set_ancestor_origins(list);
     }
     pub(crate) fn parent_key(&self, key: FrameKey) -> FrameKey {
         self.frame(key).and_then(|f| f.parent).and_then(|id| self.key(&id)).unwrap_or(key)
+    }
+    /// HTML "allowed by sandboxing to navigate" for frame `source` navigating frame `target` of
+    /// this page, with or without transient activation: a sandbox navigates only its own frame
+    /// and its descendants (the sandboxed navigation browsing context flag), and the top-level
+    /// one only with `allow-top-navigation`, or with `allow-top-navigation-by-user-activation`
+    /// and activation.
+    pub(crate) fn allowed_by_sandboxing(&self, source: FrameKey, target: FrameKey, activation: bool) -> bool {
+        if source == target {
+            return true;
+        }
+        let Some(sandbox) = self.with_frame(source, |f| f.sandbox) else { return true };
+        let top = FrameKey::from(self.page);
+        let mut descendant = false;
+        let mut current = target;
+        loop {
+            let parent = self.parent_key(current);
+            if parent == current {
+                break;
+            }
+            if parent == source {
+                descendant = true;
+                break;
+            }
+            current = parent;
+        }
+        if target == top {
+            return !sandbox.top_navigation_blocked && (!sandbox.top_navigation_needs_activation || activation);
+        }
+        descendant || !sandbox.navigation_blocked
     }
     pub fn child_keys(&self, key: FrameKey) -> FrameKeys {
         if !self.has_children() {
@@ -1144,11 +1591,11 @@ impl FrameHost {
             return Ok(value.get(s));
         }
         let data = CrossWindowData { host: Rc::downgrade(self), source: Some(source), from: None, target, foreign: false };
-        Ok(s.wrap::<CrossWindow>(data, Some(pyro_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0))))?
-            .value())
+        cross_window(s, data, pyro_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0)))
     }
-    /// `window.opener` of frame `key`: the opener page's top-level window
-    /// for the top-level frame of a popup that kept its opener (null for
+    /// `window.opener` of frame `key`: the window of the opener page's frame that opened it (its
+    /// top-level window unless `window.open` ran in a child frame) for the top-level frame of a
+    /// popup that kept its opener (null for
     /// child frames, other pages, and a closed opener). Same-origin openers
     /// are reached directly; otherwise a cross-origin stand-in.
     pub fn opener_window<'s>(
@@ -1161,7 +1608,11 @@ impl FrameHost {
             return Ok(s.null());
         }
         let Some(opener) = self.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade) else { return Ok(s.null()) };
-        let target = FrameKey::from(opener.page);
+        let target = self
+            .opener_frame
+            .get()
+            .filter(|k| k.page == opener.page && opener.frame(*k).is_some())
+            .unwrap_or_else(|| FrameKey::from(opener.page));
         let (Some(mine), Some(theirs)) = (self.frame(key), opener.frame(target)) else { return Ok(s.null()) };
         let same_origin = if mine.origin == "null" || theirs.origin == "null" {
             mine.origin == theirs.origin && mine.opaque_origin == theirs.opaque_origin
@@ -1175,7 +1626,7 @@ impl FrameHost {
             let value = pyro_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        opener_proxy(s, &opener, Some((Rc::downgrade(self), key)))
+        opener_proxy(s, &opener, target, Some((Rc::downgrade(self), key)))
     }
     pub fn relation<'s>(
         self: &Rc<Self>,
@@ -1183,6 +1634,11 @@ impl FrameHost {
         key: FrameKey,
         top: bool,
     ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+        // HTML `parent`/`top`: null once the window's navigable is gone (its container, or an
+        // ancestor's, was removed: `detach` dropped the frame and its descendants).
+        if self.with_frame(key, |_| ()).is_none() {
+            return Ok(s.null());
+        }
         self.window_value(s, key, if top { self.page.into() } else { self.parent_key(key) })
     }
     pub fn frame_element<'s>(
@@ -1240,9 +1696,6 @@ impl FrameHost {
             0x464f_5245_4947_4e00 ^ u64::from(self.page.0),
             target.child.unwrap_or(u64::MAX),
         );
-        if let Some(o) = s.lookup_identity(key) {
-            return Ok(o.value());
-        }
         let data = CrossWindowData {
             host: Rc::downgrade(self),
             source: None,
@@ -1250,7 +1703,7 @@ impl FrameHost {
             target,
             foreign: true,
         };
-        Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
+        cross_window(s, data, key)
     }
 
     /// The child window of frame `parent` with index `key` (`"0"`) or with
@@ -1300,15 +1753,36 @@ impl FrameHost {
 fn opener_proxy<'s>(
     s: &pyro_js::Scope<'s>,
     opener: &Rc<FrameHost>,
+    target: FrameKey,
     from: Option<(std::rc::Weak<FrameHost>, FrameKey)>,
 ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
-    let key = pyro_js::IdentityKey(0x4f50454e45525758, u64::from(opener.page.0));
-    if let Some(o) = s.lookup_identity(key) {
-        return Ok(o.value());
+    // One stand-in per window of the opener page (its top-level one, or a child frame's).
+    let key = match target.child {
+        None => pyro_js::IdentityKey(0x4f50454e45525758, u64::from(opener.page.0)),
+        Some(child) => pyro_js::IdentityKey(0x4f50454e45524658, child),
+    };
+    let data = CrossWindowData { host: Rc::downgrade(opener), source: None, from, target, foreign: false };
+    cross_window(s, data, key)
+}
+
+/// The WindowProxy this realm sees for a cross-origin window: HTML's cross-origin object
+/// (`Scope::cross_origin_window`) over a `CrossWindow` stand-in, one per identity `key` while
+/// either lives (the stand-in keeps the proxy, the proxy's handler the stand-in).
+fn cross_window<'s>(
+    s: &pyro_js::Scope<'s>,
+    data: CrossWindowData,
+    key: pyro_js::IdentityKey,
+) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+    const PROXY: &str = "crossOriginWindowProxy";
+    if let Some(stand_in) = s.lookup_identity(key) {
+        if let Some(proxy) = s.get_hidden(stand_in, PROXY)?.filter(|p| p.is_object()) {
+            return Ok(proxy);
+        }
     }
-    let data =
-        CrossWindowData { host: Rc::downgrade(opener), source: None, from, target: opener.page.into(), foreign: false };
-    Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
+    let stand_in = s.wrap::<CrossWindow>(data, Some(key))?;
+    let proxy = s.cross_origin_window(stand_in)?;
+    s.set_hidden(stand_in, PROXY, proxy.value())?;
+    Ok(proxy.value())
 }
 
 /// The window whose script is running (HTML's incumbent global, as
@@ -1367,21 +1841,20 @@ pub(crate) fn post_message<'s>(
     target: FrameKey,
 ) -> pyro_js::JsResult<()> {
     let (source_host, source) = source.unwrap_or_else(|| (host.clone(), target));
-    let incumbent = source_host.with_frame(source, |f| f.origin.clone()).unwrap_or_else(|| "null".into());
     // Origins compared by key: an opaque origin ("null" serialized) equals only itself.
-    let incumbent_key = source_host.with_frame(source, frame_origin_key).unwrap_or_else(|| "opaque:gone".into());
-    let (message, target_origin, options) = pyro_webapi::window_message::post_message_args(s, a, &incumbent_key)?;
+    let incumbent_key = source_host.with_frame(source, frame_origin_key);
+    let (message, target_origin, options) = pyro_webapi::window_message::post_message_args(s, a, incumbent_key.as_deref().unwrap_or("opaque:gone"))?;
     let found = host.with_frame(target, |f| Some((f.page_dom.clone()?, f.main_realm()?.clone(), frame_origin_key(f))));
     // A window whose document is gone receives nothing.
     let Some((page, realm, origin_key)) = found.flatten() else { return Ok(()) };
     let deliver = target_origin.allows(&origin_key);
     let window = (!Rc::ptr_eq(&source_host, host) || source != target)
         .then(|| message_source(host, target, &source_host, source));
-    pyro_webapi::window_message::send_window_message(s, message, options, &page, &realm, incumbent, window, deliver)
+    pyro_webapi::window_message::send_window_message(s, message, options, &page, &realm, incumbent_key, window, deliver)
 }
 
 /// A frame's origin key (`PageDom::origin_key`'s): its tuple origin, or `opaque:<token>`.
-fn frame_origin_key(f: &Frame) -> String {
+pub(crate) fn frame_origin_key(f: &Frame) -> String {
     if f.origin == "null" { format!("opaque:{}", f.opaque_origin) } else { f.origin.clone() }
 }
 
@@ -1419,10 +1892,30 @@ pub(crate) struct CrossLocationData {
     target: FrameKey,
     /// Base URL of the accessing document, which relative URLs resolve against.
     base: String,
+    /// The accessing window's frame, whose sandbox may forbid the navigation.
+    source: Option<(std::rc::Weak<FrameHost>, FrameKey)>,
 }
 impl CrossLocationData {
     fn navigate(&self, value: pyro_js::Value<'_>, replace: bool) -> pyro_js::JsResult<()> {
-        let nav = self.host.upgrade().and_then(|h| h.nav(self.target)).ok_or(JsError::ContextDestroyed)?;
+        let target_host = self.host.upgrade().ok_or(JsError::ContextDestroyed)?;
+        // HTML "navigate": a source not allowed by sandboxing to navigate the target throws.
+        if let Some((source_host, source)) = self.source.as_ref().and_then(|(h, k)| Some((h.upgrade()?, *k))) {
+            let allowed = if Rc::ptr_eq(&source_host, &target_host) {
+                let activation =
+                    source_host.frame(source).and_then(|f| f.page_dom).is_some_and(|d| d.has_transient_activation());
+                source_host.allowed_by_sandboxing(source, self.target, activation)
+            } else {
+                // Another page's navigable (a popup): neither an ancestor nor the source's top.
+                !source_host.with_frame(source, |f| f.sandbox.navigation_blocked).unwrap_or(false)
+            };
+            if !allowed {
+                return Err(JsError::dom(
+                    "SecurityError",
+                    "The frame attempting navigation is sandboxed and is not allowed to navigate this frame.",
+                ));
+            }
+        }
+        let nav = target_host.nav(self.target).ok_or(JsError::ContextDestroyed)?;
         crate::nav::navigate_cross_origin(&nav, &self.base, value, replace)
     }
 }
@@ -1440,7 +1933,12 @@ impl pyro_js::JsClass for CrossLocation {
                     "Blocked a frame from accessing a cross-origin frame's location.",
                 ));
             }
-            let data = CrossLocationData { host: d.host.clone(), target: d.target, base: d.base.clone() };
+            let data = CrossLocationData {
+                host: d.host.clone(),
+                target: d.target,
+                base: d.base.clone(),
+                source: d.source.clone(),
+            };
             let replace = s.function("replace", move |s, _, a| {
                 a.require(1, "replace")?;
                 data.navigate(a.get(0), true)?;
@@ -1462,11 +1960,13 @@ fn cross_location<'s>(
     w: &CrossWindowData,
     host: &Rc<FrameHost>,
 ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
-    let base = w
-        .accessor(host)
-        .and_then(|(h, key)| h.with_frame(key, |f| f.base_url.clone()))
+    let accessor = w.accessor(host);
+    let base = accessor
+        .as_ref()
+        .and_then(|(h, key)| h.with_frame(*key, |f| f.base_url.clone()))
         .unwrap_or_else(|| "about:blank".into());
-    let data = CrossLocationData { host: Rc::downgrade(host), target: w.target, base };
+    let source = accessor.map(|(h, key)| (Rc::downgrade(&h), key));
+    let data = CrossLocationData { host: Rc::downgrade(host), target: w.target, base, source };
     Ok(s.wrap::<CrossLocation>(data, None)?.value())
 }
 impl pyro_js::JsClass for CrossWindow {
@@ -1488,12 +1988,16 @@ impl pyro_js::JsClass for CrossWindow {
                 }
                 ("parent", None) if w.foreign => host.foreign_ancestor(s, w, host.parent_key(w.target))?,
                 ("top", None) if w.foreign => host.foreign_ancestor(s, w, host.page.into())?,
-                ("window" | "self" | "frames" | "parent" | "top", None) => opener_proxy(s, &host, w.from.clone())?,
+                ("window" | "self" | "frames", None) => opener_proxy(s, &host, w.target, w.from.clone())?,
+                ("parent", None) => opener_proxy(s, &host, host.parent_key(w.target), w.from.clone())?,
+                ("top", None) => opener_proxy(s, &host, host.page.into(), w.from.clone())?,
                 ("window" | "self" | "frames", Some(source)) => host.window_value(s, source, w.target)?,
                 ("parent", Some(source)) => host.window_value(s, source, host.parent_key(w.target))?,
                 ("top", Some(source)) => host.window_value(s, source, host.page.into())?,
                 ("length", _) => s.number(host.child_keys(w.target).len() as f64),
                 ("closed", _) => s.boolean(host.frame(w.target).is_none()),
+                // Not tracked across origins: a frame's window has none.
+                ("opener", _) => s.null(),
                 ("focus", _) => {
                     let weak = w.host.clone();
                     let target = w.target;
@@ -1704,18 +2208,28 @@ impl Browser {
         );
         self.maybe_fire_load(key);
     }
-    pub(crate) fn process_iframe_attributes(&mut self, key: FrameKey, loader: &LoaderId) {
+    pub(crate) fn process_iframe_attributes(&mut self, key: FrameKey, loader: &LoaderId, stops: u64) {
         let Some(host) = self.page(key.page).map(|p| p.frames.clone()) else { return };
+        // The cancel marker belongs to this queued processing: taken before any early return, so
+        // a stale one cannot swallow a later lazy navigation of the frame.
+        let lazy_cancelled = {
+            let mut cancelled = host.lazy_cancelled.borrow_mut();
+            cancelled.iter().position(|k| *k == key).map(|i| cancelled.remove(i)).is_some()
+        };
         let Some(frame) = host.frame(key).filter(|f| &f.loader_id == loader) else { return };
         let Some(owner) = frame.owner else { return };
         let Some(parent) = frame.parent.as_ref().and_then(|id| host.key(id)).and_then(|key| host.frame(key)) else {
             return;
         };
-        let (srcdoc, src, src_base) = {
+        if !host.dom.borrow().is_connected(owner).unwrap_or(false) {
+            return;
+        }
+        if self.defer_lazy_frame(&host, key, owner, parent.page_dom.as_deref(), lazy_cancelled) {
+            return;
+        }
+        host.attribute_navigation.borrow_mut().push(key);
+        let (srcdoc, src, src_base, encoded_src) = {
             let dom = host.dom.borrow();
-            if !dom.is_connected(owner).unwrap_or(false) {
-                return;
-            }
             // An `<object>` hosting a document navigates to its `data`, an `<embed>` to its `src`
             // (neither has `srcdoc`).
             let embedded = dom.is_document_object(owner);
@@ -1725,6 +2239,11 @@ impl Browser {
                 dom.get_attribute(owner, if object { "data" } else { "src" }).ok().flatten().map(str::to_owned),
                 // `<base href>` aware.
                 crate::loader::node_base_url(&dom, owner),
+                // HTML "encoding-parse a URL": the query in the container document's encoding.
+                dom.get_attribute(owner, if object { "data" } else { "src" })
+                    .ok()
+                    .flatten()
+                    .map(|raw| pyro_webapi::html::resolve_url(&dom, owner, raw)),
             )
         };
         let result = if let Some(html) = srcdoc {
@@ -1734,6 +2253,8 @@ impl Browser {
             let raw = src.unwrap_or_default();
             let url = if raw.trim().is_empty() {
                 "about:blank".to_string()
+            } else if let Some(encoded) = encoded_src.filter(|_| src_base.is_some()) {
+                encoded
             } else {
                 url::Url::parse(src_base.as_deref().unwrap_or(&parent.base_url))
                     .and_then(|u| u.join(&raw))
@@ -1746,7 +2267,26 @@ impl Browser {
                 // document, which stays; its load follows. Author code in that check (a default
                 // policy) may remove the container: then nothing runs and no load is fired.
                 let parent_key = frame.parent.as_ref().and_then(|id| host.key(id));
+                // CSP: the URL is checked against the inserting document's policies (the
+                // navigation's initiator), snapshotted now.
+                let initiator =
+                    parent_key.and_then(|k| host.page_dom(k)).map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom));
+                let js_url = url.clone();
+                // The frame holds its parent's `load` until the script has run and its string
+                // result (a new document) has begun: the parent's `load` sees that document.
+                if let Some(mut doc) = self.doc_mut(key) {
+                    doc.pending_frame_attributes += 1;
+                }
+                // `document.open()` on the frame's document since the attributes were queued stops
+                // loading: the javascript: URL is dropped (WPT
+                // document-open-cancels-javascript-url-navigation). One before then does not.
                 self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
+                    if let Some(mut doc) = b.doc_mut(key) {
+                        doc.pending_frame_attributes = doc.pending_frame_attributes.saturating_sub(1);
+                    }
+                    if b.doc(key).is_some_and(|d| d.nav.stop_count() != stops) {
+                        return;
+                    }
                     let connected = |b: &Browser| {
                         b.page(key.page).is_some_and(|p| p.frames.dom.borrow().is_connected(owner).unwrap_or(false))
                     };
@@ -1758,23 +2298,62 @@ impl Browser {
                     let checker = parent_key.and_then(|k| b.doc(k)).and_then(|d| {
                         Some((d.main_frame.main_realm().cloned()?, d.main_frame.page_dom.clone()?))
                     });
-                    if let (Some(realm), Some((parent_realm, parent_dom))) = (realm, checker) {
+                    // A string result replaces the initial document (HTML "evaluate a javascript: URL").
+                    let mut result = None;
+                    // CSP `script-src-elem` of the initiator: blocked, no script runs (the load
+                    // of the initial document still follows).
+                    let allowed = initiator.as_ref().is_none_or(|i| i.allows_javascript_url(&js_url));
+                    if let (true, Some(realm), Some((parent_realm, parent_dom))) = (allowed, realm, checker) {
                         if let (Ok(scope), Ok(parent_scope)) = (realm.scope(), parent_realm.scope()) {
                             let script = pyro_webapi::trusted_types::javascript_url_script(&parent_scope, &parent_dom, &source);
                             if !connected(b) {
                                 return;
                             }
                             if let Some(script) = script {
-                                if let Err(e) = scope.eval(&script, None, 1) {
-                                    scope.report_exception(&e);
-                                }
+                                result = javascript_url_result(&scope, &script);
                             }
                         }
                     }
                     if connected(b) {
-                        b.finish_blank_document(key);
+                        match result {
+                            Some(html) => {
+                                if b.begin_javascript_result(key, html).is_err() {
+                                    b.finish_blank_document(key);
+                                }
+                            }
+                            None => b.finish_blank_document(key),
+                        }
                     }
                 });
+                Ok(())
+            } else if host.nav(key).is_some_and(|nav| {
+                // The container's document initiates: one of another origin than the frame's
+                // document does not make the frame's own URL a replace (it cannot see it).
+                let source =
+                    crate::nav::NavigateSource { cross_origin: parent.origin != frame.origin, ..Default::default() };
+                nav.navigate_to_fragment_from(&url, &source)
+            }) {
+                // HTML "navigate an iframe or frame": the document's own URL with another fragment
+                // is a fragment navigation of it (`src="about:blank#1"` on an initial about:blank).
+                // For a container of another origin Chrome also fires the container's load, as if
+                // the frame had loaded (crbug.com/1248444: the embedder must not learn that the
+                // frame stayed on that document).
+                if parent.origin != frame.origin {
+                    if let Some(parent_dom) = parent.page_dom.clone() {
+                        let loader = loader.clone();
+                        self.sched.post(pyro_runtime::TaskSource::DomManipulation, move |b| {
+                            // Not for a container removed since, or whose frame has begun
+                            // another navigation (that one fires the load).
+                            let current = b.page(key.page).is_some_and(|p| {
+                                p.frames.frame(key).is_some_and(|f| f.loader_id == loader)
+                                    && p.frames.dom.borrow().is_connected(owner).unwrap_or(false)
+                            }) && b.doc(key).is_some_and(|d| d.pending_loader.is_none());
+                            if current {
+                                pyro_webapi::lifecycle::resource_loaded(&parent_dom, owner, true);
+                            }
+                        });
+                    }
+                }
                 Ok(())
             } else if url == "about:blank" && frame.url == "about:blank" && !frame.dom_content_loaded {
                 // A script that opened the initial document since (append,
@@ -1790,6 +2369,18 @@ impl Browser {
                 // The container's `referrerpolicy`, else its document's policy (the request's client).
                 let referrer_policy =
                     crate::loader::container_referrer_policy(&host.dom.borrow(), owner, parent.page_dom.as_deref());
+                // HTML "navigate an iframe or frame": "replace" while the frame's document is
+                // not completely loaded (its `load` and `pageshow` handlers still run, after
+                // the frame counts as loaded), else "auto", a push (which leaving the initial
+                // about:blank document still makes a replace). An `<object>` or `<embed>`
+                // always replaces.
+                let completely_loaded =
+                    frame.loaded && frame.page_dom.as_ref().is_none_or(|dom| dom.is_completely_loaded());
+                let handling = if completely_loaded && !host.dom.borrow().is_document_object(owner) {
+                    HistoryHandling::Push
+                } else {
+                    HistoryHandling::Replace
+                };
                 self.navigate_frame_with_handling(
                     key,
                     NavigateOpts {
@@ -1797,14 +2388,20 @@ impl Browser {
                         url,
                         reason: NavigationReason::InitialFrameNavigation,
                         cdp_request_id: None,
-                        referrer: Some(parent.url),
+                        referrer: parent.navigation_referrer(),
                         referrer_policy,
                     },
-                    HistoryHandling::Replace,
+                    handling,
                 )
                 .map(|_| ())
             }
         };
+        {
+            let mut navigating = host.attribute_navigation.borrow_mut();
+            if let Some(i) = navigating.iter().rposition(|k| *k == key) {
+                navigating.remove(i);
+            }
+        }
         if let Err(e) = result {
             if let Some(realm) = host.frame(key).and_then(|f| f.main_realm().cloned()) {
                 if let Ok(scope) = realm.scope() {
@@ -1816,6 +2413,136 @@ impl Browser {
 }
 
 impl Browser {
+    /// HTML "will lazy load element steps" for an iframe (`loading=lazy`, scripting enabled in
+    /// its document): its navigation (`src`, `srcdoc` or a `javascript:` URL) waits for the lazy
+    /// load check, the frame staying on its complete initial `about:blank`, which holds up no
+    /// `load`. False when the check let it go (or it is not lazy): navigate now.
+    fn defer_lazy_frame(
+        &mut self,
+        host: &Rc<FrameHost>,
+        key: FrameKey,
+        owner: NodeId,
+        parent_dom: Option<&pyro_webapi::PageDom>,
+        cancelled: bool,
+    ) -> bool {
+        // HTML "process the iframe attributes": only the navigation to a `src` URL (not srcdoc,
+        // not about:blank) waits on the lazy loading steps.
+        let lazy = {
+            let dom = host.dom.borrow();
+            let attr = |name| dom.get_attribute(owner, name).ok().flatten().map(str::trim);
+            is_lazy_iframe(&dom, owner)
+                && attr("srcdoc").is_none()
+                && attr("src").is_some_and(|src| !src.is_empty() && !src.eq_ignore_ascii_case("about:blank"))
+        } && parent_dom.is_some_and(|d| !d.scripting_disabled());
+        if !lazy {
+            return false;
+        }
+        // Navigated otherwise first (before this queued processing ran): no lazy load, and this
+        // processing navigates nowhere.
+        if cancelled {
+            return true;
+        }
+        {
+            let mut approved = host.lazy_approved.borrow_mut();
+            if let Some(i) = approved.iter().position(|k| *k == key) {
+                approved.remove(i);
+                return false;
+            }
+        }
+        {
+            let mut pending = host.lazy_frames.borrow_mut();
+            match pending.iter_mut().find(|(k, _)| *k == key) {
+                // A new navigation while deferred: checked again.
+                Some(entry) => entry.1 = None,
+                None => pending.push((key, None)),
+            }
+        }
+        if let Some(mut doc) = self.doc_mut(key) {
+            doc.main_frame.dom_content_loaded = true;
+            doc.main_frame.loaded = true;
+        }
+        true
+    }
+
+    /// HTML "navigate" clears the container's lazy load resumption steps: a lazy iframe navigated
+    /// other than by its attribute processing (a link, `location`, a reload, `window.open`)
+    /// loses its pending lazy load, including one whose queued processing has not run yet.
+    pub(crate) fn cancel_lazy_frame(&mut self, key: FrameKey) {
+        if key.child.is_none() {
+            return;
+        }
+        let Some(host) = self.page(key.page).map(|p| p.frames.clone()) else { return };
+        if host.attribute_navigation.borrow().contains(&key) {
+            return;
+        }
+        let Some(owner) = host.frame(key).and_then(|f| f.owner) else { return };
+        if !is_lazy_iframe(&host.dom.borrow(), owner) {
+            return;
+        }
+        host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
+        host.lazy_approved.borrow_mut().retain(|k| *k != key);
+        // A script navigation cancels the processings queued when it was asked for (not one a
+        // `src` set since queued: WPT iframe-loading-lazy-nav-location-replace-set-src). Tasks
+        // run in order, so those have usually run (and deferred into `lazy_frames`, cleared
+        // above) by the time its task navigates.
+        let pending = self.doc(key).is_some_and(|d| match d.nav.lazy_cancel_limit.get() {
+            Some(limit) => d.nav.attributes_run.get() < limit,
+            None => d.pending_frame_attributes > 0,
+        });
+        if pending {
+            let mut cancelled = host.lazy_cancelled.borrow_mut();
+            if !cancelled.contains(&key) {
+                cancelled.push(key);
+            }
+        }
+    }
+
+    /// The deferred lazy iframes that stopped being lazy, or that intersect the viewport expanded
+    /// by the lazy load margin once their document's `load` has fired, navigate (their
+    /// attributes are processed again, with what they say then).
+    pub(crate) fn resume_lazy_frames(&mut self, host: &Rc<FrameHost>) {
+        if host.lazy_frames.borrow().is_empty() {
+            return;
+        }
+        let pending: Vec<(FrameKey, Option<LazyFrameStamp>)> = host.lazy_frames.borrow().clone();
+        for (key, checked) in pending {
+            let Some(frame) = host.frame(key) else {
+                host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
+                continue;
+            };
+            let Some(owner) = frame.owner else { continue };
+            let Some((parent_loaded, Some(parent_dom))) =
+                self.doc(host.parent_key(key)).map(|d| (d.main_frame.loaded, d.main_frame.page_dom.clone()))
+            else {
+                continue;
+            };
+            let (connected, lazy) = {
+                let dom = host.dom.borrow();
+                (dom.is_connected(owner).unwrap_or(false), is_lazy_iframe(&dom, owner))
+            };
+            if !connected {
+                continue;
+            }
+            // Checked again only when the parent's DOM, style, viewport or scroll offsets changed.
+            let stamp = (parent_dom.layout().observation_stamp(&parent_dom.dom.borrow()), parent_loaded, lazy);
+            if checked == Some(stamp) {
+                continue;
+            }
+            let go = !lazy || (parent_loaded && pyro_webapi::intersection_observer::lazy_load_intersects(&parent_dom, owner));
+            if !go {
+                let stamp = (parent_dom.layout().observation_stamp(&parent_dom.dom.borrow()), parent_loaded, lazy);
+                if let Some(entry) = host.lazy_frames.borrow_mut().iter_mut().find(|(k, _)| *k == key) {
+                    entry.1 = Some(stamp);
+                }
+                continue;
+            }
+            host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
+            host.lazy_approved.borrow_mut().push(key);
+            // In a task, as the attribute processing it resumes.
+            host.queue_attributes(key, frame.loader_id.clone());
+        }
+    }
+
     /// Loads `html`, the `srcdoc` of the iframe of `key`, as its document
     /// `about:srcdoc` (the initial navigation, and a navigation to
     /// `about:srcdoc` such as `location.reload()` of that document).
@@ -1846,7 +2573,82 @@ impl Browser {
                 cdp_request_id: None,
             },
         );
-        self.begin_document(
+        // CSP Embedded Enforcement: a srcdoc document accepts its frame's required policy (a local
+        // scheme), enforces it and keeps it for its own frames, as a fetched document does.
+        let requirement = crate::csp_embedded::requirement(self, key, &opts.url);
+        let resource = Resource {
+            url: opts.url.clone(),
+            status: 200,
+            mime: "text/html".into(),
+            charset: None,
+            body: html.into_bytes().into(),
+            immutable_local: false,
+            content_disposition: None,
+            header_csp: None,
+            allow_csp_from: None,
+            refresh: None,
+            content_language: None,
+            last_modified: None,
+            reporting_endpoints: None,
+            dictionary_links: Vec::new(),
+            referrer_policy: crate::loader::parent_referrer_policy(self, key),
+            origin_agent_cluster: false,
+            sent_referrer: None,
+            timing: None,
+            partial: None,
+            nosniff: false,
+            opaque: false,
+        };
+        let (resource, enforce) =
+            crate::csp_embedded::judge(self, key, requirement.as_ref(), resource).map_err(JsError::type_error)?;
+        self.prepare_required_csp(key, requirement.map(|r| r.policy), enforce);
+        self.begin_document(key, &opts, loader.clone(), resource, history)?;
+        Ok(loader)
+    }
+
+    /// HTML "evaluate a javascript: URL" whose result is a string: the string is the frame's
+    /// new document, HTML in UTF-8 at the URL of the document it replaces, which it replaces in
+    /// session history.
+    pub(crate) fn begin_javascript_result(&mut self, key: FrameKey, html: String) -> Result<LoaderId, JsError> {
+        let host = self.page(key.page).map(|p| p.frames.clone()).ok_or(JsError::ContextDestroyed)?;
+        let frame = host.frame(key).ok_or(JsError::ContextDestroyed)?;
+        // HTML "navigate to a javascript: URL" with a string result navigates the frame: the
+        // navigation it had under way (a slower document still fetching) is aborted.
+        self.cancel_pending_document(key);
+        // CSP: the result has the policies of the document it replaces (HTML "evaluate a
+        // javascript: URL": that document's policy container), taken as its commit begins.
+        self.csp_inherit_next = frame.page_dom.as_ref().map(|dom| (key, pyro_webapi::csp::InheritedCsp::of(dom)));
+        // With them the flags of their `sandbox` directive: a CSP-sandboxed document's result
+        // stays sandboxed, its origin opaque.
+        self.csp_sandbox_next = self.doc(key).and_then(|d| d.csp_sandbox).map(|flags| (key, flags));
+        let loader = LoaderId(format!("{:032X}", self.next()));
+        // HTML "evaluate a javascript: URL": the new document's referrer is the replaced
+        // document's (not the navigation initiator's URL), kept as it is.
+        let referrer = frame.page_dom.as_ref().map(|dom| dom.document_referrer()).filter(|r| !r.is_empty());
+        let opts = NavigateOpts {
+            post: None,
+            url: frame.url.clone(),
+            reason: NavigationReason::Script,
+            cdp_request_id: None,
+            referrer_policy: referrer.as_ref().map(|_| pyro_net::ReferrerPolicy::UnsafeUrl),
+            referrer,
+        };
+        self.emit(
+            key.page,
+            PageEvent::FrameNavigate {
+                frame_id: frame.id.clone(),
+                loader_id: loader.clone(),
+                url: opts.url.clone(),
+                reason: opts.reason,
+                cdp_request_id: None,
+            },
+        );
+        // CSP Embedded Enforcement: the string's document replaces the frame's current one in
+        // place and keeps the requirement that document had (it enforces nothing more: the
+        // document it replaces already enforced it, and its policies are what the result has).
+        let required_csp = self.doc(key).and_then(|d| d.required_csp.clone());
+        self.prepare_required_csp(key, required_csp, None);
+        let begun = self.begin_document(
             key,
             &opts,
             loader.clone(),
@@ -1854,21 +2656,31 @@ impl Browser {
                 url: opts.url.clone(),
                 status: 200,
                 mime: "text/html".into(),
-                charset: None,
+                charset: Some("utf-8".into()),
                 body: html.into_bytes().into(),
                 immutable_local: false,
                 content_disposition: None,
                 header_csp: None,
+                allow_csp_from: None,
                 refresh: None,
                 content_language: None,
+                last_modified: None,
+                reporting_endpoints: None,
+                dictionary_links: Vec::new(),
                 referrer_policy: crate::loader::parent_referrer_policy(self, key),
+                origin_agent_cluster: false,
                 sent_referrer: None,
                 timing: None,
                 partial: None,
-                nosniff: false, opaque: false,
+                nosniff: false,
+                opaque: false,
             },
-            history,
-        )?;
+            HistoryHandling::Replace,
+        );
+        // (Taken by that commit, unless it failed first.)
+        self.csp_inherit_next = None;
+        self.csp_sandbox_next = None;
+        begun?;
         Ok(loader)
     }
 
@@ -1911,6 +2723,19 @@ impl Browser {
     }
 }
 
+/// Runs the script of a `javascript:` URL in `scope`: its result when that is a string (which
+/// becomes the navigated frame's document), else None. An exception is reported.
+pub(crate) fn javascript_url_result(scope: &pyro_js::Scope<'_>, script: &str) -> Option<String> {
+    match scope.eval(script, None, 1) {
+        Ok(value) if value.is_string() => value.to_string().ok(),
+        Ok(_) => None,
+        Err(e) => {
+            scope.report_exception(&e);
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod frame_id_tests {
     use super::child_of_frame_id;
@@ -1924,4 +2749,11 @@ mod frame_id_tests {
         assert_eq!(child_of_frame_id("2A"), None);
         assert_eq!(child_of_frame_id(&format!("{:032X}", u128::from(u64::MAX) + 1)), None);
     }
+}
+
+/// An HTML `<iframe>` whose `loading` attribute is in the Lazy state.
+pub(crate) fn is_lazy_iframe(dom: &pyro_dom::Dom, node: NodeId) -> bool {
+    dom.element(node).is_ok_and(|e| {
+        e.is_html() && &*e.name.local == "iframe" && e.attr("loading").is_some_and(|l| l.eq_ignore_ascii_case("lazy"))
+    })
 }

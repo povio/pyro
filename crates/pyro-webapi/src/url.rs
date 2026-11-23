@@ -10,11 +10,23 @@ use pyro_js::{
     Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value, WeakRealm,
 };
 
+pub(crate) struct BlobUrlEntry {
+    pub(crate) bytes: bytes::Bytes,
+    pub(crate) mime: String,
+    _origin_registration: Option<pyro_dom::BlobOriginRegistration>,
+}
+
 pub struct UrlData {
     params: ParamsData,
     realm: WeakRealm,
     identity: IdentityKey,
 }
+impl UrlData {
+    pub(crate) fn origin_url(&self) -> Option<Url> {
+        self.params.0.url.borrow().clone()
+    }
+}
+
 pub struct URL;
 impl JsClass for URL {
     const NAME: &'static str = "URL";
@@ -49,7 +61,9 @@ impl JsClass for URL {
             args.require(1, "URL.createObjectURL")?;
             let page = page_of(s)?;
             if s.unwrap::<crate::media_source::MediaSource>(args.get(0)).is_some() {
-                return Ok(s.string(&crate::media_source::object_url(s, &page)?));
+                let url = crate::media_source::object_url(s, &page)?;
+                crate::media::mse_playback::register(s, &page, url.clone(), args.get(0));
+                return Ok(s.string(&url));
             }
             let blob = s.unwrap::<crate::file::Blob>(args.get(0)).ok_or_else(|| {
                 JsError::Type(
@@ -59,7 +73,17 @@ impl JsClass for URL {
             })?;
             let origin = crate::storage::tuple_origin(s, &page).unwrap_or_else(|| "null".into());
             let url = format!("blob:{origin}/{}", crate::crypto::random_uuid()?);
-            page.blob_urls.borrow_mut().insert(url.clone(), (blob.bytes.clone(), blob.mime.clone()));
+            // A full hyperlink URL parse associates the live blob entry. For
+            // ordinary HTTP(S) origins its serialized form is sufficient.
+            let registration = if origin.starts_with("https://") || origin.starts_with("http://") {
+                None
+            } else {
+                let creator = page.origin_key();
+                Some(page.dom.borrow_mut().register_blob_link_origin(&url, creator))
+            };
+            page.blob_urls.borrow_mut().insert(url.clone(), BlobUrlEntry {
+                bytes: blob.bytes.clone(), mime: blob.mime.clone(), _origin_registration: registration,
+            });
             Ok(s.string(&url))
         });
         def.static_method("revokeObjectURL", 1, |s, args| {
@@ -74,6 +98,7 @@ impl JsClass for URL {
                 .is_some_and(|r| r.starts_with('/'))
             {
                 page.blob_urls.borrow_mut().remove(&url);
+                crate::media::mse_playback::revoke(&page, &url);
             }
             Ok(s.undefined())
         });

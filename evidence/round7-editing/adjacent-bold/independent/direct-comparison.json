@@ -1,0 +1,465 @@
+{
+ ".": {
+  "scores": {
+   "restored.originalText": 38,
+   "restored.html": 192,
+   "restored.glyphs": 192,
+   "restored.anchor": 192,
+   "restored.focus": 192,
+   "restored.direction": 192,
+   "restored.text": 192,
+   "restored.value": 192,
+   "restored.mixed": 192,
+   "restored.connected": 0,
+   "onceUndo.originalText": 36,
+   "onceUndo.html": 192,
+   "onceUndo.glyphs": 192,
+   "onceUndo.anchor": 172,
+   "onceUndo.focus": 172,
+   "onceUndo.direction": 192,
+   "onceUndo.text": 192,
+   "onceUndo.value": 192,
+   "onceUndo.mixed": 192,
+   "onceUndo.connected": 0,
+   "twice.originalText": 36,
+   "twice.html": 192,
+   "twice.glyphs": 192,
+   "twice.anchor": 192,
+   "twice.focus": 192,
+   "twice.direction": 192,
+   "twice.text": 192,
+   "twice.value": 192,
+   "twice.mixed": 192,
+   "twice.connected": 168,
+   "undo": 192,
+   "after.originalText": 48,
+   "after.html": 192,
+   "after.glyphs": 192,
+   "after.anchor": 192,
+   "after.focus": 192,
+   "after.direction": 192,
+   "after.text": 192,
+   "after.value": 192,
+   "after.mixed": 192,
+   "after.connected": 192,
+   "before.originalText": 192,
+   "before.html": 192,
+   "before.glyphs": 192,
+   "before.anchor": 192,
+   "before.focus": 192,
+   "before.direction": 192,
+   "before.text": 192,
+   "before.value": 192,
+   "before.mixed": 192,
+   "before.connected": 192,
+   "after.weights": 192,
+   "twice.weights": 192,
+   "onceUndo.weights": 192,
+   "restored.weights": 192
+  },
+  "losses": [
+   [
+    [
+     false,
+     false,
+     "full",
+     "b-b"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     false,
+     "full",
+     "b-strong"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     false,
+     "full",
+     "after"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     false,
+     "full",
+     "class-right"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     false,
+     "full",
+     "locked-right"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "b-b"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "b-strong"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "after"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "class-right"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "locked-right"
+    ],
+    "restored.originalText"
+   ]
+  ]
+ },
+ "neighbors": {
+  "scores": {
+   "restored.originalText": 18,
+   "restored.html": 128,
+   "restored.glyphs": 128,
+   "restored.anchor": 128,
+   "restored.focus": 128,
+   "restored.direction": 128,
+   "restored.text": 128,
+   "restored.value": 128,
+   "restored.mixed": 128,
+   "restored.connected": 0,
+   "onceUndo.originalText": 16,
+   "onceUndo.html": 128,
+   "onceUndo.glyphs": 128,
+   "onceUndo.anchor": 116,
+   "onceUndo.focus": 116,
+   "onceUndo.direction": 128,
+   "onceUndo.text": 128,
+   "onceUndo.value": 128,
+   "onceUndo.mixed": 128,
+   "onceUndo.connected": 0,
+   "twice.originalText": 16,
+   "twice.html": 108,
+   "twice.glyphs": 124,
+   "twice.anchor": 118,
+   "twice.focus": 118,
+   "twice.direction": 128,
+   "twice.text": 128,
+   "twice.value": 124,
+   "twice.mixed": 128,
+   "twice.connected": 98,
+   "undo": 128,
+   "after.originalText": 28,
+   "after.html": 128,
+   "after.glyphs": 128,
+   "after.anchor": 128,
+   "after.focus": 128,
+   "after.direction": 128,
+   "after.text": 128,
+   "after.value": 128,
+   "after.mixed": 128,
+   "after.connected": 128,
+   "before.originalText": 128,
+   "before.html": 128,
+   "before.glyphs": 128,
+   "before.anchor": 128,
+   "before.focus": 128,
+   "before.direction": 128,
+   "before.text": 128,
+   "before.value": 128,
+   "before.mixed": 128,
+   "before.connected": 128,
+   "after.weights": 128,
+   "twice.weights": 124,
+   "onceUndo.weights": 128,
+   "restored.weights": 128
+  },
+  "losses": [
+   [
+    [
+     false,
+     false,
+     "full",
+     "locked-child"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     false,
+     "full",
+     "nested"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     false,
+     "full",
+     "anchor"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     false,
+     "full",
+     "block-rule"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     false,
+     "full",
+     "light-rule"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "locked-child"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "nested"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "anchor"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "block-rule"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "light-rule"
+    ],
+    "restored.originalText"
+   ]
+  ]
+ },
+ "history": {
+  "scores": {
+   "undoFirst": 48,
+   "before.originalText": 48,
+   "before.html": 48,
+   "before.glyphs": 48,
+   "before.anchor": 48,
+   "before.focus": 48,
+   "before.direction": 48,
+   "before.text": 48,
+   "before.value": 48,
+   "before.mixed": 48,
+   "before.connected": 48,
+   "firstReturn": 48,
+   "restored.originalText": 18,
+   "restored.html": 48,
+   "restored.glyphs": 48,
+   "restored.anchor": 48,
+   "restored.focus": 48,
+   "restored.direction": 48,
+   "restored.text": 48,
+   "restored.value": 48,
+   "restored.mixed": 48,
+   "restored.connected": 0,
+   "onceUndo.originalText": 16,
+   "onceUndo.html": 48,
+   "onceUndo.glyphs": 48,
+   "onceUndo.anchor": 36,
+   "onceUndo.focus": 36,
+   "onceUndo.direction": 48,
+   "onceUndo.text": 48,
+   "onceUndo.value": 48,
+   "onceUndo.mixed": 48,
+   "onceUndo.connected": 0,
+   "twice.originalText": 16,
+   "twice.html": 48,
+   "twice.glyphs": 48,
+   "twice.anchor": 48,
+   "twice.focus": 48,
+   "twice.direction": 48,
+   "twice.text": 48,
+   "twice.value": 48,
+   "twice.mixed": 48,
+   "twice.connected": 40,
+   "undo": 48,
+   "after.originalText": 24,
+   "after.html": 48,
+   "after.glyphs": 48,
+   "after.anchor": 48,
+   "after.focus": 48,
+   "after.direction": 48,
+   "after.text": 48,
+   "after.value": 48,
+   "after.mixed": 48,
+   "after.connected": 48,
+   "repeatReturn": 48,
+   "events": 48,
+   "after.weights": 48,
+   "twice.weights": 48,
+   "onceUndo.weights": 48,
+   "restored.weights": 48
+  },
+  "losses": [
+   [
+    [
+     false,
+     false,
+     "full",
+     "b-b"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     false,
+     "full",
+     "b-strong"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     false,
+     "full",
+     "after"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "b-b"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "b-strong"
+    ],
+    "restored.originalText"
+   ],
+   [
+    [
+     false,
+     true,
+     "full",
+     "after"
+    ],
+    "restored.originalText"
+   ]
+  ]
+ },
+ "namedChanges": [
+  [
+   "editing/run/bold.html?1-1000",
+   "[[\"bold\",\"\"]] \"<b>foo</b>[bar]<strong>baz</strong>\" compare innerHTML",
+   1,
+   "Fail",
+   "Pass",
+   "Pass"
+  ],
+  [
+   "editing/run/bold.html?1-1000",
+   "[[\"bold\",\"\"]] \"[foo]<b>bar</b>baz\" compare innerHTML",
+   1,
+   "Fail",
+   "Pass",
+   "Pass"
+  ],
+  [
+   "editing/run/bold.html?1-1000",
+   "[[\"bold\",\"\"]] \"foo<b>bar</b>[baz]\" compare innerHTML",
+   1,
+   "Fail",
+   "Pass",
+   "Pass"
+  ],
+  [
+   "editing/run/bold.html?1-1000",
+   "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<b>foo</b>[bar]<b>baz</b>\" compare innerHTML",
+   1,
+   "Fail",
+   "Pass",
+   "Pass"
+  ],
+  [
+   "editing/run/bold.html?1-1000",
+   "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<strong>foo</strong>[bar]<b>baz</b>\" compare innerHTML",
+   1,
+   "Fail",
+   "Pass",
+   "Pass"
+  ]
+ ]
+}

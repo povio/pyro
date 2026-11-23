@@ -1,0 +1,102 @@
+{
+  "window": {
+    "av01.0.04M.08": [
+      [
+        "support",
+        false
+      ],
+      [
+        "configure returned",
+        "configured"
+      ],
+      [
+        "error",
+        "NotSupportedError",
+        "Video encoder configure failed.",
+        "closed",
+        0
+      ],
+      [
+        "flush rejected",
+        "NotSupportedError",
+        "Video encoder configure failed.",
+        "closed",
+        0
+      ]
+    ],
+    "vp8": [
+      [
+        "support",
+        false
+      ],
+      [
+        "configure returned",
+        "configured"
+      ],
+      [
+        "error",
+        "NotSupportedError",
+        "Video encoder configure failed.",
+        "closed",
+        0
+      ],
+      [
+        "flush rejected",
+        "NotSupportedError",
+        "Video encoder configure failed.",
+        "closed",
+        0
+      ]
+    ]
+  },
+  "worker": {
+    "av01.0.04M.08": [
+      [
+        "support",
+        false
+      ],
+      [
+        "configure returned",
+        "configured"
+      ],
+      [
+        "error",
+        "NotSupportedError",
+        "Video encoder configure failed.",
+        "closed",
+        0
+      ],
+      [
+        "flush rejected",
+        "NotSupportedError",
+        "Video encoder configure failed.",
+        "closed",
+        0
+      ]
+    ],
+    "vp8": [
+      [
+        "support",
+        false
+      ],
+      [
+        "configure returned",
+        "configured"
+      ],
+      [
+        "error",
+        "NotSupportedError",
+        "Video encoder configure failed.",
+        "closed",
+        0
+      ],
+      [
+        "flush rejected",
+        "NotSupportedError",
+        "Video encoder configure failed.",
+        "closed",
+        0
+      ]
+    ]
+  }
+}

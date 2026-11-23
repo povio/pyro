@@ -484,6 +484,27 @@ fn declarative_shadow_roots_are_parser_only_and_outlive_their_template() {
 }
 
 #[test]
+fn shadow_reference_target_survives_cloning_and_serializes_as_an_attribute() {
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = pyro_dom::parse::parse_html_unsafe(&dom, "<body><div id=host><template shadowrootmode=open shadowrootclonable shadowrootreferencetarget='a&amp;&quot;b'></template></div>");
+    let mut dom = dom.borrow_mut();
+    let host = dom.get_element_by_id(doc, "host").unwrap().unwrap();
+    let root = dom.shadow_root(host).unwrap().unwrap();
+    let copy = dom.clone_node(host, false, None).unwrap();
+    let copy_root = dom.shadow_root(copy).unwrap().unwrap();
+    assert_eq!(dom.shadow_reference_target(copy_root).unwrap(), Some("a&\"b"));
+    assert_eq!(
+        dom.get_html(copy, false, &[copy_root]).unwrap(),
+        r#"<template shadowrootmode="open" shadowrootclonable="" shadowrootreferencetarget="a&amp;&quot;b"></template>"#,
+    );
+    dom.set_shadow_reference_target(root, Some("")).unwrap();
+    assert_eq!(dom.shadow_reference_target(root).unwrap(), Some(""));
+    dom.set_shadow_reference_target(root, None).unwrap();
+    assert_eq!(dom.shadow_reference_target(root).unwrap(), None);
+    assert_eq!(dom.shadow_reference_target(copy_root).unwrap(), Some("a&\"b"));
+}
+
+#[test]
 fn declarative_shadow_roots_follow_the_document_opt_in() {
     let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
     let html = "<!doctype html><body><div id=h><template shadowrootmode=open><b>x</b></template></div>";
@@ -734,4 +755,55 @@ fn the_store_gives_back_the_slots_of_a_large_document_that_ended() {
     assert!(!d.is_alive(last));
     assert_eq!(d.node(last).unwrap_err(), DomError::StaleNode);
     assert_eq!(d.text_content(d.get_element_by_id(fourth, "x").unwrap().unwrap()).unwrap().unwrap(), "fourth");
+}
+
+#[test]
+fn interest_invoker_reflection_tracks_scope_cloning_and_attribute_writes() {
+    let (dom, doc) = doc("<div id=host></div><button id=b interestfor=host></button>");
+    let mut dom = dom.borrow_mut();
+    let button = dom.get_element_by_id(doc, "b").unwrap().unwrap();
+    let host = dom.get_element_by_id(doc, "host").unwrap().unwrap();
+    let root = dom.attach_shadow(host, ShadowRootMode::Closed).unwrap();
+    let inner = dom.create_element(doc, "a").unwrap();
+    dom.append_child(root, inner).unwrap();
+    assert_eq!(dom.interest_for_element(button).unwrap(), Some(host));
+
+    dom.set_interest_for_element(button, Some(inner)).unwrap();
+    assert_eq!(dom.get_attribute(button, "interestfor").unwrap(), Some(""));
+    assert_eq!(dom.interest_for_element(button).unwrap(), None);
+    dom.set_interest_for_element(inner, Some(button)).unwrap();
+    assert_eq!(dom.interest_for_element(inner).unwrap(), Some(button));
+
+    dom.append_child(root, button).unwrap();
+    assert_eq!(dom.interest_for_element(button).unwrap(), Some(inner));
+    let copy = dom.clone_node(button, false, None).unwrap();
+    dom.append_child(root, copy).unwrap();
+    assert_eq!(dom.interest_for_element(copy).unwrap(), None);
+    dom.set_attribute(button, "interestfor", "").unwrap();
+    assert_eq!(dom.interest_for_element(button).unwrap(), None);
+    dom.set_interest_for_element(inner, None).unwrap();
+    assert_eq!(dom.get_attribute(inner, "interestfor").unwrap(), None);
+}
+
+#[test]
+fn interest_invoker_reflection_follows_adoption_and_releases_removed_targets() {
+    let (dom, doc) = doc("<button id=b></button><div id=t></div>");
+    let mut dom = dom.borrow_mut();
+    let button = dom.get_element_by_id(doc, "b").unwrap().unwrap();
+    let target = dom.get_element_by_id(doc, "t").unwrap().unwrap();
+    let second = dom.create_document(DocumentKind::Html, "http://other.test/");
+    let container = dom.create_element(second, "div").unwrap();
+    dom.append_child(second, container).unwrap();
+    dom.set_interest_for_element(button, Some(target)).unwrap();
+    dom.adopt_node(second, target).unwrap();
+    dom.append_child(container, target).unwrap();
+    assert_eq!(dom.interest_for_element(button).unwrap(), None);
+    dom.adopt_node(second, button).unwrap();
+    dom.append_child(container, button).unwrap();
+    assert_eq!(dom.interest_for_element(button).unwrap(), Some(target));
+    dom.set_document_active(second, true).unwrap();
+    dom.remove_child(container, target).unwrap();
+    dom.collect_garbage();
+    assert!(!dom.is_alive(target));
+    assert_eq!(dom.interest_for_element(button).unwrap(), None);
 }

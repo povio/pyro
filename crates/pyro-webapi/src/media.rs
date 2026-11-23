@@ -29,6 +29,12 @@
 //!
 //! TimeRanges, MediaError and TextTrackList are made in JS (media.js) on a
 //! realm's first use.
+#[path = "mse_playback.rs"]
+pub(crate) mod mse_playback;
+#[path = "track_load.rs"]
+mod track_load;
+pub(crate) use track_load::{check_track_resource, track_ready_state, track_url};
+
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -59,7 +65,8 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    lazy_globals!(def, MODULE, "TimeRanges", "MediaError", "TextTrackList", "VideoPlaybackQuality");
+    crate::text_tracks::define_globals(def);
+    lazy_globals!(def, MODULE, "TimeRanges", "MediaError", "VideoPlaybackQuality");
 }
 
 const NETWORK_EMPTY: u8 = 0;
@@ -127,6 +134,8 @@ struct MediaState {
     pending_play: Vec<(WeakRealm, Deferred)>,
     /// HTML "can autoplay flag".
     can_autoplay: bool,
+    /// The lazy load check let this `loading=lazy` element's next resource selection run.
+    lazy_approved: bool,
     /// `preload=none` stopped the load before fetching: what to fetch once
     /// playback is requested, and the `<source>` it came from.
     suspended: Option<(Resource, Option<NodeId>)>,
@@ -147,6 +156,7 @@ struct MediaState {
     show_poster: bool,
     /// A `<video>`'s frames, while its resource has a video track.
     frames: Option<Box<VideoFrames>>,
+    mse: Option<mse_playback::Attachment>,
     /// `requestVideoFrameCallback` callbacks: handle, realm, callback.
     frame_callbacks: Vec<(u32, WeakRealm, Persistent)>,
     next_frame_callback: u32,
@@ -154,6 +164,9 @@ struct MediaState {
     /// decoder) last presented to frame callbacks, and how many were.
     presented: Option<f64>,
     presented_frames: u32,
+    /// HTML "blocked on its media element's pending text tracks": the load
+    /// of this generation stopped at HAVE_CURRENT_DATA until they settle.
+    blocked_on_tracks: Option<u32>,
 }
 
 /// A `<video>`'s resource, kept to decode frames from: the bytes until the
@@ -202,6 +215,7 @@ impl Default for MediaState {
             src_object: None,
             pending_play: Vec::new(),
             can_autoplay: true,
+            lazy_approved: false,
             suspended: None,
             fetch: None,
             fetching: false,
@@ -212,10 +226,12 @@ impl Default for MediaState {
             played: Vec::new(),
             show_poster: true,
             frames: None,
+            mse: None,
             frame_callbacks: Vec::new(),
             next_frame_callback: 1,
             presented: None,
             presented_frames: 0,
+            blocked_on_tracks: None,
         }
     }
 }
@@ -226,6 +242,11 @@ impl MediaState {
         match self.clock {
             Some((t0, p0)) => {
                 let p = p0 + (now - t0).max(0.0) / 1000.0 * self.rate;
+                let p = self
+                    .mse
+                    .as_ref()
+                    .and_then(|m| m.buffered.iter().find(|&&(a, b)| a <= p0 && p0 < b))
+                    .map_or(p, |&(a, b)| p.clamp(a, b));
                 if self.duration.is_finite() {
                     p.clamp(0.0, self.duration)
                 } else {
@@ -236,7 +257,10 @@ impl MediaState {
         }
     }
     fn at_end(&self, position: f64) -> bool {
-        self.ready >= HAVE_METADATA && self.duration.is_finite() && position >= self.duration
+        self.mse.as_ref().is_none_or(|m| m.ended)
+            && self.ready >= HAVE_METADATA
+            && self.duration.is_finite()
+            && position >= self.duration
     }
     /// HTML "potentially playing", less "ended playback" (the clock stops at the end itself).
     fn potentially_playing(&self) -> bool {
@@ -285,10 +309,17 @@ fn add_range(ranges: &mut Vec<(f64, f64)>, start: f64, end: f64) {
 #[derive(Default)]
 pub(crate) struct MediaElements {
     elements: RefCell<FxHashMap<NodeId, MediaState>>,
+    track_loads: track_load::Loads,
+    source_urls: RefCell<FxHashMap<String, Rc<mse_playback::Source>>>,
     /// Entry count at which those of collected elements are dropped.
     sweep_at: Cell<usize>,
     /// Elements whose delaying-the-load-event flag is set.
     delaying_load: Cell<usize>,
+    /// `loading=lazy` elements whose resource selection waits for the lazy load check.
+    lazy: RefCell<Vec<NodeId>>,
+    /// The observation stamp (DOM, style, viewport, scroll) and completely-loaded state at the
+    /// last lazy load check.
+    lazy_checked: Cell<Option<(((u64, u64, u32, u32), u64), bool)>>,
 }
 
 impl PageDom {
@@ -307,18 +338,29 @@ impl PageDom {
 
 fn with<R>(page: &PageDom, node: NodeId, f: impl FnOnce(&mut MediaState) -> R) -> R {
     let mut elements = page.media.elements.borrow_mut();
-    if !elements.contains_key(&node) && elements.len() >= page.media.sweep_at.get() {
-        sweep(page, &mut elements);
+    let detached = if !elements.contains_key(&node) && elements.len() >= page.media.sweep_at.get() {
+        sweep(page, &mut elements)
+    } else {
+        Vec::new()
+    };
+    let result = f(elements.entry(node).or_default());
+    drop(elements);
+    for attachment in detached {
+        attachment.detach();
     }
-    f(elements.entry(node).or_default())
+    result
 }
 
 /// Drops the state of collected elements (a pinned element is alive).
-fn sweep(page: &PageDom, elements: &mut FxHashMap<NodeId, MediaState>) {
-    let Ok(dom) = page.dom.try_borrow() else { return };
+fn sweep(page: &PageDom, elements: &mut FxHashMap<NodeId, MediaState>) -> Vec<mse_playback::Attachment> {
+    let mut detached = Vec::new();
+    let Ok(dom) = page.dom.try_borrow() else { return detached };
     let delaying = page.media.delaying_load.get();
     elements.retain(|id, st| {
         let keep = st.pinned || dom.is_alive(*id);
+        if !keep {
+            detached.extend(st.mse.take());
+        }
         if !keep && st.delaying_load {
             page.media.delaying_load.set(page.media.delaying_load.get().saturating_sub(1));
         }
@@ -331,6 +373,7 @@ fn sweep(page: &PageDom, elements: &mut FxHashMap<NodeId, MediaState>) {
             hooks.media_load_delay_released();
         }
     }
+    detached
 }
 
 /// Reads state without making it: an untouched element's defaults.
@@ -456,6 +499,8 @@ fn source_removed(page: &PageDom, node: NodeId, source: NodeId, previous: Option
 /// Releases everything the page's media elements hold: timers, fetches,
 /// DOM references. Called by `PageDom::dispose` while hooks still exist.
 pub(crate) fn dispose(page: &PageDom) {
+    page.media.track_loads.clear();
+    page.media.source_urls.borrow_mut().clear();
     let states = std::mem::take(&mut *page.media.elements.borrow_mut());
     page.media.delaying_load.set(0);
     let hooks = page.hooks();
@@ -465,6 +510,9 @@ pub(crate) fn dispose(page: &PageDom) {
             hooks.clear_media_timer(id);
         }
         drop(st.fetch.take());
+        if let Some(attachment) = st.mse.take() {
+            attachment.detach();
+        }
         if st.pinned {
             pinned.push(node);
         }
@@ -482,6 +530,21 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
         return;
     }
     match event.change {
+        MediaChange::TrackChildrenChanged(track) => {
+            track_load::sync_parent(page, node);
+            check_track_resource(page, track);
+            text_tracks_settled(page, node);
+        }
+        MediaChange::TrackChanged => {
+            let parent = track_load::media_parent(page, node);
+            if let Some(parent) = parent {
+                track_load::sync_parent(page, parent);
+            }
+            check_track_resource(page, node);
+            if let Some(parent) = parent {
+                text_tracks_settled(page, parent);
+            }
+        }
         MediaChange::Src => load(page, node),
         MediaChange::Inserted => {
             let (empty, has_object) = peek(page, node, |st| (st.network == NETWORK_EMPTY, st.src_object.is_some()));
@@ -490,12 +553,22 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
             }
         }
         MediaChange::Removed => {
-            // HTML: removed from a document (and not put back in this
-            // task), the element pauses.
-            let connected = page.dom.borrow().is_connected(node).unwrap_or(false);
-            if !connected && !peek(page, node, |st| st.paused) {
-                internal_pause(page, node);
-            }
+            // HTML removing steps: "await a stable state" (the microtask checkpoint after the
+            // removing script, not synchronously: `paused` stays false in that script), then an
+            // element still not in a document runs the internal pause steps. `paused` is true
+            // before any task queued meanwhile runs; the `pause` event is a task of its own.
+            let weak = Rc::downgrade(page);
+            let pause = move || {
+                let Some(page) = weak.upgrade() else { return };
+                if page.is_disposed() || !page.dom.borrow().is_alive(node) {
+                    return;
+                }
+                let connected = page.dom.borrow().is_connected(node).unwrap_or(false);
+                if !connected && !peek(&page, node, |st| st.paused) {
+                    internal_pause(&page, node);
+                }
+            };
+            removed_at_stable_state(page, pause);
         }
         MediaChange::SourceRemoved { source, previous } => source_removed(page, node, source, previous),
         MediaChange::SourceInserted(_) => {
@@ -519,6 +592,11 @@ fn handle(page: &Rc<PageDom>, event: &MediaEvent) {
     }
 }
 
+/// HTML "show poster flag": no text track cue is current while it is set.
+pub(crate) fn show_poster(page: &PageDom, node: NodeId) -> bool {
+    peek(page, node, |st| st.show_poster)
+}
+
 fn has_src(page: &PageDom, node: NodeId) -> bool {
     page.dom.borrow().get_attribute(node, "src").ok().flatten().is_some()
 }
@@ -531,6 +609,26 @@ fn source_children(page: &PageDom, node: NodeId) -> Vec<NodeId> {
 
 /// Queues a media element task of the load `generation`: it does nothing
 /// once another load started.
+/// Runs `f` at the next stable state: a microtask of the page's main world, so after the
+/// running script and before any task it queued; without a scriptable realm, a task.
+fn removed_at_stable_state(page: &Rc<PageDom>, f: impl FnOnce() + 'static) {
+    let f = std::cell::Cell::new(Some(f));
+    let run = std::rc::Rc::new(move || {
+        if let Some(f) = f.take() {
+            f();
+        }
+    });
+    let queued = page.main_world_realm().is_some_and(|realm| {
+        realm.scope().is_ok_and(|s| {
+            let run = run.clone();
+            s.then(s.undefined(), move |_, _| run(), |_, _| {}).is_ok()
+        })
+    });
+    if !queued {
+        page.post_task(Box::new(move || run()));
+    }
+}
+
 fn queue(page: &Rc<PageDom>, node: NodeId, generation: u32, f: impl FnOnce(&Rc<PageDom>) + 'static) {
     let weak = Rc::downgrade(page);
     page.post_task(Box::new(move || {
@@ -597,7 +695,7 @@ fn sync_clock(page: &Rc<PageDom>, node: NodeId) {
                 } else {
                     f64::INFINITY
                 };
-                plan = Some((remaining.min(TIMEUPDATE_MS), st.timer_serial));
+                plan = Some((remaining.min(TIMEUPDATE_MS), st.timer_serial, st.position, st.rate));
             }
         }
         (old, plan)
@@ -607,7 +705,9 @@ fn sync_clock(page: &Rc<PageDom>, node: NodeId) {
         hooks.clear_media_timer(id);
     }
     want_frame(page, node);
-    let Some((delay, serial)) = plan else { return };
+    let Some((delay, serial, position, rate)) = plan else { return };
+    let cue_delay = (crate::text_tracks::next_pause(page, node, position) - position) / rate * 1000.;
+    let delay = delay.min(cue_delay);
     let weak = Rc::downgrade(page);
     let task: Box<dyn FnOnce()> = Box::new(move || {
         if let Some(page) = weak.upgrade() {
@@ -639,12 +739,19 @@ fn tick(page: &Rc<PageDom>, node: NodeId, serial: u32) {
         } else {
             f64::INFINITY
         };
-        Some(st.at_end(position) || remaining < 0.5)
+        Some(st.at_end(position) || remaining < 0.5 && st.mse.as_ref().is_none_or(|m| m.ended))
     });
     match ended {
         None => {}
         Some(true) => reached_end(page, node),
         Some(false) => {
+            if peek(page, node, |st| st.mse.is_some()) {
+                mse_playback::refresh(page, node);
+            }
+            if crate::text_tracks::playback(page, node, true) {
+                internal_pause(page, node);
+                return;
+            }
             crate::input::fire_simple(page, node, "timeupdate", false, false);
             sync_clock(page, node);
         }
@@ -668,6 +775,7 @@ fn reached_end(page: &Rc<PageDom>, node: NodeId) {
     if let (Some(id), Some(hooks)) = (timer, page.hooks()) {
         hooks.clear_media_timer(id);
     }
+    if crate::text_tracks::playback(page, node, true) { internal_pause(page, node); }
     if !fire(page, node, generation, "timeupdate") {
         return;
     }
@@ -702,11 +810,19 @@ fn seek(page: &Rc<PageDom>, node: NodeId, to: f64) {
         (st.seek_serial, st.generation)
     });
     sync_clock(page, node);
+    crate::text_tracks::playback(page, node, false);
     queue_event(page, node, generation, "seeking");
-    // Every byte is at hand: the seek completes in the next task.
+    if peek(page, node, |st| st.mse.is_some()) {
+        mse_playback::refresh(page, node);
+    } else {
+        complete_seek(page, node, generation, serial);
+    }
+}
+
+fn complete_seek(page: &Rc<PageDom>, node: NodeId, generation: u32, serial: u32) {
     queue(page, node, generation, move |page| {
         let current = with(page, node, |st| {
-            let current = st.seek_serial == serial && st.seeking;
+            let current = st.seek_serial == serial && st.seeking && (st.mse.is_none() || st.ready >= HAVE_CURRENT_DATA);
             if current {
                 st.seeking = false;
             }
@@ -721,10 +837,18 @@ fn seek(page: &Rc<PageDom>, node: NodeId, to: f64) {
 
 /// HTML "notify about playing": `playing`, then the pending play() promises resolve.
 fn notify_playing(page: &Rc<PageDom>, node: NodeId, generation: u32) {
+    // The cues current at the playback position are active by `playing`.
+    crate::text_tracks::playback(page, node, false);
+    // HTML takes the pending play promises before `playing` fires: a `pause()` in its
+    // listener rejects none of them, and they resolve after it.
+    let pending = with(page, node, |st| std::mem::take(&mut st.pending_play));
     if !fire(page, node, generation, "playing") {
+        with(page, node, |st| {
+            let later = std::mem::replace(&mut st.pending_play, pending);
+            st.pending_play.extend(later);
+        });
         return;
     }
-    let pending = with(page, node, |st| std::mem::take(&mut st.pending_play));
     resolve_all(pending);
 }
 
@@ -740,6 +864,9 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
         (st.network, st.generation, st.timer.take(), st.fetch.take())
     });
     drop(old_fetch);
+    if let Some(attachment) = with(page, node, |st| st.mse.take()) {
+        attachment.detach();
+    }
     if let (Some(id), Some(hooks)) = (old_timer, page.hooks()) {
         hooks.clear_media_timer(id);
     }
@@ -784,12 +911,19 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
         st.presented = None;
     });
     update_pin(page, node);
+    // The show poster flag is set again: no cue stays active.
+    crate::text_tracks::playback(page, node, false);
     resource_selection(page, node);
 }
 
 /// HTML "resource selection algorithm": the synchronous part, then a task
 /// for the rest (after "await a stable state").
 fn resource_selection(page: &Rc<PageDom>, node: NodeId) {
+    if defer_lazy(page, node) {
+        // A deferred element does not delay the load event (a previous load may have set it).
+        set_delaying(page, node, false);
+        return;
+    }
     let generation = with(page, node, |st| {
         st.network = NETWORK_NO_SOURCE;
         st.awaiting_source = false;
@@ -797,6 +931,71 @@ fn resource_selection(page: &Rc<PageDom>, node: NodeId) {
     });
     set_delaying(page, node, true);
     queue(page, node, generation, move |page| select(page, node, generation));
+}
+
+/// HTML "will lazy load element steps" for a media element (`loading=lazy`, scripting
+/// enabled): resource selection waits for the lazy load check (`lazy_after_task`), the
+/// element staying at NETWORK_EMPTY without delaying the load event. False when the check let
+/// it go, or it is not lazy.
+fn defer_lazy(page: &Rc<PageDom>, node: NodeId) -> bool {
+    if page.scripting_disabled() || !is_lazy_media(&page.dom.borrow(), node) {
+        return false;
+    }
+    if with(page, node, |st| std::mem::take(&mut st.lazy_approved)) {
+        return false;
+    }
+    let mut lazy = page.media.lazy.borrow_mut();
+    if !lazy.contains(&node) {
+        lazy.push(node);
+    }
+    page.media.lazy_checked.set(None);
+    true
+}
+
+fn is_lazy_media(dom: &pyro_dom::Dom, node: NodeId) -> bool {
+    dom.element(node).is_ok_and(|e| {
+        e.is_html()
+            && matches!(&*e.name.local, "video" | "audio")
+            && e.attr("loading").is_some_and(|l| l.eq_ignore_ascii_case("lazy"))
+    })
+}
+
+/// After each task: the deferred lazy media elements that stopped being lazy, or that
+/// intersect the viewport expanded by the lazy load margin once the document has completely
+/// loaded, run resource selection.
+pub(crate) fn lazy_after_task(page: &Rc<PageDom>) {
+    if page.media.lazy.borrow().is_empty() || page.is_disposed() {
+        return;
+    }
+    let loaded = page.is_completely_loaded();
+    // The layout first: it may sync the viewport, which touches the DOM.
+    let stamp = || {
+        let layout = page.layout();
+        let dom = page.dom.try_borrow().ok()?;
+        Some((layout.observation_stamp(&dom), loaded))
+    };
+    let Some(now) = stamp() else { return };
+    if page.media.lazy_checked.get() == Some(now) {
+        return;
+    }
+    let nodes: Vec<NodeId> = page.media.lazy.borrow().clone();
+    for node in nodes {
+        let (alive, connected, lazy) = {
+            let dom = page.dom.borrow();
+            (dom.is_alive(node), dom.is_connected(node).unwrap_or(false), is_lazy_media(&dom, node))
+        };
+        if !alive {
+            page.media.lazy.borrow_mut().retain(|n| *n != node);
+            continue;
+        }
+        let go = !lazy || (connected && loaded && crate::intersection_observer::lazy_load_intersects(page, node));
+        if go {
+            page.media.lazy.borrow_mut().retain(|n| *n != node);
+            with(page, node, |st| st.lazy_approved = true);
+            resource_selection(page, node);
+        }
+    }
+    page.media.lazy_checked.set(stamp());
 }
 
 fn select(page: &Rc<PageDom>, node: NodeId, generation: u32) {
@@ -832,6 +1031,11 @@ fn select(page: &Rc<PageDom>, node: NodeId, generation: u32) {
 }
 
 fn resolve(page: &PageDom, node: NodeId, value: &str) -> Option<String> {
+    // Fetch "potentially dangling markup" (as Chrome): a URL written with a newline or tab
+    // (which the URL parser strips) and a `<` is blocked, so the source fails.
+    if value.contains(['\n', '\r', '\t']) && value.contains('<') {
+        return None;
+    }
     let dom = page.dom.borrow();
     let resolved = crate::html::resolve_url(&dom, node, value);
     url::Url::parse(&resolved).ok().map(|u| u.to_string())
@@ -870,7 +1074,13 @@ fn next_source(page: &Rc<PageDom>, node: NodeId, generation: u32) {
             (get("src"), get("type"))
         };
         let supported = ty.as_deref().is_none_or(|t| media_format::can_play_type(t) != media_format::CanPlay::No);
-        let url = src.filter(|s| !s.is_empty() && supported).and_then(|s| resolve(page, source, &s));
+        // HTML: a `media` attribute that does not match the environment
+        // fails the candidate (evaluated now; later changes do not react).
+        let media = page.dom.borrow().get_attribute(source, "media").ok().flatten().map(str::to_owned);
+        let media_ok = media.as_deref().is_none_or(|m| {
+            m.trim().is_empty() || page.layout().style().matches_media_list(&pyro_dom::cssom::MediaQueryList::parse(m))
+        });
+        let url = src.filter(|s| !s.is_empty() && supported && media_ok).and_then(|s| resolve(page, source, &s));
         let Some(url) = url else {
             queue(page, node, generation, move |page| {
                 crate::input::fire_simple(page, source, "error", false, false);
@@ -881,17 +1091,31 @@ fn next_source(page: &Rc<PageDom>, node: NodeId, generation: u32) {
         fetch_resource(page, node, generation, Resource::Url(url), Some(source));
         return;
     }
+    // HTML "waiting": the network state changes now (an `error` queued above
+    // already sees it); the load event stops waiting in a task.
+    with(page, node, |st| {
+        st.network = NETWORK_NO_SOURCE;
+        st.awaiting_source = true;
+    });
     queue(page, node, generation, move |page| {
-        with(page, node, |st| {
-            st.network = NETWORK_NO_SOURCE;
-            st.awaiting_source = true;
-        });
-        set_delaying(page, node, false);
+        if peek(page, node, |st| st.awaiting_source) {
+            set_delaying(page, node, false);
+        }
     });
 }
 
 /// HTML "resource fetch algorithm" for `resource` (from `source` in children mode).
 fn fetch_resource(page: &Rc<PageDom>, node: NodeId, generation: u32, resource: Resource, source: Option<NodeId>) {
+    if let Resource::Url(url) = &resource {
+        if url.starts_with("blob:") {
+            if let Some(attached) = mse_playback::attach(page, node, generation, url) {
+                if !attached {
+                    fetched(page, node, generation, source, Seek::default(), Err(FORMAT_ERROR.into()));
+                }
+                return;
+            }
+        }
+    }
     let preload_none =
         page.dom.borrow().get_attribute(node, "preload").ok().flatten().is_some_and(|p| p.eq_ignore_ascii_case("none"));
     if preload_none && !attr(page, node, "autoplay") && peek(page, node, |st| st.paused) {
@@ -1031,7 +1255,10 @@ fn fetched(
         Err(message) => match source {
             // Children mode: this candidate failed; try the next one.
             Some(source) => {
-                crate::input::fire_simple(page, source, "error", false, false);
+                // A candidate removed or moved away meanwhile gets no `error`.
+                if page.dom.borrow().parent(source).ok().flatten() == Some(node) {
+                    crate::input::fire_simple(page, source, "error", false, false);
+                }
                 if peek(page, node, |st| st.generation) == generation {
                     next_source(page, node, generation);
                 }
@@ -1066,7 +1293,9 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
     if !fire(page, node, generation, "loadedmetadata") {
         return;
     }
-    let start = with(page, node, |st| std::mem::take(&mut st.default_start));
+    let (start, url) = with(page, node, |st| (std::mem::take(&mut st.default_start), st.current_src.clone()));
+    // HTML: a start time the URL indicates (Media Fragments `#t=`) is the initial position.
+    let start = if start != 0.0 { start } else { media_fragment_start(&url).unwrap_or(0.0) };
     if start != 0.0 {
         seek(page, node, start);
     }
@@ -1074,8 +1303,44 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
         with(page, node, |st| st.ready = HAVE_CURRENT_DATA);
         set_delaying(page, node, false);
         want_frame(page, node);
-        fire(page, node, generation, "loadeddata");
+        if fire(page, node, generation, "loadeddata") {
+            past_current_data(page, node, generation);
+        }
     });
+}
+
+/// The start of a Media Fragments URI temporal dimension in `url`'s fragment (`t=[npt:]start[,end]`,
+/// name and value percent-decoded; seconds, `mm:ss` or `hh:mm:ss`, with a fraction), if any.
+fn media_fragment_start(url: &str) -> Option<f64> {
+    let (_, fragment) = url.split_once('#')?;
+    let decode = |s: &str| percent_encoding::percent_decode_str(s).decode_utf8().ok().map(|c| c.into_owned());
+    let value = fragment.split('&').rev().find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (decode(name)? == "t").then(|| decode(value)).flatten()
+    })?;
+    let value = value.strip_prefix("npt:").unwrap_or(&value);
+    let start = value.split(',').next()?;
+    if start.is_empty() {
+        return None;
+    }
+    let mut seconds = 0.0;
+    for part in start.split(':') {
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+            return None;
+        }
+        seconds = seconds * 60.0 + part.parse::<f64>().ok()?;
+    }
+    (seconds.is_finite() && seconds > 0.0).then_some(seconds)
+}
+
+/// After HAVE_CURRENT_DATA: the ready states that follow, one task each,
+/// unless pending text tracks block the element there (HTML: until each
+/// track whose mode is not disabled has loaded or failed).
+fn past_current_data(page: &Rc<PageDom>, node: NodeId, generation: u32) {
+    if track_load::pending_tracks(page, node) {
+        with(page, node, |st| st.blocked_on_tracks = Some(generation));
+        return;
+    }
     queue(page, node, generation, move |page| {
         let playing = with(page, node, |st| {
             st.ready = HAVE_FUTURE_DATA;
@@ -1114,6 +1379,21 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
         with(page, node, |st| st.network = NETWORK_IDLE);
         fire(page, node, generation, "suspend");
     });
+}
+
+/// A text track of `media` loaded, failed, changed or went: a load blocked
+/// on pending text tracks goes on once none is left.
+pub(crate) fn text_tracks_settled(page: &Rc<PageDom>, media: NodeId) {
+    let Some(generation) = peek(page, media, |st| st.blocked_on_tracks) else { return };
+    if peek(page, media, |st| st.generation) != generation {
+        with(page, media, |st| st.blocked_on_tracks = None);
+        return;
+    }
+    if track_load::pending_tracks(page, media) {
+        return;
+    }
+    with(page, media, |st| st.blocked_on_tracks = None);
+    past_current_data(page, media, generation);
 }
 
 /// HTML "dedicated media source failure steps".
@@ -1178,6 +1458,9 @@ pub(crate) fn current_frame(page: &PageDom, node: NodeId) -> Option<(pyro_media:
         return None;
     }
     let position = st.position_at(t);
+    if let Some(m) = st.mse.as_mut() {
+        return m.video_frame(position, st.duration).map(|f| (f, true));
+    }
     let frames = st.frames.as_mut()?;
     let clean = frames.clean;
     frames.player()?.frame_at(position).map(|f| (f, clean))
@@ -1196,7 +1479,9 @@ impl PageDom {
             }
             elements
                 .iter()
-                .filter(|(_, st)| st.frames.is_some() && st.ready >= HAVE_CURRENT_DATA)
+                .filter(|(_, st)| {
+                    (st.frames.is_some() || st.mse.is_some() && st.video.0 > 0) && st.ready >= HAVE_CURRENT_DATA
+                })
                 .map(|(&node, st)| (node, st.show_poster))
                 .collect()
         };
@@ -1244,6 +1529,9 @@ fn presented_frame(page: &PageDom, node: NodeId, t: f64) -> Option<(f64, f64, (u
     }
     let position = st.position_at(t);
     let size = st.video;
+    if let Some(m) = st.mse.as_mut() {
+        return m.video_frame(position, st.duration).map(|f| (f.time, f.time, (f.width, f.height)));
+    }
     match st.frames.as_mut().and_then(|f| f.player()) {
         Some(player) => {
             let index = player.index_at(position);
@@ -1312,7 +1600,13 @@ pub fn run_video_frame_callbacks(page: &Rc<PageDom>, now_ms: f64) {
 
 /// `videoWidth`/`videoHeight`: the video track's size once its metadata is known.
 pub(crate) fn video_size(n: &NodeData) -> (u32, u32) {
-    peek(n.page(), n.id, |st| if st.ready >= HAVE_METADATA { st.video } else { (0, 0) })
+    let t = now(n.page());
+    peek(n.page(), n.id, |st| {
+        if st.ready < HAVE_METADATA {
+            return (0, 0);
+        }
+        st.mse.as_ref().map_or(st.video, |m| m.presentation.dimensions(st.position_at(t)))
+    })
 }
 
 /// The element's MediaError in this realm: one object per error.
@@ -1333,6 +1627,10 @@ fn error_value<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     Ok(error)
 }
 
+pub(crate) fn mse_time_ranges<'s>(s: &Scope<'s>, flat: Value<'s>) -> JsResult<Value<'s>> {
+    MODULE.helper(s, &crate::target::page_of(s)?, "timeRanges", &[flat])
+}
+
 fn time_ranges<'s>(s: &Scope<'s>, n: &NodeData, ranges: &[(f64, f64)]) -> JsResult<Value<'s>> {
     let flat: Vec<Value<'s>> = ranges.iter().flat_map(|&(a, b)| [s.number(a), s.number(b)]).collect();
     let list = s.array(&flat)?;
@@ -1340,8 +1638,11 @@ fn time_ranges<'s>(s: &Scope<'s>, n: &NodeData, ranges: &[(f64, f64)]) -> JsResu
 }
 
 /// The whole resource once it is loaded: every byte is buffered and seekable.
-fn loaded_range(n: &NodeData) -> Vec<(f64, f64)> {
+fn loaded_range(n: &NodeData, seekable: bool) -> Vec<(f64, f64)> {
     peek(n.page(), n.id, |st| {
+        if let Some(m) = &st.mse {
+            return if seekable { m.seekable.clone() } else { m.buffered.clone() };
+        }
         if st.ready >= HAVE_METADATA && st.duration.is_finite() {
             vec![(0.0, st.duration)]
         } else {
@@ -1409,8 +1710,8 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
     });
     def.getter("seeking", |s, n| Ok(s.boolean(peek(n.page(), n.id, |st| st.seeking))));
     def.getter("duration", |s, n| Ok(s.number(peek(n.page(), n.id, |st| st.duration))));
-    def.getter("buffered", |s, n| time_ranges(s, n, &loaded_range(n)));
-    def.getter("seekable", |s, n| time_ranges(s, n, &loaded_range(n)));
+    def.getter("buffered", |s, n| time_ranges(s, n, &loaded_range(n, false)));
+    def.getter("seekable", |s, n| time_ranges(s, n, &loaded_range(n, true)));
     def.getter("played", |s, n| {
         let t = now(n.page());
         let ranges = peek(n.page(), n.id, |st| {
@@ -1423,15 +1724,10 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
         });
         time_ranges(s, n, &ranges)
     });
-    def.getter("textTracks", |s, n| {
-        let wrapper = node_value(s, n.page(), Some(n.id))?;
-        let wrapper = wrapper.as_object().ok_or(JsError::ContextDestroyed)?;
-        if let Some(list) = s.get_hidden(wrapper, "__lpTextTracks")? {
-            return Ok(list);
-        }
-        let list = MODULE.helper(s, n.page(), "textTrackList", &[])?;
-        s.set_hidden(wrapper, "__lpTextTracks", list)?;
-        Ok(list)
+    def.getter("textTracks", |s, n| crate::text_tracks::element_helper(s, n, "syncMedia", &[]));
+    def.method("addTextTrack", 1, |s, n, a| {
+        a.require(1, "addTextTrack")?;
+        crate::text_tracks::element_helper(s, n, "addTextTrack", &[a.get(0), a.get(1), a.get(2)])
     });
     def.accessor(
         "currentTime",
@@ -1589,13 +1885,17 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
         if ended {
             seek(&page, n.id, 0.0);
         }
-        let (was_paused, ready) = with(&page, n.id, |st| {
+        let (was_paused, ready, poster) = with(&page, n.id, |st| {
             let was_paused = st.paused;
+            let poster = std::mem::replace(&mut st.show_poster, false);
             st.paused = false;
             st.can_autoplay = false;
-            st.show_poster = false;
-            (was_paused, st.ready)
+            (was_paused, st.ready, poster)
         });
+        // HTML play(): clearing the show poster flag runs "time marches on".
+        if poster {
+            crate::text_tracks::playback(&page, n.id, false);
+        }
         if let Some((resource, source)) = suspended {
             // preload=none: playback requested, the fetch goes ahead.
             with(&page, n.id, |st| st.network = NETWORK_LOADING);

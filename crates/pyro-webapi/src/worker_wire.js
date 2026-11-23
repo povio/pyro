@@ -20,9 +20,11 @@
 // `host([kind, ports], 7)` makes the stream of a decoded 'S' tree.
 // `host(value, 0)` also describes an ImageBitmap or OffscreenCanvas as
 // ['C', index] (its pixels or placeholder travel beside the text);
-// `host(value, 8)` is 'C' for one that can be transferred (DataCloneError
+// `host(value, 8)` is 'C' for one that can be transferred, 'A' for AudioData (DataCloneError
 // if detached), `host(value, 9)` detaches it and `host(index, 10)` makes the
-// one of a decoded 'C' tree.
+// one of a decoded 'C' tree. For WebCodecs resources, host(value, 11) stores
+// the immutable slots and returns their index, and host(index, 12) restores
+// a 'Q' record in the receiving realm.
 // Blob bytes travel beside the text, shared, not copied. Transferred
 // MessagePorts travel beside it too: `encode` returns them in transfer-list
 // order, then the ports of the transferred streams, with the count of the
@@ -58,6 +60,21 @@
     const boxed = {Boolean: Boolean.prototype.valueOf, Number: Number.prototype.valueOf,
         String: String.prototype.valueOf, BigInt: BigInt.prototype.valueOf};
     const call = (fn, self, args = []) => apply(fn, self, args);
+    // A view whose length tracks its resizable buffer's (built without a length) serializes so.
+    // ECMAScript has no getter for that: a view ending at its buffer's end is probed by growing
+    // the buffer by up to 8 bytes and back (at its maximum, it counts as tracking).
+    const abResize = AB.prototype.resize, typedByteLength = getter(typedProto, 'byteLength');
+    function tracksLength(view, buffer, offset, viewBytes) {
+        if (!call(abResizable, buffer)) return false;
+        const length = call(abLength, buffer), before = call(viewBytes, view);
+        const room = call(abMax, buffer) - length;
+        if (length - offset - before >= 8 || length - offset - before < 0) return false;
+        if (room <= 0) return true;
+        call(abResize, buffer, [length + (room < 8 ? room : 8)]);
+        const grew = call(viewBytes, view) !== before;
+        call(abResize, buffer, [length]);
+        return grew;
+    }
     const put = (object, key, value) => define(object, key,
         {value, enumerable: true, writable: true, configurable: true});
     const hide = (object, key, value) => define(object, key, {value, writable: true, configurable: true});
@@ -85,7 +102,7 @@
                 throw new TE('transfer entries must be objects');
             put(entries, entries.length, entry);
         }
-        const buffers = [], ports = [], streams = [], kinds = [], canvases = [], seen = new M();
+        const buffers = [], ports = [], streams = [], kinds = [], resources = [], seen = new M();
         for (let i = 0; i < entries.length; ++i) {
             const entry = entries[i];
             if (call(mapHas, seen, [entry])) fail('An object is listed twice in the transfer list');
@@ -96,8 +113,8 @@
             } else if (host(entry, 4)) {
                 put(ports, ports.length, entry);
             } else if (host(entry, 8) !== undefined) {
-                // An ImageBitmap or OffscreenCanvas.
-                put(canvases, canvases.length, entry);
+                // A transferable canvas object or AudioData.
+                put(resources, resources.length, entry);
             } else {
                 // A ReadableStream, WritableStream or TransformStream ('R',
                 // 'W', 'T'; DataCloneError when locked).
@@ -108,19 +125,19 @@
             }
         }
         if (buffers.length && !abTransfer) fail('ArrayBuffer transfer is not available', true);
-        return [buffers, ports, streams, kinds, canvases];
+        return [buffers, ports, streams, kinds, resources];
     }
 
-    function encode(clone, value, options) {
+    function encode(clone, value, options, forStorage) {
         const lists = transferList(options), transfer = lists[0], ports = lists[1];
-        const streams = lists[2], kinds = lists[3], canvases = lists[4];
-        // Listed ports, streams and canvases stay themselves in the copy;
+        const streams = lists[2], kinds = lists[3], resources = lists[4];
+        // Listed ports, streams and resources stay themselves in the copy;
         // the walk numbers them. A stream's ports follow the listed ports.
         const keep = [];
         for (let i = 0; i < ports.length; ++i) put(keep, keep.length, ports[i]);
         for (let i = 0; i < streams.length; ++i) put(keep, keep.length, streams[i]);
-        for (let i = 0; i < canvases.length; ++i) put(keep, keep.length, canvases[i]);
-        const copy = clone(value, undefined, undefined, keep.length ? keep : undefined);
+        for (let i = 0; i < resources.length; ++i) put(keep, keep.length, resources[i]);
+        const copy = clone(value, undefined, undefined, keep.length ? keep : undefined, undefined, undefined, forStorage);
         // Only a message that transfers something pays for these lookups.
         const portIndex = ports.length ? new M() : undefined;
         const streamTrees = streams.length ? new M() : undefined;
@@ -162,15 +179,36 @@
             if (isView(source)) {
                 const name = call(typedName, source);
                 if (name !== undefined) {
-                    const buffer = node(call(typedBuffer, source));
-                    return '["v",' + stringify(name) + ',' + buffer + ',' + call(typedOffset, source) + ','
-                        + call(typedLength, source) + ']';
+                    const original = call(typedBuffer, source), offset = call(typedOffset, source);
+                    // A length-tracking view's length is null (probed before the buffer is serialized).
+                    const length = tracksLength(source, original, offset, typedByteLength) ? null : call(typedLength, source);
+                    const buffer = node(original);
+                    return '["v",' + stringify(name) + ',' + buffer + ',' + offset + ',' + length + ']';
                 }
-                const buffer = node(call(dvBuffer, source));
-                return '["w",' + buffer + ',' + call(dvOffset, source) + ',' + call(dvLength, source) + ']';
+                const original = call(dvBuffer, source), offset = call(dvOffset, source);
+                const length = tracksLength(source, original, offset, dvLength) ? null : call(dvLength, source);
+                const buffer = node(original);
+                return '["w",' + buffer + ',' + offset + ',' + length + ']';
             }
+            // Read native WebCodecs slots without consulting public getters.
+            const resource = host(source, 11);
+            if (resource !== undefined) return '["Q",' + resource + ']';
             const kind = call(objectTag, source);
             switch (kind) {
+                case '[object DOMPoint]': case '[object DOMPointReadOnly]':
+                case '[object DOMRect]': case '[object DOMRectReadOnly]':
+                case '[object DOMMatrix]': case '[object DOMMatrixReadOnly]': case '[object DOMQuad]': {
+                    const parts = host(source, 15);
+                    if (!parts) fail('Invalid geometry value');
+                    return '["G",' + stringify(parts[0]) + ',' + node(parts[1]) + ']';
+                }
+                case '[object ImageData]': {
+                    const parts = host(source, 13);
+                    if (parts == null) fail('Invalid ImageData');
+                    // Encode the pixel view through the graph so a separately
+                    // listed reference to image.data retains its identity.
+                    return '["I",' + parts[0] + ',' + parts[1] + ',' + stringify(parts[3]) + ',' + node(parts[2]) + ']';
+                }
                 case '[object Date]': return '["d",' + node(call(dateTime, source)) + ']';
                 case '[object RegExp]':
                     return '["x",' + stringify(call(regexpSource, source)) + ','
@@ -207,6 +245,14 @@
                     return '["E",' + stringify(call(domName, source)) + ',' + stringify(call(domMessage, source))
                         + ',' + node(stack && stack.value) + ']';
                 }
+                // A QuotaExceededError: its message, quota and requested (null for none).
+                case '[object QuotaExceededError]': {
+                    const QEE = globalThis.QuotaExceededError, stack = data(source, 'stack');
+                    const quota = call(descriptor(QEE.prototype, 'quota').get, source);
+                    const requested = call(descriptor(QEE.prototype, 'requested').get, source);
+                    return '["U",' + stringify(call(domMessage, source)) + ',' + stringify(quota) + ','
+                        + stringify(requested) + ',' + node(stack && stack.value) + ']';
+                }
             }
             const parts = host(source, 0);
             if (parts !== undefined) {
@@ -232,15 +278,21 @@
         }
         for (let i = 0; i < ports.length; ++i) host(ports[i], 4);
         for (let i = 0; i < streams.length; ++i) host(streams[i], 5);
-        for (let i = 0; i < canvases.length; ++i) host(canvases[i], 8);
+        for (let i = 0; i < resources.length; ++i) {
+            if (host(resources[i], 8) === 'A' && !call(mapHas, memory, [resources[i]])) {
+                // Even a frame only in the transfer list must be readable in
+                // the destination agent cluster when deserializing the message.
+                host(resources[i], 11);
+            }
+        }
         for (let i = 0; i < transfer.length; ++i) call(abTransfer, transfer[i]);
-        for (let i = 0; i < canvases.length; ++i) host(canvases[i], 9);
         const listed = ports.length, sent = [];
         for (let i = 0; i < listed; ++i) put(sent, i, ports[i]);
         for (let i = 0; i < streams.length; ++i) {
             const out = host(streams[i], 6);
             for (let j = 0; j < out.length; ++j) put(sent, sent.length, out[j]);
         }
+        for (let i = 0; i < resources.length; ++i) host(resources[i], 9);
         return [text, buffers, sent, listed];
     }
 
@@ -270,8 +322,10 @@
             switch (tree[0]) {
                 case 'a': return fill(remember(id, new A(tree[1])), tree, 2);
                 case 'o': return fill(remember(id, create(O.prototype)), tree, 1);
-                case 'v': return remember(id, new typed[tree[1]](node(tree[2]), tree[3], tree[4]));
-                case 'w': return remember(id, new DV(node(tree[1]), tree[2], tree[3]));
+                case 'v': return remember(id, tree[4] === null
+                    ? new typed[tree[1]](node(tree[2]), tree[3]) : new typed[tree[1]](node(tree[2]), tree[3], tree[4]));
+                case 'w': return remember(id, tree[3] === null
+                    ? new DV(node(tree[1]), tree[2]) : new DV(node(tree[1]), tree[2], tree[3]));
                 case 'd': return remember(id, new D(node(tree[1])));
                 case 'x': return remember(id, new R(tree[1], tree[2]));
                 case 'f': {
@@ -309,8 +363,20 @@
                     if (typeof stack === 'string') hide(error, 'stack', stack);
                     return error;
                 }
+                case 'U': {
+                    const options = {};
+                    if (tree[2] !== null) options.quota = tree[2];
+                    if (tree[3] !== null) options.requested = tree[3];
+                    const error = remember(id, new globalThis.QuotaExceededError(tree[1], options));
+                    const stack = node(tree[4]);
+                    if (typeof stack === 'string') hide(error, 'stack', stack);
+                    return error;
+                }
+                case 'G': return remember(id, host(tree[1], 16, node(tree[2])));
                 case 'F': return remember(id, host(tree, 1));
                 case 'C': return remember(id, host(tree[1], 10));
+                case 'Q': return remember(id, host(tree[1], 12));
+                case 'I': return remember(id, host(tree, 14, node(tree[4])));
                 case 'S': {
                     const streamPorts = [ports[tree[2]]];
                     if (tree.length > 3) put(streamPorts, 1, ports[tree[3]]);

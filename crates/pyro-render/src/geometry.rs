@@ -21,6 +21,7 @@ use stylo_taffy::CopyStyleGetters;
 
 use blitz_dom::{BaseDocument, NodeId};
 use kurbo::{Affine, Rect};
+use style::values::specified::box_::DisplayInside;
 
 /// One element's boxes, CSS px.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -538,7 +539,30 @@ impl Geometry {
             g.map_or(0.0, |g| g.top),
             g.map_or(0.0, |g| g.bottom),
         );
-        let scroll_width = if reversed.x {
+        let measure_width_from_right = reversed.x || node.primary_styles().is_some_and(|style| {
+            use style::logical_geometry::PhysicalSide;
+            use style::values::computed::Overflow;
+            let non_scrolling = |value| matches!(value, Overflow::Visible | Overflow::Clip);
+            let wm = style.writing_mode;
+            if !non_scrolling(style.clone_overflow_x()) || !non_scrolling(style.clone_overflow_y()) {
+                return false;
+            }
+            let starts_on_right = wm.inline_start_physical_side() == PhysicalSide::Right
+                || wm.block_start_physical_side() == PhysicalSide::Right;
+            if !starts_on_right || style.clone_display().inside() != DisplayInside::Flex {
+                return starts_on_right;
+            }
+            use style::computed_values::flex_direction::T as FlexDirection;
+            use style::values::computed::FlexWrap;
+            let position = style.get_position();
+            let row = matches!(position.flex_direction, FlexDirection::Row | FlexDirection::RowReverse);
+            if row != wm.is_vertical() {
+                !matches!(position.flex_direction, FlexDirection::RowReverse | FlexDirection::ColumnReverse)
+            } else {
+                !position.flex_wrap.contains(FlexWrap::WRAP_REVERSE)
+            }
+        });
+        let scroll_width = if measure_width_from_right {
             client_width.max((l.size.width - l.border.right - g.1) as f64 - o.x0)
         } else {
             client_width.max(o.x1 - (l.border.left + g.0) as f64)
@@ -643,9 +667,7 @@ impl Geometry {
         // a block-level sticky box is none: WPT `position-sticky-large-top-2`).
         let mut cb = doc.get_node(id).and_then(|n| n.parent);
         if is_table_part(doc, id) || is_cell(doc, id) {
-            while let Some(c) = cb.filter(|&c| tag(doc, c) != Some("table")) {
-                cb = doc.get_node(c).and_then(|n| n.parent);
-            }
+            cb = table_of(doc, id);
         } else {
             let inline = |c: NodeId| {
                 doc.get_node(c).and_then(|n| n.primary_styles()).is_some_and(|s| {
@@ -730,8 +752,12 @@ impl Geometry {
         if b.width != 0.0 || b.height != 0.0 {
             return Some(b);
         }
-        if is_table_part(doc, id) {
-            if tag(doc, id) == Some("tr") {
+        let inside = display_inside(doc, id);
+        if matches!(inside, Some(DisplayInside::TableColumn | DisplayInside::TableColumnGroup)) {
+            return Some(self.column_track_box(doc, id).unwrap_or(b));
+        }
+        if is_row_or_group(inside) {
+            if inside == Some(DisplayInside::TableRow) {
                 if let Some(row) = self.row_track_box(doc, id) {
                     return Some(row);
                 }
@@ -741,9 +767,7 @@ impl Geometry {
             }
             return Some(b);
         }
-        let inline =
-            doc.get_node(id).and_then(|n| n.primary_styles()).is_some_and(|s| s.clone_display().is_inline_flow());
-        if inline {
+        if doc.get_node(id).is_some_and(|node| node.is_non_atomic_inline()) {
             if let Some(r) = self.inline_union(doc, id) {
                 return Some(LayoutBox {
                     client_width: 0.0,
@@ -789,7 +813,7 @@ impl Geometry {
         let mut ancestor = id;
         while ancestor != table {
             let node = doc.get_node(ancestor)?;
-            if transformed(node) {
+            if transformed_table_part(node) {
                 return None;
             }
             ancestor = node.parent?;
@@ -809,7 +833,34 @@ impl Geometry {
         let columns = (info.columns.positions.first()?.start as f64, info.columns.positions.last()?.end as f64);
         let (transform, fixed) = self.transform(doc, table)?;
         let base = table_gutter_base(doc, table);
-        Some(row_track_rect(doc, (row.start as f64, row.end as f64), columns, id, base, transform, fixed))
+        // (Moved by its own relative offset and its group's, as its cells are.)
+        let offset = part_offset(doc, id);
+        Some(row_track_rect(doc, (row.start as f64, row.end as f64), columns, id, base, offset, transform, fixed))
+    }
+
+    fn column_track_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
+        let table = table_of(doc, id)?;
+        self.row_tracks_apply(doc, table)?;
+        let element = doc.get_node(table)?.element_data()?;
+        let blitz_dom::node::SpecialElementData::TableRoot(context) = &element.special_data else { return None };
+        let grid = context.computed_grid_info.try_borrow().ok()?;
+        let grid = grid.as_ref()?;
+        let mut tracks = context
+            .columns
+            .iter()
+            .zip(&grid.columns.positions)
+            .filter_map(|(column, track)| (column.node_id == id || column.group == Some(id)).then_some(track));
+        let first = tracks.next()?;
+        let last = tracks.next_back().unwrap_or(first);
+        let top = context.grid_box.borrow().map_or(0.0, |(top, _)| top);
+        let local = Rect::new(
+            first.start.min(last.start).into(),
+            (top + grid.rows.positions.first()?.start).into(),
+            first.end.max(last.end).into(),
+            (top + grid.rows.positions.last()?.end).into(),
+        );
+        let (transform, fixed) = self.transform(doc, table)?;
+        Some(LayoutBox::from_rect(transform.transform_rect_bbox(local), fixed))
     }
 
     /// The checks of [`Geometry::row_track_box`] that depend on the table
@@ -836,7 +887,7 @@ impl Geometry {
         let table = table_of(doc, group)?;
         self.row_tracks_apply(doc, table)?;
         let node = doc.get_node(group)?;
-        if transformed(node) || node.parent != Some(table) {
+        if transformed_table_part(node) || node.parent != Some(table) {
             return None;
         }
         let element = doc.get_node(table)?.element_data()?;
@@ -850,6 +901,7 @@ impl Geometry {
         let (transform, fixed) = self.transform(doc, table)?;
         let base = table_gutter_base(doc, table);
         let unit = |v: f64| v.signum() * ((v.abs() * 64.0 + 0.01).trunc() / 64.0);
+        let group_offset = part_offset(doc, group);
         let mut rows = context.rows.iter().enumerate().filter(|(_, row)| row.group == Some(group)).peekable();
         let mut acc: Option<Rect> = None;
         let mut add = |b: LayoutBox| {
@@ -867,13 +919,14 @@ impl Geometry {
             // The group's rows in the grid, in order: a row child the grid
             // placed is the next of them; one it did not (hidden) is read
             // as any other child.
-            if tag(doc, c) == Some("tr") && rows.peek().is_some_and(|(_, row)| row.node_id == c) {
+            if rows.peek().is_some_and(|(_, row)| row.node_id == c) {
                 let (index, _) = rows.next()?;
-                if transformed(child) {
+                if transformed_table_part(child) {
                     return None;
                 }
                 let track = info.rows.positions.get(index)?;
-                add(row_track_rect(doc, (track.start as f64, track.end as f64), columns, c, base, transform, fixed));
+                // (The group's box moves with the group's relative offset alone, not its rows'.)
+                add(row_track_rect(doc, (track.start as f64, track.end as f64), columns, c, base, group_offset, transform, fixed));
             } else if let Some(b) = self.element_box(doc, c) {
                 add(b);
             }
@@ -886,7 +939,7 @@ impl Geometry {
 
     /// Union of the (adjusted) boxes of a table part's children.
     fn children_union(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
-        if is_table_part(doc, id) && tag(doc, id) != Some("tr") {
+        if display_inside(doc, id) != Some(DisplayInside::TableRow) {
             if let Some(union) = self.group_rows_union(doc, id) {
                 return union;
             }
@@ -1331,8 +1384,8 @@ pub struct TextWord {
     pub width: f64,
     pub height: f64,
     pub fixed: bool,
-    /// Caret positions along the word: a UTF-16 offset into the node's data
-    /// and its x, from the word's start to its end.
+    pub vertical_edges: bool,
+    /// UTF-16 offsets and their document coordinate on the physical inline axis.
     pub edges: Vec<(u32, f64)>,
 }
 
@@ -1476,10 +1529,13 @@ impl Geometry {
                         let (x0, x1) = (edges[0].1, edges[edges.len() - 1].1);
                         let r =
                             origin.transform_rect_bbox(Rect::new(x0 / scale, top / scale, x1 / scale, bottom / scale));
+                        let [inline_x, inline_y, ..] = origin.as_coeffs();
+                        let vertical_edges = inline_x.abs() < inline_y.abs();
                         let edges = edges
                             .into_iter()
                             .map(|(o, ex)| {
-                                (o, origin.transform_rect_bbox(Rect::new(ex / scale, 0.0, ex / scale, 0.0)).x0)
+                                let point = origin * kurbo::Point::new(ex / scale, top / scale);
+                                (o, if vertical_edges { point.y } else { point.x })
                             })
                             .collect();
                         out.push(TextWord {
@@ -1490,6 +1546,7 @@ impl Geometry {
                             width: (r.width() * 64.0 - 0.01).ceil() / 64.0,
                             height: r.height(),
                             fixed,
+                            vertical_edges,
                             edges,
                         });
                     };
@@ -1617,13 +1674,29 @@ pub(crate) fn is_cell(doc: &BaseDocument, id: NodeId) -> bool {
 }
 
 pub(crate) fn is_table_part(doc: &BaseDocument, id: NodeId) -> bool {
-    matches!(tag(doc, id), Some("tr" | "thead" | "tbody" | "tfoot"))
+    is_row_or_group(display_inside(doc, id))
 }
 
-/// The nearest `<table>` ancestor of `id`.
+fn display_inside(doc: &BaseDocument, id: NodeId) -> Option<DisplayInside> {
+    doc.get_node(id)?.table_box_display_inside()
+}
+
+fn is_row_or_group(inside: Option<DisplayInside>) -> bool {
+    matches!(
+        inside,
+        Some(
+            DisplayInside::TableRow
+                | DisplayInside::TableRowGroup
+                | DisplayInside::TableHeaderGroup
+                | DisplayInside::TableFooterGroup
+        )
+    )
+}
+
+/// The nearest table box ancestor of `id`.
 fn table_of(doc: &BaseDocument, id: NodeId) -> Option<NodeId> {
     let mut table = doc.get_node(id)?.parent?;
-    while tag(doc, table) != Some("table") {
+    while !doc.get_node(table)?.flags.is_table_root() {
         table = doc.get_node(table)?.parent?;
     }
     Some(table)
@@ -1634,21 +1707,43 @@ fn transformed(node: &blitz_dom::Node) -> bool {
     node.transform().as_deref().is_some_and(|transform| *transform != Affine::IDENTITY)
 }
 
+/// How far relative positioning moves table part `id` (`BaseDocument::table_part_offset`).
+fn part_offset(doc: &BaseDocument, id: NodeId) -> kurbo::Vec2 {
+    doc.table_part_offset(id).map_or(kurbo::Vec2::ZERO, |o| kurbo::Vec2::new(o.x as f64, o.y as f64))
+}
+
+/// Whether a row or row group is transformed: a transform the node carries, or, since Blitz
+/// transforms a table part's cells rather than the part itself (its `Node::transform` stays
+/// empty), one its style gives it. Such a part's box is its cells' union, as they were moved; a
+/// relative offset alone shifts its track's box instead (`BaseDocument::table_part_offset`).
+fn transformed_table_part(node: &blitz_dom::Node) -> bool {
+    use style::values::computed::{Rotate, Scale, Translate};
+    transformed(node)
+        || node.primary_styles().is_some_and(|style| {
+            let b = style.get_box();
+            !b.transform.0.is_empty()
+                || !matches!(b.translate, Translate::None)
+                || !matches!(b.rotate, Rotate::None)
+                || !matches!(b.scale, Scale::None)
+        })
+}
+
 /// The box of row `id` from its grid track `(start, end)` across the
 /// table's columns `(left, right)` (see [`Geometry::row_track_box`]), grown
-/// by the collapsed-border gutters (`base`, see [`table_gutter_base`]) and
-/// placed by the table's `transform`.
+/// by the collapsed-border gutters (`base`, see [`table_gutter_base`]), moved by
+/// the row's and its group's relative offsets, and placed by the table's `transform`.
 fn row_track_rect(
     doc: &BaseDocument,
     track: (f64, f64),
     columns: (f64, f64),
     id: NodeId,
     base: Option<(f64, f64)>,
+    offset: kurbo::Vec2,
     transform: Affine,
     fixed: bool,
 ) -> LayoutBox {
     let (gx, top, bottom) = base.map(|b| row_gutters(doc, Some(id), b)).unwrap_or((0.0, 0.0, 0.0));
-    let local = Rect::new(columns.0 - gx, track.0 - top, columns.1 + gx, track.1 + bottom);
+    let local = Rect::new(columns.0 - gx, track.0 - top, columns.1 + gx, track.1 + bottom) + offset;
     LayoutBox::from_rect(transform.transform_rect_bbox(local), fixed)
 }
 

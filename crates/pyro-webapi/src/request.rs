@@ -36,6 +36,8 @@ pub struct RequestData {
     used: Rc<Cell<bool>>,
     /// `body` was read: its source holds this Request's body consumer.
     source_made: Cell<bool>,
+    /// The body is a script's ReadableStream (the hidden STREAM), not `body`'s bytes.
+    pub(crate) script_stream: Cell<bool>,
 }
 impl Drop for RequestData {
     fn drop(&mut self) {
@@ -78,10 +80,10 @@ pub(crate) fn parse_referrer(page: &crate::page::PageDom, referrer: &str) -> Res
         .base_url(base.as_ref())
         .parse(referrer)
         .map_err(|_| format!("Invalid referrer '{referrer}'"))?;
-    let document = dom.document_data(page.document()).ok().and_then(|d| pyro_net::Url::parse(&d.url).ok());
+    drop(dom);
     Ok(
         if (parsed.scheme() == "about" && parsed.path() == "client")
-            || document.is_none_or(|d| d.origin() != parsed.origin())
+            || page.origin_key() != parsed.origin().ascii_serialization()
         {
             "client".into()
         } else {
@@ -165,33 +167,22 @@ impl JsClass for Request {
         def.getter("isHistoryNavigation", |s, _d| Ok(s.boolean(false)));
         def.getter("signal", |s, d| hidden(s, d, SIGNAL));
         def.getter("duplex", |s, _d| Ok(s.string("half")));
-        def.getter("body", |s, d| {
-            if d.body.is_null() {
-                return Ok(s.null());
-            }
-            let existing = hidden(s, d, STREAM)?;
-            if !existing.is_undefined() {
-                return Ok(existing);
-            }
-            let page = crate::target::page_of(s)?;
-            let source = s.wrap::<BodySource>(StreamData::new(d.body.clone(), d.used.clone()), None)?;
-            d.source_made.set(true);
-            let read = source.get_atom("read")?;
-            let cancel = source.get_atom("cancel")?;
-            let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
-            let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
-            let owner = realm.scope()?;
-            let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
-            s.set_hidden(wrapper, STREAM, stream)?;
-            Ok(stream)
-        });
+        def.getter("body", |s, d| body_stream(s, d));
         def.getter("bodyUsed", |s, d| Ok(s.boolean(d.used.get() || stream_state(s, d)?.1)));
-        def.method("text", 0, |s, d, _| consume(s, d, ReadKind::Text));
-        def.method("json", 0, |s, d, _| consume(s, d, ReadKind::Json));
-        def.method("arrayBuffer", 0, |s, d, _| consume(s, d, ReadKind::ArrayBuffer));
-        def.method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
-        def.method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
-        def.method("formData", 0, |s, d, _| consume(s, d, ReadKind::FormData));
+        def.promise_method("text", 0, |s, d, _| consume(s, d, ReadKind::Text));
+        def.promise_method("json", 0, |s, d, _| consume(s, d, ReadKind::Json));
+        def.promise_method("arrayBuffer", 0, |s, d, _| consume(s, d, ReadKind::ArrayBuffer));
+        def.promise_method("bytes", 0, |s, d, _| consume(s, d, ReadKind::Bytes));
+        def.promise_method("blob", 0, |s, d, _| consume(s, d, ReadKind::Blob));
+        def.promise_method("formData", 0, |s, d, _| consume(s, d, ReadKind::FormData));
+        def.method("textStream", 0, |s, d, _| {
+            let (locked, disturbed) = stream_state(s, d)?;
+            if d.used.get() || locked || disturbed {
+                return Err(JsError::Type("Request body is already used".into()));
+            }
+            let stream = body_stream(s, d)?;
+            crate::fetch::text_stream(s, stream)
+        });
         def.method("clone", 0, |s, d, _| {
             let (locked, disturbed) = stream_state(s, d)?;
             if d.used.get() || locked || disturbed {
@@ -200,7 +191,21 @@ impl JsClass for Request {
             let bytes = if d.body.is_null() { None } else { Some(d.body.constructed_bytes()) };
             let headers = HeadersData::from_pairs(d.header_pairs(s), false).guard_request(d.mode == "no-cors");
             let signal = d.signal(s);
-            wrap(s, None, Fields::copy(d), headers, bytes, d.body.mime.borrow().clone(), signal)
+            let clone = wrap(s, None, Fields::copy(d), headers, bytes, d.body.mime.borrow().clone(), signal)?;
+            if d.script_stream.get() {
+                // A script's stream body is teed: this request keeps one branch, the clone the other.
+                let page = crate::target::page_of(s)?;
+                let clone_chunk = crate::structured_clone::realm_clone(s)?;
+                let pair =
+                    crate::streams::helper(s, &page, "cloneBody", &[hidden(s, d, STREAM)?, clone_chunk.value()])?;
+                let pair = pair.as_object().ok_or_else(|| JsError::Type("tee".into()))?;
+                let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+                let owner = realm.scope()?;
+                let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
+                s.set_hidden(wrapper, STREAM, pair.get_index(0)?)?;
+                adopt_stream(s, clone, pair.get_index(1)?)?;
+            }
+            Ok(clone)
         });
     }
 }
@@ -272,12 +277,14 @@ fn construct<'s>(
         None => {
             let input = crate::util::dom_string(input)?;
             let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &input);
-            let mut url = pyro_net::Url::parse(&resolved)
+            let url = pyro_net::Url::parse(&resolved)
                 .map_err(|_| JsError::Type(format!("Failed to construct 'Request': Invalid URL '{input}'").into()))?;
             if !url.username().is_empty() || url.password().is_some() {
                 return Err(JsError::Type("Failed to construct 'Request': Request cannot be constructed from a URL that includes credentials.".into()));
             }
-            url.set_fragment(None);
+            // Fetch: a request's URL keeps its fragment (`Request.url` serializes it); fetch()
+            // leaves it out of the network request (`fetch::parse_request`) and Cache matching
+            // ignores it.
             (
                 Fields {
                     method: "GET".into(),
@@ -299,6 +306,19 @@ fn construct<'s>(
             )
         }
     };
+    if let Some(priority) = string_option(s, init, "priority")? {
+        if !matches!(priority.as_str(), "high" | "low" | "auto") {
+            return Err(JsError::Type(format!(
+                "Failed to construct 'Request': The provided value '{priority}' is not a valid enum value of type RequestPriority."
+            ).into()));
+        }
+    }
+    // RequestInit `duplex` is a RequestDuplex enum: "half" is its only value.
+    if let Some(duplex) = string_option(s, init, "duplex")?.filter(|d| d != "half") {
+        return Err(JsError::Type(format!(
+            "Failed to construct 'Request': The provided value '{duplex}' is not a valid enum value of type RequestDuplex."
+        ).into()));
+    }
     let window_option = option(s, init, "window")?;
     if !window_option.is_undefined() && !window_option.is_null() {
         return Err(JsError::Type("Failed to construct 'Request': 'window' member must be null".into()));
@@ -399,6 +419,8 @@ fn construct<'s>(
     if fields.mode == "no-cors" {
         headers.retain(|(name, value)| crate::headers::cors_safelisted(name, value));
     }
+    // A script's ReadableStream that becomes the body (init's, or the input Request's).
+    let mut stream_body: Option<Value<'s>> = None;
     let body_option = option(s, init, "body")?;
     if !body_option.is_undefined() && !body_option.is_null() {
         if matches!(fields.method.as_str(), "GET" | "HEAD") {
@@ -407,16 +429,37 @@ fn construct<'s>(
             ));
         }
         if crate::streams::is_stream(s, body_option)? {
-            return Err(JsError::Type(
-                "Failed to construct 'Request': ReadableStream bodies are not supported.".into(),
-            ));
+            // A streaming body (Fetch "extract a body" of a ReadableStream): `duplex` must be
+            // "half", the stream must be usable, and it sets no Content-Type.
+            if option(s, init, "duplex")?.as_string().as_deref() != Some("half") {
+                return Err(JsError::Type(
+                    "Failed to construct 'Request': The `duplex` member must be specified for a request with a streaming body".into(),
+                ));
+            }
+            let page = crate::target::page_of(s)?;
+            if crate::streams::helper(s, &page, "isLocked", &[body_option])?.to_bool()
+                || crate::streams::helper(s, &page, "isDisturbed", &[body_option])?.to_bool()
+            {
+                return Err(JsError::Type(
+                    "Failed to construct 'Request': The body stream is locked or disturbed".into(),
+                ));
+            }
+            if fields.keepalive {
+                return Err(JsError::Type(
+                    "Failed to construct 'Request': keepalive cannot be set for a request with a streaming body".into(),
+                ));
+            }
+            stream_body = Some(body_option);
+            body_bytes = Some(Bytes::new());
+            body_mime = String::new();
+        } else {
+            let (bytes, mime) = crate::fetch::extract_body(s, body_option)?;
+            if !mime.is_empty() && !headers.iter().any(|(n, _)| n == "content-type") {
+                headers.push(("content-type".into(), mime.clone()));
+            }
+            body_bytes = Some(bytes);
+            body_mime = mime;
         }
-        let (bytes, mime) = crate::fetch::extract_body(s, body_option)?;
-        if !mime.is_empty() && !headers.iter().any(|(n, _)| n == "content-type") {
-            headers.push(("content-type".into(), mime.clone()));
-        }
-        body_bytes = Some(bytes);
-        body_mime = mime;
     } else if let Some(r) = &input_request {
         // The input's body moves to the new request.
         if !r.body.is_null() {
@@ -425,15 +468,62 @@ fn construct<'s>(
                     "Failed to construct 'Request': Request with GET/HEAD method cannot have body.".into(),
                 ));
             }
-            body_bytes = Some(r.take_body()?.unwrap_or_default());
+            // An input whose body stream a reader locked or read cannot lend it.
+            let (locked, disturbed) = stream_state(s, r)?;
+            if locked || disturbed {
+                return Err(JsError::Type(
+                    "Failed to construct 'Request': Cannot construct a Request with a Request object that has already been used.".into(),
+                ));
+            }
+            if r.script_stream.get() {
+                // Checked before the stream moves, so a refused input keeps its body.
+                if fields.mode == "no-cors" {
+                    return Err(no_cors_stream());
+                }
+                // The input's stream moves: the input's body is used from now on.
+                if r.used.replace(true) {
+                    return Err(JsError::Type("Failed to construct 'Request': Request body is already used".into()));
+                }
+                stream_body = Some(hidden(s, r, STREAM)?);
+                body_bytes = Some(Bytes::new());
+            } else {
+                body_bytes = Some(r.take_body()?.unwrap_or_default());
+            }
         }
     }
     // The body's MIME type is the request's Content-Type header.
     if let Some((_, ct)) = headers.iter().find(|(n, _)| n == "content-type") {
         body_mime = ct.clone();
     }
+    if stream_body.is_some() && fields.mode == "no-cors" {
+        return Err(no_cors_stream());
+    }
     let headers = HeadersData::from_pairs(headers, false).guard_request(fields.mode == "no-cors");
-    wrap(s, new_target, fields, headers, body_bytes, body_mime, signal)
+    let request = wrap(s, new_target, fields, headers, body_bytes, body_mime, signal)?;
+    if let Some(stream) = stream_body {
+        adopt_stream(s, request, stream)?;
+    }
+    Ok(request)
+}
+
+fn no_cors_stream() -> JsError {
+    JsError::Type("Failed to construct 'Request': A no-cors request cannot have a streaming body".into())
+}
+
+/// Makes `stream`, a script's ReadableStream, the body of the Request `request`.
+fn adopt_stream<'s>(s: &Scope<'s>, request: Value<'s>, stream: Value<'s>) -> JsResult<()> {
+    let wrapper = request.as_object().expect("Request wrapper");
+    let data = s.unwrap::<Request>(request).expect("Request wrapper");
+    data.script_stream.set(true);
+    s.set_hidden(wrapper, STREAM, stream)
+}
+
+/// The script ReadableStream that is `value`'s body when `value` is a Request made with one.
+pub(crate) fn script_body_stream<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Option<Value<'s>>> {
+    match s.unwrap::<Request>(value) {
+        Some(d) if d.script_stream.get() => Ok(Some(hidden(s, &d, STREAM)?)),
+        _ => Ok(None),
+    }
 }
 
 /// A service worker's view of an intercepted request (FetchEvent `request`):
@@ -503,6 +593,7 @@ fn wrap<'s>(
         body,
         used: Rc::new(Cell::new(false)),
         source_made: Cell::new(false),
+        script_stream: Cell::new(false),
     };
     let wrapper = match new_target {
         Some(nt) => s.wrap_new::<Request>(data, nt, Some(id))?,
@@ -525,6 +616,33 @@ fn hidden<'s>(s: &Scope<'s>, data: &RequestData, key: &'static str) -> JsResult<
     Ok(s.get_hidden(wrapper, key)?.unwrap_or(s.undefined()))
 }
 
+/// `request.body`: null, or the one stream this Request hands out (made on
+/// first use over the native body).
+fn body_stream<'s>(s: &Scope<'s>, d: &RequestData) -> JsResult<Value<'s>> {
+    if d.body.is_null() {
+        return Ok(s.null());
+    }
+    let existing = hidden(s, d, STREAM)?;
+    if !existing.is_undefined() {
+        return Ok(existing);
+    }
+    let page = crate::target::page_of(s)?;
+    let source = s.wrap::<BodySource>(StreamData::new(d.body.clone(), d.used.clone()), None)?;
+    d.source_made.set(true);
+    let read = source.get_atom("read")?;
+    let cancel = source.get_atom("cancel")?;
+    let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
+    if d.used.get() {
+        // text()/json()/... or fetch() already read the body: its stream is unusable.
+        crate::streams::helper(s, &page, "markConsumed", &[stream])?;
+    }
+    let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+    let owner = realm.scope()?;
+    let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
+    s.set_hidden(wrapper, STREAM, stream)?;
+    Ok(stream)
+}
+
 fn stream_state(s: &Scope<'_>, data: &RequestData) -> JsResult<(bool, bool)> {
     let Ok(stream) = hidden(s, data, STREAM) else { return Ok((false, false)) };
     if stream.is_undefined() {
@@ -539,15 +657,44 @@ fn stream_state(s: &Scope<'_>, data: &RequestData) -> JsResult<(bool, bool)> {
 
 fn consume<'s>(s: &Scope<'s>, data: &RequestData, kind: ReadKind) -> JsResult<Value<'s>> {
     let (locked, disturbed) = stream_state(s, data)?;
-    if locked || disturbed {
+    // A script stream body that moved to another Request is that Request's now.
+    if locked || disturbed || (data.script_stream.get() && data.used.get()) {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
         deferred.reject(s, JsError::Type("Request body has already been consumed".into()).to_value(s))?;
         return Ok(promise);
     }
-    let used = if data.body.is_null() { false } else { data.used.replace(true) };
-    if matches!(kind, ReadKind::Blob | ReadKind::FormData) {
-        data.body.refresh_mime(&data.header_pairs(s), matches!(kind, ReadKind::Blob));
+    let headers = if matches!(kind, ReadKind::Blob | ReadKind::FormData) {
+        // As they are now: a Blob's type and FormData's MIME type come from the headers when the
+        // method is called (Chrome), not from changes made while the body is read.
+        hidden(s, data, HEADERS).ok().and_then(|v| s.unwrap::<Headers>(v).map(|h| HeadersData::from_pairs(h.pairs(), true)))
+    } else {
+        None
+    };
+    if data.script_stream.get() {
+        // The body is a script's stream: read it to its end (as Response's consume does).
+        let page = crate::target::page_of(s)?;
+        let name = match kind {
+            ReadKind::FormData | ReadKind::Blob => "package",
+            ReadKind::Text => "text",
+            ReadKind::Json => "json",
+            ReadKind::ArrayBuffer | ReadKind::Chunks => "arrayBuffer",
+            ReadKind::Bytes => "bytes",
+        };
+        data.used.set(true);
+        let package = if name == "package" {
+            s.function("packageBody", move |s, _, args| {
+                let bytes = crate::encoding::buffer_source_bytes(s, args.get(0))?
+                    .ok_or_else(|| JsError::Type("Expected body bytes".into()))?;
+                crate::fetch::package_body(s, kind, bytes, headers.as_ref())
+            })?
+            .value()
+        } else {
+            s.undefined()
+        };
+        let args = [hidden(s, data, STREAM)?, s.string(name), package];
+        return crate::streams::helper(s, &page, "consume", &args);
     }
-    data.body.read(s, kind, used)
+    let used = if data.body.is_null() { false } else { data.used.replace(true) };
+    data.body.read(s, kind, used, headers)
 }

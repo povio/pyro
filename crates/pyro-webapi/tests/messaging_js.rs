@@ -256,3 +256,90 @@ fn streams_transfer_through_structured_clone_and_ports() {
         "true|true|true|a+1|DataCloneError|DataCloneError|true|x+y+closed|true|HI|true|RangeError:boom|why"
     );
 }
+
+#[test]
+fn encoded_chunk_and_image_data_keep_graph_aliases_in_a_message() {
+    let env = env();
+    env.eval(r#"
+        globalThis.received = '';
+        const channel = new MessageChannel();
+        const image = new ImageData(new Uint8ClampedArray([11,22,33,44]), 1, 1);
+        const chunk = new EncodedVideoChunk({type:'key', timestamp:42, data:new Uint8Array([7])});
+        const other = new Uint8Array([8]);
+        channel.port2.onmessage = ({data}) => {
+            received = [data.chunk.timestamp, data.chunk === data.alias, data.image instanceof ImageData,
+                data.image.data === data.pixels, data.image.colorSpace, data.pixels.join(','),
+                data.other[0], other.byteLength].join('|');
+        };
+        channel.port1.postMessage({chunk,alias:chunk,image,pixels:image.data,other}, [other.buffer]);
+        image.data[0] = 99;
+    "#);
+    env.until("received !== ''");
+    assert_eq!(env.eval("received"), "42|true|true|true|srgb|11,22,33,44|8|0");
+}
+
+#[test]
+fn audio_data_clone_aliases_close_independently_and_failed_transfers_preserve_inputs() {
+    let env = env();
+    assert_eq!(env.eval(r#"
+        const init = {format:'u8', sampleRate:8000, numberOfFrames:3, numberOfChannels:1,
+                      timestamp:42, data:new Uint8Array([4,8,12])};
+        const frame = new AudioData(init);
+        const cloned = structuredClone({a:frame, b:frame});
+        const err = f => { try { f(); return 'none'; } catch (e) { return e.name; } };
+        const transferredBuffer = new ArrayBuffer(2);
+        const rejected = err(() => structuredClone(Symbol(), {transfer:[frame, transferredBuffer]}));
+        const before = [frame.numberOfFrames, transferredBuffer.byteLength];
+        const moved = structuredClone(frame, {transfer:[frame]});
+        const closedClone = err(() => structuredClone(frame));
+        const blocked = err(() => structuredClone(moved, {transfer:[moved, frame]}));
+        const out = new Uint8Array(3);
+        moved.copyTo(out, {planeIndex:0});
+        cloned.a.close();
+        [rejected, ...before, closedClone, blocked, moved.numberOfFrames, frame.numberOfFrames,
+         cloned.a===cloned.b, cloned.a!==moved, out.join(',')].join('|')
+    "#), "DataCloneError|3|2|DataCloneError|DataCloneError|3|0|true|true|4,8,12");
+}
+
+#[test]
+fn audio_data_wire_message_preserves_pcm_identity_and_checks_recipient_and_storage() {
+    let sender = env();
+    let same = Env::with_engine("http://messaging.test/", sender.engine.clone());
+    let other = Env::with_engine("http://messaging.test/", sender.engine.clone());
+    let group = pyro_webapi::AgentClusterGroup::default();
+    sender.page.set_window_agent_cluster(group, "http://messaging.test".into());
+    same.page.set_window_agent_cluster(group, "http://messaging.test".into());
+
+    sender.eval(r#"
+        globalThis.sample = new AudioData({format:'u8', sampleRate:8000, numberOfFrames:2,
+                       numberOfChannels:1, timestamp:7, data:new Uint8Array([31,42])})
+    "#);
+    let s = sender.realm.scope().unwrap();
+    let value = s.eval("globalThis.audioGraph = {a:sample,b:sample}", None, 1).unwrap();
+    let stored = pyro_webapi::serialize_for_storage(&s, value).err().expect("audio must not be stored");
+    assert_eq!(stored.to_value(&s).as_object().unwrap().get_atom("name").unwrap().to_string().unwrap(), "DataCloneError");
+    let options = s.eval("({transfer:[sample]})", None, 1).unwrap();
+    let wire = pyro_webapi::serialize_message(&s, value, options).unwrap();
+    assert_eq!(sender.eval("sample.numberOfFrames"), "0");
+    // A resource can appear only in the transfer list. The destination still
+    // deserializes its transfer record and the queue must count its PCM bytes.
+    let list = s.eval(r#"globalThis.extra = new AudioData({format:'u8', sampleRate:8000,
+        numberOfFrames:1024, numberOfChannels:1, timestamp:0, data:new Uint8Array(1024)}); [extra]"#, None, 1).unwrap();
+    let unused = pyro_webapi::serialize_message(&s, s.number(1.), list).unwrap();
+    assert!(unused.size() >= 1024);
+    assert_eq!(sender.eval("extra.numberOfFrames"), "0");
+    let rs = other.realm.scope().unwrap();
+    for message in [&wire, &unused] {
+        let rejected = pyro_webapi::deserialize_message(&rs, message).err().expect("different agent cluster");
+        assert_eq!(rejected.to_value(&rs).as_object().unwrap().get_atom("name").unwrap().to_string().unwrap(), "DataCloneError");
+    }
+    let rs = same.realm.scope().unwrap();
+    let received = pyro_webapi::deserialize_message(&rs, &wire).unwrap();
+    rs.global().set_atom("receivedSample", received).unwrap();
+    assert_eq!(same.eval(r#"
+        const out = new Uint8Array(2);
+        receivedSample.a.copyTo(out, {planeIndex:0});
+        [receivedSample.a instanceof AudioData, receivedSample.a === receivedSample.b,
+         receivedSample.a.timestamp, out.join(',')].join('|')
+    "#), "true|true|7|31,42");
+}

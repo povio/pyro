@@ -30,7 +30,6 @@
   const fail = (what, message) => new TypeErrorC(`Failed to execute '${what}' on 'LockManager': ${message}`);
   const dom = (message, name) => new DOMExceptionC(message, name);
   const tag = (C, name) => O.defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
-  const getter = (C, name, get) => O.defineProperty(C.prototype, name, { get, enumerable: true, configurable: true });
 
   const locks = new WeakMap();
   class Lock {
@@ -38,14 +37,14 @@
       if (t !== token) throw illegal('Lock');
       locks.set(this, { name, mode });
     }
+    get name() { return lockOf(this, 'name').name; }
+    get mode() { return lockOf(this, 'mode').mode; }
   }
   const lockOf = (self, member) => {
     const l = locks.get(self);
     if (!l) throw new TypeErrorC(`Failed to read the '${member}' property from 'Lock': Illegal invocation`);
     return l;
   };
-  getter(Lock, 'name', function name() { return lockOf(this, 'name').name; });
-  getter(Lock, 'mode', function mode() { return lockOf(this, 'mode').mode; });
   tag(Lock, 'Lock');
 
   const managers = new WeakSet();
@@ -105,7 +104,13 @@
             (e) => { if (lock) native.release(id); fail2(e); },
           );
         };
-        const grant = () => { abortSteps.delete(id); run(new Lock(token, name, mode)); };
+        let granted = false;
+        const grant = (grantedId) => {
+          id = grantedId;
+          granted = true;
+          abortSteps.delete(id);
+          run(new Lock(token, name, mode));
+        };
         const stolen = () => fail2(dom("Lock broken by another request with the 'steal' option.", 'AbortError'));
         id = native.request(encode(name), mode === 'exclusive', ifAvailable, steal, grant, stolen);
         if (id === 0) {
@@ -113,7 +118,7 @@
           resolve().then(() => run(null));
           return promise;
         }
-        if (signal !== undefined) {
+        if (signal !== undefined && !granted) {
           abortSteps.set(id, () => {
             abortSteps.delete(id);
             if (native.abort(id)) fail2(call.call(signalReason, signal));
@@ -142,10 +147,13 @@
   O.defineProperty(LockManager.prototype.request, 'length', { value: 2 });
   tag(LockManager, 'LockManager');
   for (const C of [Lock, LockManager]) {
+    // Neither interface has an IDL constructor.
+    O.defineProperty(C, 'length', { value: 0 });
     for (const k of O.getOwnPropertyNames(C.prototype)) {
       if (k === 'constructor') continue;
       const d = O.getOwnPropertyDescriptor(C.prototype, k);
-      if (typeof d.value === 'function') { d.enumerable = true; O.defineProperty(C.prototype, k, d); }
+      d.enumerable = true;
+      O.defineProperty(C.prototype, k, d);
     }
   }
   // Called by the signal's abort algorithm (web_locks.rs) with the request it guards.

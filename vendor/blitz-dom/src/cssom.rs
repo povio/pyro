@@ -168,6 +168,7 @@ fn css_rule_interface(rule: &CssRule) -> &'static str {
         CssRule::Container(_) => "CSSContainerRule",
         CssRule::FontFace(_) => "CSSFontFaceRule",
         CssRule::FontFeatureValues(_) => "CSSFontFeatureValuesRule",
+        CssRule::Function(_) => "CSSFunctionRule",
         CssRule::FontPaletteValues(_) => "CSSFontPaletteValuesRule",
         CssRule::CounterStyle(_) => "CSSCounterStyleRule",
         CssRule::Keyframes(_) => "CSSKeyframesRule",
@@ -340,6 +341,7 @@ impl BaseDocument {
             client: self.request_client(),
             inline: Some(self.inline_urls.clone()),
             policies: self.sheet_policies.clone(),
+            quirks_mode: self.sheet_quirks_mode(),
         }
     }
 

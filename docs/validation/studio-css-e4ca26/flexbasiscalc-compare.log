@@ -1,0 +1,30 @@
+flexbasiscalc-main-candidate 8082 page passes 5792 named passes 182003 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+flexbasiscalc-main-parent 8082 page passes 5792 named passes 181987 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+flexbasiscalc-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+flexbasiscalc-main-parent pages left only 0 right only 0
+flexbasiscalc-main-parent passes left only 16 right only 0
+flexbasiscalc-main-parent observed left only 0 right only 0
+flexbasiscalc-main-stable pages left only 287 right only 1445
+flexbasiscalc-main-stable passes left only 5906 right only 6866
+flexbasiscalc-main-stable observed left only 260 right only 499
+Losses vs parent by URL: Counter()
+flexbasiscalc-focus-candidate 418 page passes 328 named passes 8003 observed names 9025 statuses {'complete:0': 418}
+flexbasiscalc-focus-parent 418 page passes 328 named passes 7987 observed names 9025 statuses {'complete:0': 418}
+flexbasiscalc-focus-stable 418 page passes 409 named passes 8981 observed names 9025 statuses {'complete:0': 418}
+flexbasiscalc-focus-parent pages left only 0 right only 0
+flexbasiscalc-focus-parent passes left only 16 right only 0
+flexbasiscalc-focus-parent observed left only 0 right only 0
+flexbasiscalc-focus-stable pages left only 1 right only 82
+flexbasiscalc-focus-stable passes left only 23 right only 1001
+flexbasiscalc-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+flexbasiscalc-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+flexbasiscalc-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+flexbasiscalc-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+flexbasiscalc-supplement-parent pages left only 0 right only 0
+flexbasiscalc-supplement-parent passes left only 0 right only 0
+flexbasiscalc-supplement-parent observed left only 0 right only 0
+flexbasiscalc-supplement-stable pages left only 0 right only 8
+flexbasiscalc-supplement-stable passes left only 0 right only 42
+flexbasiscalc-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

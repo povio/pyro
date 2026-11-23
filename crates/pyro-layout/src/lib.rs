@@ -143,6 +143,7 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
 /// from its network ([`GeometrySource::set_subresource_loader`]), so what it
 /// is laid out with loads the way its own sub-resource requests go.
 pub fn install_with(fetchers: FetcherFactory) {
+    pyro_dom::picture::set_media_font_provider(Some(pyro_render::media_font_metrics));
     // pyro: before a page's scripts draw on a canvas (an SVG image, a `filter`).
     pyro_render::register_hooks();
     if profile::on() {
@@ -157,7 +158,8 @@ pub fn install_with(fetchers: FetcherFactory) {
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
             scroll_stale: Default::default(),
             base_url: RefCell::new(BaseUrl::new(BLANK)),
-            snapshot_base: RefCell::new(String::new()),
+            snapshot_base: RefCell::new(Default::default()),
+            snapshot_quirks: Default::default(),
             fetcher: RefCell::new(fetchers(None)),
             loader: RefCell::new(None),
             fetchers: fetchers.clone(),
@@ -171,6 +173,7 @@ pub fn install_with(fetchers: FetcherFactory) {
 /// page's rendering state (the next `install` and the next layout make them
 /// again). The fetcher, which reaches the old client's network, goes too.
 pub fn release_thread() {
+    pyro_dom::picture::set_media_font_provider(None);
     pyro_dom::layout::set_geometry_source_factory(None);
     let renderer = RENDERER.with(|r| r.try_borrow_mut().ok().and_then(|mut r| r.take()));
     drop(renderer);
@@ -179,7 +182,7 @@ pub fn release_thread() {
 /// The Blitz document of one page document.
 /// DOM version, style generation, viewport (width, height, device pixel
 /// ratio bits, dark) and style invalidations.
-type SyncedAt = (u64, u64, (u32, u32, u64, bool, bool, pyro_render::InputCapabilities), u64);
+type SyncedAt = (u64, u64, pyro_render::ViewportKey, u64);
 
 /// A document's base URL as given, and parsed once when it is set: links
 /// resolve against the parsed form on every sync, while the snapshot keeps
@@ -194,6 +197,7 @@ pub fn frame_table(table: pyro_dom::FrameTable) -> pyro_render::FrameTable {
             let content = pyro_render::FrameContent {
                 html: frame.html,
                 url: frame.url,
+                document_url: frame.document_url,
                 scroll: frame.scroll,
                 client: frame.client,
                 frames: frame_table(frame.frames),
@@ -235,7 +239,11 @@ pub struct BlitzGeometry {
     base_url: RefCell<BaseUrl>,
     /// pyro: the base URL the last whole snapshot resolved against ([`Self::document_base`]); a
     /// delta resolves against it too, so a changed base takes a whole snapshot.
-    snapshot_base: RefCell<String>,
+    snapshot_base: RefCell<(String, String)>,
+    /// pyro: the quirks and limited-quirks modes of the last whole snapshot's document; a delta
+    /// carries neither, so a changed mode (`document.open()` then a written doctype) takes a whole
+    /// snapshot, which rebuilds the renderer's document in that mode.
+    snapshot_quirks: std::cell::Cell<(bool, bool)>,
     /// Loads the document's sub-resources: made by `fetchers` from `loader`.
     fetcher: RefCell<Arc<dyn Fetcher>>,
     /// The document's network (`None` until the embedder gives it one).
@@ -457,7 +465,9 @@ impl BlitzGeometry {
     fn snapshot(&self, dom: &Dom, style: &StyleEngine) -> Option<Snapshot> {
         let t = pyro_render::profiling::on().then(Instant::now);
         let base = self.document_base(dom, style.document());
-        *self.snapshot_base.borrow_mut() = base.text.clone();
+        let location = dom.document_url_parsed(style.document()).ok().flatten().map_or("", url::Url::as_str);
+        *self.snapshot_base.borrow_mut() = (base.text.clone(), location.to_owned());
+        self.snapshot_quirks.set((dom.is_quirks_mode(style.document()), dom.is_limited_quirks_mode(style.document())));
         let sheets = RefCell::new(HashMap::new());
         let tree = {
             let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), Some(&sheets));
@@ -475,6 +485,7 @@ impl BlitzGeometry {
             raster_budget: dom.document_data(style.document()).ok()?.raster_budget.clone(),
             frames: frame_table(dom.frame_table(style.document())),
             html: String::new(),
+            document_url: (!location.is_empty() && location != base.text).then(|| location.to_owned()),
             base_url: base.text.clone(),
             sheets: sheets.into_inner(),
             width: v.width,
@@ -491,6 +502,7 @@ impl BlitzGeometry {
                 hover: v.hover,
             },
             scroll_x: 0.0,
+            media_environment: pyro_render::media_environment(v),
             scroll_y: 0.0,
             // pyro: one document's: a navigation's next document reuses none of its responses.
             resource_scope: format!("geometry-{}-{}", self.page, self.resource_document()),
@@ -585,6 +597,7 @@ impl BlitzGeometry {
                 },
                 hover: v.hover,
             },
+            pyro_render::media_environment(v),
         );
         let now = (dom.version(), style.observation_stamp(dom).1, viewport, style.invalidations());
         let last = self.synced.replace(Some(now));
@@ -609,7 +622,10 @@ impl BlitzGeometry {
                 None
             };
             let base = self.document_base(dom, style.document());
-            let same_base = base.text == *self.snapshot_base.borrow();
+            let location = dom.document_url_parsed(style.document()).ok().flatten().map_or("", url::Url::as_str);
+            let same_base = { let previous = self.snapshot_base.borrow(); previous.0 == base.text && previous.1 == location }
+                && self.snapshot_quirks.get()
+                    == (dom.is_quirks_mode(style.document()), dom.is_limited_quirks_mode(style.document()));
             if let (Some(restyled), true) = (restyled, vp == viewport && same_base) {
                 let profiling = pyro_render::profiling::on();
                 let t = profiling.then(Instant::now);
@@ -721,7 +737,13 @@ impl BlitzGeometry {
                 Some(&(_, _, old)) if old == hash => {}
                 Some(_) if is_style => changed.push(owner),
                 Some(_) => return None,
-                None if is_style => {}
+                None if is_style => {
+                    // An owner can already be in the render tree before its sheet is registered.
+                    // Its first CSSOM edit supplies new text without a DOM mutation.
+                    if style.sheet_text(dom, owner).is_some() {
+                        changed.push(owner);
+                    }
+                }
                 None => return None,
             }
         }
@@ -829,6 +851,7 @@ impl BlitzGeometry {
                             width: w.width,
                             height: w.height,
                             fixed: w.fixed,
+                            vertical_edges: w.vertical_edges,
                             edges: w.edges,
                         },
                     )
@@ -914,6 +937,20 @@ impl GeometrySource for BlitzGeometry {
         Some(loader.bodies().font_load(&key, loader.asked_fonts().as_deref()))
     }
 
+    /// pyro: by the same request key as [`Self::font_load`].
+    fn font_bytes(&self, url: &str) -> Option<Arc<Vec<u8>>> {
+        let loader = self.loader.borrow();
+        let loader = loader.as_ref()?;
+        let key = pyro_dom::layout::LayoutBodyKey::new(
+            &loader.document(),
+            url,
+            &Default::default(),
+            pyro_dom::layout::SubresourceKind::Font,
+        );
+        let body = loader.bodies().get(&key)?;
+        (!body.opaque).then(|| body.bytes.clone())
+    }
+
     fn sync(&self, dom: &Dom, layout: &Layout) {
         let t = profile::on().then(Instant::now);
         self.sync_inner(dom, layout.style(), false);
@@ -949,16 +986,34 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.anchor_scroll_shift(self.page, key, scroll, sticky)).unwrap_or_default()
     }
 
-    fn resolved_transform_value(&self, key: u64, style: &style::properties::ComputedValues) -> Option<String> {
-        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, style))
+    fn resolved_transform_value(&self, key: u64, property: &str, style: &style::properties::ComputedValues) -> Option<String> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, property, style))
+    }
+
+    fn authored_editing_style(&self, key: u64, properties: &[&str], white_space: &str) -> Vec<(&'static str, String)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.authored_editing_style(self.page, key, properties, white_space)).unwrap_or_default()
+    }
+
+    fn svg_geometry_properties(&self, key: u64) -> Vec<(&'static str, String)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.svg_geometry_properties(self.page, key)).unwrap_or_default()
+    }
+
+    fn sampled_calc_size(&self, key: u64, width: bool, style: &style::properties::ComputedValues) -> Option<f32> {
+        RENDERER.with(|renderer| renderer.try_borrow().ok()?.as_ref()?.sampled_calc_size(self.page, key, width, style))
     }
 
     fn viewport_scrolls_leftward(&self) -> Option<bool> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.viewport_scrolls_leftward(self.page))
     }
 
-    fn content_visibility_state(&self) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+    fn content_visibility_state(&self) -> Vec<(u64, bool, [Option<f32>; 2])> {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| Some(r.as_ref()?.content_visibility_state(self.page)))).unwrap_or_default()
+    }
+
+    fn content_visibility_auto_states(&self) -> Vec<(u64, bool)> {
+        RENDERER
+            .with(|r| r.try_borrow().ok().and_then(|r| Some(r.as_ref()?.content_visibility_auto_states(self.page))))
+            .unwrap_or_default()
     }
 
     fn content_visibility_frame(&self) {
@@ -970,9 +1025,29 @@ impl GeometrySource for BlitzGeometry {
         }
     }
 
+    fn has_remembered_size_candidates(&self) -> bool {
+        RENDERER.with(|r| r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.has_remembered_size_candidates(self.page))))
+    }
+
+    fn record_remembered_sizes(&self, synced: bool) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                if let Some(r) = r.as_mut() {
+                    r.record_remembered_sizes(self.page, synced);
+                }
+            }
+        });
+    }
+
     fn force_content_visibility(&self, key: u64) -> bool {
         RENDERER.with(|r| {
             r.try_borrow_mut().ok().and_then(|mut r| Some(r.as_mut()?.force_content_visibility(self.page, key))).unwrap_or(false)
+        })
+    }
+
+    fn force_hidden_contents(&self, key: u64) -> bool {
+        RENDERER.with(|r| {
+            r.try_borrow_mut().ok().and_then(|mut r| Some(r.as_mut()?.force_hidden_contents(self.page, key))).unwrap_or(false)
         })
     }
 
@@ -1011,6 +1086,19 @@ impl GeometrySource for BlitzGeometry {
     fn has_fragmented_boxes(&self) -> bool {
         RENDERER.with(|r| {
             r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.has_fragmented_boxes(self.page)))
+        })
+    }
+
+    fn element_image(&self, key: u64, scale: f64) -> Option<pyro_dom::geometry::ElementImage> {
+        let (image, taints, (width, height)) =
+            RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.paint_element(self.page, key, scale))?;
+        Some(pyro_dom::geometry::ElementImage {
+            width,
+            height,
+            pixel_width: image.width,
+            pixel_height: image.height,
+            rgba: image.data,
+            taints,
         })
     }
 
@@ -1096,6 +1184,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.document_size(self.page))
     }
 
+    fn document_content_size(&self) -> Option<(f64, f64)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.document_content_size(self.page))
+    }
+
     fn viewport_gutters(&self) -> Option<[f64; 4]> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.viewport_gutters(self.page))
     }
@@ -1117,12 +1209,45 @@ impl GeometrySource for BlitzGeometry {
         Some(style)
     }
 
+    fn generated_hit(&self, owner: u64, x: f64, y: f64) -> Option<pyro_dom::geometry::GeneratedHit> {
+        RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.generated_hit(self.page, owner, x, y))
+    }
+
+    fn flex_reading_positions(&self, owner: u64) -> Vec<(u64, usize, usize)> {
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.flex_reading_positions(self.page, owner))).unwrap_or_default())
+    }
+
+    fn grid_item_starts(&self, owner: u64) -> Vec<(u64, u16, u16)> {
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.grid_item_starts(self.page, owner))).unwrap_or_default())
+    }
+
+    fn css_animation_frames(&self, key: u64, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.css_animation_frames(self.page, key, name))
+    }
+
+    fn sampled_font_style(
+        &self, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
+        size: Option<&style::properties::ComputedValues>, line_height: Option<&style::properties::ComputedValues>,
+    ) -> Option<pyro_dom::timing::StyleSnapshot> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.sampled_font_style(self.page, key, pseudo, size, line_height))
+    }
+
+    fn element_timing_style(
+        &self, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_timing_style(self.page, key, pseudo))
+    }
+
     fn element_starting_style(&self, key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_starting_style(self.page, key))
     }
 
     fn view_transition_names_valid(&self, root: u64) -> bool {
         RENDERER.with(|renderer| renderer.try_borrow().ok().and_then(|renderer| renderer.as_ref().map(|renderer| renderer.view_transition_names(self.page, root).0)).unwrap_or(false))
+    }
+
+    fn layout_containment_eligible(&self, key: u64) -> bool {
+        RENDERER.with(|renderer| renderer.try_borrow().ok().and_then(|renderer| renderer.as_ref()?.layout_containment_eligible(self.page, key))).unwrap_or(false)
     }
 
     fn set_transition_boxes(&self, root: u64, old: &[pyro_dom::geometry::TransitionBox], new: &[pyro_dom::geometry::TransitionBox]) -> bool {
@@ -1161,12 +1286,28 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.scroll_marker_at(self.page, x, y))
     }
 
+    fn scroll_button_hit(&self, owner: u64, x: f64, y: f64) -> Option<((i8, i8), bool)> {
+        RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.scroll_button_hit(self.page, owner, x, y))
+    }
+
+    fn scroll_button_owner_at(&self, x: f64, y: f64) -> Option<u64> {
+        RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.scroll_button_owner_at(self.page, x, y))
+    }
+
     fn uses_scroll_snap(&self) -> bool {
         RENDERER.with(|r| r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.uses_scroll_snap(self.page))))
     }
 
+    fn uses_scroll_initial_target(&self) -> bool {
+        RENDERER.with(|r| r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.uses_scroll_initial_target(self.page))))
+    }
+
     fn mandatory_snap_containers(&self) -> Vec<u64> {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.mandatory_snap_containers(self.page))).unwrap_or_default())
+    }
+
+    fn initial_scroll_targets(&self) -> Vec<u64> {
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.initial_scroll_targets(self.page))).unwrap_or_default())
     }
 
     fn take_scroll_group_moves(&self) -> Vec<u64> {
@@ -1176,6 +1317,21 @@ impl GeometrySource for BlitzGeometry {
                 .as_deref_mut()
                 .and_then(Option::as_mut)
                 .map(|r| r.take_scroll_group_moves(self.page))
+                .unwrap_or_default()
+        })
+    }
+
+    fn anchor_used(&self, key: u64) -> Option<[Option<f32>; 10]> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.anchor_used(self.page, key))
+    }
+
+    fn take_anchor_evals(&self) -> Vec<(u64, [Option<f32>; 10], [Option<f32>; 10])> {
+        RENDERER.with(|r| {
+            r.try_borrow_mut()
+                .ok()
+                .as_deref_mut()
+                .and_then(Option::as_mut)
+                .map(|r| r.take_anchor_evals(self.page))
                 .unwrap_or_default()
         })
     }
@@ -1317,7 +1473,8 @@ mod tests {
             resources: Default::default(),
             scroll_stale: Default::default(),
             base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
-            snapshot_base: RefCell::new(String::new()),
+            snapshot_base: RefCell::new(Default::default()),
+            snapshot_quirks: Default::default(),
             fetcher: RefCell::new(std::sync::Arc::new(NoFetch)),
             loader: RefCell::new(None),
             fetchers: Rc::new(|_| std::sync::Arc::new(NoFetch)),

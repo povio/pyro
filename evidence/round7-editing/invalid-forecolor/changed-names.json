@@ -1,0 +1,146 @@
+[
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"#000000fff\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"#000000fff\") return value",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"#f\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"#f\") return value",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"000000fff\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"000000fff\") return value",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"currentColor\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"currentColor\") return value",
+    1,
+    "matched",
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"f\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"f\") return value",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/forecolor.html?1-1000",
+    "[[\"forecolor\",\"potato quiche\"]] \"foo[bar]baz\": execCommand(\"forecolor\", false, \"potato quiche\") return value",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"foreColor\", false, CurrentColor) (data value)",
+    1,
+    "newly observed",
+    null,
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"foreColor\", false, CurrentColor) (dataTransfer value)",
+    1,
+    "newly observed",
+    null,
+    "Pass",
+    "Pass"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"foreColor\", false, Inherit) (data value)",
+    1,
+    "newly observed",
+    null,
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"foreColor\", false, Inherit) (dataTransfer value)",
+    1,
+    "newly observed",
+    null,
+    "Pass",
+    "Pass"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"foreColor\", false, Initial) (data value)",
+    1,
+    "newly observed",
+    null,
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"foreColor\", false, Initial) (dataTransfer value)",
+    1,
+    "newly observed",
+    null,
+    "Pass",
+    "Pass"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"foreColor\", false, Invalid-Value) (data value)",
+    1,
+    "newly observed",
+    null,
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"foreColor\", false, Invalid-Value) (dataTransfer value)",
+    1,
+    "newly observed",
+    null,
+    "Pass",
+    "Pass"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"foreColor\", false, Reset) (data value)",
+    1,
+    "newly observed",
+    null,
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"foreColor\", false, Reset) (dataTransfer value)",
+    1,
+    "newly observed",
+    null,
+    "Pass",
+    "Pass"
+  ]
+]

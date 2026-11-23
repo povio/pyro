@@ -1,0 +1,27 @@
+{
+  "source": "c7c69d1f62194b8df8490c5358f1b9acab7d888e",
+  "tree": "549b976e761538cf808fb6a57560f214233a476f",
+  "executableSHA256": "bca2df13a5ad8966cc55a0730a60774a6848d7e8f2f7253fee915933523945e6",
+  "direct": {
+    "pixels": {
+      "candidate": "ef49b48897c09b25bd7902f94cb57829813c6ea1098285cce114e648dcf2e81a",
+      "signed": "ef49b48897c09b25bd7902f94cb57829813c6ea1098285cce114e648dcf2e81a"
+    },
+    "orientation": {
+      "candidate": "c5b878490ba7d50f184056367bbaf50ef073d13d1d3f42c17e073895d7475bb9",
+      "signed": "c5b878490ba7d50f184056367bbaf50ef073d13d1d3f42c17e073895d7475bb9"
+    },
+    "metadata": {
+      "candidate": "ee8651cac96f6cc8185400e3f0eb93d11adc253a135d5ca387c8a96ae3c0d1ad",
+      "signed": "e64629fa1fa6d098137f2910c762d515186dc7c7e6d8cc16906365afdae5ee59"
+    },
+    "lifecycle": {
+      "candidate": "78a1fc1f2b06385d0d60246e1b4a2dba85d727d0d1a6ecda9c158d2f82e761ab",
+      "signed": "78a1fc1f2b06385d0d60246e1b4a2dba85d727d0d1a6ecda9c158d2f82e761ab"
+    }
+  },
+  "metadataDifferences": [
+    "text/plain support query rejects with TypeError; signed returns false",
+    "decoder type preserves IMAGE/PNG; signed returns image/png"
+  ]
+}

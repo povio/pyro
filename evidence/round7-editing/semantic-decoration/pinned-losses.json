@@ -1,0 +1,53 @@
+{
+  "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<u style=\\\"text-decoration: overline\\\">b[a]r</u>baz\" compare innerHTML": {
+    "parent": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<u style=\\\"text-decoration: overline\\\">b[a]r</u>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<u style=\\\"text-decoration: overline\\\">b[a]r</u>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<u style=\\\"text-decoration:overline\\\">b<strike>a</strike>r</u>baz\" but got \"foo<u style=\\\"text-decoration:overline\\\">b"
+    },
+    "signed": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"strikethrough\",\"\"]] \"foo<u style=\\\"text-decoration: overline\\\">b[a]r</u>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<u style=\\\"text-decoration:overline\\\">b<strike>a</strike>r</u>baz\" but got \"foo<u style=\\\"text-decoration:overline\\\">b"
+    }
+  },
+  "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" compare innerHTML": {
+    "parent": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<s style=\\\"text-decoration:overline\\\">b<span style=\\\"text-decoration:underline\\\">a</span>r</s>baz\" but got \"foo<s styl"
+    },
+    "signed": {
+      "name": "[[\"stylewithcss\",\"true\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<s style=\\\"text-decoration:overline\\\">b<span style=\\\"text-decoration:underline\\\">a</span>r</s>baz\" but got \"foo<s styl"
+    }
+  },
+  "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" compare innerHTML": {
+    "parent": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" compare innerHTML",
+      "status": "Pass",
+      "msg": ""
+    },
+    "candidate": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<s style=\\\"text-decoration:overline\\\">b<u>a</u>r</s>baz\" but got \"foo<s style=\\\"text-decoration:overline\\\">b</s><span "
+    },
+    "signed": {
+      "name": "[[\"stylewithcss\",\"false\"],[\"underline\",\"\"]] \"foo<s style=\\\"text-decoration: overline\\\">b[a]r</s>baz\" compare innerHTML",
+      "status": "Fail",
+      "msg": "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"foo<s style=\\\"text-decoration:overline\\\">b<u>a</u>r</s>baz\" but got \"foo<s style=\\\"text-decoration:overline\\\">b</s><span "
+    }
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "pages": 17,
+  "names": 554,
+  "old": 523,
+  "new": 534,
+  "gained": [
+    [
+      "css/css-values/signs-abs-computed.html",
+      "clamp(-1, calc( 1 / sign(sign(-0ch))), 1) should be used-value-equivalent to -1",
+      1
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "clamp(-1, calc( 1 / sign(sign(-0em))), 1) should be used-value-equivalent to -1",
+      1
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "clamp(-1, calc( 1 / sign(sign(-0ex))), 1) should be used-value-equivalent to -1",
+      1
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "clamp(-1, calc( 1 / sign(sign(-0rem))), 1) should be used-value-equivalent to -1",
+      1
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "clamp(-1, calc( 1 / sign(sign(-0vh))), 1) should be used-value-equivalent to -1",
+      1
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "clamp(-1, calc( 1 / sign(sign(-0vmax))), 1) should be used-value-equivalent to -1",
+      1
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "clamp(-1, calc( 1 / sign(sign(-0vmin))), 1) should be used-value-equivalent to -1",
+      1
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "clamp(-1, calc( 1 / sign(sign(-0vw))), 1) should be used-value-equivalent to -1",
+      1
+    ],
+    [
+      "css/css-values/typed_arithmetic.html",
+      "Property margin-left value 'calc(1px * 10em / -0em)'",
+      1
+    ],
+    [
+      "css/css-values/typed_arithmetic.html",
+      "clamp(-1, 1 / sign(-0em / 1px), 1) should be used-value-equivalent to -1",
+      1
+    ],
+    [
+      "css/css-values/typed_arithmetic.html",
+      "clamp(-1, 1 / sign(atan2(-0cap / 1px, 0em / 1px)), 1) should be used-value-equivalent to -1",
+      1
+    ]
+  ],
+  "lost": [],
+  "parentPassingPages": [
+    "css/css-values/calc-infinity-nan-serialize-number.html",
+    "css/css-values/signs-abs-invalid.html",
+    "css/css-values/signs-abs-serialize.html",
+    "css/cssom/css-style-attribute-modifications.html",
+    "css/cssom/cssom-cssstyledeclaration-set.html",
+    "css/cssom/cssstyledeclaration-csstext-all-shorthand.html",
+    "css/cssom/cssstyledeclaration-csstext-important.html",
+    "css/cssom/cssstyledeclaration-csstext.html",
+    "css/cssom/cssstyledeclaration-setter-attr.html",
+    "css/cssom/cssstyledeclaration-setter-declarations.html",
+    "css/cssom/style-set-property.html"
+  ],
+  "candidatePassingPages": [
+    "css/css-values/calc-infinity-nan-serialize-number.html",
+    "css/css-values/signs-abs-invalid.html",
+    "css/css-values/signs-abs-serialize.html",
+    "css/css-values/typed_arithmetic.html",
+    "css/cssom/css-style-attribute-modifications.html",
+    "css/cssom/cssom-cssstyledeclaration-set.html",
+    "css/cssom/cssstyledeclaration-csstext-all-shorthand.html",
+    "css/cssom/cssstyledeclaration-csstext-important.html",
+    "css/cssom/cssstyledeclaration-csstext.html",
+    "css/cssom/cssstyledeclaration-setter-attr.html",
+    "css/cssom/cssstyledeclaration-setter-declarations.html",
+    "css/cssom/style-set-property.html"
+  ],
+  "gainedPages": [
+    "css/css-values/typed_arithmetic.html"
+  ],
+  "lostPages": [],
+  "statusChanges": {},
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "wallMs": [
+    400,
+    1125
+  ]
+}

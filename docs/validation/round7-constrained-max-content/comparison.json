@@ -1,0 +1,386 @@
+{
+  "url": "css/css-values/calc-size/animation/interpolate-size-logical-properties-interpolation.html",
+  "total": 144,
+  "changes": [
+    [
+      [
+        "CSS Transitions: property <block-size> from [max-content] to [25px] at (-0.3) should be [90px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions: property <block-size> from [max-content] to [25px] at (0) should be [75px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions: property <block-size> from [max-content] to [25px] at (0.3) should be [60px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions: property <block-size> from [max-content] to [25px] at (0.6) should be [45px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions: property <block-size> from [max-content] to [25px] at (1.5) should be [0px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions with transition: all: property <block-size> from [max-content] to [25px] at (-0.3) should be [90px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions with transition: all: property <block-size> from [max-content] to [25px] at (0) should be [75px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions with transition: all: property <block-size> from [max-content] to [25px] at (0.3) should be [60px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions with transition: all: property <block-size> from [max-content] to [25px] at (0.6) should be [45px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions with transition: all: property <block-size> from [max-content] to [25px] at (1.5) should be [0px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions: property <inline-size> from [max-content] to neutral at (-0.3) should be [132.5px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions: property <inline-size> from [max-content] to neutral at (0) should be [125px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions: property <inline-size> from [max-content] to neutral at (0.3) should be [117.5px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions: property <inline-size> from [max-content] to neutral at (0.6) should be [110px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions: property <inline-size> from [max-content] to neutral at (1.5) should be [87.5px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions with transition: all: property <inline-size> from [max-content] to neutral at (-0.3) should be [132.5px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions with transition: all: property <inline-size> from [max-content] to neutral at (0) should be [125px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions with transition: all: property <inline-size> from [max-content] to neutral at (0.3) should be [117.5px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions with transition: all: property <inline-size> from [max-content] to neutral at (0.6) should be [110px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ],
+    [
+      [
+        "CSS Transitions with transition: all: property <inline-size> from [max-content] to neutral at (1.5) should be [87.5px]",
+        1
+      ],
+      "Fail",
+      "Pass",
+      "Pass"
+    ]
+  ],
+  "matrix": [
+    [
+      {
+        "axis": "block-size",
+        "definite": false,
+        "capped": false,
+        "before": "75px",
+        "logical": "25px",
+        "physical": "25px"
+      },
+      {
+        "axis": "block-size",
+        "definite": false,
+        "capped": true,
+        "before": "75px",
+        "logical": "25px",
+        "physical": "25px"
+      },
+      {
+        "axis": "block-size",
+        "definite": true,
+        "capped": false,
+        "before": "75px",
+        "logical": "50px",
+        "physical": "25px"
+      },
+      {
+        "axis": "block-size",
+        "definite": true,
+        "capped": true,
+        "before": "75px",
+        "logical": "25px",
+        "physical": "25px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": false,
+        "capped": false,
+        "before": "125px",
+        "logical": "100px",
+        "physical": "100px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": false,
+        "capped": true,
+        "before": "125px",
+        "logical": "100px",
+        "physical": "100px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": true,
+        "capped": false,
+        "before": "125px",
+        "logical": "112.5px",
+        "physical": "100px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": true,
+        "capped": true,
+        "before": "125px",
+        "logical": "100px",
+        "physical": "100px"
+      }
+    ],
+    [
+      {
+        "axis": "block-size",
+        "definite": false,
+        "capped": false,
+        "before": "75px",
+        "logical": "50px",
+        "physical": "25px"
+      },
+      {
+        "axis": "block-size",
+        "definite": false,
+        "capped": true,
+        "before": "75px",
+        "logical": "50px",
+        "physical": "25px"
+      },
+      {
+        "axis": "block-size",
+        "definite": true,
+        "capped": false,
+        "before": "75px",
+        "logical": "50px",
+        "physical": "25px"
+      },
+      {
+        "axis": "block-size",
+        "definite": true,
+        "capped": true,
+        "before": "75px",
+        "logical": "50px",
+        "physical": "25px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": false,
+        "capped": false,
+        "before": "125px",
+        "logical": "112.5px",
+        "physical": "100px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": false,
+        "capped": true,
+        "before": "125px",
+        "logical": "112.5px",
+        "physical": "100px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": true,
+        "capped": false,
+        "before": "125px",
+        "logical": "112.5px",
+        "physical": "100px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": true,
+        "capped": true,
+        "before": "125px",
+        "logical": "112.5px",
+        "physical": "100px"
+      }
+    ],
+    [
+      {
+        "axis": "block-size",
+        "definite": false,
+        "capped": false,
+        "before": "75px",
+        "logical": "50px",
+        "physical": "50px"
+      },
+      {
+        "axis": "block-size",
+        "definite": false,
+        "capped": true,
+        "before": "75px",
+        "logical": "50px",
+        "physical": "50px"
+      },
+      {
+        "axis": "block-size",
+        "definite": true,
+        "capped": false,
+        "before": "75px",
+        "logical": "50px",
+        "physical": "50px"
+      },
+      {
+        "axis": "block-size",
+        "definite": true,
+        "capped": true,
+        "before": "75px",
+        "logical": "50px",
+        "physical": "50px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": false,
+        "capped": false,
+        "before": "125px",
+        "logical": "112.5px",
+        "physical": "112.5px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": false,
+        "capped": true,
+        "before": "125px",
+        "logical": "112.5px",
+        "physical": "112.5px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": true,
+        "capped": false,
+        "before": "125px",
+        "logical": "112.5px",
+        "physical": "112.5px"
+      },
+      {
+        "axis": "inline-size",
+        "definite": true,
+        "capped": true,
+        "before": "125px",
+        "logical": "112.5px",
+        "physical": "112.5px"
+      }
+    ]
+  ]
+}

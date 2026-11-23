@@ -1,0 +1,1 @@
+static const char *text_module = "export default \"globalThis.executions += 100;\\r\\n\\\"ledger\\\" \\\\ \\u2603\\u0000\\u2028END\";";

@@ -60,6 +60,14 @@ const SLOTS: &str = r"(() => {
   };
 })()";
 
+/// A private slot shared by same-origin realms in this JS agent. An opaque
+/// origin gets a fresh map, just as it does for the built-in stream slots.
+pub(crate) fn shared_slot<'s>(s: &Scope<'s>, page: &PageDom, name: &str) -> JsResult<Value<'s>> {
+    let slots = s.agent_value("streams.slot", SLOTS)?.as_object().ok_or_else(unavailable)?;
+    let origin = crate::storage::document_origin(page).map_or_else(|| s.null(), |origin| s.string(&origin));
+    slots.call(None, &[origin, s.string(name)])
+}
+
 macro_rules! lazy_globals {
     ($def:ident, $($name:literal),+ $(,)?) => {
         $($def.global_value_accessor(
@@ -137,6 +145,7 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
         None => s.null(),
     };
     natives.set_atom("origin", origin)?;
+    natives.set_atom("fetchSettled", crate::fetch::settled_fetch_function(s)?)?;
     let natives = pyro_js::Persistent::new(s, natives.value());
     let factory = s.eval(include_str!("streams.js"), Some("pyro://internal/streams.js"), 1)?;
     let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[natives.get(s)])?;
@@ -178,25 +187,68 @@ pub(crate) fn helper<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str, args: &[
     module.get(name)?.as_object().ok_or_else(unavailable)?.call(None, args)
 }
 
-/// `fetch(input, init)` when `init.body` is a ReadableStream: the request goes
-/// out with the stream's bytes once it ends (no streaming upload). None for
-/// any other call; realms that never made their streams never read
-/// `init.body` here (a getter would run twice), so they do not take a
-/// stream of another window as a streaming body.
+/// `fetch(input, init)` when the body is a ReadableStream (`init.body`, or the
+/// body of a Request made with one): the request goes out with the stream's
+/// bytes once it ends (no streaming upload). None for any other call; realms
+/// that never made their streams never read `init.body` here (a getter would
+/// run twice), so they do not take a stream of another window as a streaming body.
 pub(crate) fn fetch_stream_body<'s>(s: &Scope<'s>, input: Value<'s>, init: Value<'s>) -> JsResult<Option<Value<'s>>> {
-    let Some(options) = init.as_object() else { return Ok(None) };
     let page = crate::target::page_of(s)?;
     if existing(s, &page, s.undefined())?.is_none() {
         return Ok(None);
     }
-    let body = options.get_atom("body")?;
-    if !is_stream(s, body)? {
+    let body = match init.as_object() {
+        Some(options) => options.get_atom("body")?,
+        None => s.undefined(),
+    };
+    let stream = if is_stream(s, body)? {
+        let options = init.as_object().expect("a body comes from an init object");
+        if options.get_atom("duplex")?.as_string().as_deref() != Some("half") {
+            return Err(JsError::Type(
+                "The `duplex` member must be specified for a request with a streaming body".into(),
+            ));
+        }
+        body
+    } else if body.is_undefined() {
+        match crate::request::script_body_stream(s, input)? {
+            Some(stream) => stream,
+            None => return Ok(None),
+        }
+    } else {
         return Ok(None);
+    };
+    // As new Request() (6334dbc3e): keepalive or no-cors with a stream body is a TypeError.
+    let request = s.unwrap::<crate::request::Request>(input).map(|r| (r.keepalive, r.mode.clone(), r.url.clone()));
+    let (mut keepalive, mut mode) = request.as_ref().map_or((false, "cors".to_owned()), |r| (r.0, r.1.clone()));
+    if let Some(options) = init.as_object() {
+        let value = options.get_atom("keepalive")?;
+        if !value.is_undefined() {
+            keepalive = value.to_bool();
+        }
+        let value = options.get_atom("mode")?;
+        if !value.is_undefined() {
+            mode = value.to_string()?;
+        }
     }
-    if options.get_atom("duplex")?.as_string().as_deref() != Some("half") {
-        return Err(JsError::Type("The `duplex` member must be specified for a request with a streaming body".into()));
+    if keepalive {
+        return Err(JsError::Type(
+            "Failed to execute 'fetch' on 'Window': keepalive cannot be set for a request with a streaming body".into(),
+        ));
     }
-    helper(s, &page, "fetchBuffered", &[input, init, body]).map(Some)
+    if mode == "no-cors" {
+        return Err(JsError::Type(
+            "Failed to execute 'fetch' on 'Window': A no-cors request cannot have a streaming body".into(),
+        ));
+    }
+    // Only an HTTP(S) fetch sends its body: a data:, blob: or about: one never reads the
+    // stream (which may never end). An unparsable URL fails in `fetch` itself.
+    let url = match request {
+        Some((_, _, url)) => url,
+        None => crate::util::dom_string(input)?,
+    };
+    let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &url);
+    let network = pyro_net::Url::parse(&resolved).is_ok_and(|u| matches!(u.scheme(), "http" | "https"));
+    helper(s, &page, "fetchBuffered", &[input, init, stream, s.boolean(network)]).map(Some)
 }
 
 /// Structured clone's transfer-list check: `"R"`, `"W"` or `"T"` when

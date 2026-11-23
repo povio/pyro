@@ -90,45 +90,80 @@ pub fn post_message_args<'s>(
 
 /// Serializes `message` with `options` (`{transfer}`) into `realm`, the
 /// target window's, and queues the `message` event at `page`'s window.
-/// `origin` is the source's serialized origin; `source` resolves the
+/// `origin_key` is the source's origin identity at send time; `source` resolves the
 /// source window in the realm reading `event.source` (`None`: the target
 /// window itself). Errors (DataCloneError, a getter's exception) propagate
 /// in the realm of `s`, the poster's scope (see `structured_clone::clone_into`).
 /// Without `deliver` (the target origin did not match) the message is still
 /// serialized, transferring what it lists, and then dropped.
+/// A posted message counted on its sender ([`PageDom::messages_delay_load`]) until its delivery
+/// task has run or been dropped.
+struct PendingMessage(Option<std::rc::Weak<PageDom>>);
+
+impl PendingMessage {
+    fn new(sender: Option<Rc<PageDom>>) -> Self {
+        if let Some(sender) = &sender {
+            sender.outgoing_messages.set(sender.outgoing_messages.get().saturating_add(1));
+        }
+        Self(sender.as_ref().map(Rc::downgrade))
+    }
+}
+
+impl Drop for PendingMessage {
+    fn drop(&mut self) {
+        if let Some(sender) = self.0.as_ref().and_then(std::rc::Weak::upgrade) {
+            sender.outgoing_messages.set(sender.outgoing_messages.get().saturating_sub(1));
+        }
+    }
+}
+
 pub fn send_window_message<'s>(
     s: &Scope<'s>,
     message: Value<'s>,
     options: Value<'s>,
     page: &Rc<PageDom>,
     realm: &Realm,
-    origin: String,
+    origin_key: Option<String>,
     source: Option<MessageSource>,
     deliver: bool,
 ) -> JsResult<()> {
     let rs = realm.scope()?;
-    let (data, ports) = if message.as_object().is_none() && options.is_nullish() {
-        (Persistent::new(&rs, rs.rehome(message)), None)
+    let payload = if message.as_object().is_none() && options.is_nullish() {
+        crate::structured_clone::MessagePayload::Local(Persistent::new(&rs, rs.rehome(message)), None)
     } else {
-        let (data, ports) = crate::structured_clone::clone_into(s, &rs, message, options)?;
-        (Persistent::new(&rs, data), Some(Persistent::new(&rs, ports.value())))
+        crate::structured_clone::clone_into(s, &rs, message, options)?
     };
     if !deliver {
         return Ok(());
     }
+    // The sending document's `load` waits until this message is delivered (or dropped).
+    let pending = PendingMessage::new(crate::target::page_of(s).ok());
     let weak = Rc::downgrade(page);
+    let realm = realm.downgrade();
     page.post_task(Box::new(move || {
+        let _pending = pending;
         let Some(page) = weak.upgrade() else { return };
         if page.is_disposed() {
             return;
         }
         let Some(window) = page.window_target() else { return };
-        let ev = EventCore::trusted(&page, EventInterface::MessageEvent, "message", false, false);
+        let Some(realm) = realm.upgrade() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        let (ty, data, ports) = match payload.read(&scope) {
+            Ok((value, ports)) => ("message", Some(value), ports),
+            Err(JsError::Terminated) => return,
+            Err(_) => ("messageerror", None, None),
+        };
+        let ev = EventCore::trusted(&page, EventInterface::MessageEvent, ty, false, false);
         {
             let mut f = ev.fields.borrow_mut();
-            f.message_data = Some(data);
+            f.message_data = data;
             f.message_ports = ports;
-            f.origin = origin;
+            if let Some(key) = origin_key {
+                f.set_sender_origin(key);
+            } else {
+                f.origin = "null".into();
+            }
             match source {
                 Some(source) => f.message_source_window = Some(source),
                 None => f.message_source = Some(window),

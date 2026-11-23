@@ -24,9 +24,11 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use pyro_dom::forms::InputType;
-use pyro_dom::{Dom, NodeId, PopoverStack};
+use pyro_dom::{Dom, NodeId, PopoverStack, PopoverType};
 use pyro_js::{ClassDef, JsClass, JsError, JsResult};
 use rustc_hash::{FxHashMap, FxHashSet};
+
+use pyro_dom::dom::InvokerTarget;
 
 use crate::event::{EventCore, EventInterface};
 use crate::node::{node_value, NodeData};
@@ -38,12 +40,18 @@ struct PendingToggle {
     old_open: bool,
     new_open: bool,
     source: Option<NodeId>,
+    /// The queued task that fires it (a later toggle cancels it and queues its own).
+    seq: u64,
 }
 
 /// Per-page state of popovers, dialogs and invokers.
 #[derive(Default)]
 pub(crate) struct PopoverState {
-    toggles: RefCell<FxHashMap<NodeId, PendingToggle>>,
+    /// Pending `toggle` events by element and kind: a dialog's (`true`) are coalesced apart from
+    /// its popover's (HTML gives each its own toggle task tracker).
+    toggles: RefCell<FxHashMap<(NodeId, bool), PendingToggle>>,
+    /// Numbers the queued toggle tasks (`PendingToggle::seq`).
+    toggle_seq: Cell<u64>,
     /// The element focused when a dialog or an auto/hint popover was shown.
     previously_focused: RefCell<FxHashMap<NodeId, NodeId>>,
     /// Popovers being shown or hidden ("popover showing or hiding").
@@ -54,18 +62,9 @@ pub(crate) struct PopoverState {
     /// HTML "popover pointerdown target" and the dialog one.
     pointerdown_popover: Cell<Option<NodeId>>,
     pointerdown_dialog: Cell<Option<NodeId>>,
-    /// Elements set through `popoverTargetElement` / `commandForElement`
-    /// ("explicitly set attr-element"), by invoker and attribute.
-    explicit: RefCell<FxHashMap<(NodeId, Reflected), NodeId>>,
     /// An element the focusing steps focus although it is not focusable
     /// (a dialog without a focusable descendant).
     forced_focus: Cell<Option<NodeId>>,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-enum Reflected {
-    PopoverTarget,
-    CommandFor,
 }
 
 impl PopoverState {
@@ -77,13 +76,6 @@ impl PopoverState {
 
 // ----- helpers ---------------------------------------------------------------
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum PopoverType {
-    Auto,
-    Manual,
-    Hint,
-}
-
 fn is_html(dom: &Dom, el: NodeId, local: &str) -> bool {
     dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == local)
 }
@@ -91,14 +83,7 @@ fn is_html(dom: &Dom, el: NodeId, local: &str) -> bool {
 /// The `popover` attribute's state: missing is none, empty or `auto` is
 /// auto, an invalid value is manual.
 fn popover_type(dom: &Dom, el: NodeId) -> Option<PopoverType> {
-    let v = dom.get_attribute(el, "popover").ok().flatten()?;
-    Some(if v.is_empty() || v.eq_ignore_ascii_case("auto") {
-        PopoverType::Auto
-    } else if v.eq_ignore_ascii_case("hint") {
-        PopoverType::Hint
-    } else {
-        PopoverType::Manual
-    })
+    dom.get_attribute(el, "popover").ok().flatten().map(PopoverType::from_value)
 }
 
 fn stack_of(ty: Option<PopoverType>) -> Option<PopoverStack> {
@@ -160,19 +145,42 @@ fn fire_toggle(
 /// ones): a later change before the task ran keeps the first old state and
 /// takes the new one.
 pub(crate) fn queue_toggle(page: &Rc<PageDom>, el: NodeId, old_open: bool, new_open: bool, source: Option<NodeId>) {
+    queue_toggle_of(page, el, false, old_open, new_open, source);
+}
+
+/// [`queue_toggle`] for a dialog's open state (its dialog toggle task tracker).
+fn queue_dialog_toggle(page: &Rc<PageDom>, el: NodeId, old_open: bool, new_open: bool, source: Option<NodeId>) {
+    queue_toggle_of(page, el, true, old_open, new_open, source);
+}
+
+fn queue_toggle_of(
+    page: &Rc<PageDom>,
+    el: NodeId,
+    dialog: bool,
+    old_open: bool,
+    new_open: bool,
+    source: Option<NodeId>,
+) {
+    // HTML "queue a ... toggle event task": a pending one is cancelled, its old state kept, and
+    // the event queued again, after the tasks queued since.
+    let seq = page.popover.toggle_seq.get().wrapping_add(1);
+    page.popover.toggle_seq.set(seq);
     {
         let mut toggles = page.popover.toggles.borrow_mut();
-        if let Some(t) = toggles.get_mut(&el) {
-            t.new_open = new_open;
-            t.source = source;
-            return;
-        }
-        toggles.insert(el, PendingToggle { old_open, new_open, source });
+        let old_open = toggles.get(&(el, dialog)).map_or(old_open, |t| t.old_open);
+        toggles.insert((el, dialog), PendingToggle { old_open, new_open, source, seq });
     }
     let weak = Rc::downgrade(page);
     page.post_task(Box::new(move || {
         let Some(page) = weak.upgrade() else { return };
-        let Some(t) = page.popover.toggles.borrow_mut().remove(&el) else { return };
+        let t = {
+            let mut toggles = page.popover.toggles.borrow_mut();
+            if toggles.get(&(el, dialog)).is_none_or(|t| t.seq != seq) {
+                return;
+            }
+            toggles.remove(&(el, dialog))
+        };
+        let Some(t) = t else { return };
         fire_toggle(&page, el, "toggle", t.old_open, t.new_open, false, t.source);
     }));
 }
@@ -251,11 +259,16 @@ pub(crate) fn check_popover_validity(page: &PageDom, el: NodeId, expect_showing:
     if !dom.is_connected(el).unwrap_or(false) || dom.node_document(el).ok() != Some(page.document()) {
         return fail("InvalidStateError", "Invalid on disconnected popover elements.");
     }
-    if !expect_showing && is_html(&dom, el, "dialog") && is_open(&dom, el) {
+    // HTML "check popover validity": a modal dialog (one shown by show() or the `open`
+    // attribute may also be a popover) and an element in fullscreen cannot be shown as popovers.
+    if !expect_showing && is_html(&dom, el, "dialog") && dom.is_modal(el) {
         return fail(
             "InvalidStateError",
-            "The dialog is already open as a dialog, and therefore cannot be opened as a popover.",
+            "The dialog is already open as a modal dialog, and therefore cannot be opened as a popover.",
         );
+    }
+    if !expect_showing && page.fullscreen_stack.borrow().contains(&el) {
+        return fail("InvalidStateError", "The element is fullscreen, and therefore cannot be opened as a popover.");
     }
     Ok(true)
 }
@@ -268,6 +281,10 @@ fn nearest_open_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
         if dom.is_popover_showing(n) && matches!(popover_type(dom, n), Some(PopoverType::Auto | PopoverType::Hint)) {
             return Some(n);
         }
+        // A select's open picker is an auto popover holding the select's contents.
+        if dom.is_select_picker_open(n) {
+            return Some(n);
+        }
         cur = parent_or_host(dom, n);
     }
     None
@@ -275,11 +292,12 @@ fn nearest_open_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
 
 /// HTML "nearest inclusive target popover for invoker": the showing
 /// popover a flat-tree inclusive ancestor of `node` invokes.
-fn nearest_invoked_popover(page: &PageDom, dom: &Dom, node: NodeId) -> Option<NodeId> {
+fn nearest_invoked_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
     let mut cur = Some(node);
     while let Some(n) = cur {
-        let target = popover_target_with(dom, n, explicit_of(page, n, Reflected::PopoverTarget))
-            .or_else(|| command_for_element(page, dom, n));
+        let target = popover_target_with(dom, n)
+            // A disabled command button invokes nothing (as a disabled popovertarget one).
+            .or_else(|| command_for_element(dom, n).filter(|_| !dom.is_disabled(n).unwrap_or(false)));
         if let Some(t) = target.filter(|&t| dom.is_popover_showing(t)) {
             if matches!(popover_type(dom, t), Some(PopoverType::Auto | PopoverType::Hint)) {
                 return Some(t);
@@ -288,6 +306,37 @@ fn nearest_invoked_popover(page: &PageDom, dom: &Dom, node: NodeId) -> Option<No
         cur = parent_or_host(dom, n);
     }
     None
+}
+
+/// Whether popover `inner` is nested in popover `outer`: `outer` is a flat-tree ancestor of it or
+/// of one of its invokers, along the chain of invokers.
+fn nested_in(dom: &Dom, inner: NodeId, outer: NodeId) -> bool {
+    let mut current = Some(inner);
+    let mut budget = 64;
+    while let Some(popover) = current {
+        let mut node = parent_or_host(dom, popover);
+        while let Some(n) = node {
+            if n == outer {
+                return true;
+            }
+            node = parent_or_host(dom, n);
+        }
+        let invoker = dom.popover_invoker(popover);
+        if invoker.is_some_and(|i| i == outer || dom.contains(outer, i).unwrap_or(false)) {
+            return true;
+        }
+        budget -= 1;
+        current = invoker.and_then(|i| nearest_open_popover(dom, i)).filter(|&p| p != popover && budget > 0);
+    }
+    false
+}
+
+/// The popover a dialog or fullscreen element entering the top layer keeps open, with those
+/// below it (HTML "show a modal dialog", Fullscreen "requestFullscreen()"): its topmost popover
+/// ancestor in the hint stack, else in the auto stack.
+fn top_layer_popover_ancestor(dom: &Dom, el: NodeId) -> Option<NodeId> {
+    topmost_popover_ancestor(dom, el, PopoverStack::Hint, None)
+        .or_else(|| topmost_popover_ancestor(dom, el, PopoverStack::Auto, None))
 }
 
 /// HTML "topmost popover ancestor": the highest popover of `stack` that
@@ -356,6 +405,11 @@ fn close_stack_until(
             break;
         }
         budget -= 1;
+        if page.dom.borrow().is_select_picker_open(top) {
+            hide_select_picker(page, top, false);
+            hidden.push(top);
+            continue;
+        }
         let fire = fire_events && initial.contains(&top);
         let previous = page.popover.previously_focused.borrow().get(&top).copied();
         let _ = hide_popover(page, top, false, fire, false, None);
@@ -391,9 +445,24 @@ fn close_stack_until(
 fn hide_all_popovers_until(page: &Rc<PageDom>, endpoint: Option<NodeId>, focus_previous: bool, fire_events: bool) {
     let in_hint = endpoint.is_some_and(|e| page.dom.borrow().popover_stack(PopoverStack::Hint).contains(&e));
     close_stack_until(page, PopoverStack::Hint, endpoint.filter(|_| in_hint), focus_previous, fire_events);
-    if !in_hint {
-        close_stack_until(page, PopoverStack::Auto, endpoint, focus_previous, fire_events);
-    }
+    let auto_endpoint = match endpoint {
+        // A hint endpoint keeps the auto popovers it is nested in (shown inside or invoked
+        // from), and the ones below them; the autos above close (whatwg/html#12304).
+        Some(hint) if in_hint => {
+            let dom = page.dom.borrow();
+            topmost_popover_ancestor(&dom, hint, PopoverStack::Auto, dom.popover_invoker(hint))
+        }
+        other => other,
+    };
+    close_stack_until(page, PopoverStack::Auto, auto_endpoint, focus_previous, fire_events);
+}
+
+/// Fullscreen "requestFullscreen()", as the element becomes fullscreen: the popovers that do
+/// not contain it close (the topmost auto popover ancestor's stack above it, or all of them),
+/// as for a modal dialog.
+pub(crate) fn hide_popovers_for_fullscreen(page: &Rc<PageDom>, el: NodeId) {
+    let until = top_layer_popover_ancestor(&page.dom.borrow(), el);
+    hide_all_popovers_until(page, until, false, true);
 }
 
 fn remove_watcher(page: &PageDom, el: NodeId) {
@@ -417,17 +486,37 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
     let nested = !page.popover.busy.borrow_mut().insert(el);
     let _busy = Busy(page, el, !nested);
     let fire_events = !nested;
+    // HTML "show popover": the document the popover was in before `beforetoggle` (its
+    // "expected document").
+    let original_document = page.dom.borrow().node_document(el).ok();
     if fire_events && !fire_toggle(page, el, "beforetoggle", false, true, true, invoker) {
+        return Ok(());
+    }
+    // A `beforetoggle` handler that moved the popover to another document makes it invalid.
+    if page.dom.borrow().node_document(el).ok() != original_document {
+        if throw {
+            return Err(JsError::dom("InvalidStateError", "The popover was moved to another document."));
+        }
         return Ok(());
     }
     if !check_popover_validity(page, el, false, false)? {
         return Ok(());
     }
     let ty = popover_type(&page.dom.borrow(), el);
+    // An auto popover inside a showing hint popover (or invoked from one) is shown as a hint: it
+    // joins the hint stack above that ancestor (HTML: an auto popover nested in a hint is
+    // downgraded to a hint).
+    let mut downgraded = false;
     match ty {
         Some(PopoverType::Auto) => {
-            let ancestor = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, invoker);
-            hide_all_popovers_until(page, ancestor, false, fire_events);
+            let hint_ancestor = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Hint, invoker);
+            if hint_ancestor.is_some() {
+                downgraded = true;
+                close_stack_until(page, PopoverStack::Hint, hint_ancestor, false, fire_events);
+            } else {
+                let ancestor = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, invoker);
+                hide_all_popovers_until(page, ancestor, false, fire_events);
+            }
         }
         Some(PopoverType::Hint) => {
             let ancestor = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Hint, invoker);
@@ -436,11 +525,17 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
         _ => {}
     }
     // The events may have changed the popover's type or state.
-    if popover_type(&page.dom.borrow(), el) != ty || !check_popover_validity(page, el, false, false)? {
+    if popover_type(&page.dom.borrow(), el) != ty {
+        if throw {
+            return Err(JsError::dom("InvalidStateError", "The popover type changed while showing the popover."));
+        }
+        return Ok(());
+    }
+    if !check_popover_validity(page, el, false, throw)? {
         return Ok(());
     }
     let previous = focused(page);
-    let stack = stack_of(ty);
+    let stack = if downgraded { Some(PopoverStack::Hint) } else { stack_of(ty) };
     overlay_style_flush(page, el);
     {
         let mut dom = page.dom.borrow_mut();
@@ -451,7 +546,10 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
         }
     }
     if stack.is_some() {
-        page.popover.watchers.borrow_mut().push(el);
+        // Once: an open dialog that is also shown as a popover is one watcher entry.
+        let mut watchers = page.popover.watchers.borrow_mut();
+        watchers.retain(|&w| w != el);
+        watchers.push(el);
     }
     // Popover focusing steps.
     if let Some(control) = autofocus_delegate(page, el) {
@@ -487,33 +585,68 @@ pub(crate) fn hide_popover(
     if !check_popover_validity(page, el, true, throw)? {
         return Ok(());
     }
+    hide_showing_popover(page, el, focus_previous, fire_events, source)
+}
+
+/// Run the closing steps even when the mutation that triggered them removed the attribute.
+pub(crate) fn hide_showing_popover(
+    page: &Rc<PageDom>,
+    el: NodeId,
+    focus_previous: bool,
+    fire_events: bool,
+    source: Option<NodeId>,
+) -> JsResult<()> {
+    let still_showing = || page.dom.borrow().is_popover_showing(el);
+    if !still_showing() {
+        return Ok(());
+    }
     let nested = !page.popover.busy.borrow_mut().insert(el);
     let _busy = Busy(page, el, !nested);
     let fire_events = fire_events && !nested;
-    let ty = popover_type(&page.dom.borrow(), el);
-    // The stack it is in (none for a manual popover, or one whose type
-    // changed while it showed).
-    let stack = stack_of(ty).filter(|&s| page.dom.borrow().popover_stack(s).contains(&el));
+    // Stack membership records how the element opened, even after an attribute mutation.
+    let stack = [PopoverStack::Auto, PopoverStack::Hint].into_iter()
+        .find(|&stack| page.dom.borrow().popover_stack(stack).contains(&el));
     if let Some(stack) = stack {
         // The popovers above it in its stack close first.
         close_stack_until(page, stack, Some(el), focus_previous, fire_events);
-        if !check_popover_validity(page, el, true, false)? {
+        if !still_showing() {
             return Ok(());
+        }
+        // An auto popover's hidden with the hint popovers nested in it (shown inside it or
+        // invoked from it); unrelated hints stay open.
+        if stack == PopoverStack::Auto {
+            let nested = {
+                let dom = page.dom.borrow();
+                let hints = dom.popover_stack(PopoverStack::Hint);
+                hints.iter().position(|&h| nested_in(&dom, h, el)).map(|i| i.checked_sub(1).map(|j| hints[j]))
+            };
+            if let Some(endpoint) = nested {
+                close_stack_until(page, PopoverStack::Hint, endpoint, focus_previous, fire_events);
+                if !still_showing() {
+                    return Ok(());
+                }
+            }
         }
     }
     page.dom.borrow_mut().set_popover_invoker(el, None);
     if fire_events {
         fire_toggle(page, el, "beforetoggle", true, false, false, source);
-        if let Some(stack) = stack {
-            // A handler showed another popover above it.
+        if !still_showing() {
+            return Ok(());
+        }
+        if let Some(stack) = stack.filter(|&stack| page.dom.borrow().popover_stack(stack).contains(&el)) {
+            // A handler may have opened another popover above this one.
             close_stack_until(page, stack, Some(el), focus_previous, false);
         }
-        if !check_popover_validity(page, el, true, false)? {
+        if !still_showing() {
             return Ok(());
         }
         queue_toggle(page, el, true, false, source);
     }
     let keep = overlay_style_flush(page, el);
+    if keep {
+        crate::animation_events::drop_unrendered_overlay_transition(page, el);
+    }
     {
         let mut dom = page.dom.borrow_mut();
         if keep {
@@ -521,7 +654,14 @@ pub(crate) fn hide_popover(
         }
         dom.set_popover_showing(el, false).js()?;
     }
-    remove_watcher(page, el);
+    // A dialog still open (with show() or `open`) keeps its watcher.
+    let open_dialog = {
+        let dom = page.dom.borrow();
+        is_html(&dom, el, "dialog") && is_open(&dom, el)
+    };
+    if !open_dialog {
+        remove_watcher(page, el);
+    }
     let previous = page.popover.previously_focused.borrow_mut().remove(&el);
     if let Some(prev) = previous.filter(|_| focus_previous) {
         let inside = focused(page).is_none_or(|f| page.dom.borrow().contains(el, f).unwrap_or(false));
@@ -537,17 +677,128 @@ pub(crate) fn hide_popover(
 pub(crate) fn source_option<'s>(s: &pyro_js::Scope<'s>, v: pyro_js::Value<'s>) -> JsResult<Option<NodeId>> {
     let Some(o) = v.as_object() else { return Ok(None) };
     let source = o.get_atom("source")?;
-    if source.is_nullish() {
+    // Web IDL: `source` is a (non-nullable) HTMLElement: absent is none, null or anything that
+    // is not an element throws.
+    if source.is_undefined() {
         return Ok(None);
     }
-    Ok(s.unwrap::<crate::node::Node>(source).map(|n| n.id))
+    match s.unwrap::<crate::node::Node>(source) {
+        Some(n) if n.page().dom.borrow().element(n.id).is_ok() => Ok(Some(n.id)),
+        _ => Err(JsError::Type(
+            "Failed to read the 'source' property: The provided value is not of type 'HTMLElement'.".into(),
+        )),
+    }
 }
 
 // ----- light dismiss and close requests --------------------------------------------
 
+// ----- select pickers ------------------------------------------------------------------
+
+/// Whether `select` shows a picker of its own: a customizable select (computed `appearance:
+/// base-select`) rendering as a drop-down box (not `multiple`, display size 1), enabled and
+/// connected.
+pub(crate) fn has_select_picker(page: &PageDom, select: NodeId) -> bool {
+    let dom = page.dom.borrow();
+    if !is_html(&dom, select, "select")
+        || !dom.is_connected(select).unwrap_or(false)
+        || dom.is_disabled(select).unwrap_or(true)
+    {
+        return false;
+    }
+    if dom.has_attribute(select, "multiple").unwrap_or(false) {
+        return false;
+    }
+    let size = dom.get_attribute(select, "size").ok().flatten().and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(1);
+    size <= 1 && page.layout().computed_style_value(&dom, select, "appearance") == "base-select"
+}
+
+/// Opens a customizable select's picker. The picker is an auto popover: auto popovers that do
+/// not hold the select close first, light dismiss, a close request, an auto popover or a dialog
+/// shown later close it. The selected option takes the focus, as in Chromium.
+pub(crate) fn show_select_picker(page: &Rc<PageDom>, select: NodeId) {
+    if page.dom.borrow().is_select_picker_open(select) {
+        return;
+    }
+    let ancestor = topmost_popover_ancestor(&page.dom.borrow(), select, PopoverStack::Auto, None);
+    hide_all_popovers_until(page, ancestor, false, true);
+    let previous = focused(page);
+    if page.dom.borrow_mut().set_select_picker_open(select, true).is_err() {
+        return;
+    }
+    page.popover.watchers.borrow_mut().retain(|&w| w != select);
+    page.popover.watchers.borrow_mut().push(select);
+    if let Some(prev) = previous {
+        page.popover.previously_focused.borrow_mut().insert(select, prev);
+    }
+    let option = page.dom.borrow().selected_options(select).ok().and_then(|o| o.first().copied());
+    if let Some(option) = option {
+        focus_forced(page, option);
+    }
+}
+
+/// Focuses an option of an open picker (one without a box of its own yet is focused too).
+pub(crate) fn focus_picker_option(page: &Rc<PageDom>, option: NodeId) {
+    focus_forced(page, option);
+}
+
+/// Closes a select's picker. With `focus_select`, focus inside the select goes back to it.
+pub(crate) fn hide_select_picker(page: &Rc<PageDom>, select: NodeId, focus_select: bool) {
+    if !page.dom.borrow().is_select_picker_open(select) {
+        return;
+    }
+    let _ = page.dom.borrow_mut().set_select_picker_open(select, false);
+    remove_watcher(page, select);
+    page.popover.previously_focused.borrow_mut().remove(&select);
+    let inside = focused(page).is_some_and(|f| f != select && page.dom.borrow().contains(select, f).unwrap_or(false));
+    if focus_select || inside {
+        crate::input::focus_element_with_options(page, select, true);
+    }
+}
+
+/// A trusted left-button `mousedown` on `target` (not canceled): a press on a customizable
+/// select's button (the select itself, or its first child button) opens its picker, or
+/// closes it when open. A press inside the open picker does not.
+pub(crate) fn select_picker_mousedown(page: &Rc<PageDom>, target: NodeId) {
+    let select = {
+        let dom = page.dom.borrow();
+        let mut cur = Some(target);
+        let mut found = None;
+        while let Some(n) = cur {
+            if is_html(&dom, n, "select") {
+                found = Some(n);
+                break;
+            }
+            cur = parent_or_host(&dom, n);
+        }
+        let Some(select) = found else { return };
+        // The press is on the select's button: the select, or inside its first child button.
+        let on_button = target == select || {
+            let mut cur = Some(target);
+            let mut button = false;
+            while let Some(n) = cur.filter(|&n| n != select) {
+                if is_html(&dom, n, "button") && dom.parent(n).ok().flatten() == Some(select) {
+                    button = dom.element_children(select).ok().and_then(|mut c| c.next()) == Some(n);
+                    break;
+                }
+                cur = parent_or_host(&dom, n);
+            }
+            button
+        };
+        if !on_button {
+            return;
+        }
+        select
+    };
+    if page.dom.borrow().is_select_picker_open(select) {
+        hide_select_picker(page, select, true);
+    } else if has_select_picker(page, select) {
+        show_select_picker(page, select);
+    }
+}
+
 /// The auto/hint popover `node` is in or invokes that is highest in the
 /// popover stacks ("topmost clicked popover").
-fn topmost_clicked_popover(page: &PageDom, dom: &Dom, node: NodeId) -> Option<NodeId> {
+fn topmost_clicked_popover(dom: &Dom, node: NodeId) -> Option<NodeId> {
     let position = |p: NodeId| {
         let auto = dom.popover_stack(PopoverStack::Auto);
         auto.iter()
@@ -555,7 +806,7 @@ fn topmost_clicked_popover(page: &PageDom, dom: &Dom, node: NodeId) -> Option<No
             .or_else(|| dom.popover_stack(PopoverStack::Hint).iter().position(|&e| e == p).map(|i| i + auto.len()))
     };
     let clicked = nearest_open_popover(dom, node);
-    let invoked = nearest_invoked_popover(page, dom, node);
+    let invoked = nearest_invoked_popover(dom, node);
     match (clicked, invoked) {
         (Some(c), Some(i)) => Some(if position(c) >= position(i) { c } else { i }),
         (c, i) => c.or(i),
@@ -594,7 +845,7 @@ pub(crate) fn light_dismiss(page: &Rc<PageDom>, target: NodeId, x: f64, y: f64, 
         !dom.popover_stack(PopoverStack::Auto).is_empty() || !dom.popover_stack(PopoverStack::Hint).is_empty()
     };
     if has_popovers {
-        let ancestor = topmost_clicked_popover(page, &page.dom.borrow(), target);
+        let ancestor = topmost_clicked_popover(&page.dom.borrow(), target);
         if down {
             page.popover.pointerdown_popover.set(ancestor);
         } else if page.popover.pointerdown_popover.take() == ancestor {
@@ -614,7 +865,7 @@ pub(crate) fn light_dismiss(page: &Rc<PageDom>, target: NodeId, x: f64, y: f64, 
     if down {
         page.popover.pointerdown_dialog.set(ancestor);
     } else if page.popover.pointerdown_dialog.take() == ancestor && ancestor != Some(topmost) {
-        request_close_dialog(page, topmost, None);
+        request_close_dialog(page, topmost, None, None);
     }
 }
 
@@ -628,7 +879,7 @@ fn forget_closed_watchers(page: &PageDom) {
             && if is_html(&dom, w, "dialog") && !dom.is_popover_showing(w) {
                 is_open(&dom, w)
             } else {
-                dom.is_popover_showing(w)
+                dom.is_popover_showing(w) || dom.is_select_picker_open(w)
             }
     });
 }
@@ -644,16 +895,20 @@ pub(crate) fn close_request(page: &Rc<PageDom>) -> bool {
     let candidate = {
         let dom = page.dom.borrow();
         let watchers = page.popover.watchers.borrow();
-        watchers.iter().rev().copied().find(|&w| dom.is_popover_showing(w) || closed_by(&dom, w) != ClosedBy::None)
+        watchers.iter().rev().copied().find(|&w| {
+            dom.is_popover_showing(w) || dom.is_select_picker_open(w) || closed_by(&dom, w) != ClosedBy::None
+        })
     };
     let Some(w) = candidate else { return false };
-    if page.dom.borrow().is_popover_showing(w) {
+    if page.dom.borrow().is_select_picker_open(w) {
+        hide_select_picker(page, w, true);
+    } else if page.dom.borrow().is_popover_showing(w) {
         let _ = hide_popover(page, w, true, true, false, None);
         if page.dom.borrow().is_popover_showing(w) {
             remove_watcher(page, w);
         }
     } else {
-        request_close_dialog(page, w, None);
+        request_close_dialog(page, w, None, None);
     }
     true
 }
@@ -680,20 +935,30 @@ fn closed_by(dom: &Dom, el: NodeId) -> ClosedBy {
 }
 
 /// HTML "dialog focusing steps": the autofocus delegate, else the first
-/// focusable descendant being rendered, else the dialog itself.
+/// focusable descendant being rendered, else the dialog itself. Then the
+/// top-level document's autofocus is processed: no later `autofocus`
+/// element takes focus (WPT the-dialog-element/dialog-focusing-steps-prevent-autofocus).
 fn dialog_focusing_steps(page: &Rc<PageDom>, dialog: NodeId) {
     if page.dom.borrow().is_inert(dialog) {
         return;
     }
+    focus_dialog_target(page, dialog);
+    crate::lifecycle::dialog_processed_autofocus(page, dialog);
+}
+
+fn focus_dialog_target(page: &Rc<PageDom>, dialog: NodeId) {
     if let Some(control) = autofocus_delegate(page, dialog) {
         if control != dialog {
             crate::input::focus_element(page, control);
             return;
         }
     }
+    // HTML "focus delegate" for a dialog: the first sequentially focusable descendant, or the
+    // focus delegate of a `delegatesFocus` shadow host met first (any focusable area in its
+    // shadow trees, autofocus first; WPT the-dialog-element/dialog-focus-shadow-double-nested).
     let first = {
         let list = descendants(&page.dom.borrow(), dialog);
-        list.into_iter().find(|&d| {
+        list.into_iter().find_map(|d| {
             let tabbable = page
                 .dom
                 .borrow()
@@ -702,7 +967,16 @@ fn dialog_focusing_steps(page: &Rc<PageDom>, dialog: NodeId) {
                 .flatten()
                 .and_then(|t| t.trim().parse::<i32>().ok())
                 .is_none_or(|t| t >= 0);
-            tabbable && focusable_rendered(page, d)
+            if tabbable && focusable_rendered(page, d) {
+                return Some(d);
+            }
+            let layout = page.layout();
+            let dom = page.dom.borrow();
+            if !dom.is_delegates_focus_host(d) {
+                return None;
+            }
+            let delegate = dom.focus_delegate(d, &|n| crate::input::is_focusable_area(&layout, &dom, n));
+            delegate
         })
     };
     match first {
@@ -740,11 +1014,11 @@ fn show_dialog(page: &Rc<PageDom>, el: NodeId) -> JsResult<()> {
     if !fire_toggle(page, el, "beforetoggle", false, true, true, None) || is_open(&page.dom.borrow(), el) {
         return Ok(());
     }
-    queue_toggle(page, el, false, true, None);
+    queue_dialog_toggle(page, el, false, true, None);
     let previous = focused(page);
     page.dom.borrow_mut().set_attribute(el, "open", "").js()?;
     // Popovers that do not contain the dialog close, as for showModal().
-    let until = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, None);
+    let until = top_layer_popover_ancestor(&page.dom.borrow(), el);
     hide_all_popovers_until(page, until, false, true);
     after_dialog_open(page, el, previous);
     Ok(())
@@ -752,7 +1026,7 @@ fn show_dialog(page: &Rc<PageDom>, el: NodeId) -> JsResult<()> {
 
 /// `dialog.showModal()`; with `throw` false (the `show-modal` command),
 /// the invalid states do nothing.
-fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool) -> JsResult<()> {
+fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool, source: Option<NodeId>) -> JsResult<()> {
     let fail = |name: &'static str, message: &str| if throw { Err(JsError::dom(name, message)) } else { Ok(()) };
     {
         let dom = page.dom.borrow();
@@ -774,8 +1048,11 @@ fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool) -> JsResult<()
         if !dom.is_connected(el).unwrap_or(false) {
             return fail("InvalidStateError", "The element is not in a Document.");
         }
+        if !in_active_document(page, &dom, el) {
+            return fail("InvalidStateError", "The element's document is not fully active.");
+        }
     }
-    if !fire_toggle(page, el, "beforetoggle", false, true, true, None) {
+    if !fire_toggle(page, el, "beforetoggle", false, true, true, source) {
         return Ok(());
     }
     {
@@ -784,7 +1061,7 @@ fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool) -> JsResult<()
             return Ok(());
         }
     }
-    queue_toggle(page, el, false, true, None);
+    queue_dialog_toggle(page, el, false, true, source);
     let previous = focused(page);
     overlay_style_flush(page, el);
     {
@@ -795,7 +1072,7 @@ fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool) -> JsResult<()
         dom.set_modal(el, true).js()?;
     }
     // Popovers that do not contain the dialog close.
-    let until = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, None);
+    let until = top_layer_popover_ancestor(&page.dom.borrow(), el);
     hide_all_popovers_until(page, until, false, true);
     after_dialog_open(page, el, previous);
     Ok(())
@@ -810,8 +1087,12 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
     if !is_open(&page.dom.borrow(), el) {
         return;
     }
-    queue_toggle(page, el, true, false, source);
+    queue_dialog_toggle(page, el, true, false, source);
+    let was_modal = page.dom.borrow().is_modal(el);
     let keep = overlay_style_flush(page, el);
+    if keep {
+        crate::animation_events::drop_unrendered_overlay_transition(page, el);
+    }
     {
         let mut dom = page.dom.borrow_mut();
         if keep {
@@ -823,27 +1104,73 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
     if let Some(r) = result {
         page.set_dialog_return(el, r);
     }
-    remove_watcher(page, el);
+    // A dialog still shown as a popover keeps its watcher.
+    if !page.dom.borrow().is_popover_showing(el) {
+        remove_watcher(page, el);
+    }
     let previous = page.popover.previously_focused.borrow_mut().remove(&el);
+    // The focused element, when it is in the dialog in the flat tree (a shadow tree inside it, an
+    // element slotted into it).
+    let focused_inside = focused(page).filter(|&f| {
+        let dom = page.dom.borrow();
+        let mut node = Some(f);
+        while let Some(n) = node {
+            if n == el {
+                return true;
+            }
+            node = crate::input::flat_parent_element(&dom, n);
+        }
+        false
+    });
     if let Some(prev) = previous {
-        let inside = focused(page).is_none_or(|f| page.dom.borrow().contains(el, f).unwrap_or(false));
-        if inside {
+        // HTML "close the dialog": focus goes back when the focused area is in the dialog, or
+        // always for a dialog that was modal.
+        if was_modal || focused(page).is_none() || focused_inside.is_some() {
             crate::input::focus_element_with_options(page, prev, true);
         }
+    } else if let Some(f) = focused_inside {
+        // No previously focused element: focus does not stay inside the closed dialog (the focus
+        // fixup of its now unrendered element), it goes back to the body, as in Chrome.
+        crate::input::blur_element(page, f);
     }
     crate::input::queue_simple(page, el, "close", false, false);
 }
 
 /// `dialog.requestClose(result)` and a close request: a cancelable
 /// `cancel`, then the dialog closes unless it was canceled.
-pub(crate) fn request_close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String>) {
-    if !is_open(&page.dom.borrow(), el) {
+fn request_close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String>, source: Option<NodeId>) {
+    {
+        let dom = page.dom.borrow();
+        // Only a connected dialog of a fully active document has a close watcher.
+        if !is_open(&dom, el) || !dom.is_connected(el).unwrap_or(false) || !in_active_document(page, &dom, el) {
+            return;
+        }
+    }
+    // HTML close watcher "is running cancel action": a request made from the dialog's own
+    // `cancel` listener neither fires another `cancel` nor closes it.
+    let key = (page.id(), el);
+    if CANCELING.with(|c| c.borrow().contains(&key)) {
         return;
     }
-    if !crate::input::fire_simple(page, el, "cancel", false, true) {
+    CANCELING.with(|c| c.borrow_mut().push(key));
+    let proceed = crate::input::fire_simple(page, el, "cancel", false, true);
+    CANCELING.with(|c| c.borrow_mut().retain(|k| *k != key));
+    if !proceed {
         return;
     }
-    close_dialog(page, el, result, None);
+    close_dialog(page, el, result, source);
+}
+
+thread_local! {
+    /// Dialogs whose close request is firing `cancel` (page id, element).
+    static CANCELING: std::cell::RefCell<Vec<(u64, NodeId)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Whether `el` is in the page's own document, the one its browsing context shows, and that
+/// document is fully active (a document made by `createHTMLDocument`, a removed iframe's or one
+/// navigated away from is not).
+fn in_active_document(page: &PageDom, dom: &Dom, el: NodeId) -> bool {
+    page.is_fully_active() && dom.node_document(el).is_ok_and(|d| d == page.document())
 }
 
 /// `<form method=dialog>` submission: closes the form's nearest `dialog`
@@ -877,7 +1204,7 @@ pub(crate) fn define_dialog<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) 
         Ok(s.undefined())
     });
     def.method("showModal", 0, |s, n, _a| {
-        show_modal_dialog(n.page(), n.id, true)?;
+        show_modal_dialog(n.page(), n.id, true, None)?;
         Ok(s.undefined())
     });
     def.method("close", 0, |s, n, a| {
@@ -887,7 +1214,7 @@ pub(crate) fn define_dialog<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) 
     });
     def.method("requestClose", 0, |s, n, a| {
         let result = if a.get(0).is_undefined() { None } else { Some(dom_string(a.get(0))?) };
-        request_close_dialog(n.page(), n.id, result);
+        request_close_dialog(n.page(), n.id, result, None);
         Ok(s.undefined())
     });
     def.accessor(
@@ -937,48 +1264,43 @@ fn is_submit_button(dom: &Dom, el: NodeId) -> bool {
     matches!(dom.input_type(el), Ok(InputType::Submit | InputType::Image))
 }
 
-/// The element an IDREF attribute of `el` names: the explicitly set one
-/// when the attribute is empty, else the element with that id in `el`'s
-/// tree.
-fn reflected_element(dom: &Dom, el: NodeId, attr: &str, explicit: Option<NodeId>) -> Option<NodeId> {
-    let v = dom.get_attribute(el, attr).ok().flatten()?;
-    if v.is_empty() {
-        return explicit.filter(|&t| {
-            dom.is_connected(t).unwrap_or(false) || dom.root_node(t, false).ok() == dom.root_node(el, false).ok()
-        });
+/// A reset button: `<input type=reset>` or `<button type=reset>`.
+fn is_reset_button(dom: &Dom, el: NodeId) -> bool {
+    if is_html(dom, el, "button") {
+        return dom.get_attribute(el, "type").ok().flatten().is_some_and(|t| t.eq_ignore_ascii_case("reset"));
     }
-    let root = dom.root_node(el, false).ok()?;
-    dom.get_element_by_id(root, v).ok().flatten()
-}
-
-fn explicit_of(page: &PageDom, el: NodeId, which: Reflected) -> Option<NodeId> {
-    page.popover.explicit.borrow().get(&(el, which)).copied()
+    matches!(dom.input_type(el), Ok(InputType::Reset))
 }
 
 /// HTML "popover target element" of `node`.
-fn popover_target_with(dom: &Dom, node: NodeId, explicit: Option<NodeId>) -> Option<NodeId> {
+fn popover_target_with(dom: &Dom, node: NodeId) -> Option<NodeId> {
     if !dom.has_attribute(node, "popovertarget").unwrap_or(false) || !is_invoker_type(dom, node) {
         return None;
     }
     if dom.is_disabled(node).unwrap_or(false) {
         return None;
     }
-    if dom.form_owner(node).ok().flatten().is_some() && is_submit_button(dom, node) {
+    // A submit or reset button with a form owner submits or resets the form instead (as
+    // Chromium: a reset button of a form does not toggle its popover either).
+    if dom.form_owner(node).ok().flatten().is_some() && (is_submit_button(dom, node) || is_reset_button(dom, node)) {
         return None;
     }
-    reflected_element(dom, node, "popovertarget", explicit).filter(|&t| popover_type(dom, t).is_some())
+    dom.invoker_target(node, InvokerTarget::PopoverTarget).ok().flatten()
+        .and_then(|target| dom.resolve_reference_target(target).ok().flatten())
+        .filter(|&t| popover_type(dom, t).is_some())
 }
 
-fn command_for_element(page: &PageDom, dom: &Dom, node: NodeId) -> Option<NodeId> {
+fn command_for_element(dom: &Dom, node: NodeId) -> Option<NodeId> {
     if !is_html(dom, node, "button") || !dom.has_attribute(node, "commandfor").unwrap_or(false) {
         return None;
     }
-    reflected_element(dom, node, "commandfor", explicit_of(page, node, Reflected::CommandFor))
+    dom.invoker_target(node, InvokerTarget::CommandFor).ok().flatten()
+        .and_then(|target| dom.resolve_reference_target(target).ok().flatten())
 }
 
 fn popover_target_of(page: &PageDom, node: NodeId) -> Option<NodeId> {
     let dom = page.dom.borrow();
-    popover_target_with(&dom, node, explicit_of(page, node, Reflected::PopoverTarget))
+    popover_target_with(&dom, node)
 }
 
 /// HTML "popover target attribute activation behavior" of `node` for a
@@ -987,8 +1309,12 @@ pub(crate) fn popover_target_activation(page: &Rc<PageDom>, node: NodeId, event_
     let Some(popover) = popover_target_of(page, node) else { return };
     let (showing, action) = {
         let dom = page.dom.borrow();
-        // A click inside a popover nested in its own invoker does nothing.
-        if dom.contains(popover, event_target).unwrap_or(false) && dom.contains(node, popover).unwrap_or(false) {
+        // A click inside a popover nested in its own invoker does nothing (a descendant, not the
+        // invoker itself: a button that is its own popover target toggles itself).
+        if popover != node
+            && dom.contains(popover, event_target).unwrap_or(false)
+            && dom.contains(node, popover).unwrap_or(false)
+        {
             return;
         }
         let action = dom.get_attribute(node, "popovertargetaction").ok().flatten().map(str::to_ascii_lowercase);
@@ -1040,26 +1366,24 @@ fn command_state(v: &str) -> Option<Command> {
 pub(crate) fn button_activation(page: &Rc<PageDom>, button: NodeId, event_target: NodeId) {
     let target = {
         let dom = page.dom.borrow();
-        if !dom.has_attribute(button, "commandfor").unwrap_or(false) {
-            None
-        } else {
-            reflected_element(&dom, button, "commandfor", explicit_of(page, button, Reflected::CommandFor))
-        }
+        command_for_element(&dom, button)
     };
     let Some(target) = target else {
         popover_target_activation(page, button, event_target);
         return;
     };
-    let (raw, command, is_popover, is_dialog) = {
+    let (raw, command, html_target, is_dialog) = {
         let dom = page.dom.borrow();
         let raw = dom.get_attribute(button, "command").ok().flatten().unwrap_or("").to_owned();
         let command = command_state(&raw);
-        (raw, command, popover_type(&dom, target).is_some(), is_html(&dom, target, "dialog"))
+        (raw, command, dom.element(target).is_ok_and(|e| e.is_html()), is_html(&dom, target, "dialog"))
     };
     let Some(command) = command else { return };
     let popover_command = matches!(command, Command::TogglePopover | Command::ShowPopover | Command::HidePopover);
     let dialog_command = matches!(command, Command::Close | Command::RequestClose | Command::ShowModal);
-    if (popover_command && !is_popover) || (dialog_command && !is_dialog) {
+    // Popover commands dispatch on any HTML element. A listener can
+    // add or remove its popover attribute before the default action.
+    if (popover_command && !html_target) || (dialog_command && !is_dialog) {
         return;
     }
     let (key, source) = {
@@ -1068,6 +1392,7 @@ pub(crate) fn button_activation(page: &Rc<PageDom>, button: NodeId, event_target
     };
     let Some(key) = key else { return };
     let ev = EventCore::trusted(page, EventInterface::CommandEvent, "command", false, true);
+    ev.state.borrow_mut().composed = true;
     {
         let mut f = ev.fields.borrow_mut();
         f.command = if command == Command::Custom { raw } else { raw.to_ascii_lowercase() };
@@ -1088,15 +1413,16 @@ pub(crate) fn button_activation(page: &Rc<PageDom>, button: NodeId, event_target
             }
         }
         Command::HidePopover => {}
+        Command::ShowModal | Command::Close | Command::RequestClose if showing => {}
         Command::ShowModal => {
-            let _ = show_modal_dialog(page, target, false);
+            let _ = show_modal_dialog(page, target, false, Some(button));
         }
         Command::Close | Command::RequestClose => {
             let value = page.dom.borrow().get_attribute(button, "value").ok().flatten().map(str::to_owned);
             if command == Command::Close {
                 close_dialog(page, target, value, Some(button));
             } else {
-                request_close_dialog(page, target, value);
+                request_close_dialog(page, target, value, Some(button));
             }
         }
     }
@@ -1112,7 +1438,7 @@ macro_rules! reflect_element {
                 let page = n.page();
                 let target = {
                     let dom = page.dom.borrow();
-                    reflected_element(&dom, n.id, $attr, explicit_of(page, n.id, $which))
+                    dom.invoker_target(n.id, $which).js()?
                 };
                 node_value(s, page, target)
             },
@@ -1120,44 +1446,24 @@ macro_rules! reflect_element {
                 let target = if v.is_nullish() {
                     None
                 } else {
-                    let el = s.unwrap::<crate::node::Node>(v).filter(|t| t.page().dom.borrow().element(t.id).is_ok());
-                    Some(
-                        el.ok_or_else(|| {
-                            JsError::Type(
-                                concat!(
-                                    "Failed to set the '",
-                                    $prop,
-                                    "' property: Failed to convert value to 'Element'."
-                                )
-                                .into(),
-                            )
-                        })?
-                        .id,
-                    )
+                    let el = s.unwrap::<crate::node::Element>(v).ok_or_else(|| {
+                        JsError::Type(concat!("Expected an Element for ", $prop).into())
+                    })?;
+                    if !Rc::ptr_eq(&el.page().dom, &n.page().dom) {
+                        return n.page().dom.borrow_mut().set_attribute_ns(n.id, None, $attr, "").js();
+                    }
+                    Some(el.id)
                 };
-                set_explicit(n.page(), n.id, $which, $attr, target)
+                n.page().dom.borrow_mut().set_invoker_target(n.id, $which, target).js()
             },
         );
     };
 }
 
-fn set_explicit(page: &PageDom, el: NodeId, which: Reflected, attr: &str, target: Option<NodeId>) -> JsResult<()> {
-    match target {
-        Some(t) => {
-            page.popover.explicit.borrow_mut().insert((el, which), t);
-            page.dom.borrow_mut().set_attribute(el, attr, "").js()
-        }
-        None => {
-            page.popover.explicit.borrow_mut().remove(&(el, which));
-            page.dom.borrow_mut().remove_attribute(el, attr).js().map(|_| ())
-        }
-    }
-}
-
 /// The PopoverInvokerElement mixin: `popoverTargetElement` and
 /// `popoverTargetAction` (button and input).
 pub(crate) fn define_popover_invoker<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    reflect_element!(def, "popoverTargetElement", "popovertarget", Reflected::PopoverTarget);
+    reflect_element!(def, "popoverTargetElement", "popovertarget", InvokerTarget::PopoverTarget);
     def.accessor(
         "popoverTargetAction",
         |s, n| {
@@ -1178,7 +1484,7 @@ pub(crate) fn define_popover_invoker<C: JsClass<Data = NodeData>>(def: &mut Clas
 
 /// `commandForElement` and `command` (button).
 pub(crate) fn define_command_invoker<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    reflect_element!(def, "commandForElement", "commandfor", Reflected::CommandFor);
+    reflect_element!(def, "commandForElement", "commandfor", InvokerTarget::CommandFor);
     def.accessor(
         "command",
         |s, n| {
@@ -1195,4 +1501,10 @@ pub(crate) fn define_command_invoker<C: JsClass<Data = NodeData>>(def: &mut Clas
             n.page().dom.borrow_mut().set_attribute(n.id, "command", &v).js()
         },
     );
+}
+
+/// [`crate::thread_state::reset_thread`]'s part: a dialog is in [`CANCELING`] only while its
+/// `cancel` event fires.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    CANCELING.with(|c| !c.borrow().is_empty()).then_some("popover::CANCELING")
 }

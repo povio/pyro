@@ -13,7 +13,30 @@ use pyro_dom::{Dom, NodeId};
 use pyro_js::{IdentityKey, Persistent, RealmId, WeakRealm};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+thread_local! {
+    /// Child frames whose `resize` is queued, for the next rendering update's resize steps
+    /// ([`PageDom::run_pending_frame_resizes`]).
+    static PENDING_FRAME_RESIZES: RefCell<Vec<std::rc::Weak<PageDom>>> = const { RefCell::new(Vec::new()) };
+}
+
 static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
+
+/// The browser's origin-keyed agent clusters are partitioned by browsing context group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentClusterGroup(u64);
+
+impl Default for AgentClusterGroup {
+    fn default() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentCluster {
+    group: AgentClusterGroup,
+    origin: std::sync::Arc<str>,
+}
 
 /// High bit marks identity keys of non-node event targets / events.
 pub(crate) const OTHER_NS: u64 = 1 << 63;
@@ -62,6 +85,8 @@ impl ImageBytes {
 }
 
 pub struct PageDom {
+    /// Cookie Store uses the environment creation URL even after a history update.
+    pub(crate) cookie_creation_url: std::cell::OnceCell<String>,
     pub dom: DomRef,
     id: u64,
     disposed: Cell<bool>,
@@ -84,16 +109,37 @@ pub struct PageDom {
     navigation_requests: Cell<u32>,
     document: Cell<NodeId>,
     scripting_disabled: Cell<bool>,
+    /// The sandboxed auxiliary navigation browsing context flag: a sandboxed frame without
+    /// `allow-popups` (or inside one) opens no new window. Set by the embedder.
+    popups_sandboxed: Cell<bool>,
+    /// The sandboxed `document.domain` browsing context flag (any sandbox): setting
+    /// `document.domain` throws. Set by the embedder.
+    document_domain_sandboxed: Cell<bool>,
+    /// The sandboxed forms browsing context flag (no `allow-forms`): forms submit nothing.
+    /// Set by the embedder.
+    forms_sandboxed: Cell<bool>,
     /// The document's origin is opaque although its URL's is not (a sandboxed
     /// frame without `allow-same-origin`). Set by the embedder before the
     /// context services.
     opaque_origin: Cell<bool>,
+    /// The origin a sandboxed (opaque-origin) document would have without the sandbox (its
+    /// "precursor origin"): what CSP's `'self'` matches in it, as Chrome.
+    csp_precursor_origin: RefCell<Option<String>>,
+    /// Schemeful site of this environment's top-level document at creation.
+    cookie_partition_key: RefCell<Option<String>>,
+    cookie_site_context: Cell<pyro_net::cookies::SiteContext>,
+    agent_cluster: RefCell<AgentCluster>,
     /// HTML "sticky activation": the user interacted with the document.
     sticky_activation: Cell<bool>,
     flushing_iframes: Cell<bool>,
     /// The document's render-blocking element set (see `render_blocking`).
     pub(crate) render_blocking: crate::render_blocking::RenderBlocking,
     connected_iframes: RefCell<FxHashSet<NodeId>>,
+    /// URLs of the classic scripts this document fetched CORS-cross-origin (tainting "opaque"):
+    /// their errors are muted (HTML "muted errors": "Script error.", no location, no error).
+    muted_scripts: RefCell<FxHashSet<String>>,
+    /// HTML "has been revealed": the document's `pagereveal` event fired (`lifecycle::reveal`).
+    pub(crate) revealed: Cell<bool>,
     pub(crate) selectors: RefCell<SelectorCache>,
     /// Attribute and tag names by JavaScript string identity (see `names`).
     pub(crate) names: crate::names::NameTable,
@@ -120,7 +166,7 @@ pub struct PageDom {
     /// The custom element definitions of this page's realms (`crate::custom`).
     pub(crate) custom_elements: RefCell<crate::custom::Registry>,
     pub(crate) header_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
-    pub(crate) data_view_readers: RefCell<FxHashMap<RealmId, Persistent>>,
+    pub(crate) encoding_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
     /// install.js's `blobParts` conversion, per realm (file.rs).
     pub(crate) blob_parts: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Wrappers kept alive because they hold listeners for a connected
@@ -154,7 +200,7 @@ pub struct PageDom {
     /// (registered by their wrappers, removed when those are collected), for
     /// the embedder's resize and orientation change events.
     pub(crate) viewport_targets: RefCell<Vec<(crate::window::ViewportTarget, TargetKey)>>,
-    /// Live `MediaQueryList` targets (one per realm and query text) with the
+    /// Live `MediaQueryList` targets with the
     /// last `matches` each reported, for the embedder's `change` events.
     pub(crate) media_queries: RefCell<Vec<crate::layout_api::MediaQueryEntry>>,
     /// Each realm's original `structuredClone` (MessagePort cloning).
@@ -170,6 +216,7 @@ pub struct PageDom {
     pub(crate) sw_controlled: Cell<bool>,
     /// The document is shown in a child frame (a client's `frameType`).
     nested_frame: Cell<bool>,
+    window_chrome: Cell<(bool, i32, i32)>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
     pub(crate) define_properties: RefCell<FxHashMap<RealmId, Persistent>>,
     /// MessagePorts whose peer was collected; their pins are reconciled at
@@ -191,13 +238,14 @@ pub struct PageDom {
     pub(crate) error_event_world: Cell<Option<(u64, RealmId)>>,
     /// The document's clock (`performance.now()`), which `Event.timeStamp`
     /// reads so both share a time origin and a resolution.
-    event_clock: RefCell<Option<Rc<dyn Fn() -> f64>>>,
+    event_clock: RefCell<Option<Rc<dyn Fn(std::time::Instant) -> f64>>>,
     /// Each realm's installer of `isTrusted`, a [LegacyUnforgeable] accessor:
     /// an own property of every event (`event::define_unforgeables`).
     pub(crate) event_unforgeables: RefCell<FxHashMap<RealmId, Persistent>>,
     /// CSS animation and transition event timelines.
     pub(crate) animation_events: crate::animation_events::State,
     pub net: RefCell<Option<pyro_net::NetClient>>,
+    pub(crate) cookie_observers: RefCell<Vec<crate::cookie_store::events::WindowObserver>>,
     pub(crate) intersections: crate::intersection_observer::BindingState,
     pub(crate) resizes: crate::resize_observer::BindingState,
     /// Scroll event targets awaiting the next rendering update, per document
@@ -206,11 +254,23 @@ pub struct PageDom {
     /// block the next document's events. The value: whether a `scrollend`
     /// follows (a scroll that ran to completion, not a layout clamp).
     pub(crate) pending_scrolls: RefCell<Vec<((NodeId, Option<NodeId>), bool, Rc<()>)>>,
+    /// pyro: whether each `content-visibility: auto` element skipped its contents when its
+    /// `contentvisibilityautostatechange` last fired (`layout_api::content_visibility_events`).
+    pub(crate) cv_auto_states: RefCell<std::collections::HashMap<NodeId, bool>>,
+    /// pyro: whether a paced check of those states is queued, and the DOM version and scroll
+    /// generation they were last read at (`layout_api::schedule_content_visibility_check`).
+    pub(crate) cv_auto_check: Cell<(bool, Option<(u64, u64)>)>,
     /// The DOM version scroll offsets were last re-clamped at, and whether a
     /// re-clamp is queued for the next frame (`layout_api::clamp_scrolls`).
     pub(crate) scroll_clamp: Cell<(Option<u64>, bool)>,
     pub(crate) mutations: crate::mutation_observer::BindingState,
+    /// `<img>` `currentSrc` between a relevant mutation and the microtask it queues
+    /// (`html::current_src_checkpoint`).
+    pub(crate) current_src: RefCell<crate::html::CurrentSrcState>,
     pub(crate) identity: RefCell<crate::identity::IdentityState>,
+    /// CSP violation reports of the document shown: its `Reporting-Endpoints` and the reports
+    /// it sent (`csp_report`).
+    pub(crate) csp_reports: RefCell<crate::csp_report::ReportState>,
     /// The browser context's permissions and clipboard.
     context_services: RefCell<Rc<crate::navigator_extras::ContextServices>>,
     /// `navigator.maxTouchPoints` (Emulation.setTouchEmulationEnabled).
@@ -227,13 +287,19 @@ pub struct PageDom {
     /// Named popups this document opened (`window.open(url, name)`): a
     /// later open with the same name reuses the popup while it is open.
     pub(crate) popups: RefCell<Vec<(String, Rc<crate::popup::PopupState>)>>,
+    /// Messages this document's scripts posted (`postMessage` to any window) whose delivery task
+    /// has not run yet: its `load` waits for them, as HTML queues `load` as a task after them.
+    pub(crate) outgoing_messages: std::cell::Cell<u32>,
     /// `URL.createObjectURL` store: blob URL -> (bytes, type). Owned by the
     /// creating document; revocation, document replacement and disposal drop
     /// the entries (and their bytes).
-    pub(crate) blob_urls: RefCell<FxHashMap<String, (bytes::Bytes, String)>>,
+    pub(crate) blob_urls: RefCell<FxHashMap<String, crate::url::BlobUrlEntry>>,
     /// `document.referrer` and the `Referrer-Policy` header of the document's
     /// response, set by the embedder at commit (`crate::fetch`).
     pub(crate) referrer: crate::fetch::DocumentReferrer,
+    /// The document response's `Last-Modified` header as Unix milliseconds, set by the
+    /// embedder at commit (`document.lastModified`).
+    last_modified: std::cell::Cell<Option<f64>>,
     pub(crate) reflected_url_base: RefCell<Option<crate::html::ReflectedUrlBase>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
@@ -246,12 +312,22 @@ pub struct PageDom {
     /// dispatched, so a listener whose actions unload it again (removing an ancestor frame) does
     /// not run them twice.
     unloading: Cell<bool>,
+    /// `beforeunload` listeners of this document running now (HTML "unload counter").
+    before_unload_depth: Cell<u32>,
+    /// `beforeunload` already fired, synchronously, for the script navigation now queued (the
+    /// embedder's navigation then does not fire it again).
+    before_unload_fired: Cell<bool>,
     /// Navigation Timing of the document, recorded as the lifecycle steps
     /// run (`lifecycle`).
     timing: Cell<DocumentTiming>,
     /// Resource Timing: the document's entry buffer (`resource_timing`).
     pub(crate) resource_timings: crate::resource_timing::ResourceTimings,
     pub(crate) focus_values: RefCell<FxHashMap<NodeId, String>>,
+    /// Scoped focusgroup memory: per owner, the item focused last (the
+    /// group's tab stop on re-entry unless the owner says `nomemory`).
+    pub(crate) focusgroup_memory: RefCell<FxHashMap<NodeId, NodeId>>,
+    /// HTML-in-Canvas: drawable canvases and the `paint` events they owe.
+    pub(crate) html_in_canvas: crate::html_in_canvas::Shared,
     /// ARIA element reflection (`ariaLabelledByElements`, ...): per element and attribute, the
     /// elements set explicitly and the frozen array last returned (html.rs `AriaRefs`).
     pub(crate) aria_refs: RefCell<FxHashMap<(NodeId, &'static str), crate::html::AriaRefs>>,
@@ -267,10 +343,17 @@ pub struct PageDom {
     /// pyro: HTML's list of available images, by (absolute URL, CORS state: 0 none, 1 anonymous,
     /// 2 use-credentials), oldest first.
     available_images: RefCell<Vec<((String, u8), AvailableImage)>>,
+    /// pyro: SVG `<image>` elements whose last request gave no image, with its URL
+    /// ([`PageDom::set_svg_image_broken`]).
+    svg_images_broken: RefCell<FxHashMap<NodeId, String>>,
     /// `images` size at which entries of collected elements are dropped.
     images_sweep_at: Cell<usize>,
     /// Pending `HTMLImageElement.decode()` promises (`crate::image_decode`).
     pub(crate) image_decodes: RefCell<FxHashMap<NodeId, Vec<crate::image_decode::PendingDecode>>>,
+    /// HTML: the top-level document's "autofocus candidates" (`lifecycle::flush_autofocus_candidates`).
+    pub(crate) autofocus_candidates: RefCell<Vec<NodeId>>,
+    /// HTML: the top-level document's "autofocus processed flag".
+    pub(crate) autofocus_processed: Cell<bool>,
     /// Encoded bytes of loaded `<img>`s the embedder kept for canvas use
     /// ([`PageDom::set_image_bytes`]), decoded on first use.
     image_bytes: RefCell<FxHashMap<NodeId, ImageBytes>>,
@@ -282,7 +365,10 @@ pub struct PageDom {
     image_bytes_refused: Cell<usize>,
     /// Bitmaps of canvas elements with a 2D context (`canvas.rs`), for
     /// painting them.
-    pub(crate) canvas_surfaces: RefCell<Vec<(NodeId, std::rc::Weak<RefCell<pyro_canvas::Surface>>)>>,
+    /// With the color space each bitmap is in, and its last conversion to sRGB (source rows, held
+    /// weakly, and converted rows) for one that is not.
+    #[allow(clippy::type_complexity)]
+    pub(crate) canvas_surfaces: RefCell<Vec<(NodeId, std::rc::Weak<RefCell<pyro_canvas::Surface>>, pyro_dom::canvas_color::Space, RefCell<Option<(std::sync::Weak<Vec<u8>>, std::sync::Arc<Vec<u8>>)>>)>>,
     /// Canvas elements whose control went to an `OffscreenCanvas`
     /// (`transferControlToOffscreen`), with the frame it shows there.
     pub(crate) canvas_placeholders: RefCell<Vec<(NodeId, std::sync::Arc<crate::canvas::Placeholder>)>>,
@@ -301,6 +387,7 @@ pub struct PageDom {
     /// scheduled (`crate::input::update_hover_after_task`).
     pub(crate) hover_update_queued: Cell<bool>,
     press_target: Cell<Option<NodeId>>,
+    pub(crate) pressed_pseudo: Cell<Option<pyro_dom::geometry::GeneratedHit>>,
     /// The `pointerdown` of the press in progress was canceled: its
     /// compatibility mouse events (moves while down, `mouseup`) are not
     /// sent, as in Chromium; a canceled `pointerup` suppresses nothing.
@@ -312,13 +399,15 @@ pub struct PageDom {
     pub(crate) text_drag: Cell<Option<crate::input::TextDrag>>,
     /// The document selection (`crate::editing`), shared by every world.
     pub(crate) selection: RefCell<Option<crate::editing::DocSelection>>,
-    pub(crate) selectionchange_pending: Cell<bool>,
+    pub(crate) selectionchange_pending: RefCell<FxHashSet<NodeId>>,
     /// The custom highlights (`CSS.highlights`, `crate::highlights`), in registration order.
     pub(crate) highlights: RefCell<Vec<crate::highlights::CustomHighlight>>,
     /// The ranges of the last fragment navigation's text directives (`::target-text`).
     pub(crate) target_text: RefCell<Vec<Rc<crate::range::RangeOwner>>>,
     /// Undo/redo steps of user edits (`crate::edit_commands`).
     pub(crate) undo: RefCell<crate::edit_commands::UndoHistory>,
+    /// Values set by a formatting command on a collapsed selection.
+    pub(crate) typing_values: RefCell<Option<crate::edit_commands::inline_value::TypingValues>>,
     /// The native drag-and-drop session in progress, if any.
     pub(crate) drag: RefCell<Option<crate::input::DragSession>>,
     /// `document.open()`'s script-created parser (`crate::html` document
@@ -375,14 +464,22 @@ pub struct PageDom {
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
     /// The CSS-connected font faces of the document as of an author sheets key (`css_font_faces`).
     css_font_faces: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<Vec<pyro_dom::font_face::CssFace>>)>>,
+    /// pyro: the loaded faces of this realm's `FontFaceSet` (a document's or a worker's) for
+    /// canvas text, with a generation that changes with them (font_loading.rs `canvasFaces`).
+    canvas_faces: RefCell<(u64, Rc<Vec<pyro_canvas::text::WebFace>>)>,
+    /// pyro: the web faces canvas text last drew with, by the key of what made them
+    /// (canvas.rs `canvas_web_faces`): their bytes are not copied or decompressed per draw.
+    canvas_face_cache: RefCell<Option<(u64, Rc<Vec<pyro_canvas::text::WebFace>>)>>,
     /// Tasks queued through [`PageDom::post_task`] so far.
     posted_tasks: Cell<u64>,
+    pub(crate) web_tasks: crate::scheduler::PendingTasks,
     /// HTML "completely loaded": the document's `load` and `pageshow` have
     /// been dispatched. Until then a navigation its script starts without a
     /// user gesture replaces its history entry.
     completely_loaded: Cell<bool>,
     /// When trusted input last reached the document (transient activation).
     input_activation: Cell<Option<std::time::Instant>>,
+    debugger_gesture: Cell<bool>,
     /// Fullscreen API: the document's fullscreen elements, the topmost last (`crate::fullscreen`).
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
     /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
@@ -391,6 +488,8 @@ pub struct PageDom {
     pub(crate) paint_worklet: RefCell<Option<Rc<pyro_js::Realm>>>,
     /// That worklet's module map (every module of its graphs: entries and imports).
     pub(crate) paint_worklet_modules: pyro_js::WorkletModuleMap,
+    /// The AudioWorkletGlobalScopes of this realm's BaseAudioContexts (`crate::audio_worklet`).
+    pub(crate) audio_worklets: RefCell<Vec<Rc<crate::audio_worklet::AudioWorkletGlobal>>>,
     /// A range slider being dragged (`crate::input`): the element and its value at the press.
     pub(crate) range_drag: RefCell<Option<(NodeId, String)>>,
     /// The window's `load` event is being dispatched (`lifecycle::load`).
@@ -404,6 +503,11 @@ pub struct PageDom {
     /// The document's frame's latest navigation ([`PageDom::navigation_started`]).
     navigation_started: Cell<u64>,
     planned_navigation_seq: Cell<u64>,
+    /// HTML "iframe load in progress" (the container's `load` for this document is being fired)
+    /// and "mute iframe load" (a `document.open()` during it: the container's next `load` for
+    /// this document is not fired, so a load listener that rewrites its frame does not loop).
+    iframe_load_in_progress: Cell<bool>,
+    mute_iframe_load: Cell<bool>,
     /// The last rejected-promise notification task queued (`event::schedule_rejection_notify`):
     /// its realm, [`PageDom::posted_tasks`] once it was queued, and the list entries it reports.
     pub(crate) rejection_batch: RefCell<Option<(pyro_js::RealmId, u64, Rc<RefCell<Vec<u64>>>)>>,
@@ -420,12 +524,21 @@ pub struct PageDom {
     used_font_families: RefCell<Option<(u64, std::collections::HashSet<String>)>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
+    /// The generation of each file input's selection (`files_changed`): its
+    /// `files` returns the same FileList while it stays.
+    pub(crate) file_generations: RefCell<FxHashMap<NodeId, u64>>,
+    file_generation: Cell<u64>,
     /// Faux layout + style engine of the displayed document. Read it with
     /// [`PageDom::layout`], which first sizes a child frame's viewport.
     pub layout: RefCell<pyro_dom::layout::Layout>,
     /// A child frame's viewport (its iframe's content box): `None` for top
     /// documents, which keep the emulated viewport.
     frame_viewport: RefCell<Option<FrameViewportSource>>,
+    /// pyro: brings the content sizes of the responsively embedded documents its iframes show up to
+    /// date in the DOM store before a script reads its layout (css-sizing-4 `frame-sizing`;
+    /// [`PageDom::sync_responsive_frames`]), and whether it is running.
+    responsive_frames: RefCell<Option<ResponsiveFramesSource>>,
+    responsive_frames_running: Cell<bool>,
     /// Child frames: the viewport was sized from the iframe once (later
     /// changes are resizes), a `resize` task is queued, and the earliest a
     /// listening window re-reads its iframe after a task (with a wake queued).
@@ -446,6 +559,10 @@ pub struct PageDom {
 /// Computes a child frame's viewport from its iframe; `None`: unknown yet,
 /// keep the current one.
 pub type FrameViewportSource = Rc<dyn Fn() -> Option<pyro_dom::media::Viewport>>;
+
+/// pyro: sets the content sizes of a document's responsively embedded child frames on their
+/// iframes (`Dom::set_frame_content_size`), from the browser that knows its frames.
+pub type ResponsiveFramesSource = Rc<dyn Fn()>;
 
 /// Navigation Timing marks of a document, in the event clock's
 /// milliseconds (`performance.now()`); `None` until the step ran.
@@ -529,10 +646,12 @@ pub struct NavigationRequest {
     pub body: Option<Vec<u8>>,
     pub content_type: Option<String>,
     /// A new browsing context (popup) keeps its opener (`window.opener`):
-    /// `window.open` without `noopener`, or a link with `rel=opener`.
+    /// `window.open` without `noopener`, or a link or form whose target creates one without
+    /// noopener (`window::element_noopener`).
     pub opener: bool,
     /// `window.open`'s returned object watches this popup.
     pub popup: Option<Rc<crate::popup::PopupTicket>>,
+    pub window_features: crate::window_features::WindowFeatures,
     /// The request's own referrer policy: a link's `referrerpolicy` state,
     /// no-referrer for `rel=noreferrer` (`None`: the document's policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
@@ -629,6 +748,9 @@ pub enum FrameContainer {
 }
 
 /// Embedder (pyro-browser) services the bindings need.
+pub type StreamScriptJob = Box<dyn FnOnce(Box<dyn FnOnce()>)>;
+pub type StreamScriptReady = Box<dyn FnOnce(StreamScriptJob)>;
+
 pub trait PageHooks {
     /// Where the document is shown: geometry across frames (an
     /// IntersectionObserver's implicit root is the top-level document's
@@ -676,6 +798,24 @@ pub trait PageHooks {
 
     /// Schedules `task` on the page's event loop as a separate task.
     fn post_task(&self, task: Box<dyn FnOnce()>);
+    /// Admit a prioritized web task onto the window or worker's event loop.
+    fn post_web_task(
+        &self,
+        _priority: pyro_runtime::WebPrioritySource,
+        _delay: std::time::Duration,
+        _task: Box<dyn FnOnce()>,
+    ) -> Option<Box<dyn FnOnce()>> {
+        None
+    }
+    /// Queue a `scheduler.yield()` continuation, which outranks tasks of its
+    /// priority on the window or worker's event loop.
+    fn post_web_continuation(
+        &self,
+        _priority: pyro_runtime::WebPrioritySource,
+        _task: Box<dyn FnOnce()>,
+    ) -> Option<Box<dyn FnOnce()>> {
+        None
+    }
     /// Schedules `task` as a separate task after `delay` (default: at once).
     fn post_delayed_task(&self, _delay: std::time::Duration, task: Box<dyn FnOnce()>) {
         self.post_task(task)
@@ -689,6 +829,17 @@ pub trait PageHooks {
         done: Box<dyn FnOnce(Result<MediaResponse, String>)>,
     ) -> Option<MediaFetchHandle> {
         self.post_task(Box::new(move || done(Err("no media loader".into()))));
+        None
+    }
+    /// Fetch a text track with its media parent's CORS setting. The same
+    /// cancellation and document-liveness contract as fetch_media applies.
+    fn fetch_text_track(
+        &self,
+        _url: String,
+        _crossorigin: Option<String>,
+        done: Box<dyn FnOnce(Result<MediaResponse, String>)>,
+    ) -> Option<MediaFetchHandle> {
+        self.post_task(Box::new(move || done(Err("no text track loader".into()))));
         None
     }
     /// A media playback timer: runs `task` after `delay` unless cleared
@@ -762,6 +913,10 @@ pub trait PageHooks {
     /// is loading again, so DOMContentLoaded/load can be reported anew, and
     /// the document is no longer the initial about:blank one.
     fn document_reopened(&self) {}
+    /// `window.stop()`: HTML "stop loading" the frame. Its ongoing
+    /// navigation is canceled and its document aborted: the parser stops and
+    /// neither DOMContentLoaded nor load fires (the caller sets readyState).
+    fn stop_loading(&self) {}
     /// `document.close()` finished the script-created parser (readyState is
     /// already "interactive"): fire DOMContentLoaded, then load once nothing
     /// blocks it. Returns false when the embedder does not handle it.
@@ -773,6 +928,7 @@ pub trait PageHooks {
     /// loader (a blocking one reports through
     /// `lifecycle::written_script_fetched`). False when the embedder cannot
     /// load scripts; the write then reports them as unsupported.
+    fn streamed_script(&self, _node: NodeId, _live: Rc<dyn Fn() -> bool>, ready: StreamScriptReady) { ready(Box::new(|done| done())); }
     fn written_script_queued(&self) -> bool {
         false
     }
@@ -806,6 +962,11 @@ pub trait PageHooks {
     fn frame_document(&self, _iframe: NodeId) -> Option<NodeId> {
         None
     }
+    /// This document's `window.opener` as the window running in `scope` sees it (null without
+    /// one): the `source` of a message its opener posts through `window.open`'s result.
+    fn opener_window<'s>(&self, scope: &pyro_js::Scope<'s>) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+        Ok(scope.null())
+    }
     /// WindowProxy of the child browsing context in `scope`'s realm.
     fn frame_window<'s>(&self, _scope: &pyro_js::Scope<'s>, _iframe: NodeId) -> Option<pyro_js::Value<'s>> {
         None
@@ -822,18 +983,32 @@ pub trait PageHooks {
     ) -> pyro_js::JsResult<Option<pyro_js::Value<'s>>> {
         Ok(None)
     }
+    /// HTML "the rules for choosing a navigable" for an existing navigable: the WindowProxy, as
+    /// `scope` sees it, of the frame of this page that `name` chooses (`_parent`, `_top`, or a
+    /// frame's target name). `None` when no frame of the page has that name (a popup, or a new
+    /// window, is the caller's to find or make).
+    fn target_window<'s>(&self, _scope: &pyro_js::Scope<'s>, _name: &str) -> Option<pyro_js::Value<'s>> {
+        None
+    }
 }
 
 impl PageDom {
     pub fn new(dom: DomRef, document: NodeId) -> Rc<PageDom> {
         dom.borrow_mut().watch_iframes(document).expect("page document");
         dom.borrow_mut().set_document_scripting(document, true).expect("page document");
+        // Standalone PageDom embedders create a top-level document. The frame
+        // and worker embedders supply the actual inherited storage site below.
+        let cookie_partition_key = dom.borrow().document_data(document).ok()
+            .and_then(|d| pyro_net::Url::parse(d.url.as_ref()).ok())
+            .and_then(|url| pyro_net::cookies::partition_key(&url));
         Rc::new_cyclic(|this| PageDom {
+            cookie_creation_url: Default::default(),
             this: this.clone(),
             frame_sized: Cell::new(false),
             sw_client: RefCell::new(None),
             sw_controlled: Cell::new(false),
             nested_frame: Cell::new(false),
+            window_chrome: Cell::default(),
             frame_resize_queued: Cell::new(false),
             frame_resize_next: Cell::new(None),
             frame_resize_wake: Cell::new(false),
@@ -850,11 +1025,24 @@ impl PageDom {
             navigation_requests: Cell::new(0),
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
+            popups_sandboxed: Cell::new(false),
+            document_domain_sandboxed: Cell::new(false),
+            forms_sandboxed: Cell::new(false),
             opaque_origin: Cell::new(false),
+            csp_precursor_origin: RefCell::new(None),
+            cookie_site_context: Cell::new(if cookie_partition_key.is_some() {
+                pyro_net::cookies::SiteContext::SameSite
+            } else {
+                pyro_net::cookies::SiteContext::CrossSite
+            }),
+            cookie_partition_key: RefCell::new(cookie_partition_key),
+            agent_cluster: RefCell::new(AgentCluster { group: AgentClusterGroup::default(), origin: "".into() }),
             sticky_activation: Cell::new(false),
             flushing_iframes: Cell::new(false),
             render_blocking: Default::default(),
             connected_iframes: RefCell::new(FxHashSet::default()),
+            muted_scripts: RefCell::new(FxHashSet::default()),
+            revealed: Cell::new(false),
             selectors: RefCell::new(SelectorCache::default()),
             names: Default::default(),
             collection_members: RefCell::default(),
@@ -864,7 +1052,7 @@ impl PageDom {
             current_script: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
             main_world: RefCell::new(None),
-            data_view_readers: RefCell::new(FxHashMap::default()),
+            encoding_helpers: RefCell::new(FxHashMap::default()),
             blob_parts: RefCell::new(FxHashMap::default()),
             header_helpers: RefCell::new(FxHashMap::default()),
             url_params_helpers: RefCell::new(FxHashMap::default()),
@@ -891,14 +1079,19 @@ impl PageDom {
             event_unforgeables: RefCell::new(FxHashMap::default()),
             animation_events: Default::default(),
             net: RefCell::new(None),
+            cookie_observers: Default::default(),
             identity: RefCell::new(Default::default()),
+            csp_reports: Default::default(),
             context_services: Default::default(),
             max_touch_points: Cell::new(0),
             permission_watchers: RefCell::new(Vec::new()),
             mutations: Default::default(),
+            current_src: Default::default(),
             intersections: Default::default(),
             resizes: Default::default(),
             pending_scrolls: Default::default(),
+            cv_auto_states: Default::default(),
+            cv_auto_check: Default::default(),
             scroll_clamp: Default::default(),
             fetch_state: Default::default(),
             xhr_state: Default::default(),
@@ -907,8 +1100,10 @@ impl PageDom {
             session_storage: RefCell::new(Default::default()),
             opaque_storage: Default::default(),
             popups: RefCell::new(Vec::new()),
+            outgoing_messages: std::cell::Cell::new(0),
             blob_urls: RefCell::new(FxHashMap::default()),
             referrer: Default::default(),
+            last_modified: std::cell::Cell::new(None),
             reflected_url_base: RefCell::new(None),
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
@@ -916,9 +1111,13 @@ impl PageDom {
             transition_captures: RefCell::new(None),
             transition_quota: RefCell::new(None),
             unloading: Cell::new(false),
+            before_unload_depth: Cell::new(0),
+            before_unload_fired: Cell::new(false),
             timing: Cell::new(DocumentTiming::default()),
             resource_timings: Default::default(),
             focus_values: RefCell::new(FxHashMap::default()),
+            focusgroup_memory: RefCell::new(FxHashMap::default()),
+            html_in_canvas: Default::default(),
             aria_refs: RefCell::new(FxHashMap::default()),
             focus_transition: RefCell::new(None),
             editing_target: Cell::new(None),
@@ -927,8 +1126,11 @@ impl PageDom {
             hovered: Cell::new(None),
             images: RefCell::new(FxHashMap::default()),
             available_images: RefCell::new(Vec::new()),
+            svg_images_broken: RefCell::new(FxHashMap::default()),
             images_sweep_at: Cell::new(64),
             image_decodes: RefCell::new(FxHashMap::default()),
+            autofocus_candidates: RefCell::new(Vec::new()),
+            autofocus_processed: Cell::new(false),
             image_bytes: RefCell::new(FxHashMap::default()),
             image_bytes_kept: Cell::new((0, 0)),
             image_bytes_refused: Cell::new(0),
@@ -940,15 +1142,17 @@ impl PageDom {
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
             press_target: Cell::new(None),
+            pressed_pseudo: Cell::new(None),
             compat_mouse_suppressed: Cell::new(false),
             drag_candidate: Cell::new(None),
             text_drag: Cell::new(None),
             drag: RefCell::new(None),
             selection: RefCell::new(None),
-            selectionchange_pending: Cell::new(false),
+            selectionchange_pending: RefCell::new(FxHashSet::default()),
             highlights: RefCell::new(Vec::new()),
             target_text: RefCell::new(Vec::new()),
             undo: RefCell::new(Default::default()),
+            typing_values: Default::default(),
             script_parser: RefCell::new(None),
             script_parser_active: Cell::new(false),
             script_parser_close: Cell::new(false),
@@ -971,19 +1175,26 @@ impl PageDom {
             sheet_responses: RefCell::default(),
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
+            canvas_faces: RefCell::new((0, Rc::default())),
+            canvas_face_cache: RefCell::new(None),
             posted_tasks: Cell::new(0),
+            web_tasks: Default::default(),
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
+            debugger_gesture: Cell::new(false),
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_allowed: Cell::new(true),
             paint_worklet: RefCell::new(None),
             paint_worklet_modules: Default::default(),
+            audio_worklets: RefCell::new(Vec::new()),
             range_drag: RefCell::new(None),
             dispatching_load: Cell::new(false),
             opaque_origin_token: Cell::new(None),
             planned_navigations: RefCell::new(Vec::new()),
             navigation_started: Cell::new(0),
             planned_navigation_seq: Cell::new(0),
+            iframe_load_in_progress: Cell::new(false),
+            mute_iframe_load: Cell::new(false),
             rejection_batch: RefCell::new(None),
             font_loads: Cell::new(0),
             load_layout_since: Cell::new(None),
@@ -991,8 +1202,12 @@ impl PageDom {
             created: std::time::Instant::now(),
             used_font_families: RefCell::new(None),
             files: RefCell::new(FxHashMap::default()),
+            file_generations: RefCell::new(FxHashMap::default()),
+            file_generation: Cell::new(0),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
             frame_viewport: RefCell::new(None),
+            responsive_frames: RefCell::new(None),
+            responsive_frames_running: Cell::new(false),
         })
     }
 
@@ -1034,6 +1249,19 @@ impl PageDom {
     pub fn set_fullscreen_allowed(&self, allowed: bool) {
         self.fullscreen_allowed.set(allowed);
     }
+    /// Install the origin identity committed by the frame loader, including its opaque token.
+    pub fn set_window_agent_cluster(&self, group: AgentClusterGroup, origin: String) {
+        *self.agent_cluster.borrow_mut() = AgentCluster { group, origin: origin.into() };
+    }
+
+    pub(crate) fn agent_cluster(&self) -> AgentCluster {
+        self.agent_cluster.borrow().clone()
+    }
+
+    pub(crate) fn inherit_agent_cluster(&self, cluster: AgentCluster) {
+        *self.agent_cluster.borrow_mut() = cluster;
+    }
+
     /// The embedder's identity for the document's origin, used when that origin is opaque.
     pub fn set_opaque_origin_token(&self, token: u64) {
         self.opaque_origin_token.set(Some(token));
@@ -1085,13 +1313,28 @@ impl PageDom {
 
     /// Bytes and type registered for a live `URL.createObjectURL` URL.
     pub fn blob_url(&self, url: &str) -> Option<(bytes::Bytes, String)> {
-        self.blob_urls.borrow().get(url).cloned()
+        self.blob_urls.borrow().get(url).map(|entry| (entry.bytes.clone(), entry.mime.clone()))
     }
 
     /// Number of live object URLs registered by the current document.
     pub fn blob_url_count(&self) -> usize {
         self.blob_urls.borrow().len()
     }
+    pub fn set_window_chrome(&self, is_popup: bool, left: i32, top: i32) {
+        self.window_chrome.set((is_popup, left, top));
+    }
+
+    pub fn screen_position(&self) -> (i32, i32) {
+        let (_, left, top) = self.window_chrome.get();
+        (left, top)
+    }
+
+    pub(crate) fn bars_visible(&self) -> bool {
+        // BarProp.visible: false once the window has no browsing context (its frame was removed,
+        // its popup discarded), as in Chrome (WPT the-window-object/BarProp); else not a popup.
+        self.is_fully_active() && !self.window_chrome.get().0
+    }
+
     pub fn is_disposed(&self) -> bool {
         self.disposed.get()
     }
@@ -1115,6 +1358,7 @@ impl PageDom {
         if !self.detached.replace(true) {
             self.release_activity();
         }
+        crate::custom::release_document(self);
         self.realms.borrow_mut().clear();
         drop(self.main_world.take());
     }
@@ -1164,6 +1408,7 @@ impl PageDom {
     }
 
     fn release_activity(&self) {
+        self.web_tasks.clear();
         self.transition_captures.borrow_mut().take();
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(true);
@@ -1172,9 +1417,11 @@ impl PageDom {
         self.connected_iframes.borrow_mut().clear();
         crate::fetch::dispose(self);
         crate::websocket::dispose(self);
+        self.cookie_observers.borrow_mut().clear();
         crate::xhr::dispose(self);
         crate::resource_timing::dispose(self);
         crate::file_reader::dispose(self);
+        crate::crypto_subtle::public_key::cancel(self.id(), None);
         crate::mutation_observer::dispose(self);
         crate::intersection_observer::dispose(self);
         crate::resize_observer::dispose(self);
@@ -1182,6 +1429,7 @@ impl PageDom {
         crate::message_channel::dispose(self);
         crate::web_locks::dispose(self);
         drop(self.paint_worklet.take());
+        crate::audio_worklet::dispose(self);
         crate::service_worker::client_gone(self);
         crate::indexeddb::dispose(self);
         crate::media::dispose(self);
@@ -1201,7 +1449,7 @@ impl PageDom {
         drop(self.event_clock.take());
         self.animation_events.clear();
         drop(self.pending_port_reconcile.take());
-        drop(self.data_view_readers.take());
+        drop(self.encoding_helpers.take());
         drop(self.blob_parts.take());
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
@@ -1209,13 +1457,14 @@ impl PageDom {
         drop(self.drag.take());
         // The selection owns Persistents to its Range wrappers.
         drop(self.selection.take());
+        self.typing_values.take();
         // Highlights hold their ranges' nodes.
         drop(self.highlights.take());
         drop(self.target_text.take());
         self.opaque_storage.clear();
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());
-        drop(self.custom_elements.take());
+        crate::custom::release_document(self);
         let windows = self.window_keys.take();
         let mut dom = self.dom.borrow_mut();
         for (doc, key) in windows {
@@ -1243,6 +1492,7 @@ impl PageDom {
         self.note_document_scripting();
         self.opaque_storage.clear();
         // Object URLs belong to the replaced document.
+        crate::media::mse_playback::clear_urls(self);
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());
         let viewport = self.layout.borrow().viewport().clone();
@@ -1265,14 +1515,76 @@ impl PageDom {
     pub fn scripting_disabled(&self) -> bool {
         self.scripting_disabled.get()
     }
+    /// Browser-owned sandbox policy: the sandboxed auxiliary navigation browsing context flag
+    /// (no `allow-popups`): `window.open` creates no window.
+    pub fn set_popups_sandboxed(&self, sandboxed: bool) {
+        self.popups_sandboxed.set(sandboxed);
+    }
+    pub fn popups_sandboxed(&self) -> bool {
+        self.popups_sandboxed.get()
+    }
+    /// Browser-owned sandbox policy: the sandboxed `document.domain` browsing context flag.
+    pub fn set_document_domain_sandboxed(&self, sandboxed: bool) {
+        self.document_domain_sandboxed.set(sandboxed);
+    }
+    pub fn document_domain_sandboxed(&self) -> bool {
+        self.document_domain_sandboxed.get()
+    }
+    /// Browser-owned sandbox policy: the sandboxed forms browsing context flag.
+    pub fn set_forms_sandboxed(&self, sandboxed: bool) {
+        self.forms_sandboxed.set(sandboxed);
+    }
+    pub fn forms_sandboxed(&self) -> bool {
+        self.forms_sandboxed.get()
+    }
     /// Browser-owned sandbox policy: the document's origin is opaque (its
     /// realm's origin is "null") whatever its URL. Set before the context
     /// services, which may already make the document a service worker client.
     pub fn set_opaque_origin(&self, opaque: bool) {
         self.opaque_origin.set(opaque);
     }
+    /// A sandboxed document's precursor origin (serialized; `None`: none known): CSP's `'self'`
+    /// matches it while the document's own origin is opaque.
+    pub fn set_csp_precursor_origin(&self, origin: Option<String>) {
+        *self.csp_precursor_origin.borrow_mut() = origin;
+    }
+    pub(crate) fn csp_precursor_origin(&self) -> Option<String> {
+        self.csp_precursor_origin.borrow().clone()
+    }
+    pub fn set_cookie_context(&self, key: Option<String>, site: pyro_net::cookies::SiteContext) {
+        *self.cookie_partition_key.borrow_mut() = key;
+        self.cookie_site_context.set(site);
+    }
+
+    /// A document's site for cookies is opaque if any ancestor is cross-site,
+    /// even when this document itself matches the top-level site.
+    pub fn cookie_site_context(&self) -> pyro_net::cookies::SiteContext {
+        self.cookie_site_context.get()
+    }
+
+    pub fn cookie_partition_key(&self) -> Option<String> {
+        self.cookie_partition_key.borrow().clone()
+    }
+
     pub fn has_opaque_origin(&self) -> bool {
         self.opaque_origin.get()
+    }
+
+    /// Records whether the classic script at `url` was last fetched CORS-cross-origin (`muted`):
+    /// an exception thrown from such a script is reported with muted errors
+    /// (`lifecycle::report_exception`); a CORS-same-origin fetch of the URL unmutes it.
+    pub fn set_script_errors_muted(&self, url: &str, muted: bool) {
+        let mut scripts = self.muted_scripts.borrow_mut();
+        if muted {
+            scripts.insert(url.to_owned());
+        } else {
+            scripts.remove(url);
+        }
+    }
+
+    /// Whether exceptions from the script at `url` are reported with muted errors.
+    pub fn script_errors_muted(&self, url: &str) -> bool {
+        self.muted_scripts.borrow().contains(url)
     }
 
     /// HTML "activation notification": trusted user input reached the
@@ -1284,6 +1596,24 @@ impl PageDom {
             peer.sticky_activation.set(true);
         }
     }
+    /// CDP reports an evaluation with userGesture as a gesture source when
+    /// that evaluation opens a window. Keep automation separate from trusted
+    /// input used by navigation and the DOM user-activation APIs.
+    pub fn with_debugger_gesture<R>(&self, run: impl FnOnce() -> R) -> R {
+        struct Restore<'a>(&'a Cell<bool>, bool);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) { self.0.set(self.1); }
+        }
+
+        self.notify_user_activation();
+        let _restore = Restore(&self.debugger_gesture, self.debugger_gesture.replace(true));
+        run()
+    }
+
+    pub fn window_open_user_gesture(&self) -> bool {
+        self.has_transient_activation() || self.debugger_gesture.get()
+    }
+
     /// HTML "sticky activation".
     pub fn has_sticky_activation(&self) -> bool {
         self.sticky_activation.get()
@@ -1292,6 +1622,10 @@ impl PageDom {
     /// HTML "completely finish loading": `load` and `pageshow` are done.
     pub fn set_completely_loaded(&self) {
         self.completely_loaded.set(true);
+    }
+    /// Whether this document has completely finished loading.
+    pub fn is_completely_loaded(&self) -> bool {
+        self.completely_loaded.get()
     }
     /// A navigation this document starts now replaces its own entry: HTML
     /// has `location` and form submissions do so while the document is not
@@ -1340,6 +1674,26 @@ impl PageDom {
     pub fn navigation_started(&self) -> u64 {
         self.navigation_started.get()
     }
+    /// HTML "iframe load event steps" for this (child) document: `fire` fires its container's
+    /// `load` with the "iframe load in progress" flag set, unless a `document.open()` during an
+    /// earlier one muted it.
+    pub fn run_iframe_load(&self, fire: impl FnOnce()) {
+        if self.mute_iframe_load.get() {
+            return;
+        }
+        let outer = self.iframe_load_in_progress.replace(true);
+        fire();
+        self.iframe_load_in_progress.set(outer);
+    }
+
+    /// HTML document open steps: an open while the container's `load` for this document is
+    /// being fired mutes the next one.
+    pub fn note_document_opened_for_iframe_load(&self) {
+        if self.iframe_load_in_progress.get() {
+            self.mute_iframe_load.set(true);
+        }
+    }
+
     /// Takes a new [`PageDom::navigation_started`] number: what was started
     /// before and has not begun is superseded.
     pub fn note_navigation_started(&self) -> u64 {
@@ -1406,7 +1760,28 @@ impl PageDom {
     /// Reentrant mutations are drained by the outer flush; a held DOM borrow
     /// defers work until the next safe point.
     pub fn flush_iframe_events(&self) {
+        self.flush_mutation_events(None);
+    }
+
+    pub(crate) fn flush_mutation_events(&self, callback: Option<&pyro_js::Scope<'_>>) {
         use pyro_dom::iframe::IframeChange;
+        if self.dom.try_borrow().is_ok_and(|dom| dom.has_changed_popovers()) {
+            if let Some(page) = self.this.upgrade() {
+                let changed = self.dom.borrow_mut().take_changed_popovers(self.document());
+                for el in changed {
+                    let hide = || {
+                        let _ = crate::popover::hide_showing_popover(&page, el, true, true, None);
+                    };
+                    // beforetoggle runs script synchronously. A setter in that listener
+                    // must complete its own attribute change steps before returning.
+                    if let Some(scope) = callback {
+                        scope.realm().reenter_native_callback_hook(hide);
+                    } else {
+                        hide();
+                    }
+                }
+            }
+        }
         // `<details>` toggles pyro-dom queued: one empty check otherwise.
         if self.dom.try_borrow().is_ok_and(|d| d.has_details_toggles()) {
             if let Some(this) = self.this.upgrade() {
@@ -1478,6 +1853,11 @@ impl PageDom {
                         hooks.script_connected(event.node);
                         self.flushing_iframes.set(true);
                     }
+                    IframeChange::PermissionElement if connected => {
+                        if let Some(page) = self.this.upgrade() {
+                            crate::html::permission_element_connected(&page, event.node);
+                        }
+                    }
                     _ => (),
                 }
             }
@@ -1529,6 +1909,41 @@ impl PageDom {
             pyro_dom::geometry::FontLoad::Loading => Some(false),
             pyro_dom::geometry::FontLoad::NotAsked | pyro_dom::geometry::FontLoad::Failed => None,
         }
+    }
+
+    /// pyro: the realm's `FontFaceSet` faces changed: canvas text draws with `faces`.
+    pub(crate) fn set_canvas_faces(&self, faces: Vec<pyro_canvas::text::WebFace>) {
+        let mut slot = self.canvas_faces.borrow_mut();
+        slot.0 += 1;
+        slot.1 = Rc::new(faces);
+    }
+
+    /// pyro: the realm's `FontFaceSet` faces for canvas text and their generation.
+    pub(crate) fn canvas_faces(&self) -> (u64, Rc<Vec<pyro_canvas::text::WebFace>>) {
+        let slot = self.canvas_faces.borrow();
+        (slot.0, slot.1.clone())
+    }
+
+    /// pyro: the web faces canvas text drew with for `key`, or the ones `make` gives (kept).
+    pub(crate) fn canvas_face_cache(
+        &self,
+        key: u64,
+        make: impl FnOnce() -> Vec<pyro_canvas::text::WebFace>,
+    ) -> Rc<Vec<pyro_canvas::text::WebFace>> {
+        if let Some((k, faces)) = &*self.canvas_face_cache.borrow() {
+            if *k == key {
+                return faces.clone();
+            }
+        }
+        let faces = Rc::new(make());
+        *self.canvas_face_cache.borrow_mut() = Some((key, faces.clone()));
+        faces
+    }
+
+    /// pyro: the bytes of the document's font at `url` once the layout engine loaded them (canvas
+    /// text draws with the document's web fonts).
+    pub fn font_url_bytes(&self, url: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.try_layout()?.font_bytes(url)
     }
 
     /// The `@font-face` rules of the document's sheets: its CSS-connected `FontFace`s, in order
@@ -1608,6 +2023,7 @@ impl PageDom {
 
     /// Starts layout-dependent resource requests when a rendering opportunity observes changed styles.
     pub fn sync_frame_resources(&self) {
+        self.sync_responsive_frames();
         if let (Ok(dom), Some(layout)) = (self.dom.try_borrow(), self.try_layout()) {
             let stamp = { let s = layout.style().observation_stamp(&dom); (s.0, s.1) };
             if stamp != self.load_layout_version.get() || self.load_layout_version.get() == (0, 0) {
@@ -1763,6 +2179,26 @@ impl PageDom {
         }
     }
 
+    /// pyro: the browser's update of this document's responsively embedded frames' content sizes
+    /// ([`PageDom::sync_responsive_frames`]); `None`: it has none to update.
+    pub fn set_responsive_frames_source(&self, source: Option<ResponsiveFramesSource>) {
+        *self.responsive_frames.borrow_mut() = source;
+    }
+
+    /// pyro: brings the content sizes of the responsively embedded documents this document's iframes
+    /// show up to date (css-sizing-4 `frame-sizing`), so the layout a script reads next (an iframe's
+    /// `offsetHeight`, a ResizeObserver's gather) sizes those iframes from their content as the
+    /// renderer does. Called with no borrow of the DOM store held; a nested call (the update lays the
+    /// child documents out) does nothing.
+    pub fn sync_responsive_frames(&self) {
+        let Some(source) = self.responsive_frames.borrow().clone() else { return };
+        if self.responsive_frames_running.replace(true) {
+            return;
+        }
+        source();
+        self.responsive_frames_running.set(false);
+    }
+
     /// Sizes this child frame's viewport from its iframe (see
     /// [`PageDom::layout`]); `None` for a top document.
     pub fn set_frame_viewport_source(&self, source: Option<FrameViewportSource>) {
@@ -1776,7 +2212,19 @@ impl PageDom {
     pub fn layout(&self) -> std::cell::Ref<'_, pyro_dom::layout::Layout> {
         self.sync_frame_viewport();
         self.sync_viewport_meta();
+        self.resolve_inline_styles();
         self.layout.borrow()
+    }
+
+    /// pyro: runs the inline style CSP checks that wait ([`crate::csp::resolve_inline_styles`])
+    /// before styles are read; one `RefCell` check when none waits (any page without a policy).
+    pub(crate) fn resolve_inline_styles(&self) {
+        if !self.dom.try_borrow().is_ok_and(|d| d.has_pending_style_checks()) {
+            return;
+        }
+        if let Some(page) = self.this.upgrade() {
+            crate::csp::resolve_inline_styles(&page);
+        }
     }
 
     /// [`PageDom::layout`] without panicking while the layout is borrowed
@@ -1784,6 +2232,7 @@ impl PageDom {
     pub fn try_layout(&self) -> Option<std::cell::Ref<'_, pyro_dom::layout::Layout>> {
         self.sync_frame_viewport();
         self.sync_viewport_meta();
+        self.resolve_inline_styles();
         self.layout.try_borrow().ok()
     }
 
@@ -1806,13 +2255,31 @@ impl PageDom {
         drop(layout);
         let resized = self.frame_sized.replace(true) && old != (viewport.width, viewport.height);
         if resized && !self.frame_resize_queued.replace(true) {
+            PENDING_FRAME_RESIZES.with(|p| p.borrow_mut().push(self.this.clone()));
             let page = self.this.clone();
             self.post_task(Box::new(move || {
+                // Off the resize steps' list: nothing keeps the page alive for them now.
+                PENDING_FRAME_RESIZES.with(|p| p.borrow_mut().retain(|w| !w.ptr_eq(&page)));
                 if let Some(page) = page.upgrade() {
-                    page.frame_resize_queued.set(false);
-                    page.fire_frame_resize();
+                    // The resize steps of a rendering update may have fired it already.
+                    if page.frame_resize_queued.replace(false) {
+                        page.fire_frame_resize();
+                    }
                 }
             }));
+        }
+    }
+
+    /// HTML "run the resize steps" of a rendering update for the child frames resized since the
+    /// last one: their `resize` fires now, before the update's animation frame callbacks, rather
+    /// than in the task queued for it (WPT webappapis/scripting/event-loops
+    /// update-the-rendering-resize-autofocus: an autofocus focus listener resizes an iframe).
+    pub fn run_pending_frame_resizes() {
+        let pending = PENDING_FRAME_RESIZES.with(|p| std::mem::take(&mut *p.borrow_mut()));
+        for page in pending.into_iter().filter_map(|p| p.upgrade()) {
+            if page.frame_resize_queued.replace(false) {
+                page.fire_frame_resize();
+            }
         }
     }
 
@@ -1877,6 +2344,8 @@ impl PageDom {
     /// `set_stylesheet_text` once fetched.
     pub fn apply_style_event(&self, ev: &pyro_dom::script::ResourceEvent) {
         use pyro_dom::script::{ResourceKind, ResourceReason};
+        // pyro: a `<style>` CSP blocks registers with no rules (`StyleEngine` asks the DOM).
+        self.resolve_inline_styles();
         let mut layout = self.layout.borrow_mut();
         let style = layout.style_mut();
         match (ev.kind, ev.reason) {
@@ -1894,6 +2363,10 @@ impl PageDom {
     pub fn set_stylesheet_text(&self, link: NodeId, text: &str) {
         self.layout.borrow_mut().style_mut().set_sheet_text(link, text);
     }
+    pub(crate) fn set_edited_style_element(&self, owner: NodeId, text: String, generation: u32) {
+        self.layout.borrow_mut().style_mut().add_sheet(owner, pyro_dom::style::SheetSource::EditedStyleElement { text, generation });
+    }
+
     /// pyro: reserves `link`'s cascade slot for the response it now loads (empty, of no URL yet).
     pub fn reserve_stylesheet(&self, link: NodeId) {
         let mut layout = self.layout.borrow_mut();
@@ -1905,6 +2378,7 @@ impl PageDom {
     /// pyro: `policy`, its `Referrer-Policy`, goes on the link in render snapshots (an engine
     /// attribute), where the renderer takes it for the sheet's own requests.
     pub fn set_stylesheet_response(&self, link: NodeId, url: &str, text: &str, policy: Option<&str>) {
+        self.dom.borrow_mut().note_preferred_link_sheet(link);
         self.dom.borrow_mut().set_sheet_policy(link, policy);
         // (Its tainting goes with its text to the renderer, `Dom::sheet_key`.)
         let opaque = !self.sheet_response(link).origin_clean;
@@ -1916,6 +2390,12 @@ impl PageDom {
     pub fn current_script(&self) -> Option<NodeId> {
         self.current_script.get()
     }
+    pub fn set_executing_classic_script(&self, script: NodeId) {
+        let dom = self.dom.borrow();
+        let in_shadow = dom.root_node(script, false).and_then(|root| dom.is_shadow_root(root)).unwrap_or(false);
+        self.current_script.set((!in_shadow).then_some(script));
+    }
+
     pub fn set_current_script(&self, script: Option<NodeId>) {
         self.current_script.set(script);
     }
@@ -1982,9 +2462,9 @@ impl PageDom {
         let layout = self.layout();
         let mut out = Vec::new();
         for entry in self.media_queries.borrow().iter() {
-            let now = layout.style().match_media(&entry.query);
+            let now = layout.style().matches_media_list(&entry.query);
             if entry.last.replace(now) != now {
-                out.push((entry.target, entry.query.clone(), now));
+                out.push((entry.target, entry.media.clone(), now));
             }
         }
         out
@@ -2029,12 +2509,15 @@ impl PageDom {
     }
     /// Installs the clock `Event.timeStamp` reads: milliseconds since the
     /// document's time origin, as `performance.now()` reports them.
-    pub fn set_event_clock(&self, clock: Rc<dyn Fn() -> f64>) {
+    pub fn set_event_clock(&self, clock: Rc<dyn Fn(std::time::Instant) -> f64>) {
         *self.event_clock.borrow_mut() = Some(clock);
     }
     /// The document's clock now, if the embedder installed one.
     pub(crate) fn event_time(&self) -> Option<f64> {
-        self.event_clock.borrow().as_ref().map(|clock| clock())
+        self.event_clock.borrow().as_ref().map(|clock| clock(std::time::Instant::now()))
+    }
+    pub(crate) fn clock_for_entries(&self) -> Option<Rc<dyn Fn(std::time::Instant) -> f64>> {
+        self.event_clock.borrow().clone()
     }
     pub(crate) fn next_event_id(&self) -> u64 {
         let n = self.next_event.get();
@@ -2165,12 +2648,20 @@ impl PageDom {
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(self: &Rc<Self>) {
         self.timeline_time.set(None);
+        crate::cookie_store::events::after_task(self);
         // Drawing changes no DOM: offscreen frames are committed whether or
         // not the task was otherwise quiet (one empty-list check without).
         crate::canvas::commit_frames(self);
+        // Scrolling changes no DOM: deferred lazy media are checked whatever the task did.
+        crate::media::lazy_after_task(self);
+        // pyro: so does `content-visibility: auto` relevance (one lookup without a listener).
+        crate::layout_api::schedule_content_visibility_check(self);
         if self.quiet_since_last_task() {
             return;
         }
+        // pyro: inline style CSP checks no read ran yet report now (before the stamp: a blocked
+        // one changes the DOM's version).
+        self.resolve_inline_styles();
         // The DOM as this checkpoint saw it (the checkpoint's idle check
         // asks first, so asking does not consume a change).
         if let Ok(dom) = self.dom.try_borrow() {
@@ -2184,6 +2675,9 @@ impl PageDom {
         crate::mutation_observer::after_task(self);
         crate::svg_use::after_task(self);
         crate::intersection_observer::after_task(self);
+        // pyro: what a responsively embedded child document's content became sizes its iframe
+        // before the observers gather.
+        self.sync_responsive_frames();
         crate::resize_observer::after_task(self);
         self.frame_resize_after_task();
         crate::layout_api::schedule_scroll_clamp(self);
@@ -2195,7 +2689,7 @@ impl PageDom {
         self.header_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
-        self.data_view_readers.borrow_mut().retain(|realm, _| {
+        self.encoding_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
         self.blob_parts.borrow_mut().retain(|realm, _| {
@@ -2211,6 +2705,7 @@ impl PageDom {
         self.trim_node_wrappers(dom.slot_count() as usize);
         let released = dom.take_released_listeners();
         drop(dom);
+        crate::custom::prune_registry_roots(self);
         crate::target::release_listener_slots(self, released);
     }
 
@@ -2228,10 +2723,12 @@ impl PageDom {
             return false;
         }
         !dom.has_iframe_events()
+            && !dom.has_changed_popovers()
             && !dom.has_details_toggles()
             && !self.render_blocking_pending(&dom)
             && !dom.has_pending_mutations()
             && !dom.has_gc_candidates()
+            && !dom.has_released_listeners()
             && self.mutations.pending_drops_is_empty()
             && self.pending_release.borrow().is_empty()
             && self.pending_port_reconcile.borrow().is_empty()
@@ -2391,6 +2888,12 @@ impl PageDom {
             h.navigate(req);
         }
     }
+    /// A message this document posted is still to be delivered: its `load` waits (HTML queues
+    /// the `load` task after the message tasks its parsing queued; the embedder fires `load` at a
+    /// checkpoint, after them only when it waits for them).
+    pub fn messages_delay_load(&self) -> bool {
+        self.outgoing_messages.get() > 0
+    }
     pub(crate) fn popup_command(&self, popup: Rc<crate::popup::PopupState>, command: crate::popup::PopupCommand) {
         if let Some(h) = self.hooks() {
             h.popup_command(popup, command);
@@ -2505,6 +3008,31 @@ impl PageDom {
     pub(crate) fn set_hidden(&self, hidden: bool) {
         self.hidden.set(hidden);
     }
+    /// HTML "unload counter" above 0: the document's `beforeunload` listeners are running, or it
+    /// is being unloaded (`pagehide`, `unload`, and after). History traversals it asks for are
+    /// ignored.
+    pub fn in_unload(&self) -> bool {
+        self.unloading.get() || self.before_unload_depth.get() > 0
+    }
+
+    /// Records that `beforeunload` fired for a navigation about to start ([`Self::take_before_unload_fired`]).
+    pub fn mark_before_unload_fired(&self, fired: bool) {
+        self.before_unload_fired.set(fired);
+    }
+
+    /// Whether `beforeunload` already fired for the navigation now starting; clears it.
+    pub fn take_before_unload_fired(&self) -> bool {
+        self.before_unload_fired.replace(false)
+    }
+
+    pub(crate) fn enter_before_unload(&self) {
+        self.before_unload_depth.set(self.before_unload_depth.get() + 1);
+    }
+
+    pub(crate) fn leave_before_unload(&self) {
+        self.before_unload_depth.set(self.before_unload_depth.get().saturating_sub(1));
+    }
+
     /// Marks the document as unloading; false when it already was.
     pub(crate) fn start_unloading(&self) -> bool {
         !self.unloading.replace(true)
@@ -2526,7 +3054,9 @@ impl PageDom {
     }
 
     pub(crate) fn remember_focus_value(&self, el: NodeId) {
-        if let Ok(v) = self.dom.borrow().value(el) {
+        let mut dom = self.dom.borrow_mut();
+        dom.clear_edited_since_focus(el);
+        if let Ok(v) = dom.value(el) {
             self.focus_values.borrow_mut().insert(el, v);
         }
     }
@@ -2605,6 +3135,26 @@ impl PageDom {
         }
     }
 
+    /// Embedder: SVG `<image>` `el`'s request for `url` gave no image (`Some(url)`: a network
+    /// error, a status outside 2xx or bytes that are no image), or it did (`None`). A canvas
+    /// treats such an element as broken (`HTML` "check the usability of the image argument").
+    pub fn set_svg_image_broken(&self, el: NodeId, url: Option<&str>) {
+        let mut broken = self.svg_images_broken.borrow_mut();
+        match url {
+            Some(url) => {
+                broken.insert(el, url.to_owned());
+            }
+            None => {
+                broken.remove(&el);
+            }
+        }
+    }
+
+    /// pyro: whether SVG `<image>` `el`'s request for `url` gave no image.
+    pub(crate) fn svg_image_broken(&self, el: NodeId, url: &str) -> bool {
+        self.svg_images_broken.borrow().get(&el).is_some_and(|u| u == url)
+    }
+
     /// pyro: the URLs in the list of available images (any CORS state).
     pub fn available_image_urls(&self) -> Vec<String> {
         self.available_images.borrow().iter().map(|((url, _), _)| url.clone()).collect()
@@ -2668,6 +3218,49 @@ impl PageDom {
             self.set_image_bytes(el, bytes.bytes().clone(), clean);
         }
         true
+    }
+
+    /// pyro: `el`'s bytes taken from the list of available images when it kept none of its own:
+    /// an image that loaded before the document first used a canvas API kept none
+    /// ([`PageDom::wants_image_bytes`]: `createImageBitmap(img)` in the `load` handler of a
+    /// `new Image()`, WPT html/canvas/element/manual/imagebitmap), while the list keeps the
+    /// request's bytes whatever the document draws. Only for an `src` (no `srcset`, not in a
+    /// `<picture>`), whose request the list is keyed by. Whether `el` has bytes now.
+    pub(crate) fn adopt_available_image_bytes(&self, el: NodeId) -> bool {
+        if self.image_bytes.borrow().contains_key(&el) {
+            return true;
+        }
+        let (url, cors, policy) = {
+            let dom = self.dom.borrow();
+            let Ok(Some(src)) = dom.get_attribute(el, "src") else { return false };
+            if src.trim().is_empty() || dom.get_attribute(el, "srcset").ok().flatten().is_some() {
+                return false;
+            }
+            let in_picture = dom
+                .parent(el)
+                .ok()
+                .flatten()
+                .and_then(|p| dom.element(p).ok().map(|e| e.is_html() && &*e.name.local == "picture"))
+                .unwrap_or(false);
+            if in_picture {
+                return false;
+            }
+            let cors = match dom.get_attribute(el, "crossorigin").ok().flatten() {
+                None => 0,
+                Some(v) if v.eq_ignore_ascii_case("use-credentials") => 2,
+                Some(_) => 1,
+            };
+            let policy =
+                pyro_net::ReferrerPolicy::from_attribute(dom.get_attribute(el, "referrerpolicy").ok().flatten());
+            (crate::html::resolve_url(&dom, el, src.trim()), cors, policy)
+        };
+        let policy = policy.unwrap_or_else(|| self.referrer_policy());
+        let Some(image) = self.available_html_image(&url, cors, policy, self.document_url_parsed()) else {
+            return false;
+        };
+        let Some((bytes, clean)) = image.bytes else { return false };
+        self.set_image_bytes(el, bytes.bytes().clone(), clean);
+        self.image_bytes.borrow().contains_key(&el)
     }
 
     /// Whether loaded images' bytes should be kept for canvas use
@@ -2784,16 +3377,33 @@ impl PageDom {
         }
         Some((bitmap, entry.clean))
     }
+    /// Records the committed document response's `Last-Modified` time (Unix milliseconds;
+    /// `None`: no valid header).
+    pub fn set_last_modified(&self, ms: Option<f64>) {
+        self.last_modified.set(ms.filter(|ms| ms.is_finite()));
+    }
+    /// [`PageDom::set_last_modified`]'s time.
+    pub(crate) fn last_modified(&self) -> Option<f64> {
+        self.last_modified.get()
+    }
     /// HTMLImageElement.complete: no `src`, or the current `src` has
     /// finished loading (successfully or not). A `src` set since the last
     /// load started is not complete yet, as in Chromium.
     pub(crate) fn image_complete(&self, el: NodeId) -> bool {
-        let src = self.dom.borrow().get_attribute(el, "src").ok().flatten().map(str::to_owned);
-        let Some(src) = src else { return true };
+        let (src, srcset) = {
+            let dom = self.dom.borrow();
+            let srcset = dom.get_attribute(el, "srcset").ok().flatten().is_some_and(|v| !v.trim().is_empty());
+            (dom.get_attribute(el, "src").ok().flatten().map(str::to_owned), srcset)
+        };
+        // HTML: complete without `src` and `srcset`; a `srcset` alone is a request (the loader
+        // keys it by the empty `src`).
+        let Some(src) = src.or_else(|| srcset.then(String::new)) else { return true };
         let complete = match self.images.borrow().get(&el) {
             Some((loading, pending, _)) if *loading == src => Some(!pending),
             // Empty or unresolvable sources are complete (broken).
-            _ if src.trim().is_empty() => Some(true),
+            _ if src.trim().is_empty() && !srcset => Some(true),
+            // A `srcset` whose request the loader has not started yet.
+            _ if srcset => Some(false),
             _ => None,
         };
         // pyro: a source the embedder has not seen yet: complete when it is an available image.
@@ -2811,6 +3421,7 @@ impl PageDom {
     }
     pub(crate) fn set_press_target(&self, el: Option<NodeId>) {
         self.press_target.set(el);
+        self.pressed_pseudo.set(None);
     }
     pub(crate) fn take_press_target(&self) -> Option<NodeId> {
         self.press_target.take().filter(|&p| self.dom.borrow().is_alive(p))
@@ -2828,6 +3439,22 @@ impl PageDom {
     }
     pub(crate) fn set_nonce(&self, el: NodeId, attr: Option<&str>, value: String) {
         self.nonces.borrow_mut().insert(el, (attr.map(str::to_owned), value));
+    }
+    /// `el`'s \[\[CryptographicNonce\]\] slot, as the `nonce` IDL attribute reads it: what the IDL
+    /// attribute set (while the content attribute is what it was then), else the nonce that
+    /// nonce hiding kept when it emptied the attribute, else the attribute (empty: none).
+    pub(crate) fn cryptographic_nonce(&self, el: NodeId) -> String {
+        let dom = self.dom.borrow();
+        let attr = dom.get_attribute(el, "nonce").ok().flatten();
+        if let Some(nonce) = self.nonce(el, attr) {
+            return nonce;
+        }
+        if attr == Some("") {
+            if let Some(hidden) = dom.hidden_nonce(el) {
+                return self.nonce(el, Some(hidden)).unwrap_or_else(|| hidden.to_owned());
+            }
+        }
+        attr.unwrap_or("").to_owned()
     }
 
     /// The style engine applies `sheets` (constructed sheets' ids and
@@ -2860,7 +3487,21 @@ impl PageDom {
         let names: Vec<String> = files.iter().map(|f| f.name.clone()).collect();
         self.dom.borrow_mut().set_file_names(input, &names)?;
         self.files.borrow_mut().insert(input, files);
+        self.files_changed(input);
         Ok(())
+    }
+
+    /// Empties a file input's selection.
+    pub(crate) fn clear_input_files(&self, input: NodeId) {
+        if self.files.borrow_mut().remove(&input).is_some() {
+            self.files_changed(input);
+        }
+    }
+
+    fn files_changed(&self, input: NodeId) {
+        let g = self.file_generation.get() + 1;
+        self.file_generation.set(g);
+        self.file_generations.borrow_mut().insert(input, g);
     }
 
     /// Number of wrappers pinned for listeners (diagnostics/tests).
@@ -3083,4 +3724,14 @@ impl PageDom {
     pub(crate) fn sheet_response(&self, node: NodeId) -> SheetResponse {
         self.sheet_responses.borrow().get(&node).copied().unwrap_or(SheetResponse { generation: 0, origin_clean: true })
     }
+}
+
+/// [`crate::thread_state::reset_thread`]'s part: the child frames waiting for their resize steps
+/// are dropped when closed, one still alive is named.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    PENDING_FRAME_RESIZES.with(|p| {
+        let mut p = p.borrow_mut();
+        p.retain(|page| page.strong_count() > 0);
+        (!p.is_empty()).then_some("page::PENDING_FRAME_RESIZES")
+    })
 }

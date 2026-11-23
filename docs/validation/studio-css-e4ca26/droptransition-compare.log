@@ -1,0 +1,30 @@
+droptransition-main-candidate 8082 page passes 5695 named passes 181216 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+droptransition-main-parent 8082 page passes 5692 named passes 181190 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+droptransition-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+droptransition-main-parent pages left only 3 right only 0
+droptransition-main-parent passes left only 26 right only 0
+droptransition-main-parent observed left only 0 right only 0
+droptransition-main-stable pages left only 277 right only 1532
+droptransition-main-stable passes left only 5898 right only 7645
+droptransition-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+droptransition-focus-candidate 130 page passes 74 named passes 1345 observed names 1739 statuses {'complete:0': 130}
+droptransition-focus-parent 130 page passes 72 named passes 1322 observed names 1739 statuses {'complete:0': 130}
+droptransition-focus-stable 130 page passes 81 named passes 1383 observed names 1739 statuses {'complete:0': 130}
+droptransition-focus-parent pages left only 2 right only 0
+droptransition-focus-parent passes left only 23 right only 0
+droptransition-focus-parent observed left only 0 right only 0
+droptransition-focus-stable pages left only 5 right only 12
+droptransition-focus-stable passes left only 77 right only 115
+droptransition-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+droptransition-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+droptransition-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+droptransition-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+droptransition-supplement-parent pages left only 0 right only 0
+droptransition-supplement-parent passes left only 0 right only 0
+droptransition-supplement-parent observed left only 0 right only 0
+droptransition-supplement-stable pages left only 0 right only 8
+droptransition-supplement-stable passes left only 0 right only 42
+droptransition-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

@@ -1,0 +1,69 @@
+{
+  "surface": "function",
+  "textarea": {
+    "shortDefault": [
+      "ab",
+      [
+        0,
+        0,
+        true
+      ]
+    ],
+    "detachedRemove": [
+      3,
+      6,
+      false
+    ],
+    "detachedAdopt": [
+      2,
+      4,
+      false
+    ],
+    "hostRemoval": [
+      0,
+      0,
+      true
+    ],
+    "resetUnchanged": [
+      [
+        1,
+        2,
+        false
+      ],
+      "custom"
+    ]
+  },
+  "input": {
+    "shortDefault": [
+      "ab",
+      [
+        0,
+        0,
+        true
+      ]
+    ],
+    "detachedRemove": [
+      3,
+      6,
+      false
+    ],
+    "detachedAdopt": [
+      2,
+      4,
+      false
+    ],
+    "hostRemoval": [
+      0,
+      0,
+      true
+    ],
+    "resetUnchanged": [
+      [
+        1,
+        2,
+        false
+      ],
+      "custom"
+    ]
+  }
+}

@@ -91,10 +91,11 @@ pub(crate) struct Mirror {
     pub(crate) bridge: crate::net::Bridge,
     pub(crate) scope: String,
     pub(crate) base_url: String,
+    pub(crate) document_url: Option<String>,
     /// The document facts it was built with ([`crate::Snapshot::xml_document`],
     /// [`crate::Snapshot::content_language`]).
     pub(crate) facts: (bool, Option<String>, bool, bool),
-    pub(crate) viewport: (u32, u32, u64, bool, bool, crate::InputCapabilities),
+    pub(crate) viewport: crate::ViewportKey,
     sheets: HashMap<String, String>,
     tree: Arc<Tree>,
     nodes: FxHashMap<u64, Entry>,
@@ -200,9 +201,10 @@ impl Mirror {
         bridge: crate::net::Bridge,
         scope: String,
         sheets: HashMap<String, String>,
-        viewport: (u32, u32, u64, bool, bool, crate::InputCapabilities),
+        viewport: crate::ViewportKey,
     ) -> Result<Mirror, Rebuild> {
         let base_url = config.base_url.clone().unwrap_or_default();
+        let document_url = config.document_url.clone();
         let facts = (config.xml_document, config.content_language.clone(), config.quirks_mode, config.line_height_quirk);
         let mut doc = BaseDocument::new(config);
         // Diagnostics: incremental restyle, full relayout every render (tells
@@ -243,6 +245,7 @@ impl Mirror {
             bridge,
             scope,
             base_url,
+            document_url,
             facts,
             viewport,
             sheets,
@@ -257,6 +260,11 @@ impl Mirror {
         };
         mirror.debug_check_keys();
         Ok(mirror)
+    }
+
+    /// The nodes [`Mirror::set_element_scroll`] scrolled last.
+    pub(crate) fn scrolled_nodes(&self) -> &[NodeId] {
+        &self.scrolled
     }
 
     /// The Blitz node of `key`.
@@ -728,7 +736,12 @@ impl Mirror {
             while let Some(k) = stack.pop() {
                 if let Some(e) = nodes.remove(&k) {
                     set_key(keys, e.id, None);
-                    stack.extend(e.children);
+                    // A detached parent's last child list can still name
+                    // subtrees moved earlier in this delta. Their new parent
+                    // now owns their forward and reverse key mappings.
+                    stack.extend(e.children.into_iter().filter(|child| {
+                        nodes.get(child).is_some_and(|entry| entry.parent == Some(k))
+                    }));
                 }
             }
         }

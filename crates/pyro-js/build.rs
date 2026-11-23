@@ -8,11 +8,14 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Custom accessor slots, one per (class, attribute). pyro-webapi and pyro-browser
-/// define about 1,570 attributes; a registry that needs more installs the rest as ordinary
-/// accessors, which inline caches cannot call directly (NodeList.length went
-/// from 12 to 31 ns when it lost its slot). pyro-browser's
-/// `accessor_slots_fit_the_registry` test fails on overflow.
-const SLOTS: usize = 4096;
+/// define more than 4,096 attributes since round 7; a registry that needs more installs the
+/// rest as ordinary accessors, which inline caches cannot call directly (NodeList.length went
+/// from 12 to 31 ns when it lost its slot), and a global's lazily made interface object (a
+/// custom value, JSC patch 0034) then reads as a getter instead of a data property
+/// (`self.WebSocket`, `self.IDBRequest` in WPT idlharness). Which attributes lose out depends on
+/// registration order. pyro-browser's `accessor_slots_fit_the_registry` test fails on overflow.
+/// Slot numbers are u16.
+const SLOTS: usize = 8192;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");

@@ -4,6 +4,7 @@
 // pages that need it are named `.sub.` and left out. trickle is the one pages in our sets depend on:
 // html/dom/render-blocking loads every script and stylesheet with `trickle(d1)` so that it is still loading when the
 // page looks; answered at once, whether such a load had finished was a race with the page's frames.
+import http from 'node:http';
 import zlib from 'node:zlib';
 
 const int = (s) => {
@@ -122,7 +123,15 @@ export function* trickleSteps(steps, size) {
 
 // Writes `r` to the node:http response `res`, trickled if a trickle pipe ran.
 export function send(res, r) {
-  res.writeHead(r.status, r.headers);
+  try {
+    res.writeHead(r.status, r.headers);
+  } catch {
+    // Node refuses header values wptserve sends as they are (a `header()` pipe's control or
+    // non-Latin-1 characters): answer with the same bytes, written by hand, instead of leaving
+    // the request unanswered (text-module/ignore-content-type.any.html timed out).
+    sendRaw(res, r);
+    return;
+  }
   if (!r.trickle) { res.end(r.body); return; }
   res.flushHeaders();
   const steps = trickleSteps(r.trickle, r.body.length);
@@ -138,4 +147,23 @@ export function send(res, r) {
     res.end();
   };
   next();
+}
+
+/** The response `r` written straight to the socket, its header values as they are (UTF-8). */
+function sendRaw(res, r) {
+  const socket = res.socket;
+  if (!socket || socket.destroyed) return;
+  const lines = [`HTTP/1.1 ${r.status} ${http.STATUS_CODES[r.status] ?? ''}`];
+  let length = false;
+  for (const [name, value] of Object.entries(r.headers)) {
+    if (value == null) continue;
+    length ||= name.toLowerCase() === 'content-length';
+    for (const v of [value].flat()) lines.push(`${name}: ${v}`);
+  }
+  if (!length) lines.push(`content-length: ${r.body.length}`);
+  lines.push('connection: close', '', '');
+  // As Node's own path: no body for HEAD, 204 or 304.
+  const bodiless = res.req?.method === 'HEAD' || r.status === 204 || r.status === 304;
+  const head = Buffer.from(lines.join('\r\n'), 'utf8');
+  socket.end(bodiless ? head : Buffer.concat([head, r.body]));
 }

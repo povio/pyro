@@ -386,6 +386,17 @@ where
             if using_cached_reset_properties {
                 LonghandIdSet::late_group_only_inherited()
             } else {
+                #[cfg(feature = "servo")]
+                if !context.builder.effective_zoom.is_one() {
+                    let medium = specified::BorderSideWidth::medium().to_computed_value(&context);
+                    context.builder.set_border_top_width(medium.clone());
+                    context.builder.set_border_right_width(medium.clone());
+                    context.builder.set_border_bottom_width(medium.clone());
+                    context.builder.set_border_left_width(medium.clone());
+                    context.builder.set_outline_width(medium.clone());
+                    context.builder.set_column_rule_width(medium.clone().into());
+                    context.builder.set_row_rule_width(medium.into());
+                }
                 LonghandIdSet::late_group()
             }
         },
@@ -474,6 +485,15 @@ fn is_base_appearance(context: &computed::Context) -> bool {
         Appearance::Base => *box_style.get__moz_default_appearance() != Appearance::None,
         _ => false,
     }
+}
+
+/// pyro: whether the element is a select (a widget `appearance: base-select` applies to).
+fn is_select_widget(context: &computed::Context) -> bool {
+    use computed::Appearance;
+    matches!(
+        context.builder.get_box().get__moz_default_appearance(),
+        Appearance::Listbox | Appearance::Menulist
+    )
 }
 
 fn tweak_when_ignoring_colors(
@@ -639,6 +659,7 @@ struct Declaration<'a> {
 pub(crate) struct Declarations<'a> {
     /// Whether we have any prioritary property. This is just a minor optimization.
     has_prioritary_properties: bool,
+    has_font_inputs: bool,
     /// A list of all the applicable longhand declarations.
     longhand_declarations: SmallVec<[Declaration<'a>; 64]>,
     /// The prioritary property position data.
@@ -674,6 +695,9 @@ impl<'a> Declarations<'a> {
         priority: CascadePriority,
         id: LonghandId,
     ) {
+        if matches!(decl, PropertyDeclaration::WithVariables(_)) && id.uses_parent_font_metrics() && id != LonghandId::FontSize {
+            self.has_font_inputs = true;
+        }
         if let Some(id) = PrioritaryPropertyId::from_longhand(id) {
             self.note_prioritary_property(id);
         }
@@ -721,7 +745,7 @@ fn find_non_custom_references(
         return result;
     };
     let dependent_types = syntax.dependent_types();
-    let may_reference_length = dependent_types.intersects(DependentDataTypes::LENGTH);
+    let may_reference_length = dependent_types.intersects(DependentDataTypes::LENGTH | DependentDataTypes::NUMERIC_MATH);
     if may_reference_length {
         result |= value.references.non_custom_references(is_root_element);
     }
@@ -947,6 +971,16 @@ impl<'a> Cascade<'a> {
                     context
                         .included_cascade_flags
                         .insert(RuleCascadeFlags::APPEARANCE_BASE);
+                } else if is_select_widget(context) {
+                    // pyro: a select of auto appearance inside a base-appearance select is not
+                    // in its base subtree (it and its options keep their auto look), as in
+                    // Chromium (WPT customizable-select/base-appearance-inheritance).
+                    context
+                        .style()
+                        .remove_flags(ComputedValueFlags::IS_IN_APPEARANCE_BASE_SUBTREE);
+                    context
+                        .included_cascade_flags
+                        .remove(RuleCascadeFlags::APPEARANCE_BASE);
                 }
             },
             WritingMode | Direction | TextOrientation => {
@@ -2171,6 +2205,7 @@ fn substitute_all(
         /// Number of variables visited. This is used as the order index
         /// when we visit a new unresolved variable.
         count: usize,
+        resolving_font_input: bool,
         /// The map from a substitution function name to its order index.
         index_map: OrderIndexMap,
         /// Mapping from a non-custom dependency to its order index.
@@ -2290,6 +2325,7 @@ fn substitute_all(
         lowlink: &mut usize,
         self_ref: &mut bool,
         non_custom_references: &mut ReferenceFlags,
+        early_random_count: &mut i32,
     ) {
         macro_rules! check_declaration_value_cycle {
             ($arg:expr) => {{
@@ -2306,6 +2342,7 @@ fn substitute_all(
                     &mut arg_lowlink,
                     &mut arg_self_ref,
                     non_custom_references,
+                    early_random_count,
                 );
                 *lowlink = cmp::min(*lowlink, arg_lowlink);
                 *self_ref |= arg_self_ref;
@@ -2314,20 +2351,88 @@ fn substitute_all(
         }
 
         // FIXME: Maybe avoid visiting the same var twice if not needed?
-        let mut refs_stack = SmallVec::<[&References; 5]>::new();
-        refs_stack.push(root);
-        while let Some(refs) = refs_stack.pop() {
-            *non_custom_references |= refs.flags;
-            for next in &refs.refs {
+        // Follow chosen fallback and branch values in substitution order before resuming
+        // their enclosing value. Early random indexes belong to that ordered evaluation.
+        let mut refs_stack = SmallVec::<[std::slice::Iter<'_, _>; 5]>::new();
+        macro_rules! queue_references {
+            ($refs:expr) => {{
+                let refs: &References = $refs;
+                *non_custom_references |= refs.flags;
+                if !refs.refs.is_empty() {
+                    refs_stack.push(refs.refs.iter());
+                }
+            }};
+        }
+        queue_references!(root);
+        while let Some(mut iter) = refs_stack.pop() {
+            if let Some(next) = iter.next() {
+                if !iter.as_slice().is_empty() {
+                    refs_stack.push(iter);
+                }
                 let (next_var, fallback) = match next.function {
+                    SubstitutionFunction::Custom(ref function) => {
+                        for arg in &function.arguments { check_declaration_value_cycle!(arg); }
+                        // Locals and parameters shadow the element map. Let invocation identify
+                        // the element properties actually read through the active bindings.
+                        let deps = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+                        let mut replacement = context.replacement_context(property_id);
+                        replacement.function_dependencies = Some(deps.clone());
+                        if let Ok(result) = function.replace(source, &mut replacement) {
+                            // An untyped result may introduce units into a registered receiving
+                            // property, just as var() substitution would.
+                            *non_custom_references |= ReferenceFlags::font_units_in(&result.css);
+                        }
+                        // A typed slot converted even inside an unregistered receiving property.
+                        // Only slots whose computed values were consulted contribute these edges.
+                        let consumed = replacement.function_units;
+                        drop(replacement);
+                        consumed.for_each_non_custom(context.computed_context.is_root_element(), |reference| {
+                            visit_link(VarType::NonCustom(reference), index, references_from_non_custom_properties, context, lowlink, self_ref);
+                        });
+                        for name in deps.take() {
+                            visit_link(VarType::Custom(name), index, references_from_non_custom_properties, context, lowlink, self_ref);
+                        }
+                        continue;
+                    },
+                    SubstitutionFunction::If(ref function) => {
+                        for branch in &function.branches {
+                            let before = *early_random_count;
+                            if check_declaration_value_cycle!(branch.condition) {
+                                break;
+                            }
+                            let mut replacement = context.replacement_context(property_id);
+                            replacement.early_random_count = before;
+                            let (test, _) = branch.parsed_condition(source, &mut replacement);
+                            *early_random_count = replacement.early_random_count;
+                            let Some(test) = test else { continue };
+                            let result = test.evaluate(&mut |predicate| {
+                                predicate.for_each_property(&mut |name| {
+                                    // An already guarded query evaluates to false without a var() edge.
+                                    if context.index_map.var.get(&name).is_some_and(|&i| context.var_info[i].var.is_some()) {
+                                        return;
+                                    }
+                                    visit_link(VarType::Custom(name), index, references_from_non_custom_properties,
+                                        context, lowlink, self_ref);
+                                });
+                                predicate.matches(source, &mut context.replacement_context(property_id), &mut false)
+                            });
+                            if result.to_bool(false) {
+                                queue_references!(&branch.value.references);
+                                break;
+                            }
+                        }
+                        continue;
+                    },
                     SubstitutionFunction::Env(ref env_fn) => {
                         let name = match &env_fn.name {
                             SubstitutionArgument::Unparsed(arg) => {
+                                let before = *early_random_count;
                                 if check_declaration_value_cycle!(arg) {
                                     continue;
                                 }
                                 let mut replacement_context =
                                     context.replacement_context(property_id);
+                                replacement_context.early_random_count = before;
                                 env_fn
                                     .replace_name(source, &mut replacement_context)
                                     .value
@@ -2349,21 +2454,20 @@ fn substitute_all(
                             })
                             .is_some();
                         if !present && let Some(ref fallback) = env_fn.fallback {
-                            refs_stack.push(&fallback.references);
+                            queue_references!(&fallback.references);
                         }
                         continue;
                     },
                     SubstitutionFunction::Attr(ref attr_fn) => {
                         let arg = match &attr_fn.arg {
                             SubstitutionArgument::Unparsed(arg) => {
+                                let before = *early_random_count;
                                 if check_declaration_value_cycle!(arg) {
                                     continue;
                                 }
-                                attr_fn
-                                    .replace_arg(
-                                        source,
-                                        &mut context.replacement_context(property_id),
-                                    )
+                                let mut replacement_context = context.replacement_context(property_id);
+                                replacement_context.early_random_count = before;
+                                attr_fn.replace_arg(source, &mut replacement_context)
                                     .value
                                     .map(|arg| Cow::Owned(arg.into_owned()))
                             },
@@ -2372,7 +2476,7 @@ fn substitute_all(
                         };
                         let Some(arg) = arg else {
                             if let Some(ref fallback) = attr_fn.fallback {
-                                refs_stack.push(&fallback.references);
+                                queue_references!(&fallback.references);
                             }
                             continue;
                         };
@@ -2395,14 +2499,16 @@ fn substitute_all(
                             attr_fn.fallback.as_ref(),
                         )
                     },
-                    SubstitutionFunction::Var(ref var_fn) => {
+                    SubstitutionFunction::Var(ref var_fn) | SubstitutionFunction::Inherit(ref var_fn) => {
                         let name = match &var_fn.name {
                             SubstitutionArgument::Unparsed(arg) => {
+                                let before = *early_random_count;
                                 if check_declaration_value_cycle!(arg) {
                                     continue;
                                 }
                                 let mut replacement_context =
                                     context.replacement_context(property_id);
+                                replacement_context.early_random_count = before;
                                 var_fn
                                     .replace_name(source, &mut replacement_context)
                                     .value
@@ -2413,10 +2519,21 @@ fn substitute_all(
                         };
                         let Some(name) = name else {
                             if let Some(ref fallback) = var_fn.fallback {
-                                refs_stack.push(&fallback.references);
+                                queue_references!(&fallback.references);
                             }
                             continue;
                         };
+                        if matches!(next.function, SubstitutionFunction::Inherit(_)) {
+                            // The primary is already computed on the parent; only a selected
+                            // fallback can introduce further edges on this element.
+                            let replacement = context.replacement_context(property_id);
+                            if crate::substitution::VarFunction::inherited_value(&name.0, &replacement).is_none()
+                                && let Some(ref fallback) = var_fn.fallback
+                            {
+                                queue_references!(&fallback.references);
+                            }
+                            continue;
+                        }
                         (VarType::Custom(name.0.clone()), var_fn.fallback.as_ref())
                     },
                 };
@@ -2456,7 +2573,7 @@ fn substitute_all(
                 }
 
                 if !primary_valid && let Some(fallback) = fallback {
-                    refs_stack.push(&fallback.references);
+                    queue_references!(&fallback.references);
                 }
             }
         }
@@ -2521,6 +2638,7 @@ fn substitute_all(
         // of the match so we can create the corresponding nodes once we've pushed this variable.
         let mut value_non_custom_refs = ReferenceFlags::empty();
         let mut registered = false;
+        let mut inherited_font_basis = false;
         let value = match var {
             VarType::Custom(ref name) | VarType::Attr(ref name) => {
                 let map = &context.computed_context.builder.substitution_functions;
@@ -2542,6 +2660,11 @@ fn substitute_all(
                 let is_root = context.computed_context.is_root_element();
                 value_non_custom_refs = find_non_custom_references(registration, value, is_root);
                 registered = !registration.is_universal();
+                if context.resolving_font_input && let Some(syntax) = &registration.syntax {
+                    use crate::properties_and_values::syntax::data_type::DependentDataTypes as D;
+                    let types = syntax.dependent_types();
+                    inherited_font_basis = types.contains(D::NUMERIC_MATH) && !types.contains(D::LENGTH);
+                }
                 let has_dependency = value
                     .references
                     .flags
@@ -2624,11 +2747,15 @@ fn substitute_all(
                 &mut lowlink,
                 &mut self_ref,
                 &mut value_non_custom_refs,
+                &mut 0,
             );
 
             // ... Then the non-custom properties this value depends on (font-size, line-height,
             // color-scheme), as computed by `find_non_custom_references` above.
             let is_root = context.computed_context.is_root_element();
+            if inherited_font_basis {
+                value_non_custom_refs.remove(ReferenceFlags::FONT_UNITS | ReferenceFlags::LH_UNITS);
+            }
             if registered && !value_non_custom_refs.is_empty() {
                 value_non_custom_refs.for_each_non_custom(is_root, |r| {
                     visit_link(
@@ -2688,6 +2815,7 @@ fn substitute_all(
                         &mut lowlink,
                         &mut self_ref,
                         &mut Default::default(),
+                        &mut 0,
                     );
                 }
             }
@@ -2745,6 +2873,8 @@ fn substitute_all(
                     };
                     // We know we're not in a loop now, perform substitution.
                     // TODO(emilio): Merge with the cycle detection loop instead?
+                    let previous = context.computed_context.for_font_affecting_property;
+                    context.computed_context.for_font_affecting_property |= inherited_font_basis;
                     substitute_references_if_needed_and_apply(
                         name,
                         kind,
@@ -2753,6 +2883,7 @@ fn substitute_all(
                         context.computed_context,
                         context.attribute_tracker,
                     );
+                    context.computed_context.for_font_affecting_property = previous;
                 }
             },
             VarType::NonCustom(non_custom) => {
@@ -2765,6 +2896,7 @@ fn substitute_all(
 
     let mut context = Context {
         count: 0,
+        resolving_font_input: false,
         index_map: OrderIndexMap::default(),
         non_custom_index_map: NonCustomReferenceMap::default(),
         stack: SmallVec::new(),
@@ -2783,6 +2915,44 @@ fn substitute_all(
         }
         first = false;
     };
+    // Resolve registered numeric inputs to winning font declarations before unrelated
+    // properties. Only actually selected substitutions inherit the font consumer's basis.
+    if decls.has_font_inputs {
+        for dependency in [SingleNonCustomReference::FontUnits, SingleNonCustomReference::LhUnits] {
+            if references_from_non_custom_properties[dependency].is_some() {
+                reset(&mut context);
+                traverse(VarType::NonCustom(dependency), references_from_non_custom_properties, &mut context);
+            }
+        }
+        let mut visited = LonghandIdSet::default();
+        let mut reverted = FxHashMap::<LonghandId, (CascadePriority, RevertKind)>::default();
+        for declaration in &decls.longhand_declarations {
+            let id = declaration.decl.id().as_longhand().unwrap();
+            let priority = declaration.priority;
+            if !id.uses_parent_font_metrics() || id == LonghandId::FontSize || visited.contains(id) ||
+                !(priority.flags() - context.computed_context.included_cascade_flags).is_empty() {
+                continue;
+            }
+            if let Some(&(previous, kind)) = reverted.get(&id) && !previous.allows_when_reverted(&priority, kind) {
+                continue;
+            }
+            if let Some(kind) = declaration.decl.get_css_wide_keyword().and_then(|k| k.revert_kind()) {
+                reverted.insert(id, (priority, kind));
+                continue;
+            }
+            visited.insert(id);
+            let PropertyDeclaration::WithVariables(v) = declaration.decl else { continue };
+            reset(&mut context);
+            context.resolving_font_input = true;
+            let value = &v.value.variable_value;
+            let property_id = PropertyIdRef::from(v.value.from_shorthand.map(NonCustomPropertyId::from).unwrap_or_else(|| id.into()));
+            let mut lowlink = usize::MAX;
+            visit_value_references(None, &value.references, value, usize::MAX, property_id,
+                references_from_non_custom_properties, &mut context, &mut lowlink, &mut false,
+                &mut ReferenceFlags::empty(), &mut 0);
+            context.resolving_font_input = false;
+        }
+    }
     // Note that `seen` doesn't contain names inherited from our parent, but
     // those can't have variable references (since we inherit the computed
     // variables) so we don't want to spend cycles traversing them anyway.
@@ -2818,6 +2988,7 @@ fn substitute_all(
             &mut lowlink,
             &mut self_ref,
             &mut Default::default(),
+            &mut 0,
         );
     }
 }

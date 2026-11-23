@@ -149,7 +149,7 @@ fn fetch_post_bytes_headers_redirects_and_http_errors() {
         const redirect=await fetch('/redirect');
         if(!redirect.redirected || !redirect.url.endsWith('/json') || (await redirect.json()).answer!==42) throw Error('redirect');
         const manual=await fetch('/redirect',{redirect:'manual'});
-        if(manual.type!=='opaqueredirect' || manual.status!==0 || manual.url!=='' || [...manual.headers].length || await manual.text()!=='') throw Error('manual');
+        if(manual.type!=='opaqueredirect' || manual.status!==0 || !manual.url.endsWith('/redirect') || [...manual.headers].length || await manual.text()!=='') throw Error('manual');
         try { await fetch('/redirect',{redirect:'error'}); throw Error('redirect accepted') } catch(e){if(!(e instanceof TypeError))throw e;}
         result='ok';
     })().catch(e=>result='ERROR '+e);"#);
@@ -927,6 +927,65 @@ fn text_decoder_streams_split_characters() {
         ),
         "|\u{20ac}||1"
     );
+}
+
+#[test]
+fn blob_text_stream_decodes_utf8_and_ignores_type() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        r#"globalThis.state='pending';
+        (async()=>{
+          const all=async(st)=>{const r=st.getReader(),c=[];for(;;){const {done,value}=await r.read();if(done)return c;c.push(value)}};
+          const out=[typeof Blob.prototype.textStream];
+          // Patched globals are not consulted: the pipe is internal.
+          const pt=ReadableStream.prototype.pipeThrough; ReadableStream.prototype.pipeThrough=()=>{throw 'used'};
+          const s=new Blob(['﻿a','€'.slice(0)],{type:'text/plain;charset=utf-16le'}).textStream();
+          ReadableStream.prototype.pipeThrough=pt;
+          out.push(s instanceof ReadableStream);
+          const c=await all(s); out.push(c.every(x=>typeof x==='string')+':'+c.join(''));
+          out.push((await all(new Blob().textStream())).length);
+          const bytes=new Uint8Array([0x68,0x00,0xe2,0x82]);
+          out.push(JSON.stringify((await all(new Blob([bytes]).textStream())).join('')));
+          const b=new Blob(['x']); out.push(b.textStream()!==b.textStream());
+          state=out.join('|');
+        })().catch(e=>state='ERROR '+e+' '+e.stack);"#,
+    );
+    env.until("state!=='pending'");
+    assert_eq!(env.eval("state"), "function|true|true:a\u{20ac}|0|\"h\\u0000\u{fffd}\"|true");
+}
+
+#[test]
+fn body_text_stream_decodes_utf8_and_checks_usability() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        r#"globalThis.state='pending';
+        (async()=>{
+          const all=async(st)=>{const r=st.getReader(),c=[];for(;;){const {done,value}=await r.read();if(done)return c;c.push(value)}};
+          const throws=(f)=>{try{f();return 'none'}catch(e){return e.name}};
+          const out=[typeof Response.prototype.textStream+typeof Request.prototype.textStream];
+          const r=new Response('h€'); const t=r.textStream();
+          out.push((t instanceof ReadableStream)+':'+r.bodyUsed+':'+(await all(t)).join(''));
+          const q=new Request('https://example.com',{method:'POST',body:new Uint8Array([0x68,0,0xe2,0x82,0xac])});
+          out.push(JSON.stringify((await all(q.textStream())).join(''))+':'+q.bodyUsed);
+          const enc=new TextEncoder().encode('€');
+          const split=new Response(new ReadableStream({start(c){c.enqueue(enc.slice(0,1));c.enqueue(enc.slice(1));c.close()}}));
+          out.push((await all(split.textStream())).join(''));
+          const n=new Response(); const a=n.textStream(), b=n.textStream();
+          out.push((a!==b)+':'+n.bodyUsed+':'+(await all(a)).length+(await all(b)).length);
+          const used=new Response('x'); used.text(); const locked=new Request('https://example.com',{method:'POST',body:'x'}); locked.body.getReader();
+          out.push(throws(()=>used.textStream())+':'+throws(()=>locked.textStream()));
+          const net=await fetch('/json'); out.push((await all(net.textStream())).join('').length+':'+net.bodyUsed);
+          state=out.join('|');
+        })().catch(e=>state='ERROR '+e+' '+e.stack);"#,
+    );
+    env.until("state!=='pending'");
+    assert_eq!(
+        env.eval("state"),
+        "functionfunction|true:true:h\u{20ac}|\"h\\u0000\u{20ac}\":true|\u{20ac}|true:false:00|TypeError:TypeError|13:true"
+    );
+    env.finish_network_tasks();
 }
 
 #[test]

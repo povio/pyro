@@ -165,6 +165,11 @@ impl ReferrerPolicyModifier {
 /// CORS mode). Every valid `url()` has these, most with no modifier set.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
 pub struct RequestUrlModifiers {
+    /// Fragment-only spelling retained alongside the referrer when computing a local CSS URL.
+    #[cfg(feature = "servo")]
+    #[serde(default)]
+    #[ignore_malloc_size_of = "Arc"]
+    local_fragment: Option<servo_arc::Arc<String>>,
     /// `cross-origin()`
     pub cross_origin: Option<CrossOriginModifier>,
     /// `integrity()`: the integrity metadata (Subresource Integrity § 3.3).
@@ -178,10 +183,18 @@ pub struct RequestUrlModifiers {
 }
 
 impl RequestUrlModifiers {
+    /// Whether this resource was specified with a fragment-only URL.
+    #[cfg(feature = "servo")]
+    pub fn is_local_fragment(&self) -> bool {
+        self.local_fragment.is_some()
+    }
+
     /// Parses `<request-url-modifier>*` up to the end of `input`: `None` when there is none, an
     /// error for any other token, an unknown modifier, or one given twice.
     pub fn parse(context: &ParserContext, input: &mut Parser) -> Result<Option<Self>, ParseError> {
         let mut modifiers = Self {
+            #[cfg(feature = "servo")]
+            local_fragment: None,
             cross_origin: None,
             integrity: None,
             referrer_policy: None,

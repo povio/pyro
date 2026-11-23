@@ -1,0 +1,130 @@
+[
+  [
+    "web-locks/idlharness.https.any.html",
+    "Lock interface object length",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.html",
+    "Lock interface: attribute mode",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.html",
+    "Lock interface: attribute name",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.html",
+    "LockManager interface object length",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.serviceworker.html",
+    "Lock interface object length",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.serviceworker.html",
+    "Lock interface: attribute mode",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.serviceworker.html",
+    "Lock interface: attribute name",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.serviceworker.html",
+    "LockManager interface object length",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.sharedworker.html",
+    "Lock interface object length",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.sharedworker.html",
+    "Lock interface: attribute mode",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.sharedworker.html",
+    "Lock interface: attribute name",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.sharedworker.html",
+    "LockManager interface object length",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.worker.html",
+    "Lock interface object length",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.worker.html",
+    "Lock interface: attribute mode",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.worker.html",
+    "Lock interface: attribute name",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "web-locks/idlharness.https.any.worker.html",
+    "LockManager interface object length",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]

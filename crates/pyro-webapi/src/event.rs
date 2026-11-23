@@ -38,6 +38,12 @@ pub enum EventInterface {
     PopStateEvent,
     HashChangeEvent,
     PageTransitionEvent,
+    /// HTML `pagereveal`.
+    PageRevealEvent,
+    /// HTML `pageswap`.
+    PageSwapEvent,
+    /// Install element `installresult` (WICG install element, tentative).
+    InstallResultEvent,
     MessageEvent,
     StorageEvent,
     MediaQueryListEvent,
@@ -46,6 +52,14 @@ pub enum EventInterface {
     TransitionEvent,
     ToggleEvent,
     CommandEvent,
+    InterestEvent,
+    TaskPriorityChangeEvent,
+    /// CSS Containment `contentvisibilityautostatechange`.
+    ContentVisibilityAutoStateChangeEvent,
+    /// HTML-in-Canvas `paint` (`crate::html_in_canvas`).
+    CanvasPaintEvent,
+    /// CSS Scroll Snap 2 `scrollsnapchange` / `scrollsnapchanging`.
+    SnapEvent,
     /// Made in JS on first use (`crate::editing_globals`): natively an
     /// Event wrapper with ClipboardEvent.prototype.
     ClipboardEvent,
@@ -84,8 +98,14 @@ pub enum StorageAreaRef {
 /// Interface-specific fields (flat; unused fields keep defaults).
 #[derive(Default)]
 pub struct EventFields {
+    pub(crate) previous_task_priority: Option<pyro_runtime::WebTaskPriority>,
     pub detail: f64,
     pub custom_detail: Option<Persistent>,
+    /// `PageRevealEvent.viewTransition` / `PageSwapEvent.viewTransition` (null: no view
+    /// transitions here, unless a constructor was given one).
+    pub(crate) view_transition: Option<Persistent>,
+    /// `PageSwapEvent.activation` (a NavigationActivation, or null).
+    pub(crate) activation: Option<Persistent>,
     /// `UIEvent.view` given to a constructor or init method (a Window).
     pub view: Option<Persistent>,
     pub screen_x: f64,
@@ -101,6 +121,7 @@ pub struct EventFields {
     pub button: i16,
     pub buttons: u16,
     pub related_target: Option<TargetKey>,
+    pub(crate) pseudo_hit: Option<(TargetKey, pyro_dom::geometry::GeneratedHit)>,
     pub key: String,
     pub code: String,
     pub location: u32,
@@ -110,6 +131,7 @@ pub struct EventFields {
     pub char_code: u32,
     pub data: Option<String>,
     pub input_type: String,
+    pub(crate) editing_range: Option<Box<(TargetKey, crate::range::StaticRangeData)>>,
     pub pointer_id: i32,
     pub pointer_type: String,
     pub is_primary: bool,
@@ -145,11 +167,16 @@ pub struct EventFields {
     /// `CommandEvent` (one event never has both).
     pub submitter: Option<TargetKey>,
     pub state: Option<Persistent>,
+    /// `PopStateEvent.hasUAVisualTransition` (false for every popstate the browser fires: it
+    /// draws no visual transition).
+    pub has_ua_visual_transition: bool,
     /// `FormDataEvent.formData`.
     pub form_data: Option<Persistent>,
     pub old_url: String,
     pub new_url: String,
     pub persisted: bool,
+    /// `InstallResultEvent.result` (an `InstallResult` value; empty reads as "aborted").
+    pub install_result: &'static str,
     pub message_data: Option<Persistent>,
     /// Same-document Window source, resolved in the observing world without
     /// an event-to-global persistent root. Port messages have no source.
@@ -159,7 +186,12 @@ pub struct EventFields {
     pub message_source_window: Option<MessageSource>,
     /// `ports`: the transferred MessagePorts' new ports, in the receiver's realm.
     pub message_ports: Option<Persistent>,
+    /// `MessageEvent.userActivation` (a `UserActivation`, or null).
+    pub message_user_activation: Option<Persistent>,
     pub origin: String,
+    /// The origin object supplied by message delivery. An author-provided
+    /// MessageEventInit.origin is only a string, even if it spells a valid URL.
+    pub(crate) message_origin: Option<Box<crate::origin::OriginValue>>,
     /// MessageEvent `lastEventId` (EventSource); None reads as "".
     pub last_event_id: Option<Box<str>>,
     pub(crate) data_transfer: Option<crate::data_transfer::DataTransferRef>,
@@ -174,6 +206,7 @@ pub struct EventFields {
     pub touch: Option<Rc<TouchLists>>,
     /// `AnimationEvent.animationName`.
     pub animation_name: String,
+    pub css_animation: Option<Persistent>,
     /// `TransitionEvent.propertyName`.
     pub property_name: String,
     /// `elapsedTime` (seconds) and `pseudoElement` of both.
@@ -184,6 +217,16 @@ pub struct EventFields {
     pub new_state: String,
     /// `CommandEvent.command`.
     pub command: String,
+    /// `ContentVisibilityAutoStateChangeEvent.skipped`.
+    pub skipped: bool,
+    /// `CanvasPaintEvent.changedElements`, and the frozen array made of
+    /// them on first read ([SameObject]).
+    pub changed_elements: Vec<NodeId>,
+    pub changed_elements_array: Option<Persistent>,
+    /// `SnapEvent.snapTargetBlock` / `.snapTargetInline`, each held for as long as the event
+    /// exposes it.
+    pub snap_targets: [Option<NodeId>; 2],
+    pub snap_holds: Vec<crate::collections::NodeHold>,
 }
 
 /// Resolves a `MessageEvent.source` window in the realm reading it.
@@ -273,7 +316,7 @@ impl EventCore {
                     | EventInterface::DragEvent
                     | EventInterface::UiEvent
                     | EventInterface::TouchEvent
-            ),
+            ) && !matches!(ty, "pointerenter" | "pointerleave" | "mouseenter" | "mouseleave"),
         );
         e.state.borrow_mut().is_trusted = true;
         e
@@ -425,6 +468,9 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::PopStateEvent => s.wrap::<PopStateEvent>(d, Some(key)),
         EventInterface::HashChangeEvent => s.wrap::<HashChangeEvent>(d, Some(key)),
         EventInterface::PageTransitionEvent => s.wrap::<PageTransitionEvent>(d, Some(key)),
+        EventInterface::PageRevealEvent => s.wrap::<PageRevealEvent>(d, Some(key)),
+        EventInterface::PageSwapEvent => s.wrap::<PageSwapEvent>(d, Some(key)),
+        EventInterface::InstallResultEvent => s.wrap::<InstallResultEvent>(d, Some(key)),
         EventInterface::MessageEvent => s.wrap::<MessageEvent>(d, Some(key)),
         EventInterface::StorageEvent => s.wrap::<StorageEvent>(d, Some(key)),
         EventInterface::MediaQueryListEvent => s.wrap::<MediaQueryListEvent>(d, Some(key)),
@@ -432,7 +478,14 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::AnimationEvent => s.wrap::<AnimationEvent>(d, Some(key)),
         EventInterface::TransitionEvent => s.wrap::<TransitionEvent>(d, Some(key)),
         EventInterface::ToggleEvent => s.wrap::<ToggleEvent>(d, Some(key)),
+        EventInterface::TaskPriorityChangeEvent => s.wrap::<crate::task_signal::TaskPriorityChangeEvent>(d, Some(key)),
         EventInterface::CommandEvent => s.wrap::<CommandEvent>(d, Some(key)),
+        EventInterface::InterestEvent => s.wrap::<InterestEvent>(d, Some(key)),
+        EventInterface::CanvasPaintEvent => s.wrap::<CanvasPaintEvent>(d, Some(key)),
+        EventInterface::SnapEvent => s.wrap::<SnapEvent>(d, Some(key)),
+        EventInterface::ContentVisibilityAutoStateChangeEvent => {
+            s.wrap::<ContentVisibilityAutoStateChangeEvent>(d, Some(key))
+        }
         EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
@@ -528,7 +581,7 @@ fn get_str(init: Option<Object<'_>>, name: &'static str) -> JsResult<String> {
 }
 
 /// Shared constructor: `new XEvent(type, init)`.
-fn construct<'s, C: JsClass<Data = EventData>>(
+pub(crate) fn construct<'s, C: JsClass<Data = EventData>>(
     s: &Scope<'s>,
     new_target: Object<'s>,
     a: Args<'s>,
@@ -537,7 +590,14 @@ fn construct<'s, C: JsClass<Data = EventData>>(
 ) -> JsResult<Object<'s>> {
     let ty = arg_string(&a, 0, C::NAME)?;
     let page = page_of(s)?;
-    let init = a.get(1).as_object();
+    let dictionary = a.get(1);
+    if matches!(iface, EventInterface::InterestEvent | EventInterface::CommandEvent | EventInterface::ToggleEvent)
+        && !dictionary.is_nullish()
+        && !dictionary.is_object()
+    {
+        return Err(JsError::Type(format!("{}Init must be an object, null, or undefined", C::NAME).into()));
+    }
+    let init = dictionary.as_object();
     let core = EventCore::new(
         &page,
         iface,
@@ -885,6 +945,8 @@ fn fill_storage<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
 }
 
 fn fill_popstate<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    // PopStateEventInit members in lexicographic order.
+    f.has_ua_visual_transition = get_bool(init, "hasUAVisualTransition")?;
     if let Some(o) = init {
         f.state = Some(Persistent::new(s, o.get_atom("state")?));
     }
@@ -930,19 +992,57 @@ fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     f.origin = get_str(init, "origin")?;
     let last_event_id = get_str(init, "lastEventId")?;
     f.last_event_id = (!last_event_id.is_empty()).then(|| last_event_id.into());
+    // `userActivation` (a UserActivation or null; null by default).
+    if let Some(o) = init {
+        let activation = o.get_atom("userActivation")?;
+        if !activation.is_nullish() {
+            if s.unwrap::<crate::user_activation::UserActivation>(activation).is_none() {
+                return Err(JsError::Type(
+                    "Failed to construct 'MessageEvent': Failed to read the 'userActivation' property from 'MessageEventInit': Failed to convert value to 'UserActivation'.".into(),
+                ));
+            }
+            f.message_user_activation = Some(Persistent::new(s, activation));
+        }
+    }
+    // `source` (a WindowProxy, MessagePort or ServiceWorker; null by default): given back as is.
+    if let Some(o) = init {
+        let source = o.get_atom("source")?;
+        if !source.is_nullish() {
+            let source = Persistent::new(s, source);
+            f.message_source_window = Some(Rc::new(move |s| Ok(s.rehome(source.get(s)))));
+        }
+    }
     Ok(())
 }
 
-fn fill_animation<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+fn css_event_animation<'s>(s: &Scope<'s>, init: Option<Object<'s>>, transition: bool) -> JsResult<Option<Persistent>> {
+    let Some(init) = init else { return Ok(None) };
+    let value = init.get_atom("animation")?;
+    if value.is_undefined() || value.is_null() { return Ok(None); }
+    crate::animations::validate_event_animation(s, value, transition)?;
+    Ok(Some(Persistent::new(s, value)))
+}
+
+fn css_event_elapsed_time(init: Option<Object<'_>>) -> JsResult<f64> {
+    let elapsed = get_num(init, "elapsedTime", 0.0)?;
+    if !elapsed.is_finite() {
+        return Err(JsError::Type("elapsedTime is not a finite number.".into()));
+    }
+    Ok(elapsed)
+}
+
+fn fill_animation<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.css_animation = css_event_animation(s, init, false)?;
     f.animation_name = get_str(init, "animationName")?;
-    f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
+    f.elapsed_time = css_event_elapsed_time(init)?;
     f.pseudo_element = get_str(init, "pseudoElement")?;
     Ok(())
 }
 
-fn fill_transition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+fn fill_transition<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.css_animation = css_event_animation(s, init, true)?;
     f.property_name = get_str(init, "propertyName")?;
-    f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
+    f.elapsed_time = css_event_elapsed_time(init)?;
     f.pseudo_element = get_str(init, "pseudoElement")?;
     Ok(())
 }
@@ -952,11 +1052,57 @@ fn fill_pagetransition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Obje
     Ok(())
 }
 
+/// `PageRevealEventInit` / `PageSwapEventInit`: `viewTransition` and (for PageSwapEvent)
+/// `activation`, each an object or null.
+fn fill_page_reveal_swap<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    if let Some(o) = init {
+        for (name, slot) in [("activation", &mut f.activation), ("viewTransition", &mut f.view_transition)] {
+            let v = o.get(name)?;
+            *slot = (!v.is_undefined() && !v.is_null()).then(|| Persistent::new(s, v));
+        }
+    }
+    Ok(())
+}
+
+/// `InstallResultEventInit.result`: an `InstallResult` enum value, "aborted" when omitted.
+fn fill_install_result<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let value = match init {
+        Some(o) => o.get_atom("result")?,
+        None => return Ok(()),
+    };
+    if value.is_undefined() {
+        return Ok(());
+    }
+    let result = value.to_string()?;
+    f.install_result = match result.as_str() {
+        "success" => "success",
+        "aborted" => "aborted",
+        "invalid-data" => "invalid-data",
+        _ => {
+            return Err(JsError::Type(
+                format!(
+                    "Failed to construct 'InstallResultEvent': Failed to read the 'result' property from 'InstallResultEventInit': The provided value '{result}' is not a valid enum value of type InstallResult."
+                )
+                .into(),
+            ))
+        }
+    };
+    Ok(())
+}
+
 fn fill_submit<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     if let Some(o) = init {
-        if let Some(n) = s.unwrap::<crate::node::Node>(o.get_atom("submitter")?) {
-            f.submitter = Some(n.target.key);
+        // `HTMLElement? submitter = null`: anything but null/undefined or a node is a TypeError.
+        let v = o.get_atom("submitter")?;
+        if v.is_nullish() {
+            return Ok(());
         }
+        let Some(n) = s.unwrap::<crate::node::Node>(v) else {
+            return Err(JsError::type_error(
+                "Failed to construct 'SubmitEvent': Failed to read the 'submitter' property from 'SubmitEventInit': The provided value is not of type 'HTMLElement'.",
+            ));
+        };
+        f.submitter = Some(n.target.key);
     }
     Ok(())
 }
@@ -1103,10 +1249,17 @@ impl JsClass for UiEvent {
             e.refresh_wrappers();
             Ok(s.undefined())
         });
-        // https://w3c.github.io/uievents/#dom-uievent-pseudotarget: the
-        // pseudo-element the event targets. Hit testing never resolves to a
-        // pseudo-element here, so every UI event reports none.
-        def.getter("pseudoTarget", |s, _e| Ok(s.null()));
+        def.getter("pseudoTarget", |s, e| {
+            let Some((owner, hit)) = e.fields.borrow().pseudo_hit else { return Ok(s.null()) };
+            let state = e.state.borrow();
+            if !state.is_trusted || !state.dispatching || state.current_target.is_none() || state.target != Some(owner) {
+                return Ok(s.null());
+            }
+            drop(state);
+            let element = target_value(s, &e.page, Some(owner))?;
+            let (kind, marker) = hit.selectors();
+            crate::pseudo_element::MODULE.helper(s, &e.page, "fromHit", &[element, s.string(kind), s.boolean(marker)])
+        });
         def.getter("which", |s, e| {
             let f = e.fields.borrow();
             Ok(s.number(match e.iface {
@@ -1506,7 +1659,22 @@ impl JsClass for InputEvent {
                 None => s.null(),
             })
         });
-        def.pure_method("getTargetRanges", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
+        def.method("getTargetRanges", 0, |s, e, _a| {
+            let fields = e.fields.borrow();
+            if let Some((host, range)) = fields.editing_range.as_deref() {
+                // The dispatch path retargets the editing host at shadow boundaries.
+                // Later DOM mutations must not hide the snapshot from a listener
+                // on the original path or expose it to a retargeted ancestor.
+                let state = e.state.borrow();
+                if state.current_target.is_some() && state.target == Some(*host) {
+                    let (start, end) = range.points();
+                    let data = crate::range::StaticRangeData::from_points(&e.page, start, end)?;
+                    let range = s.wrap::<crate::range::StaticRange>(data, None)?;
+                    return Ok(s.array(&[range.value()])?.value());
+                }
+            }
+            Ok(s.array(&[])?.value())
+        });
     }
 }
 
@@ -1721,6 +1889,11 @@ fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>,
     let element = s.unwrap::<crate::node::Node>(v).filter(|n| n.page().dom.borrow().element(n.id).is_ok());
     match element {
         Some(n) => {
+            // TargetKey is local to a DOM store. Documents in a browsing
+            // context group share one, including ordinary same-origin frames.
+            if !Rc::ptr_eq(&page_of(s)?.dom, &n.page().dom) {
+                return Err(JsError::Type("node belongs to another page".into()));
+            }
             f.submitter = Some(n.target.key);
             Ok(())
         }
@@ -1731,14 +1904,23 @@ fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>,
 }
 
 fn fill_toggle<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
-    f.old_state = get_str(init, "oldState")?;
     f.new_state = get_str(init, "newState")?;
+    f.old_state = get_str(init, "oldState")?;
     fill_source(s, f, init, "ToggleEvent")
 }
 
 fn fill_command<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     f.command = get_str(init, "command")?;
     fill_source(s, f, init, "CommandEvent")
+}
+
+/// Outside dispatch, retargeting against null crosses every shadow root, as
+/// does retargeting against the document. During dispatch use the listener's
+/// current target, including capture listeners on non-bubbling events.
+fn retargeted_source<'s>(s: &Scope<'s>, e: &EventData) -> JsResult<Value<'s>> {
+    let observer = e.state.borrow().current_target.unwrap_or(TargetKey::Node(e.page.document().index()));
+    let source = e.fields.borrow().submitter.map(|key| e.page.dom.borrow().retarget_live(key, observer));
+    target_value(s, &e.page, source)
 }
 
 /// `ToggleEvent` (HTML): details, popover and dialog `beforetoggle` /
@@ -1752,10 +1934,7 @@ impl JsClass for ToggleEvent {
         def.constructor(1, |s, nt, a| construct::<ToggleEvent>(s, nt, a, EventInterface::ToggleEvent, fill_toggle));
         def.getter("oldState", |s, e| Ok(s.string(&e.fields.borrow().old_state)));
         def.getter("newState", |s, e| Ok(s.string(&e.fields.borrow().new_state)));
-        def.getter("source", |s, e| {
-            let k = e.fields.borrow().submitter;
-            target_value(s, &e.page, k)
-        });
+        def.getter("source", retargeted_source);
     }
 }
 
@@ -1769,11 +1948,166 @@ impl JsClass for CommandEvent {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(1, |s, nt, a| construct::<CommandEvent>(s, nt, a, EventInterface::CommandEvent, fill_command));
         def.getter("command", |s, e| Ok(s.string(&e.fields.borrow().command)));
-        def.getter("source", |s, e| {
-            let k = e.fields.borrow().submitter;
-            target_value(s, &e.page, k)
+        def.getter("source", retargeted_source);
+    }
+}
+
+/// CSS Containment `ContentVisibilityAutoStateChangeEvent`: fired at a
+/// `content-visibility: auto` element when its contents start or stop
+/// being skipped.
+pub struct ContentVisibilityAutoStateChangeEvent;
+impl JsClass for ContentVisibilityAutoStateChangeEvent {
+    const NAME: &'static str = "ContentVisibilityAutoStateChangeEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<ContentVisibilityAutoStateChangeEvent>(
+                s,
+                nt,
+                a,
+                EventInterface::ContentVisibilityAutoStateChangeEvent,
+                fill_cv_auto_state,
+            )
+        });
+        def.getter("skipped", |s, e| Ok(s.boolean(e.fields.borrow().skipped)));
+    }
+}
+
+fn fill_cv_auto_state<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.skipped = get_bool(init, "skipped")?;
+    Ok(())
+}
+
+/// Event carrying the source element of an interest transition.
+pub struct InterestEvent;
+impl JsClass for InterestEvent {
+    const NAME: &'static str = "InterestEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<InterestEvent>(s, nt, a, EventInterface::InterestEvent, |s, fields, init| {
+                fill_source(s, fields, init, "InterestEvent")
+            })
+        });
+        def.getter("source", retargeted_source);
+    }
+}
+
+/// HTML-in-Canvas `CanvasPaintEvent`: the `paint` event of a
+/// `<canvas content=drawable>`, with the drawable elements that changed.
+pub struct CanvasPaintEvent;
+impl JsClass for CanvasPaintEvent {
+    const NAME: &'static str = "CanvasPaintEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<CanvasPaintEvent>(s, nt, a, EventInterface::CanvasPaintEvent, fill_canvas_paint)
+        });
+        // [SameObject] FrozenArray<Element>.
+        def.getter("changedElements", |s, e| {
+            if let Some(array) = e.fields.borrow().changed_elements_array.as_ref() {
+                return Ok(array.get(s));
+            }
+            let nodes = e.fields.borrow().changed_elements.clone();
+            let mut values = Vec::with_capacity(nodes.len());
+            for node in nodes {
+                // A changed element can be gone by the time the array is read.
+                if let Ok(o) = crate::node::wrap_node(s, &e.page, node) {
+                    values.push(o.value());
+                }
+            }
+            let array = s.frozen_array(&values)?;
+            e.fields.borrow_mut().changed_elements_array = Some(Persistent::new(s, array));
+            Ok(array)
         });
     }
+}
+
+/// `SnapEvent` (CSS Scroll Snap 2 § 5): the boxes a scroller snaps to on its block and inline
+/// axes, of `scrollsnapchange` and `scrollsnapchanging`.
+pub struct SnapEvent;
+impl JsClass for SnapEvent {
+    const NAME: &'static str = "SnapEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<SnapEvent>(s, nt, a, EventInterface::SnapEvent, fill_snap));
+        def.getter("snapTargetBlock", |s, e| snap_target(s, e, 0));
+        def.getter("snapTargetInline", |s, e| snap_target(s, e, 1));
+    }
+}
+
+fn snap_target<'s>(s: &Scope<'s>, e: &EventData, axis: usize) -> JsResult<Value<'s>> {
+    let target = e.fields.borrow().snap_targets[axis];
+    match target {
+        Some(id) => Ok(crate::node::wrap_node(s, &e.page, id)?.value()),
+        None => Ok(s.null()),
+    }
+}
+
+/// Holds the snap targets `targets` (block, inline) in the event fields `f`.
+pub(crate) fn set_snap_targets(page: &Rc<PageDom>, f: &mut EventFields, targets: [Option<NodeId>; 2]) {
+    f.snap_targets = targets;
+    f.snap_holds =
+        targets.into_iter().flatten().filter_map(|id| crate::collections::NodeHold::new(page, id).ok()).collect();
+}
+
+/// `snapTargetBlock` / `snapTargetInline` of a SnapEventInit: a Node or null.
+fn fill_snap<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let Some(o) = init else { return Ok(()) };
+    let page = page_of(s)?;
+    let mut targets = [None; 2];
+    for (axis, name) in [(0, "snapTargetBlock"), (1, "snapTargetInline")] {
+        let v = o.get_atom(name)?;
+        if v.is_undefined() || v.is_null() {
+            continue;
+        }
+        match s.unwrap::<crate::node::Node>(v) {
+            Some(n) if Rc::ptr_eq(&page.dom, &n.page().dom) => targets[axis] = Some(n.id),
+            _ => {
+                return Err(JsError::Type(
+                    format!(
+                        "Failed to construct 'SnapEvent': Failed to read the '{name}' property from 'SnapEventInit': Failed to convert value to 'Node'."
+                    )
+                    .into(),
+                ))
+            }
+        }
+    }
+    set_snap_targets(&page, f, targets);
+    Ok(())
+}
+
+/// `changedElements` of a CanvasPaintEventInit: a sequence of Elements.
+fn fill_canvas_paint<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let Some(o) = init else { return Ok(()) };
+    let v = o.get_atom("changedElements")?;
+    if v.is_undefined() {
+        return Ok(());
+    }
+    let what = "Failed to construct 'CanvasPaintEvent': The provided value cannot be converted to a sequence.";
+    let seq = s.sequence(v, what)?;
+    let len = seq.get_atom("length")?.to_number()? as u32;
+    let page = page_of(s)?;
+    for i in 0..len {
+        let item = seq.get_index(i)?;
+        let element = s
+            .unwrap::<crate::node::Node>(item)
+            .filter(|n| Rc::ptr_eq(&n.page().dom, &page.dom) && n.page().dom.borrow().element(n.id).is_ok());
+        match element {
+            Some(n) => f.changed_elements.push(n.id),
+            None => {
+                return Err(JsError::Type(
+                    "Failed to construct 'CanvasPaintEvent': Failed to read the 'changedElements' property from 'CanvasPaintEventInit': Failed to convert value to 'Element'."
+                        .into(),
+                ))
+            }
+        }
+    }
+    Ok(())
 }
 
 pub struct PopStateEvent;
@@ -1786,6 +2120,7 @@ impl JsClass for PopStateEvent {
             construct::<PopStateEvent>(s, nt, a, EventInterface::PopStateEvent, fill_popstate)
         });
         def.getter("state", |s, e| Ok(e.fields.borrow().state.as_ref().map_or(s.null(), |p| p.get(s))));
+        def.getter("hasUAVisualTransition", |s, e| Ok(s.boolean(e.fields.borrow().has_ua_visual_transition)));
     }
 }
 
@@ -1891,6 +2226,53 @@ impl JsClass for PageTransitionEvent {
     }
 }
 
+/// HTML `PageRevealEvent`: fired at a document's first rendering opportunity.
+pub struct PageRevealEvent;
+impl JsClass for PageRevealEvent {
+    const NAME: &'static str = "PageRevealEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<PageRevealEvent>(s, nt, a, EventInterface::PageRevealEvent, fill_page_reveal_swap)
+        });
+        def.getter("viewTransition", |s, e| Ok(e.fields.borrow().view_transition.as_ref().map_or(s.null(), |p| p.get(s))));
+    }
+}
+
+/// HTML `PageSwapEvent`: fired at a document about to be replaced by a cross-document navigation.
+pub struct PageSwapEvent;
+impl JsClass for PageSwapEvent {
+    const NAME: &'static str = "PageSwapEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<PageSwapEvent>(s, nt, a, EventInterface::PageSwapEvent, fill_page_reveal_swap)
+        });
+        def.getter("viewTransition", |s, e| Ok(e.fields.borrow().view_transition.as_ref().map_or(s.null(), |p| p.get(s))));
+        def.getter("activation", |s, e| Ok(e.fields.borrow().activation.as_ref().map_or(s.null(), |p| p.get(s))));
+    }
+}
+
+/// `InstallResultEvent` (WICG install element, tentative): the outcome of an `<install>`
+/// element's installation, `installresult`.
+pub struct InstallResultEvent;
+impl JsClass for InstallResultEvent {
+    const NAME: &'static str = "InstallResultEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<InstallResultEvent>(s, nt, a, EventInterface::InstallResultEvent, fill_install_result)
+        });
+        def.getter("result", |s, e| {
+            let result = e.fields.borrow().install_result;
+            Ok(s.string(if result.is_empty() { "aborted" } else { result }))
+        });
+    }
+}
+
 /// CSS Animations `AnimationEvent` (`animationstart`, `animationiteration`,
 /// `animationend`, `animationcancel`).
 pub struct AnimationEvent;
@@ -1903,6 +2285,7 @@ impl JsClass for AnimationEvent {
             construct::<AnimationEvent>(s, nt, a, EventInterface::AnimationEvent, fill_animation)
         });
         def.getter("animationName", |s, e| Ok(s.string(&e.fields.borrow().animation_name)));
+        def.getter("animation", |s, e| Ok(e.fields.borrow().css_animation.as_ref().map_or(s.null(), |value| value.get(s))));
         def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
         def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
     }
@@ -1920,8 +2303,27 @@ impl JsClass for TransitionEvent {
             construct::<TransitionEvent>(s, nt, a, EventInterface::TransitionEvent, fill_transition)
         });
         def.getter("propertyName", |s, e| Ok(s.string(&e.fields.borrow().property_name)));
+        def.getter("animation", |s, e| Ok(e.fields.borrow().css_animation.as_ref().map_or(s.null(), |value| value.get(s))));
         def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
         def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
+    }
+}
+
+/// Extract the internal origin from either a MessageEvent or the service
+/// worker's ExtendableMessageEvent, whose native base is Event. Neither a
+/// prototype nor a public origin property can install this field.
+pub(crate) fn message_origin(s: &Scope<'_>, value: Value<'_>) -> Option<crate::origin::OriginValue> {
+    s.unwrap::<Event>(value)?.fields.borrow().message_origin.as_deref().cloned()
+}
+
+pub(crate) fn serialize_message_origin(key: &str) -> &str {
+    if key.starts_with("opaque:") || key.starts_with("opaque-document:") { "null" } else { key }
+}
+
+impl EventFields {
+    pub(crate) fn set_sender_origin(&mut self, key: String) {
+        self.origin = serialize_message_origin(&key).to_owned();
+        self.message_origin = crate::origin::OriginValue::from_key(key).map(Box::new);
     }
 }
 
@@ -1943,9 +2345,42 @@ impl JsClass for MessageEvent {
             let source = e.fields.borrow().message_source;
             crate::target::target_value(s, &e.page, source)
         });
+        def.getter("userActivation", |s, e| {
+            Ok(e.fields.borrow().message_user_activation.as_ref().map_or(s.null(), |p| s.rehome(p.get(s))))
+        });
         def.getter("ports", |s, e| match e.fields.borrow().message_ports.as_ref() {
             Some(ports) => Ok(s.rehome(ports.get(s))),
             None => Ok(s.array(&[])?.value()),
+        });
+        // `initMessageEvent(type, bubbles, cancelable, data, origin, lastEventId, source, ports)`
+        // (legacy): like the constructor's dictionary, ignored while the event is dispatched.
+        def.method("initMessageEvent", 1, |s, e, a| {
+            let ty = arg_string(&a, 0, "MessageEvent.initMessageEvent")?;
+            if e.state.borrow().dispatching {
+                return Ok(s.undefined());
+            }
+            let init = s.object();
+            init.set_atom("data", if a.len() > 3 { a.get(3) } else { s.null() })?;
+            init.set_atom("origin", a.get(4))?;
+            init.set_atom("lastEventId", a.get(5))?;
+            init.set_atom("source", a.get(6))?;
+            let ports = a.get(7);
+            init.set_atom("ports", if ports.is_undefined() { s.array(&[])?.value() } else { ports })?;
+            // Filled apart, then moved in: reading the ports runs no code holding this event.
+            let mut filled = EventFields::default();
+            fill_message(s, &mut filled, Some(init))?;
+            init_event_state(e, &ty, a.get(1).to_bool(), a.get(2).to_bool());
+            {
+                let mut f = e.fields.borrow_mut();
+                f.message_data = filled.message_data.take();
+                f.message_ports = filled.message_ports.take();
+                f.origin = std::mem::take(&mut filled.origin);
+                f.last_event_id = filled.last_event_id.take();
+                f.message_source_window = filled.message_source_window.take();
+                f.message_source = None;
+            }
+            e.refresh_wrappers();
+            Ok(s.undefined())
         });
     }
 }
@@ -1985,6 +2420,9 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<PopStateEvent>();
     engine.register::<HashChangeEvent>();
     engine.register::<PageTransitionEvent>();
+    engine.register::<PageRevealEvent>();
+    engine.register::<PageSwapEvent>();
+    engine.register::<InstallResultEvent>();
     engine.register::<MessageEvent>();
     engine.register::<StorageEvent>();
     engine.register::<MediaQueryListEvent>();
@@ -1993,7 +2431,11 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<AnimationEvent>();
     engine.register::<TransitionEvent>();
     engine.register::<ToggleEvent>();
+    engine.register::<CanvasPaintEvent>();
+    engine.register::<SnapEvent>();
+    engine.register::<ContentVisibilityAutoStateChangeEvent>();
     engine.register::<CommandEvent>();
+    engine.register::<InterestEvent>();
 }
 
 /// A `Touch` wrapper's state.

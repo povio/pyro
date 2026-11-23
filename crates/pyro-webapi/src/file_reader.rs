@@ -10,7 +10,9 @@ use std::{
 use base64::Engine as _;
 use bytes::Bytes;
 use pyro_dom::events::TargetKey;
-use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, Object, Persistent, RealmId, Scope, Value, WeakRealm};
+use pyro_js::{
+    ClassDef, IdentityKey, JsClass, JsError, JsResult, Object, Persistent, RealmId, Scope, Value, WeakRealm,
+};
 use rustc_hash::FxHashMap;
 
 use crate::{
@@ -77,6 +79,31 @@ enum Mode {
     DataUrl,
     Binary,
 }
+impl Mode {
+    fn convert<'s>(&self, s: &Scope<'s>, bytes: &[u8], mime: &str) -> JsResult<Value<'s>> {
+        Ok(match self {
+            Mode::Buffer => crate::encoding::array_buffer(s, bytes)?,
+            Mode::Binary => s.string(&bytes.iter().map(|b| char::from(*b)).collect::<String>()),
+            Mode::DataUrl => {
+                let mime = if mime.is_empty() { "application/octet-stream" } else { mime };
+                s.string(&format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+            }
+            Mode::Text(label) => {
+                let encoding = label
+                    .as_ref()
+                    .and_then(|v| encoding_rs::Encoding::for_label(v.as_bytes()))
+                    .or_else(|| {
+                        mime.parse::<data_url::mime::Mime>()
+                            .ok()
+                            .and_then(|m| encoding_rs::Encoding::for_label(m.get_parameter("charset")?.as_bytes()))
+                    })
+                    .unwrap_or(encoding_rs::UTF_8);
+                s.string(&encoding.decode(bytes).0)
+            }
+        })
+    }
+}
+
 struct Pending {
     reader: Rc<Reader>,
     _wrapper: Persistent,
@@ -144,6 +171,40 @@ impl JsClass for FileReader {
         handlers!("loadstart", "progress", "load", "error", "abort", "loadend");
     }
 }
+
+/// Synchronous reads are available to dedicated and shared workers.
+pub(crate) struct FileReaderSync;
+impl JsClass for FileReaderSync {
+    const NAME: &'static str = "FileReaderSync";
+    type Data = ();
+    type Parent = pyro_js::NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(0, |s, nt, _| s.wrap_new::<Self>((), nt, None));
+        def.method("readAsArrayBuffer", 1, |s, _, a| read_sync(s, a, Mode::Buffer));
+        def.method("readAsBinaryString", 1, |s, _, a| read_sync(s, a, Mode::Binary));
+        def.method("readAsDataURL", 1, |s, _, a| read_sync(s, a, Mode::DataUrl));
+        def.method("readAsText", 1, |s, _, a| read_sync(s, a, Mode::Text(None)));
+    }
+}
+
+fn read_sync<'s>(s: &Scope<'s>, a: pyro_js::Args<'s>, mut mode: Mode) -> JsResult<Value<'s>> {
+    a.require(1, "FileReaderSync read")?;
+    let (bytes, mime) = {
+        let blob = s
+            .unwrap::<crate::file::Blob>(a.get(0))
+            .ok_or_else(|| JsError::Type("FileReaderSync requires a Blob or File".into()))?;
+        (blob.bytes.clone(), blob.mime.clone())
+    };
+    if let Mode::Text(label) = &mut mode {
+        *label = a.opt(1).filter(|v| !v.is_undefined()).map(crate::util::dom_string).transpose()?;
+    }
+    if bytes.len() > target::page_of(s)?.file_readers.limits.get().max_read_bytes {
+        return Err(JsError::dom("NotReadableError", "FileReader input budget exceeded"));
+    }
+    mode.convert(s, &bytes, &mime)
+}
+
 fn read<'s>(s: &Scope<'s>, d: &ReaderData, a: pyro_js::Args<'s>, mode: Mode) -> JsResult<Value<'s>> {
     a.require(1, "FileReader read")?;
     if s.unwrap::<crate::file::Blob>(a.get(0)).is_none() {
@@ -280,37 +341,12 @@ impl Pending {
             _ => self.finish(&s, &page),
         }
     }
-    fn convert<'s>(&self, s: &Scope<'s>, bytes: &[u8]) -> JsResult<Value<'s>> {
-        Ok(match &self.mode {
-            Mode::Buffer => crate::encoding::array_buffer(s, bytes)?,
-            Mode::Binary => s.string(&bytes.iter().map(|b| char::from(*b)).collect::<String>()),
-            Mode::DataUrl => {
-                let mime = if self.mime.is_empty() { "application/octet-stream" } else { &self.mime };
-                s.string(&format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
-            }
-            Mode::Text(label) => {
-                let encoding = label
-                    .as_ref()
-                    .and_then(|v| encoding_rs::Encoding::for_label(v.as_bytes()))
-                    .or_else(|| {
-                        self.mime
-                            .split(';')
-                            .skip(1)
-                            .filter_map(|p| p.trim().split_once('='))
-                            .find(|(k, _)| k.trim().eq_ignore_ascii_case("charset"))
-                            .and_then(|(_, v)| encoding_rs::Encoding::for_label(v.trim().trim_matches('"').as_bytes()))
-                    })
-                    .unwrap_or(encoding_rs::UTF_8);
-                s.string(&encoding.decode(bytes).0)
-            }
-        })
-    }
     fn finish(&self, s: &Scope<'_>, page: &Rc<PageDom>) {
         let result = self
             .bytes
             .take()
             .ok_or_else(|| JsError::dom("NotReadableError", "FileReader input budget exceeded"))
-            .and_then(|bytes| self.convert(s, &bytes));
+            .and_then(|bytes| self.mode.convert(s, &bytes, &self.mime));
         let Ok(wrapper) = self.reader.wrapper(s) else {
             cancel(page, self);
             return;

@@ -91,6 +91,9 @@ struct Source {
     realm_id: pyro_js::RealmId,
     callback: Persistent,
     queue: Arc<Mutex<Queue>>,
+    /// The request's CSP guard (`connect-src`): its redirect findings are reported when the
+    /// connection fails.
+    csp: Option<Arc<pyro_net::csp::RequestCsp>>,
 }
 
 thread_local! {
@@ -101,11 +104,12 @@ thread_local! {
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
     // The absolute URL of `url` against the document (or worker) base, or
-    // null when it does not parse.
+    // null when it does not parse. HTML "encoding-parse a URL": the query is in
+    // the document's encoding.
     let resolve = s.function("resolve", |s, _this, a| {
         let page = crate::target::page_of(s)?;
         let input = crate::util::dom_string(a.get(0))?;
-        let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &input);
+        let resolved = crate::html::resolve_url(&page.dom.borrow(), page.document(), &input);
         Ok(match pyro_net::Url::parse(&resolved) {
             Ok(url) => s.string(url.as_str()),
             Err(_) => s.null(),
@@ -137,6 +141,33 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     natives.set_atom("cancel", cancel.value())?;
+    // HTML initializes the MessageEvent with the final response URL's
+    // origin. Build a native event rather than consulting the realm's
+    // author-replaceable MessageEvent constructor.
+    let message = s.function("message", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let target = s.unwrap::<crate::target::EventTarget>(a.get(0)).ok_or(JsError::ContextDestroyed)?.key;
+        let event = crate::event::EventCore::trusted(
+            &page, crate::event::EventInterface::MessageEvent, &a.get(1).to_string()?, false, false,
+        );
+        {
+            let mut fields = event.fields.borrow_mut();
+            fields.message_data = Some(Persistent::new(s, a.get(2)));
+            let origin = a.get(3).to_string()?;
+            if origin == "null" {
+                // This value came from the final response URL. An opaque URL
+                // yields a new opaque origin each time a message is created.
+                fields.origin = origin;
+                fields.message_origin = Some(Box::new(crate::origin::OriginValue::fresh()));
+            } else {
+                fields.set_sender_origin(origin);
+            }
+            fields.last_event_id = Some(a.get(4).to_string()?.into_boxed_str());
+        }
+        crate::target::fire(&page, target, &event);
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("message", message.value())?;
     Ok(natives)
 }
 
@@ -175,6 +206,9 @@ fn start(
     // The stream is not buffered: no body bound.
     request.max_body = Some(usize::MAX);
     page.apply_request_defaults(&mut request);
+    // CSP `connect-src`: a blocked connection fails for good (no reconnection).
+    let check = pyro_net::csp::CspRequest::new(request.url.clone(), pyro_net::csp::RequestDest::Empty);
+    request.csp = crate::csp::guard_request(page, check, None);
     let id = net.next_request_id();
     let queue = Arc::new(Mutex::new(Queue::default()));
     SOURCES.with(|m| {
@@ -186,6 +220,7 @@ fn start(
                 realm_id: s.realm_id(),
                 callback,
                 queue: queue.clone(),
+                csp: request.csp.clone(),
             },
         )
     });
@@ -213,7 +248,11 @@ fn start(
                 }
                 Report::End
             }
-            ResponseEvent::Failed(error) => Report::Failed(fatal_scheme || matches!(error, NetError::Cors(_))),
+            ResponseEvent::Failed(error) => Report::Failed(
+                fatal_scheme
+                    || matches!(error, NetError::Cors(_))
+                    || matches!(&error, NetError::Blocked(reason) if reason == pyro_net::csp::BLOCKED_BY_CSP),
+            ),
         };
         let post = {
             let mut q = queue.lock().unwrap();
@@ -231,11 +270,16 @@ fn start(
 
 /// Delivers a connection's queued reports to its script.
 fn pump(id: RequestId) {
-    let Some((realm, callback, queue)) = SOURCES.with(|m| {
-        m.borrow().get(&id).map(|source| (source.realm.clone(), source.callback.clone(), source.queue.clone()))
+    let Some((realm, callback, queue, page, csp)) = SOURCES.with(|m| {
+        m.borrow().get(&id).map(|source| {
+            (source.realm.clone(), source.callback.clone(), source.queue.clone(), source.page.clone(), source.csp.clone())
+        })
     }) else {
         return;
     };
+    if let Some(page) = page.upgrade() {
+        crate::csp::report_guard(&page, csp.as_ref(), None);
+    }
     let reports = {
         let mut q = queue.lock().unwrap();
         q.scheduled = false;

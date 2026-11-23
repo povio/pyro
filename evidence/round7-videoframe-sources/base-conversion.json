@@ -1,0 +1,22 @@
+{
+  "overflow": {
+    "reads": [],
+    "error": "TypeError"
+  },
+  "negative": {
+    "reads": [],
+    "error": "TypeError"
+  },
+  "fractional": {
+    "reads": [],
+    "error": "TypeError"
+  },
+  "nonfinite": {
+    "reads": [],
+    "error": "TypeError"
+  },
+  "abrupt": {
+    "reads": [],
+    "error": "TypeError"
+  }
+}

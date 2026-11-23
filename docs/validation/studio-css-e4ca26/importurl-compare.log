@@ -1,0 +1,30 @@
+importurl-main-candidate 8082 page passes 5730 named passes 181545 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+importurl-main-parent 8082 page passes 5724 named passes 181532 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+importurl-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+importurl-main-parent pages left only 6 right only 0
+importurl-main-parent passes left only 13 right only 0
+importurl-main-parent observed left only 0 right only 0
+importurl-main-stable pages left only 280 right only 1500
+importurl-main-stable passes left only 5901 right only 7319
+importurl-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+importurl-focus-candidate 314 page passes 239 named passes 4566 observed names 4733 statuses {'complete:0': 314}
+importurl-focus-parent 314 page passes 233 named passes 4553 observed names 4733 statuses {'complete:0': 314}
+importurl-focus-stable 314 page passes 280 named passes 4580 observed names 4732 statuses {'complete:0': 314}
+importurl-focus-parent pages left only 6 right only 0
+importurl-focus-parent passes left only 13 right only 0
+importurl-focus-parent observed left only 0 right only 0
+importurl-focus-stable pages left only 15 right only 56
+importurl-focus-stable passes left only 111 right only 125
+importurl-focus-stable observed left only 1 right only 0
+Losses vs parent by URL: Counter()
+importurl-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+importurl-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+importurl-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+importurl-supplement-parent pages left only 0 right only 0
+importurl-supplement-parent passes left only 0 right only 0
+importurl-supplement-parent observed left only 0 right only 0
+importurl-supplement-stable pages left only 0 right only 8
+importurl-supplement-stable passes left only 0 right only 42
+importurl-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

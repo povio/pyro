@@ -1,0 +1,19 @@
+node:internal/modules/run_main:111
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+
+  assert.ok(tests.length && tests.every(([, outcome]) => outcome === 0))
+
+    at file:///private/tmp/pyro-r7-param/tests/e2e/audio-grain-duration.mjs:112:12 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+Node.js v26.13.1
+node tests/e2e/audio-grain-duration.mjs "$C" "$W"  offline-close >   0.62s user 0.31s system 163% cpu 0.567 total

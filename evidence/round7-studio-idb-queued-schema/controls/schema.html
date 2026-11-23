@@ -1,0 +1,50 @@
+<!doctype html>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+const result = request => new Promise((resolve, reject) => {
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+const open = (name, version, upgrade) => {
+  const request = indexedDB.open(name, version);
+  request.onupgradeneeded = () => upgrade(request.result, request.transaction);
+  return result(request);
+};
+promise_test(async test => {
+  const name = 'queued-schema-' + Math.random();
+  const keys = [];
+  const first = await open(name, 1, db => {
+    db.createObjectStore('untouched').put('sentinel', 0);
+    const old = db.createObjectStore('records', {autoIncrement: true});
+    old.put('old', 7);
+    old.add('old-next').onsuccess = event => keys.push(event.target.result);
+    db.deleteObjectStore('records');
+    db.createObjectStore('records', {autoIncrement: true}).add({tag: 'new'}).onsuccess = event => keys.push(event.target.result);
+  });
+  first.close();
+  assert_array_equals(keys, [8, 1]);
+  const events = [];
+  const upgrade = open(name, 2, (db, tx) => {
+    const original = tx.objectStore('records');
+    original.name = 'renamed';
+    original.add({tag: 'new'}).onsuccess = () => events.push('write');
+    original.createIndex('unique', 'tag', {unique: true});
+    tx.objectStore('untouched').put('replacement', 0).onerror = event => events.push(event.target.error.name);
+    tx.onabort = () => events.push(tx.error.name);
+  });
+  await promise_rejects_dom(test, 'AbortError', upgrade);
+  assert_array_equals(events, ['write', 'AbortError', 'ConstraintError']);
+  const reopened = await open(name, 1);
+  assert_array_equals(Array.from(reopened.objectStoreNames), ['records', 'untouched']);
+  const tx = reopened.transaction(['records', 'untouched'], 'readwrite');
+  const records = tx.objectStore('records');
+  assert_equals(records.indexNames.length, 0);
+  const [all, sentinel, next] = await Promise.all([result(records.getAll()), result(tx.objectStore('untouched').get(0)), result(records.add('next'))]);
+  assert_equals(all.length, 1);
+  assert_equals(all[0].tag, 'new');
+  assert_equals(sentinel, 'sentinel');
+  assert_equals(next, 2);
+  reopened.close();
+}, 'Replacement generator, data and sibling persist across reopen and failed unique-index upgrade');
+</script>

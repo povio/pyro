@@ -18,6 +18,8 @@ bitflags! {
         const LENGTH = 1 << 0;
         /// <color> values depend on color-scheme, etc..
         const COLOR= 1 << 1;
+        /// Numeric math may consume a length without producing a length.
+        const NUMERIC_MATH = 1 << 2;
     }
 }
 
@@ -103,16 +105,15 @@ impl DataType {
             | DataType::LengthPercentage
             | DataType::TransformFunction
             | DataType::TransformList => DependentDataTypes::LENGTH,
-            DataType::Color => DependentDataTypes::COLOR,
+            // Typed arithmetic can cancel the length dimension while still needing font metrics.
             DataType::Number
             | DataType::Percentage
-            | DataType::Image
-            | DataType::Url
             | DataType::Integer
             | DataType::Angle
             | DataType::Time
-            | DataType::Resolution
-            | DataType::CustomIdent
+            | DataType::Resolution => DependentDataTypes::NUMERIC_MATH,
+            DataType::Color => DependentDataTypes::COLOR,
+            DataType::Image | DataType::Url | DataType::CustomIdent
             | DataType::String => DependentDataTypes::empty(),
         }
     }

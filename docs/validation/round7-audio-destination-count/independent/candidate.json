@@ -1,0 +1,131 @@
+{
+  "mode": "candidate",
+  "version": "158.0.8127.37",
+  "started": "2026-11-22T14:03:23.301Z",
+  "ended": "2026-11-22T14:03:23.668Z",
+  "elapsedNs": "366510375",
+  "sha256": "165a197025263283f3ffb6d7496f10cf1ee70c5d68a6d16309cc5af499c3b843",
+  "rows": [
+    {
+      "type": "realtime",
+      "label": "0",
+      "before": 2,
+      "max": 2,
+      "value": 0,
+      "exception": "NotSupportedError",
+      "after": 2
+    },
+    {
+      "type": "realtime",
+      "label": "-1",
+      "before": 2,
+      "max": 2,
+      "value": -1,
+      "exception": "IndexSizeError",
+      "after": 2
+    },
+    {
+      "type": "realtime",
+      "label": "33",
+      "before": 2,
+      "max": 2,
+      "value": 33,
+      "exception": "IndexSizeError",
+      "after": 2
+    },
+    {
+      "type": "realtime",
+      "label": "max+1",
+      "before": 2,
+      "max": 2,
+      "value": 3,
+      "exception": "IndexSizeError",
+      "after": 2
+    },
+    {
+      "type": "realtime",
+      "label": "1",
+      "before": 2,
+      "max": 2,
+      "value": 1,
+      "exception": null,
+      "after": 1
+    },
+    {
+      "type": "realtime",
+      "label": "same",
+      "before": 2,
+      "max": 2,
+      "value": 2,
+      "exception": null,
+      "after": 2
+    },
+    {
+      "type": "offline",
+      "label": "0",
+      "before": 2,
+      "max": 2,
+      "value": 0,
+      "exception": "InvalidStateError",
+      "after": 2
+    },
+    {
+      "type": "offline",
+      "label": "-1",
+      "before": 2,
+      "max": 2,
+      "value": -1,
+      "exception": "InvalidStateError",
+      "after": 2
+    },
+    {
+      "type": "offline",
+      "label": "33",
+      "before": 2,
+      "max": 2,
+      "value": 33,
+      "exception": "InvalidStateError",
+      "after": 2
+    },
+    {
+      "type": "offline",
+      "label": "max+1",
+      "before": 2,
+      "max": 2,
+      "value": 3,
+      "exception": "InvalidStateError",
+      "after": 2
+    },
+    {
+      "type": "offline",
+      "label": "1",
+      "before": 2,
+      "max": 2,
+      "value": 1,
+      "exception": "InvalidStateError",
+      "after": 2
+    },
+    {
+      "type": "offline",
+      "label": "same",
+      "before": 2,
+      "max": 2,
+      "value": 2,
+      "exception": null,
+      "after": 2
+    }
+  ],
+  "pcm": {
+    "channels": 2,
+    "frames": 256,
+    "rate": 48000,
+    "levels": [
+      0.25,
+      -0.5
+    ],
+    "maxAbsError": [
+      0,
+      0
+    ]
+  }
+}

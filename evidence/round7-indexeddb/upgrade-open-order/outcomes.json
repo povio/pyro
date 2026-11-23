@@ -1,0 +1,38 @@
+[
+  {
+    "url": "IndexedDB/transaction-create_in_versionchange.any.html",
+    "name": "Attempt to create new transactions inside a versionchange transaction",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-create_in_versionchange.any.serviceworker.html",
+    "name": "Attempt to create new transactions inside a versionchange transaction",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-create_in_versionchange.any.sharedworker.html",
+    "name": "Attempt to create new transactions inside a versionchange transaction",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  },
+  {
+    "url": "IndexedDB/transaction-create_in_versionchange.any.worker.html",
+    "name": "Attempt to create new transactions inside a versionchange transaction",
+    "occurrence": 1,
+    "parent": "Fail",
+    "candidate": "Pass",
+    "repeat": "Pass",
+    "chrome158": "Pass"
+  }
+]

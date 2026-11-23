@@ -35,6 +35,8 @@ pub struct FrameContent {
     pub html: String,
     /// Its URL, which its relative URLs resolve against.
     pub url: String,
+    /// The actual URL when a base element or inherited frame base changes resource resolution.
+    pub document_url: Option<String>,
     /// Its viewport's scroll position.
     pub scroll: (f64, f64),
     /// The frame (frame id and loader id) its requests are made for.
@@ -133,7 +135,7 @@ pub fn engine_marked(nonce: &str, _element: &crate::node::ElementData) -> bool {
 /// under their canonical names; a render snapshot's travel under nonce names only.
 pub const ENGINE_FIELDS: &[&str] = &[
     "data-pyro-frame",
-    "data-pyro-frame-content-height",
+    "data-pyro-frame-content-size",
     "data-pyro-sheet",
     "data-pyro-sheet-referrer-policy",
     "data-pyro-scroll-left",
@@ -183,10 +185,19 @@ pub fn engine_field(nonce: &str, name: &markup5ever::QualName) -> Option<String>
     same_secret(given, nonce).then(|| format!("data-pyro-{field}"))
 }
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct MediaEnvironment {
+    pub screen: Option<(u32, u32)>,
+    pub reduced_motion: bool,
+}
+
 /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)
 pub struct DocumentConfig {
+    pub media_environment: MediaEnvironment,
     /// The initial `Viewport`
     pub viewport: Option<Viewport>,
+    /// Actual document URL when it differs from the base used for relative resources.
+    pub document_url: Option<String>,
     /// The base url which relative URLs are resolved against
     pub base_url: Option<String>,
     /// pyro: the id of the frame this is the document of (a frame document of the render
@@ -241,7 +252,9 @@ pub struct DocumentConfig {
     pub xml_document: bool,
     /// pyro: a document in quirks mode: a percentage height whose containing block is a block
     /// of `auto` height resolves against the nearest ancestor that has one (Quirks Mode §3.5,
-    /// "The percentage height calculation quirk"). Defaults to `false`.
+    /// "The percentage height calculation quirk"), and the document's author sheets parse with
+    /// the unitless length quirk (Quirks Mode §3.6; `BaseDocument::sheet_quirks_mode`). Defaults
+    /// to `false`.
     pub quirks_mode: bool,
     /// pyro: a document in quirks or limited-quirks mode: a line without text, preserved white
     /// space or inline boxes with edges has no strut (Quirks Mode §3.3, "The line height
@@ -259,7 +272,9 @@ impl Default for DocumentConfig {
     fn default() -> Self {
         Self {
             viewport: None,
+            media_environment: Default::default(),
             base_url: None,
+            document_url: None,
             frame_client: None,
             frames: FrameTable::default(),
             ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],

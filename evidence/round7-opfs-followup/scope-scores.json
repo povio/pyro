@@ -1,0 +1,174 @@
+{
+  "base": {
+    "opfs": {
+      "pages": 69,
+      "observedNames": 976,
+      "namedPasses": 943,
+      "strict": 56,
+      "pageOutcome": {
+        "complete": 69
+      },
+      "harnessOutcome": {
+        "OK": 69
+      },
+      "nonOK": []
+    },
+    "storage": {
+      "pages": 29,
+      "observedNames": 295,
+      "namedPasses": 149,
+      "strict": 13,
+      "pageOutcome": {
+        "complete": 26,
+        "error": 3
+      },
+      "harnessOutcome": {
+        "OK": 26,
+        "Error": 3
+      },
+      "nonOK": [
+        [
+          "storage/partitioned-estimate-usage-details-caches.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-service-workers.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-indexeddb.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ]
+      ]
+    }
+  },
+  "candidate": {
+    "opfs": {
+      "pages": 69,
+      "observedNames": 976,
+      "namedPasses": 943,
+      "strict": 56,
+      "pageOutcome": {
+        "complete": 69
+      },
+      "harnessOutcome": {
+        "OK": 69
+      },
+      "nonOK": [],
+      "delta": {}
+    },
+    "storage": {
+      "pages": 29,
+      "observedNames": 295,
+      "namedPasses": 149,
+      "strict": 13,
+      "pageOutcome": {
+        "complete": 26,
+        "error": 3
+      },
+      "harnessOutcome": {
+        "OK": 26,
+        "Error": 3
+      },
+      "nonOK": [
+        [
+          "storage/partitioned-estimate-usage-details-caches.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-indexeddb.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ],
+        [
+          "storage/partitioned-estimate-usage-details-service-workers.tentative.https.sub.html",
+          "error",
+          "Error",
+          "Unhandled rejection: assert_greater_than: expected a number greater than 0 but got 0",
+          1
+        ]
+      ],
+      "delta": {}
+    }
+  },
+  "chrome158": {
+    "opfs": {
+      "pages": 69,
+      "observedNames": 976,
+      "namedPasses": 818,
+      "strict": 57,
+      "pageOutcome": {
+        "complete": 64,
+        "timeout": 5
+      },
+      "harnessOutcome": {
+        "OK": 64,
+        "Timeout": 5
+      },
+      "nonOK": [
+        [
+          "fs/FileSystemDirectoryHandle-getFileHandle.https.any.sharedworker.html",
+          "timeout",
+          "Timeout",
+          null,
+          13
+        ],
+        [
+          "fs/FileSystemFileHandle-cross-primitive-locking.https.tentative.worker.html",
+          "timeout",
+          "Timeout",
+          null,
+          90
+        ],
+        [
+          "fs/FileSystemFileHandle-move.https.any.serviceworker.html",
+          "timeout",
+          "Timeout",
+          null,
+          24
+        ],
+        [
+          "fs/FileSystemFileHandle-move.https.any.sharedworker.html",
+          "timeout",
+          "Timeout",
+          null,
+          24
+        ],
+        [
+          "fs/FileSystemWritableFileStream.https.any.html",
+          "timeout",
+          "Timeout",
+          null,
+          9
+        ]
+      ]
+    },
+    "storage": {
+      "pages": 29,
+      "observedNames": 295,
+      "namedPasses": 295,
+      "strict": 29,
+      "pageOutcome": {
+        "complete": 29
+      },
+      "harnessOutcome": {
+        "OK": 29
+      },
+      "nonOK": []
+    }
+  }
+}

@@ -1111,8 +1111,19 @@ pub trait MatchMethods: TElement {
         }
 
         let old_container_type = *old_primary_style.get_container_type();
-        if old_container_type != new_container_type
-            && (cfg!(feature = "servo") || !new_container_type.is_size_container_type())
+        // pyro: servo has no post-layout `UpdateContainerQueryStyles` step, and its post-layout
+        // container size refresh only revisits containers already queried, so any change of
+        // container-type (into a size container or between types too) re-evaluates the
+        // descendants' container queries and units, as does a change of container-name (named
+        // queries, including name-only ones on non-size containers, select another container).
+        #[cfg(feature = "servo")]
+        let type_or_name_changed = old_container_type != new_container_type
+            || old_primary_style.get_container_name() != new_primary_style.get_container_name();
+        #[cfg(not(feature = "servo"))]
+        let type_or_name_changed = false;
+        if type_or_name_changed {
+            child_restyle_hint |= RestyleHint::restyle_subtree();
+        } else if old_container_type != new_container_type && !new_container_type.is_size_container_type()
         {
             // Stopped being a size container. Re-evaluate container queries and units on all our descendants.
             // Changes into and between different size containment is handled in `UpdateContainerQueryStyles`.

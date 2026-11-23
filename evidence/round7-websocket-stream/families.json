@@ -1,0 +1,121 @@
+{
+  "classic guards": {
+    "matchedGain": 0,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 2,
+    "lpOnly": 0
+  },
+  "abort": {
+    "matchedGain": 36,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "environment: window": {
+    "matchedGain": 105,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 2
+  },
+  "variant: wpt_flags=h2": {
+    "matchedGain": 40,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "variant: wss": {
+    "matchedGain": 200,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 4
+  },
+  "environment: serviceworker": {
+    "matchedGain": 105,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 2
+  },
+  "environment: sharedworker": {
+    "matchedGain": 105,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 2
+  },
+  "environment: dedicatedworker": {
+    "matchedGain": 105,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 2
+  },
+  "backpressure-receive": {
+    "matchedGain": 4,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "backpressure-send": {
+    "matchedGain": 4,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "close": {
+    "matchedGain": 220,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "variant: default": {
+    "matchedGain": 140,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 4
+  },
+  "constructor": {
+    "matchedGain": 52,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "read": {
+    "matchedGain": 8,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 8
+  },
+  "remote-close": {
+    "matchedGain": 56,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "websocket-error": {
+    "matchedGain": 40,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "variant: plain": {
+    "matchedGain": 40,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  }
+}

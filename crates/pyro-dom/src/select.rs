@@ -365,7 +365,11 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                 let pseudo = style::selector_parser::transition_selector(&lower, parser).map_err(|_| invalid())?;
                 return Ok(PseudoElement(pseudo.to_css_string()[2..].to_owned()));
             }
-            "highlight" | "cue" | "cue-region"
+            "highlight" => {
+                let pseudo = style::selector_parser::highlight_selector(parser).map_err(|_| invalid())?;
+                return Ok(PseudoElement(pseudo.to_css_string()[2..].to_owned()));
+            }
+            "cue" | "cue-region"
             | "picker"
             | "scroll-button"
             | "column" => {
@@ -783,6 +787,9 @@ impl selectors::Element for ElemRef<'_> {
             CaseSensitivity::AsciiCaseInsensitive => classes.iter().any(|c| c.eq_ignore_ascii_case(&name.0)),
         }
     }
+    fn has_class_prefix(&self, prefix: &CssIdent, quirks: bool) -> bool {
+        self.data().classes().iter().any(|class| selectors::attr::matches_class_prefix(class, &prefix.0, quirks))
+    }
     fn has_custom_state(&self, name: &CssIdent) -> bool {
         self.dom.has_custom_state_idx(self.idx, &name.0)
     }
@@ -813,11 +820,11 @@ impl Dom {
         matches!(&self.n(doc).kind, NodeKind::Document(d) if d.kind == crate::node::DocumentKind::Html)
     }
 
+    /// `:link`/`:any-link` (HTML § 4.16.3): an `a` or `area` element with an `href` attribute
+    /// (not a `link` element).
     fn is_link(&self, idx: u32) -> bool {
         self.n(idx).element().is_some_and(|e| {
-            e.is_html()
-                && matches!(&*e.name.local, "a" | "area" | "link")
-                && e.attr_local(&local_name!("href")).is_some()
+            e.is_html() && matches!(&*e.name.local, "a" | "area") && e.attr_local(&local_name!("href")).is_some()
         })
     }
 
@@ -847,24 +854,35 @@ impl Dom {
             Visited => false,
             Active => {
                 let a = self.activated_idx(self.n(idx).owner_doc);
-                a != NIL && self.shadow_including_inclusive_ancestor(idx, a)
+                a != NIL && (self.user_action_chain_holds(idx, a) || self.labeled_by_active_label(idx, a))
             }
             Target => self.is_url_target(idx),
             Checked => self.checkedness_idx(idx) || self.option_selected_idx(idx),
-            Indeterminate => {
-                e.control.as_ref().is_some_and(|c| c.indeterminate)
-                    // A progress bar without a value (HTML §4.16.3).
-                    || (e.is_html()
-                        && e.name.local == local_name!("progress")
-                        && e.attr_local(&local_name!("value")).is_none())
-            }
+            // HTML § 4.16.3: a checkbox whose indeterminate IDL attribute is true, a radio button
+            // whose group has no checked radio button, a progress bar without a value.
+            Indeterminate => match self.html_local(idx).map(|l| &**l) {
+                Some("input") => match self.input_type_idx(idx) {
+                    crate::forms::InputType::Checkbox => e.control.as_ref().is_some_and(|c| c.indeterminate),
+                    crate::forms::InputType::Radio => {
+                        self.radio_group(idx).into_iter().all(|r| !self.checkedness_idx(r))
+                    }
+                    _ => false,
+                },
+                Some("progress") => e.attr_local(&local_name!("value")).is_none(),
+                _ => false,
+            },
             Disabled => self.is_disabled_idx(idx),
             Enabled => (self.is_form_control_idx(idx) || self.is_face_idx(idx)) && !self.is_disabled_idx(idx),
             State(s) => self.has_custom_state_idx(idx, s),
             Required => self.required_applies_idx(idx) && e.attr_local(&local_name!("required")).is_some(),
-            Optional => self.required_applies_idx(idx) && e.attr_local(&local_name!("required")).is_none(),
-            ReadWrite => self.is_mutable_text_idx(idx),
-            ReadOnly => !self.is_mutable_text_idx(idx),
+            // HTML: every `input`, `select` and `textarea` that is not required, also one `required`
+            // does not apply to (a hidden input; WPT required-optional-hidden).
+            Optional => {
+                matches!(self.html_local(idx).map(|l| &**l), Some("input" | "select" | "textarea"))
+                    && !(self.required_applies_idx(idx) && e.attr_local(&local_name!("required")).is_some())
+            }
+            ReadWrite => self.matches_read_write_idx(idx),
+            ReadOnly => !self.matches_read_write_idx(idx),
             PlaceholderShown => {
                 e.attr_local(&local_name!("placeholder")).is_some()
                     && self.is_mutable_text_idx(idx)
@@ -878,17 +896,17 @@ impl Dom {
             }
             FocusVisible => {
                 let doc = self.n(idx).owner_doc;
-                self.focused_idx(doc) == idx && self.focus_visible_flag(doc)
+                self.focused_idx(doc) == idx && self.focus_visible_now(doc)
             }
             FocusWithin => {
                 let f = self.focused_idx(self.n(idx).owner_doc);
-                f != NIL && self.shadow_including_inclusive_ancestor(idx, f)
+                f != NIL && self.user_action_chain_holds(idx, f)
             }
             Hover => {
                 let h = self.hovered_idx(self.n(idx).owner_doc);
-                h != NIL && self.shadow_including_inclusive_ancestor(idx, h)
+                h != NIL && self.user_action_chain_holds(idx, h)
             }
-            Defined => !e.name.local.contains('-') || e.flags & crate::node::element_flags::CUSTOM_DEFINED != 0,
+            Defined => e.is_defined(),
             Default => {
                 // A checkbox or radio button checked by default (HTML :default); other input
                 // types ignore `checked`.
@@ -930,8 +948,12 @@ impl Dom {
             }
             Open => {
                 e.is_html()
-                    && matches!(&*e.name.local, "details" | "dialog")
-                    && e.attr_local(&local_name!("open")).is_some()
+                    && match &*e.name.local {
+                        "details" | "dialog" => e.attr_local(&local_name!("open")).is_some(),
+                        // A customizable select whose picker is open.
+                        "select" => self.is_select_picker_open_idx(idx),
+                        _ => false,
+                    }
             }
             // A dialog shown with `showModal()` that is still open.
             Modal => {
@@ -941,6 +963,52 @@ impl Dom {
                     && self.is_modal_idx(idx)
             }
             PopoverOpen => self.is_popover_showing_idx(idx),
+        }
+    }
+
+    /// Whether `:hover`, `:active` or `:focus-within` reaches `anc` from the element `node` that
+    /// holds the state: `anc` is a shadow-including inclusive ancestor of `node` and no element in
+    /// the top layer (a modal dialog, a showing popover, or one kept there for its `overlay`
+    /// transition) lies strictly between them. Chrome stops the chain at the innermost top-layer
+    /// element, which matches but whose ancestors do not (WPT css/selectors `*-toplayer-001`,
+    /// `toplayer-transition-001`, `user-action-pseudo-top-layer`).
+    /// HTML `:active`: the labeled control of a label that matches it (a
+    /// label around the activated element `a`) matches it too.
+    fn labeled_by_active_label(&self, idx: u32, a: u32) -> bool {
+        if !self.labelable_idx(idx) {
+            return false;
+        }
+        let mut cur = a;
+        while cur != NIL {
+            if self.html_local(cur) == Some(&local_name!("label")) && self.labeled_control_idx(cur) == idx {
+                return true;
+            }
+            cur = self.n(cur).parent;
+        }
+        false
+    }
+
+    pub(crate) fn user_action_chain_holds(&self, anc: u32, node: u32) -> bool {
+        if self.top_layer().is_empty() || anc == node {
+            return self.shadow_including_inclusive_ancestor(anc, node);
+        }
+        let mut cur = node;
+        loop {
+            if cur == anc {
+                return true;
+            }
+            if self.n(cur).is_element() && self.top_layer_rank(self.id_of(cur)).is_some() {
+                return false;
+            }
+            let p = self.n(cur).parent;
+            cur = if p != NIL {
+                p
+            } else {
+                match &self.n(cur).kind {
+                    NodeKind::Fragment(f) if f.shadow.is_some() => f.host,
+                    _ => return false,
+                }
+            };
         }
     }
 

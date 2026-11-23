@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 
 use pyro_js::{JsError, JsResult, Persistent, Scope, Value};
 use rustc_hash::FxHashMap;
@@ -201,11 +202,16 @@ struct OriginPermissions {
 /// (each `char` one byte) rather than text.
 type ClipboardEntry = (String, String, bool);
 
+/// Permissions follow a browser context across its owner and worker threads.
+#[derive(Clone, Default)]
+pub(crate) struct PermissionTable(Arc<RwLock<FxHashMap<Option<String>, OriginPermissions>>>);
+
 /// State a browser context's pages share: its permission table and its
 /// clipboard (in memory; nothing reaches the system clipboard).
 #[derive(Default)]
 pub struct ContextServices {
-    permissions: RefCell<FxHashMap<Option<String>, OriginPermissions>>,
+    pub(crate) permissions: PermissionTable,
+    pub(crate) web_locks: crate::web_locks::LockService,
     clipboard: RefCell<Vec<ClipboardEntry>>,
     /// Documents with PermissionStatus change listeners.
     watchers: RefCell<Vec<std::rc::Weak<PageDom>>>,
@@ -229,6 +235,10 @@ pub struct GeolocationFix {
 }
 
 impl ContextServices {
+    pub(crate) fn for_worker(permissions: PermissionTable, web_locks: crate::web_locks::LockService) -> Self {
+        Self { permissions, web_locks, ..Self::default() }
+    }
+
     /// Whether loads of this context's frames may go through a service
     /// worker (it has registrations): the one test a load pays otherwise.
     pub fn may_route_loads(&self) -> bool {
@@ -239,7 +249,7 @@ impl ContextServices {
     /// `navigator.permissions.query` takes them) become granted for
     /// `origin` (`None`: every origin) and the rest denied.
     pub fn grant(&self, origin: Option<String>, names: &[String]) {
-        let mut table = self.permissions.borrow_mut();
+        let mut table = self.permissions.0.write().unwrap_or_else(|e| e.into_inner());
         let entry = table.entry(origin).or_default();
         entry.settings = names.iter().map(|n| (n.clone(), PermissionSetting::Granted)).collect();
         entry.deny_others = true;
@@ -247,18 +257,18 @@ impl ContextServices {
 
     /// `Browser.setPermission`: one permission's setting for `origin`.
     pub fn set(&self, origin: Option<String>, name: &str, setting: PermissionSetting) {
-        self.permissions.borrow_mut().entry(origin).or_default().settings.insert(name.to_owned(), setting);
+        self.permissions.0.write().unwrap_or_else(|e| e.into_inner()).entry(origin).or_default().settings.insert(name.to_owned(), setting);
     }
 
     /// `Browser.resetPermissions`.
     pub fn reset(&self) {
-        self.permissions.borrow_mut().clear();
+        self.permissions.0.write().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     /// The state `navigator.permissions.query({name})` reports in a document
     /// of `origin` (`None`: an opaque origin).
     pub fn state(&self, origin: Option<&str>, name: &str) -> PermissionSetting {
-        let table = self.permissions.borrow();
+        let table = self.permissions.0.read().unwrap_or_else(|e| e.into_inner());
         // The origin's own entry first, then the every-origin one.
         let own = origin.and_then(|o| table.get(&Some(o.to_owned())));
         for entry in own.into_iter().chain(table.get(&None)) {
@@ -338,8 +348,7 @@ impl ContextServices {
 /// itself kept per realm.
 pub(crate) fn member<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'s>> {
     const KEY: &str = "lpNavigatorExtras";
-    let unavailable = || JsError::Type("navigator extras are unavailable".into());
-    let navigator = crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable)?;
+    let navigator = crate::worker_scope::module_holder(s, page)?;
     let extras = match s.get_hidden(navigator, KEY)?.and_then(|v| v.as_object()) {
         Some(extras) => extras,
         None => {
@@ -353,6 +362,12 @@ pub(crate) fn member<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsRes
 
 fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     let native = s.object();
+    native.set_atom("worker", s.boolean(crate::worker_scope::is_worker(s)))?;
+    native.set_atom("serviceWorker", s.boolean(s.global_data::<crate::worker_scope::ServiceWorkerGlobalScope>().is_some()))?;
+    let clone = s.function("cloneNotificationData", |s, _, a| {
+        crate::structured_clone::clone_for_storage(s, a.get(0))
+    })?;
+    native.set_atom("cloneNotificationData", clone.value())?;
     let ua = s.function("uaData", |s, _, _| {
         let page = crate::target::page_of(s)?;
         Ok(s.string(&user_agent_json(&page)))
@@ -438,7 +453,7 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     extras.as_object().ok_or_else(|| JsError::Type("navigator extras".into()))
 }
 
-fn permission_state(page: &PageDom, name: &str) -> PermissionSetting {
+pub(crate) fn permission_state(page: &PageDom, name: &str) -> PermissionSetting {
     let origin = crate::storage::document_origin(page);
     page.context_services().state(origin.as_deref(), name)
 }

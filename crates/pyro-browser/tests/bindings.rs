@@ -670,10 +670,11 @@ fn review_every_announced_deferred_world_is_destroyed_with_its_document_and_page
     }
 }
 
-/// A failed module fetch is a null entry in the document's module map. A
-/// later preload/import must keep that failure until a new document loads.
+/// A failed module fetch is not kept in the document's module map
+/// (whatwg/html#10327, 6778ba036): a later preload or import of the URL fetches
+/// it again, and they share that one fetch.
 #[test]
-fn failed_modulepreload_is_retained_until_navigation() {
+fn failed_modulepreload_is_not_retained() {
     let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     let loader = Rc::new(StaticLoader::default());
@@ -689,12 +690,12 @@ fn failed_modulepreload_is_retained_until_navigation() {
     eval(&thread, page, "const late = document.createElement('link'); late.rel = 'modulepreload'; late.href = '/recover.js'; late.addEventListener('load', () => out.push('late:load')); late.addEventListener('error', () => out.push('late:error')); document.head.appendChild(late);
         import('/recover.js').then(() => out.push('import:loaded'), error => out.push('import:' + (error instanceof TypeError) + ':' + /Failed to fetch dynamically imported module/.test(error.message)));");
     settle(&mut thread);
-    assert_eq!(eval(&thread, page, "out.sort().join()"), "import:true:true,late:error,pre:error");
-    assert_eq!(loader.log.borrow().iter().filter(|url| *url == "http://site.test/recover.js").count(), 1);
+    assert_eq!(eval(&thread, page, "out.sort().join()"), "import:loaded,late:load,pre:error");
+    assert_eq!(loader.log.borrow().iter().filter(|url| *url == "http://site.test/recover.js").count(), 2);
     thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
     settle(&mut thread);
     eval(&thread, page, "import('/recover.js').then(module => out.push('import:' + module.value));");
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "out.join()"), "import:42");
-    assert_eq!(loader.log.borrow().iter().filter(|url| *url == "http://site.test/recover.js").count(), 2);
+    assert_eq!(loader.log.borrow().iter().filter(|url| *url == "http://site.test/recover.js").count(), 3);
 }

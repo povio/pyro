@@ -7,9 +7,31 @@ use pyro_js::{JsResult, Scope};
 use crate::page::PageDom;
 
 /// Interface objects on the global that exist only in a secure context.
-const GLOBALS: &[&str] = &["LockManager", "Lock", "MediaDevices", "Worklet"];
-/// `Navigator` attributes that exist only in a secure context.
-const NAVIGATOR: &[&str] = &["locks", "mediaDevices"];
+const GLOBALS: &[&str] = &[
+    "LockManager",
+    "Lock",
+    "MediaDevices",
+    "Worklet",
+    "AudioWorklet",
+    "ImageDecoder",
+    "ImageTrackList",
+    "ImageTrack",
+    "AudioDecoder",
+    "AudioEncoder",
+    "VideoDecoder",
+    "VideoEncoder",
+    "cookieStore",
+    "StorageBucketManager",
+    "StorageBucket",
+    "AudioPlaybackStats",
+    "FetchLaterResult",
+    // `[SecureContext] readonly attribute CacheStorage caches`: absent rather than an accessor
+    // reading undefined, so a page's own `var caches = ...` (fetch/api/request/request-init-001)
+    // gets a plain global variable, as in Chrome.
+    "caches",
+];
+/// `Navigator` members that exist only in a secure context.
+const NAVIGATOR: &[&str] = &["locks", "storageBuckets", "mediaDevices", "registerProtocolHandler", "unregisterProtocolHandler"];
 
 /// A secure context (HTML): the document and every ancestor document are potentially trustworthy,
 /// as the embedder reports it (`PageHooks::is_secure_context`); without one, the realm's origin or the
@@ -29,9 +51,16 @@ pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
     if secure(s, page) {
         return Ok(());
     }
+    crate::storage_manager::hide_file_system_globals(s)?;
     let global = s.global();
     for name in GLOBALS {
         global.delete(name)?;
+    }
+    // `caches` is a Window attribute: also off the interface prototype, wherever it is installed.
+    if let Some(window) = global.get_atom("Window")?.as_object() {
+        if let Some(proto) = window.get_atom("prototype")?.as_object() {
+            proto.delete("caches")?;
+        }
     }
     if let Some(navigator) = global.get_atom("Navigator")?.as_object() {
         if let Some(proto) = navigator.get_atom("prototype")?.as_object() {

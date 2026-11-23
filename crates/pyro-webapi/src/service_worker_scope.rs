@@ -36,6 +36,9 @@ use crate::worker::{Shared, MAX_QUEUED_BYTES};
 pub(crate) struct ServiceStart {
     pub version: u64,
     pub registration: u64,
+    pub(crate) partition_key: Option<String>,
+    pub(crate) cookie_site_context: pyro_net::cookies::SiteContext,
+    pub(crate) cookies: Arc<crate::cookie_store::subscriptions::Subscriptions>,
     pub scope: String,
     pub script_url: String,
     pub update_via_cache: String,
@@ -142,6 +145,38 @@ fn call(s: &Scope<'_>, name: &str, args: &[Value<'_>]) {
 pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster, shared: Arc<Shared>) -> JsResult<()> {
     let version = start.version;
     let native = s.object();
+    let self_post = s.function("postToSelf", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let options = crate::structured_clone::transfer_options(s, a.opt(1))?;
+        let payload = crate::structured_clone::encode_message(s, a.get(0), options)?;
+        let origin = page.origin_key();
+        let realm = s.realm().downgrade();
+        let receiver = Rc::downgrade(&page);
+        page.post_task(Box::new(move || {
+            let (Some(realm), Some(page)) = (realm.upgrade(), receiver.upgrade()) else { return };
+            if page.is_disposed() { return }
+            if let Ok(s) = realm.scope() {
+                message(&s, &payload, None, &origin);
+            }
+        }));
+        Ok(s.undefined())
+    })?;
+    native.set_atom("postToSelf", self_post.value())?;
+    let subscriptions = start.cookies.clone();
+    let script_url = pyro_net::Url::parse(&start.script_url).map_err(|_| JsError::ContextDestroyed)?;
+    let manager = s.function("cookieManager", move |s, _, _| {
+        crate::cookie_store::subscriptions::manager(s, &crate::target::page_of(s)?, subscriptions.clone(), Some(script_url.clone()))
+    })?;
+    native.set_atom("cookieManager", manager.value())?;
+    let trusted = s.function("dispatchTrustedEvent", |s, _, a| {
+        if let Some(origin) = a.opt(1).filter(|origin| !origin.is_undefined()) {
+            let event = s.unwrap::<crate::event::Event>(a.get(0)).ok_or(JsError::ContextDestroyed)?;
+            event.fields.borrow_mut().set_sender_origin(origin.to_string()?);
+        }
+        crate::cookie_store::events::dispatch_trusted(s, s.global().value(), a.get(0))?;
+        Ok(s.undefined())
+    })?;
+    native.set_atom("dispatchTrustedEvent", trusted.value())?;
     let up = move |poster: &RemotePoster, message: SwUp| {
         poster(Box::new(move || deliver(version, message)));
     };
@@ -333,6 +368,19 @@ fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<
 }
 
 /// Moves this worker's own `state` (the browser thread's lifecycle step).
+pub(crate) fn extendable_event<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+    glue(s)?.get_atom("ExtendableEvent")
+}
+
+/// Fire a functional event in the active worker, using the same extension
+/// and lifetime-promise machinery as its install/activate events.
+pub(crate) fn cookie_change(s: &Scope<'_>, page: &Rc<PageDom>, changes: &[pyro_net::cookies::CookieChange]) {
+    match crate::cookie_store::events::cookie_event(s, page, true, changes) {
+        Ok(event) => call(s, "dispatchCookieChange", &[event]),
+        Err(err) => s.report_exception(&err),
+    }
+}
+
 pub(crate) fn set_state(s: &Scope<'_>, state: &str) {
     call(s, "state", &[s.string(state)]);
 }
@@ -353,25 +401,25 @@ pub(crate) fn reply(s: &Scope<'_>, id: u64, result: Result<String, (String, Stri
     }
 }
 
-/// A message from a client (`ServiceWorker.postMessage`); `source` is the
-/// client's JSON description.
+/// A message to this worker. An absent client description denotes a
+/// message posted by the service worker to itself.
 pub(crate) fn message(
     s: &Scope<'_>,
-    page: &Rc<PageDom>,
     message: &crate::structured_clone::WireMessage,
-    source: &str,
-    origin: &str,
+    client: Option<&str>,
+    origin_key: &str,
 ) {
-    let source = s.parse_json(source).unwrap_or_else(|| s.null());
-    let _ = page;
+    let source = client.and_then(|json| s.parse_json(json)).unwrap_or_else(|| s.null());
+    let origin = s.string(crate::event::serialize_message_origin(origin_key));
+    let key = s.string(origin_key);
     match crate::structured_clone::decode_with_ports(s, message) {
         Ok((data, ports)) => call(
             s,
             "dispatchMessage",
-            &[data, ports.map_or_else(|| s.undefined(), |p| p.value()), source, s.string(origin)],
+            &[data, ports.map_or_else(|| s.undefined(), |p| p.value()), source, origin, key],
         ),
         Err(JsError::Terminated) => {}
-        Err(_) => call(s, "dispatchMessageError", &[source, s.string(origin)]),
+        Err(_) => call(s, "dispatchMessageError", &[source, origin, key]),
     }
 }
 
@@ -412,6 +460,9 @@ fn redirect_name(redirect: pyro_net::RedirectMode) -> &'static str {
 }
 
 fn destination_name(destination: pyro_net::Destination) -> &'static str {
+    if destination == pyro_net::Destination::CompressionDictionary {
+        return "compression-dictionary";
+    }
     match pyro_net::referrer::fetch_dest(destination) {
         "empty" => "",
         other => other,
@@ -433,7 +484,13 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
         credentials: credentials_name(request.credentials),
         cache: cache_name(request.cache),
         redirect: redirect_name(request.redirect),
-        referrer: request.referrer.as_ref().map_or_else(|| "no-referrer".to_owned(), |u| u.to_string()),
+        // Fetch "main fetch" sets the request's referrer to the one its policy determines before a
+        // service worker sees it (an `origin` policy: the origin only; `no-referrer`: none).
+        referrer: request
+            .referrer
+            .as_ref()
+            .and_then(|r| pyro_net::referrer::referrer_for(r, &request.url, request.referrer_policy))
+            .unwrap_or_else(|| "no-referrer".to_owned()),
         referrer_policy: request.referrer_policy.as_str().to_owned(),
         integrity: String::new(),
         keepalive: false,

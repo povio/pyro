@@ -22,6 +22,43 @@ pub fn same_origin(a: &Url, b: &Url) -> bool {
     a.origin() == b.origin()
 }
 
+const CROSS_ORIGIN_RESOURCE_POLICY: header::HeaderName =
+    header::HeaderName::from_static("cross-origin-resource-policy");
+
+/// Fetch "cross-origin resource policy check" (without COEP): whether the
+/// response at `url` (a redirect included) to a `no-cors` request is blocked
+/// by its `Cross-Origin-Resource-Policy` header. The value is compared byte
+/// for byte as the header list's combined value, so a repeated or unknown
+/// value (`same, same-origin`, `SAME-ORIGIN`) allows.
+pub fn corp_blocks(req: &Request, url: &Url, headers: &HeaderMap) -> bool {
+    if req.mode != RequestMode::NoCors {
+        return false;
+    }
+    // A browser-initiated request has no initiator to protect.
+    let Some(origin) = req.origin.as_deref() else { return false };
+    let mut values = headers.get_all(CROSS_ORIGIN_RESOURCE_POLICY).iter();
+    let Some(policy) = values.next() else { return false };
+    if values.next().is_some() {
+        return false;
+    }
+    // "null" (an opaque origin) parses to an error: same-origin and
+    // same-site with nothing.
+    let origin = Url::parse(origin).ok();
+    match policy.as_bytes() {
+        b"same-origin" => !origin.is_some_and(|o| same_origin(&o, url)),
+        b"same-site" => {
+            let Some(o) = origin else { return true };
+            let schemelessly_same_site = match (o.host_str(), url.host_str()) {
+                (Some(a), Some(b)) => crate::cookies::site_of(a).eq_ignore_ascii_case(crate::cookies::site_of(b)),
+                _ => false,
+            };
+            // An `http:` document cannot read a same-site `https:` resource.
+            !(schemelessly_same_site && (o.scheme() == "https" || url.scheme() != "https"))
+        }
+        _ => false,
+    }
+}
+
 fn safelisted_content_type(v: &[u8]) -> bool {
     let Ok(s) = std::str::from_utf8(v) else { return false };
     let essence = s.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
@@ -54,7 +91,31 @@ pub fn is_safelisted_header(name: &str, value: &HeaderValue) -> bool {
     }
 }
 
-/// Headers that make a request non-simple, lowercased and sorted.
+/// CORS-safelisted request-header check, `Range` included: a simple range
+/// (`bytes=N-` or `bytes=N-M`, no whitespace). [`is_safelisted_header`]
+/// leaves it out, as the no-cors guards (which call it) must.
+pub fn is_cors_safelisted_header(name: &str, value: &HeaderValue) -> bool {
+    is_safelisted_header(name, value)
+        || (name == "range"
+            // Fetch: a safelisted value is at most 128 bytes.
+            && value.len() <= 128
+            && crate::range::parse_single_range_with(value.as_bytes(), false).is_some_and(|(start, _)| start.is_some()))
+}
+
+/// Fetch "CORS-unsafe request-header names" of `headers`: those that need a
+/// preflight, lowercased and sorted.
+pub fn cors_unsafe_header_names(headers: &HeaderMap) -> Vec<String> {
+    let mut names: Vec<String> = headers
+        .iter()
+        .filter(|(n, v)| !is_cors_safelisted_header(n.as_str(), v))
+        .map(|(n, _)| n.as_str().to_owned())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Headers that a no-cors request may not carry, lowercased and sorted.
 pub fn unsafe_header_names(headers: &HeaderMap) -> Vec<String> {
     let mut names: Vec<String> = headers
         .iter()
@@ -79,7 +140,7 @@ pub fn is_cors_request(req: &Request, _origin_url: Option<&Url>) -> bool {
 
 pub fn needs_preflight(req: &Request) -> bool {
     let simple_method = matches!(req.method, Method::GET | Method::HEAD | Method::POST);
-    !simple_method || !unsafe_header_names(&req.headers).is_empty()
+    !simple_method || !cors_unsafe_header_names(&req.headers).is_empty()
 }
 
 pub fn preflight_request_headers(req: &Request, origin: &str) -> HeaderMap {
@@ -90,7 +151,7 @@ pub fn preflight_request_headers(req: &Request, origin: &str) -> HeaderMap {
     if let Ok(v) = HeaderValue::from_str(req.method.as_str()) {
         h.insert(header::ACCESS_CONTROL_REQUEST_METHOD, v);
     }
-    let names = unsafe_header_names(&req.headers);
+    let names = cors_unsafe_header_names(&req.headers);
     if !names.is_empty() {
         if let Ok(v) = HeaderValue::from_str(&names.join(",")) {
             h.insert(header::ACCESS_CONTROL_REQUEST_HEADERS, v);
@@ -102,10 +163,16 @@ pub fn preflight_request_headers(req: &Request, origin: &str) -> HeaderMap {
 
 /// Response CORS check.
 pub fn cors_check(headers: &HeaderMap, origin: &str, credentials: Credentials) -> Result<(), String> {
-    let acao = headers
-        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+    // Fetch "CORS check": the header's values combined, so several header lines
+    // (`*` and an origin) are one value equal to neither and fail.
+    let mut lines = headers.get_all(header::ACCESS_CONTROL_ALLOW_ORIGIN).iter();
+    let acao = lines
+        .next()
         .and_then(|v| v.to_str().ok())
         .ok_or("No 'Access-Control-Allow-Origin' header is present on the requested resource")?;
+    if lines.next().is_some() {
+        return Err("The 'Access-Control-Allow-Origin' header contains multiple values, but only one is allowed".into());
+    }
     if credentials != Credentials::Include && acao == "*" {
         return Ok(());
     }
@@ -137,6 +204,11 @@ fn list(headers: &HeaderMap, name: header::HeaderName) -> Vec<String> {
         .collect()
 }
 
+/// An HTTP token (RFC 9110 `tchar`s), as a method or header field name.
+fn is_token(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+}
+
 #[derive(Clone, Debug)]
 struct PreflightEntry {
     methods: Vec<String>,
@@ -155,6 +227,17 @@ fn validate_preflight(status: u16, resp: &HeaderMap, req: &Request, origin: &str
     let methods = list(resp, header::ACCESS_CONTROL_ALLOW_METHODS);
     let headers: Vec<String> =
         list(resp, header::ACCESS_CONTROL_ALLOW_HEADERS).into_iter().map(|h| h.to_ascii_lowercase()).collect();
+    // Fetch "CORS-preflight fetch": either list failing to parse (`#method`, `#field-name`:
+    // tokens) is a network error, a value line `list` skips (not visible ASCII) included.
+    let unreadable = [header::ACCESS_CONTROL_ALLOW_METHODS, header::ACCESS_CONTROL_ALLOW_HEADERS]
+        .into_iter()
+        .any(|name| resp.get_all(name).iter().any(|v| v.to_str().is_err()));
+    if unreadable {
+        return Err("Invalid value in the preflight response's allow lists".into());
+    }
+    if let Some(bad) = methods.iter().chain(&headers).find(|t| !is_token(t)) {
+        return Err(format!("Invalid token '{bad}' in the preflight response's allow lists"));
+    }
     let wildcard_ok = req.credentials != Credentials::Include;
     let any_method = wildcard_ok && methods.iter().any(|m| m == "*");
     let any_header = wildcard_ok && headers.iter().any(|h| h == "*");
@@ -165,7 +248,7 @@ fn validate_preflight(status: u16, resp: &HeaderMap, req: &Request, origin: &str
     {
         return Err(format!("Method {m} is not allowed by Access-Control-Allow-Methods in preflight response"));
     }
-    for h in unsafe_header_names(&req.headers) {
+    for h in cors_unsafe_header_names(&req.headers) {
         // Authorization is never covered by the wildcard.
         let wild = any_header && h != "authorization";
         if !wild && !headers.contains(&h) {
@@ -214,7 +297,7 @@ impl PreflightCache {
             || e.any_method
             || e.methods.iter().any(|x| x == m);
         method_ok
-            && unsafe_header_names(&req.headers)
+            && cors_unsafe_header_names(&req.headers)
                 .iter()
                 .all(|h| (e.any_header && h != "authorization") || e.headers.contains(h))
     }

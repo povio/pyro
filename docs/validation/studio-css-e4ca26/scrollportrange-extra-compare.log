@@ -1,0 +1,12 @@
+scrollportrange-extra 298 page passes 128 named passes 1900 observed names 2554 statuses {'complete:0': 275, 'complete:2': 22, 'complete:1': 1}
+scrollportrange-extra-parent 298 page passes 128 named passes 1900 observed names 2554 statuses {'complete:0': 275, 'complete:2': 22, 'complete:1': 1}
+scrollportrange-extra-parent pages left only 0 right only 0
+scrollportrange-extra-parent passes left only 0 right only 0
+scrollportrange-extra-parent observed left only 0 right only 0
+scrollportrange-extra-stable 298 page passes 256 named passes 2334 observed names 2554 statuses {'complete:0': 288, 'complete:2': 10}
+scrollportrange-extra-stable pages left only 1 right only 129
+scrollportrange-extra-stable passes left only 50 right only 484
+scrollportrange-extra-stable observed left only 0 right only 0
+lost pages set()
+lost names set()
+gained pages set()

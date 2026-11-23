@@ -1,0 +1,15 @@
+wptserve on http://web-platform.test:53209 (log /var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-7JsyWK/serve.log)
+base: 100/138 (1 s)
+base: done 138 pages in 1.3 s (CPU: browser 1.6 s, runner 2.2 s, server 0.0 s), restarts 0, event loop lag p50 0 ms p99 1 ms
+wptserve on http://web-platform.test:54232 (log /var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-AyUPj2/serve.log)
+final: 100/138 (1 s)
+final: done 138 pages in 1.2 s (CPU: browser 1.6 s, runner 1.8 s, server 0.0 s), restarts 0, event loop lag p50 0 ms p99 1 ms
+wptserve on http://web-platform.test:55407 (log /var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Copl6Y/serve.log)
+final-repeat: 100/138 (1 s)
+final-repeat: done 138 pages in 1.2 s (CPU: browser 1.6 s, runner 1.7 s, server 0.0 s), restarts 0, event loop lag p50 0 ms p99 1 ms
+wptserve on http://web-platform.test:56429 (log /var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-70Nr6Y/serve.log)
+base-repeat: 100/138 (1 s)
+base-repeat: done 138 pages in 1.1 s (CPU: browser 1.6 s, runner 1.8 s, server 0.0 s), restarts 0, event loop lag p50 0 ms p99 1 ms
+base: 0736e531 (HEAD)
+blitz-dom: UPSTREAM.patch written: 69 file(s), 67 section(s) kept as committed (67 from HEAD), 2 regenerated (src/layout/table.rs, src/node/node.rs)
+blitz-dom: patch verified: git apply on the upstream reconstructed at 0736e531 (HEAD) reproduces vendor/blitz-dom/src, vendor/blitz-dom/assets, and git apply -R gives it back

@@ -68,10 +68,11 @@ fn script_text_handlers_and_comments_are_dropped() {
         "<iframe src=\"/frame\"></iframe><p>kept</p></body></html>",
     ));
     let html = render(&dom.borrow(), d);
-    // A script stays (without its text): it counts for sibling selectors (WPT CSS2 `content-072`).
+    // A script, noscript and template stay without their content: they count for sibling
+    // selectors (WPT CSS2 `content-072`) and have a computed style (`display: none`).
     assert_eq!(
         html,
-        "<!DOCTYPE html><html><head><script></script></head><body><iframe></iframe><p>kept</p></body></html>"
+        "<!DOCTYPE html><html><head><script></script></head><body><noscript></noscript><template></template><iframe></iframe><p>kept</p></body></html>"
     );
 }
 
@@ -443,7 +444,7 @@ fn render_tree_keeps_event_handler_attributes_markup_drops() {
 }
 
 fn frame(html: &str, client: &str) -> FrameDocument {
-    FrameDocument { html: html.into(), url: "http://test/frame".into(), scroll: (0.0, 0.0), client: client.into(), frames: Default::default(), sheets: Default::default() }
+    FrameDocument { document_url: None, html: html.into(), url: "http://test/frame".into(), scroll: (0.0, 0.0), client: client.into(), frames: Default::default(), sheets: Default::default() }
 }
 
 /// Every attribute the renderer reads from the engine is the engine's: a page attribute whose
@@ -521,7 +522,7 @@ fn frame_documents_are_replaced_per_page() {
     assert!(has(&dom.borrow()));
     // The popup refreshes its own frames (it has none).
     dom.borrow_mut().set_frame_documents(&[popup], Vec::new());
-    dom.borrow_mut().set_frame_content_heights(&[popup], &[]);
+    dom.borrow_mut().set_frame_content_sizes(&[popup], &[]);
     assert!(has(&dom.borrow()), "the opener's iframe keeps its document");
     // The opener refreshing its own set without the frame does drop it.
     dom.borrow_mut().set_frame_documents(&[opener], Vec::new());

@@ -77,21 +77,20 @@ const ran = () => {
 };
 
 test('bypassCSP: a page policy lifted, nonce hiding included', async ({ browser }) => {
-  // pyro enforces no CSP directive: without bypassCSP the page's inline
-  // script, eval, cross-origin script, inline handler and an added inline
-  // script all run, where Chromium blocks every one of them ({ nonced: 1,
-  // evaled: 'EvalError', inline: null, other: null, clicked: null, and
-  // addScriptTag({ content }) throws "...violates the following Content
-  // Security Policy directive..."). The one effect a header-delivered policy
-  // has is nonce hiding, as in Chromium: the attribute of an element script
-  // inserts reads back empty, the property keeps the value.
+  // Without bypassCSP the page's policy applies, as in Chromium: the nonced
+  // script runs, eval throws an EvalError, and the inline script without the
+  // nonce, the cross-origin script, the inline handler and an added inline
+  // script are blocked (addScriptTag({ content }) throws "...violates the
+  // following Content Security Policy directive..."); a same-origin script
+  // ('self') still loads. Nonce hiding applies too: the attribute of an
+  // element the script inserts reads back empty, the property keeps the value.
   const strict = await browser.newContext();
   const page = await strict.newPage();
   await page.goto(`${SITE}/csp`);
   await page.locator('button').click();
-  await page.addScriptTag({ content: 'window.added = 1' });
+  await expect(page.addScriptTag({ content: 'window.added = 1' })).rejects.toThrow(/Content Security Policy/);
   await page.addScriptTag({ url: '/own.js' });
-  expect(await page.evaluate(ran)).toEqual({ nonced: 1, evaled: 1, inline: 1, other: 1, clicked: 1, added: 1, own: 1, nonceAttribute: '', nonceProperty: 'abc' });
+  expect(await page.evaluate(ran)).toEqual({ nonced: 1, evaled: 'EvalError', inline: null, other: null, clicked: null, added: null, own: 1, nonceAttribute: '', nonceProperty: 'abc' });
   await strict.close();
 
   // With it, as in Chromium (Page.setBypassCSP): everything runs and the

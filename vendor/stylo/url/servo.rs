@@ -88,6 +88,7 @@ impl CssUrl {
         // modifier of its own.
         let modifiers = resolved.is_some().then(|| {
             Arc::new(super::RequestUrlModifiers {
+                local_fragment: serialization.starts_with('#').then(|| serialization.clone()),
                 cross_origin: None,
                 integrity: None,
                 referrer_policy: None,
@@ -102,7 +103,8 @@ impl CssUrl {
     }
 
     /// pyro: this URL with the request URL modifiers `modifiers`.
-    pub(super) fn with_modifiers(self, modifiers: super::RequestUrlModifiers) -> Self {
+    pub(super) fn with_modifiers(self, mut modifiers: super::RequestUrlModifiers) -> Self {
+        modifiers.local_fragment = self.original.clone().filter(|s| s.starts_with('#'));
         CssUrl(Arc::new(CssUrlData {
             original: self.0.original.clone(),
             resolved: self.0.resolved.clone(),
@@ -124,12 +126,8 @@ impl CssUrl {
     /// Returns true if this URL looks like a fragment.
     /// See https://drafts.csswg.org/css-values/#local-urls
     ///
-    /// Since Servo currently stores resolved URLs, this is hard to implement. We
-    /// either need to change servo to lazily resolve (like Gecko), or note this
-    /// information in the tokenizer.
     pub fn is_fragment(&self) -> bool {
-        error!("Can't determine whether the url is a fragment.");
-        false
+        self.original.as_ref().is_some_and(|s| s.starts_with('#'))
     }
 
     /// Returns the resolved url if it was valid.
@@ -213,7 +211,14 @@ impl ToComputedValue for SpecifiedUrl {
 
     // If we can't resolve the URL from the specified one, we fall back to the original
     // but still return it as a ComputedUrl::Invalid
-    fn to_computed_value(&self, _: &Context) -> Self::ComputedValue {
+    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
+        if self.is_fragment()
+            && let Some(document) = context.device().document_url()
+            && let Some(original) = &self.original
+            && let Ok(url) = document.join(original)
+        {
+            return ComputedUrl::Valid(Arc::new(url), self.modifiers.clone());
+        }
         match self.resolved {
             Some(ref url) => ComputedUrl::Valid(url.clone(), self.modifiers.clone()),
             None => match self.original {
@@ -228,7 +233,7 @@ impl ToComputedValue for SpecifiedUrl {
     fn from_computed_value(computed: &ComputedUrl) -> Self {
         let data = match *computed {
             ComputedUrl::Valid(ref url, ref modifiers) => CssUrlData {
-                original: None,
+                original: modifiers.as_ref().and_then(|m| m.local_fragment.clone()),
                 resolved: Some(url.clone()),
                 modifiers: modifiers.clone(),
             },
@@ -279,7 +284,9 @@ impl ToCss for ComputedUrl {
         W: Write,
     {
         let string = match *self {
-            ComputedUrl::Valid(ref url, _) => url.as_str(),
+            ComputedUrl::Valid(ref url, ref modifiers) => modifiers.as_ref()
+                .and_then(|m| m.local_fragment.as_ref())
+                .map_or_else(|| url.as_str(), |fragment| fragment.as_str()),
             ComputedUrl::Invalid(ref invalid_string) => invalid_string,
         };
 

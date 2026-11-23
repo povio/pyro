@@ -1,0 +1,37 @@
+{
+  "basic": {},
+  "supplemental": {
+    "blob": {
+      "signed": {
+        "opaque": true,
+        "before": [
+          true,
+          true,
+          true
+        ],
+        "after": [
+          false,
+          false,
+          false,
+          false
+        ],
+        "reparsed": false
+      },
+      "candidate": {
+        "opaque": true,
+        "before": [
+          false,
+          false,
+          true
+        ],
+        "after": [
+          false,
+          false,
+          true,
+          true
+        ],
+        "reparsed": false
+      }
+    }
+  }
+}

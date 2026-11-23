@@ -8,6 +8,14 @@ crate (`diff -ruN`).
 
 ## The change
 
+- Container-relative lengths, including those inside math functions, are invalid in computationally independent typed initial values. Ordinary declarations can still use them; viewport units keep their existing behavior.
+
+- Servo exposes the `page` property and the `size` and `page-orientation` descriptors through the style system. The latter two remain restricted to `@page`. This does not implement named-page pagination or rotated print output.
+
+- The six standard system-font shorthands resolve through the Servo device font provider for both cascade and interpolation. Internal Gecko keywords remain Gecko-only.
+
+- Gap decoration inset offsets are signed length-percentages or `overlap-join`. Row and column cap and junction offsets participate in the cascade and animation. The inset shorthands expand into those same eight longhands. This is style-system support, not gap-decoration painting.
+
 - `rule_cache.rs`, `properties/helpers.mako.rs`: a style that inherits a reset property explicitly
   (`inherit` on a non-inherited property) stays in the rule cache when the property is one of
   `box-sizing`, `baseline-shift`, `baseline-source` and `alignment-baseline`: the parent's value is
@@ -22,6 +30,11 @@ crate (`diff -ruN`).
   `break-inside` (and the legacy `page-break-*` shorthands) are parsed and computed for servo too
   (upstream: gecko only). pyro-render's PDF output reads them to place page cuts of paper-cut
   documents. Nothing else reads them; computed values of other properties are unchanged.
+
+- `properties/longhands.toml`, `properties/shorthands.toml`, `properties/shorthands.rs`, `values/*/animation.rs`:
+  the interest invokers' `interest-delay-start` and `interest-delay-end` longhands (`normal | <time [0s,∞]>`,
+  initial `normal`, discretely animated) and the `interest-delay` shorthand (one or two values, the end copying
+  the start), as Chrome ships them (WPT html/semantics/interestfor). Upstream stylo has none.
 
 - `properties/longhands.toml`: `margin-trim` is parsed and computed for servo too (upstream: gecko
   only), with `rebuild_box` restyle damage. Taffy's block layout reads it through stylo_taffy
@@ -46,7 +59,7 @@ crate (`diff -ruN`).
 
 - `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `orphans` and `widows`
   are added (upstream has neither; both were counted unknown properties), inherited, in
-  `inherited_text`. pyro-render's PDF output reads them to place page cuts of paper-cut documents.
+  `inherited_text`. Both interpolate as positive integers. pyro-render's PDF output reads them to place page cuts of paper-cut documents.
 
 - `stylist.rs`, `style_resolver.rs`: each origin's `CascadeData` also files its single-level
   `::before`/`::after` rules that declare `content`, `display` or `animation-name` (on the
@@ -184,6 +197,18 @@ how it is kept (pyro lays no MathML out); alone it is inline-level. The declarat
 block-level `::before` in an inline box now renders as a block). Test: `display_math_computes_to_flow` in
 `crates/pyro-render/tests/inline_leftovers.rs`.
 
+`values/specified/box.rs` (`Display::RUBY_MASK`, `RUBY_TEXT_MASK`, `DisplayKeyword::Ruby`), `style_adjuster.rs`:
+`display` accepts `ruby` (`inline ruby`, `ruby inline`), `block ruby` (`ruby block`) and `ruby-text` in the
+servo engine too, as Blink (Chrome 158) does; `ruby-base`, `ruby-base-container`, `ruby-text-container`,
+`run-in ruby` and `ruby list-item` stay invalid, as there. Upstream's ruby display values are gecko-only, so the
+declarations (and the UA sheet's `ruby { display: ruby }`, `rt { display: ruby-text }`) were dropped. They are
+`inline flow` / `block flow` with a pyro bit that only parsing and serialization read: layout sees the inline
+or block box (blitz-dom finds `<ruby>` by tag name), and `Display::without_ruby` strips the bit where a
+computed value is compared with `Display::Inline` (the writing-mode and text-combine-upright fixups here,
+blitz-dom's `wrap-inside` walk, pyro-dom). Blockified, `ruby` is `block ruby` and `ruby-text` is `block`, as in
+Chrome. Tests: `crates/pyro-dom/tests/css_display.rs`, `ruby_display_values_compute_as_chrome` in
+`crates/pyro-webapi/tests/dom_js.rs`, WPT `css/css-display/parsing/display-{valid,computed}.html`.
+
 `values/specified/box.rs` (`DisplayInside::WebkitBox`, `Display::WebkitBox`, `WebkitInlineBox`, `FlowRoot`),
 `properties/longhands.toml` (`-webkit-box-orient`, servo only), `properties/shorthands.toml`
 (`-webkit-line-clamp`), `style_adjuster.rs` (`adjust_for_webkit_box`), `properties/computed_value_flags.rs`
@@ -199,7 +224,9 @@ only. `-webkit-box` is never a computed value. Tests: `crates/pyro-render/tests/
 `values/specified/box.rs`, `values/computed/box.rs` (`OverflowClipMargin`): the length of `overflow-clip-margin`
 may be negative, as Blink takes it (the clip edge moves inwards; WPT `css-overflow/overflow-clip-margin-016`,
 `-017`), where the specification and upstream have a non-negative length. Test:
-`crates/pyro-render/tests/overflow_clip.rs`.
+`crates/pyro-render/tests/overflow_clip.rs`. `properties/longhands.toml`: `overflow-clip-margin` animates
+discretely (upstream interpolates its length), as Blink does and as the WPT expects
+(it cites csswg-drafts#4441); WPT `css/css-overflow/overflow-no-interpolation.html`.
 - `values/specified/text.rs` (`WordBreak::Manual`): `word-break: manual` (CSS Text 4) is parsed for the servo engine.
   blitz-dom lays it out as `normal` without dictionary breaks in Southeast Asian scripts (its README.pyro.md).
   `WordBreak::AutoPhrase`: `word-break: auto-phrase` (CSS Text 4), parsed under the same condition; parley lays it
@@ -232,9 +259,10 @@ kept for serialization (`1.23 drop`) and `sink` stays 0 then. pyro turns the pro
 - `properties/longhands.toml`: `font-palette` is parsed and computed for servo too, behind
   `layout.css.font-palette.enabled` (upstream: gecko only). blitz-paint draws COLR glyphs in the palette it selects.
 - `values/specified/font.rs`: `FontPalette` is an enum: a name (`normal`, `light`, `dark`, `<dashed-ident>`) or
-  `palette-mix(<color-interpolation-method>, <palette> <percentage>?, <palette> <percentage>?)` (CSS Fonts 5,
-  nested mixes too; `FontPaletteMix::weights` normalizes the percentages). Its computed and resolved values are
-  the specified one, written out (deriving them recurses without end). `color/mix.rs`: `ColorInterpolationMethod`
+  `palette-mix()` of one or more weighted palettes, including nested mixes. The interpolation space defaults to
+  Oklab. Omitted percentages share the remainder; specified math expressions serialize as math until computed.
+  Animation mixes unequal endpoints in Oklab, clamping progress to the endpoints. Equal endpoints retain their value.
+  `color/mix.rs`: `ColorInterpolationMethod`
   and `HueInterpolationMethod` derive serde, as servo's font style struct needs.
 - `values/specified/number.rs` (`Integer::resolve_with_font_size`), `stylesheets/font_palette_values_rule.rs`:
   an `<integer>` of `base-palette` or `override-colors` whose calc() has font-relative lengths
@@ -308,6 +336,9 @@ slotted rules of a pseudo-element. blitz-dom keeps shadow trees' styles (its REA
   absolutely and fixed positioned descendants, as in Chromium (round 6 lane paint).
 - `servo/selector_parser.rs`: `:has-slotted` and `:has-slotted(<selector-list>)` (CSS Scoping 1 § 3.2.5),
   `NonTSPseudoClass::HasSlotted`, matched by blitz-dom on a slot's flattened slottables (round 6 lane paint).
+- `servo/selector_parser.rs`: `:lang()` and `:dir()` may follow `::part()` (upstream rejected them after a
+  part-like pseudo-element); they are not tree-structural, and Chrome accepts and matches them on the part
+  (WPT `css/selectors/invalidation/part-dir`, `part-lang`, `parsing/parse-part`).
 - `values/specified/align.rs` (`AlignFlags::FLOW_START`/`FLOW_END`): the `flow-start` and `flow-end` keywords
   (css-align-3) in `<content-position>` and `<self-position>`, serialized, flipped and listed like the others;
   stylo_taffy maps them to `flex-start`/`flex-end` (WPT `css/css-flexbox/alignment/flow-start-flow-end-*`).
@@ -346,11 +377,14 @@ nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `cli
 - `values/generics/length.rs` (`GenericSize::CalcSizeAuto`, `CalcSizeFitContent`, `CalcSizeMinContent`,
   `CalcSizeMaxContent`), `values/specified/length.rs` (`Size::parse_calc_size`), `values/specified/calc.rs`
   (`AdditionalFunctions::CALC_SIZE`, `CalcNode::parse_calc_size_calculation`), `values/computed/length.rs`:
-  `calc-size(auto | fit-content | min-content | max-content, <calculation>)` in the `Size` properties (`width`,
+  `calc-size(auto | fit-content | min-content | max-content | stretch, <calculation>)` in the `Size` properties (`width`,
   `height`, their logical and min forms). The calculation is kept as a length-percentage whose `size` keyword is
   `100%` (other percentages are rejected), so its percentage basis is the size of the basis: layout resolves it
-  against that size (stylo_taffy, blitz-dom). A `<length-percentage>` or `calc-size()` basis, `any`, `max-*` and
-  interpolation are not supported; the value serializes as `calc-size(<calculation>)` with `size` as `100%`.
+  against that size (stylo_taffy, blitz-dom). Animation combines calculations with a common intrinsic basis,
+  including its bare keyword (the identity calculation) and absolute lengths (basis-independent calculations).
+  A `<length-percentage>` or `calc-size()` basis, `any`, `max-*` and ordinary percentages in the calculation
+  are not supported. The serializer retains the basis and writes the internal percentage as a multiple of
+  `size`, so a CSSOM declaration can be parsed again without changing its meaning.
 
 ## Legacy `-webkit-box` alignment and flexing for servo (WPT round 3, lane FO)
 
@@ -458,3 +492,57 @@ without a style context (custom properties left as they are): pyro serializes a 
   that resolves at computed-value time gets the NaN adjustment absolute colors get (it was only done for colors the
   parser had resolved), and a NaN hue of `lch()`/`oklch()` computes to 0. WPT css-color `parsing/color-valid-*`,
   `color-computed-lab`; test `color_functions_keep_calc_in_their_specified_value` (pyro-webapi).
+
+- `properties/cascade.rs` `did_apply_prioritary_property`: a select (`-moz-default-appearance` `menulist` or
+  `listbox`) whose appearance is not base leaves the `@appearance-base` subtree it inherited: a select of auto
+  appearance nested in one of `appearance: base-select` keeps its auto look, as do its options (Chromium). WPT html
+  `customizable-select/base-appearance-inheritance`.
+- Round 7 (css-conditional C2): `queries/condition.rs` `QueryCondition::contains_unknown`, `stylesheets/container_rule.rs`
+  `ContainerCondition::has_unknown`: a container query with a `<general-enclosed>` (an unknown feature or function)
+  selects no query container and never matches (CSS Conditional 5 § 7.1, as Chrome: `(width > 0px) or (foo: bar)` is
+  false). Enclosed text with substitution references (`var()`, `attr()`, `env()`) is exempt: it is parsed again at
+  match time (`matches_general`). WPT css-conditional `container-queries/query-evaluation`,
+  `container-selection-unknown-features`.
+- Round 7 (css-conditional C3): `matching.rs` `finish_restyle` (servo): any change of `container-type` (also into a
+  size container, or between types) or of `container-name` restyles the element's subtree. Upstream left changes into
+  size containment to Gecko's post-layout `UpdateContainerQueryStyles` and gave a name change only
+  `RESTYLE_IF_AFFECTED_BY_NAMED_STYLE_CONTAINER`, which size and name-only queries ignore; servo has neither, and
+  blitz-dom's post-layout refresh revisits only containers already queried. WPT css-conditional container-queries
+  `container-type-invalidation`, `container-name-invalidation`, `comma-separated-invalidation`,
+  `query-container-name-dynamic`.
+- Round 7 (scroll-state container queries, `scrollable`): `queries/condition.rs` parses
+  `scroll-state( <scroll-state-query> )` in `@container` (`QueryCondition::ScrollState`: a condition of
+  scroll-state features, or a bare feature, which serializes without parentheses, as Chrome) behind
+  `layout.css.scroll-state.enabled` (blitz-dom and pyro-dom turn it on, which also enables
+  `container-type: scroll-state`). Its features come from `FeatureType::ScrollState`
+  (`container_rule.rs` `SCROLL_STATE_FEATURES`: `scrollable`, keyword `queries/values.rs` `Scrollable`). It
+  needs a `scroll-state` container (`FeatureFlags::SCROLL_STATE`) and evaluates against the edges
+  `TElement::query_scrollable_edges` gives (`ScrollableEdges`), logical values by the container's writing mode;
+  blitz-dom records them per container after layout. `scrolled`, `snapped` and `stuck` stay
+  `<general-enclosed>`. `queries/feature_expression.rs` `to_css_unparenthesized`. WPT css-conditional
+  `container-queries/scroll-state/*scrollable*`, `container-type-scroll-state-*`.
+- Round 7 (R-HTML-16r): `queries/feature_expression.rs` `QueryExpressionValue::parse`: a length media feature takes a
+  math function that resolves to the number 0 (`calc(0)`) as a zero length, as Blink does. WPT html
+  `the-img-element/sizes/parse-a-sizes-attribute-*` (`(min-width:calc(0)) 1px`).
+- Round 7 (CSS Color 4 §7): absolute HSL floors negative saturation without clipping extended
+  saturation or lightness before serialization. HSL ↔ HWB uses their common sRGB representation
+  directly rather than an XYZ round trip. Mix finalization and CSSOM operand storage are unchanged.
+- Round 7 (reparse precision): `values/mod.rs` `serialize_specified_dimension`, in `serialize_for_reparse` mode, writes
+  a `cubic-bezier()` number (no unit, outside a calc() expression, whose numbers can be f32 simplification results)
+  that six significant digits do not give back at its shortest exact `f32` form and flags it as it flags a negative
+  zero, so `css_for_reparse` gives the inline style's backing text the easing script set (`cubic-bezier(0, 1.8333334,
+  …)`; `cssText` still shows six digits). `generics/easing.rs` `TimingFunction` serializes by hand (as its derive
+  did) to hold `EasingSerialization` around the bezier's numbers; `generics/calc.rs` `write_calculation` holds
+  `CalculationSerialization`. Chromium samples the curve it parsed. WPT css-transforms
+  `animation/transform-composition` (CSS Animations at 1.5).
+- Round 7 (margin rules in the CSSOM): `properties/properties.mako.rs` `NonCustomPropertyId::allowed_in_rule`: a
+  margin rule parsed on its own, outside its `@page` (Pyro's CSSOM reparses a `CSSMarginRule`'s declarations with the
+  rule type `Margin` alone), takes every property, as Chrome's margin rules do (WPT css-page `cssom/margin-002`,
+  `parsing/margin-rules-002`). Upstream gives the same answer through an empty intersection with
+  `DECLARATION_ALLOWED_TYPES`, but only in release builds: debug builds fail its assertion.
+- Round 7 (color mix weights at f64): `color/mix.rs` `ColorMixItem::weight` is f64 (`new` takes any `Into<f64>`), and
+  `mix_many` folds, alpha and premultiplied components are computed in f64 from it; `values/animated/color.rs`
+  `Color::animate` mixes two absolute colors directly (as `from_color_mix` did, in the animation space). An
+  animation's weights `(1 - p, p)` at a huge extrapolated progress (2^31) were (-2^31, 2^31) in f32, summed to 0, and
+  the fold skipped the end color. WPT css/filter-effects `animation/filter-interpolation-002` (drop-shadow color at
+  2147483648).

@@ -248,6 +248,21 @@ def to_phys(name, logical, physical):
     return name.replace(logical, physical).replace("inset-", "")
 
 
+PAGE_BOX_PROPERTIES = set('''
+    direction unicode-bidi background background-color background-image background-repeat
+    background-attachment background-position background-position-x background-position-y
+    background-size background-origin background-clip border border-width border-color border-style
+    border-top border-right border-bottom border-left border-top-width border-right-width
+    border-bottom-width border-left-width border-top-color border-right-color border-bottom-color
+    border-left-color border-top-style border-right-style border-bottom-style border-left-style
+    counter-reset counter-increment color font font-family font-size font-style font-variant
+    font-weight height min-height max-height line-height outline outline-width outline-style
+    outline-color padding padding-top padding-right padding-bottom padding-left quotes letter-spacing
+    text-align text-decoration text-indent text-transform white-space word-spacing visibility
+    width min-width max-width
+'''.split())
+
+
 class Property(object):
     def __init__(
         self,
@@ -271,6 +286,8 @@ class Property(object):
         self.gecko_pref = gecko_pref
         self.idl_method = idl_method(name, self.camel_case)
         self.rule_types_allowed = rule_values_from_arg(rule_types_allowed)
+        if name in PAGE_BOX_PROPERTIES:
+            self.rule_types_allowed |= PAGE_RULE
         # For enabled_in, the setup is as follows:
         # It needs to be one of the four values: ["", "ua", "chrome", "content"]
         #  * "chrome" implies "ua", and implies that they're explicitly
@@ -512,12 +529,42 @@ class Longhand(Property):
             ty = "Box<{}>".format(ty)
         return ty
 
+    def is_font_affecting(self):
+        # CSS Values 4, font-relative lengths. line-height has its own basis rules.
+        return self.name.startswith("font-") or self.name in ("math-style", "math-depth")
+
     def is_zoom_dependent(self):
         if not self.predefined_type:
             return False
         # TODO: Get this from SpecifiedValueInfo or so instead; see bug 1887627.
-        return self.predefined_type in {
+        return self.predefined_type.rsplit("::", 1)[-1] in {
+            "AnimationRangeEnd",
+            "AnimationRangeStart",
+            "BackgroundSize",
+            "BaselineShift",
+            "BorderCornerRadius",
+            "BorderImageWidth",
+            "BorderShape",
+            "ClipPath",
+            "Image",
+            "OffsetPath",
+            "ShapeOutside",
             "BorderSideWidth",
+            "RuleWidth",
+            "RuleInset",
+            "ClipRectOrAuto",
+            "ContainIntrinsicSize",
+            "FlexBasis",
+            "GridTemplateComponent",
+            "HorizontalPosition",
+            "ImplicitGridTracks",
+            "OffsetPosition",
+            "OverflowClipMargin",
+            "Perspective",
+            "TransformOrigin",
+            "Translate",
+            "VerticalPosition",
+            "ViewTimelineInset",
             "BorderSpacing",
             "BoxShadow",
             "Filter",
@@ -611,6 +658,9 @@ class Longhand(Property):
                 "ShapeRendering",
                 "TextAnchor",
                 "ImageOrientation",
+                "InterpolateSize",
+                "Speak",
+                "ReadingFlow",
                 "TextOrientation",
                 "BoxCollapse",
                 "Visibility",
@@ -618,10 +668,14 @@ class Longhand(Property):
                 "ColumnSpan",
                 "ColumnFill",
                 "ColumnWrap",
+                "column::RuleBreak",
+                "column::RuleOverlap",
+                "column::RuleVisibilityItems",
                 "Orient",
                 "BackfaceVisibility",
                 "Isolation",
                 "ViewTransitionScope",
+                "ScrollAxisLock",
                 "ScrollBehavior",
                 "ScrollMarkerGroup",
                 "ScrollTargetGroup",
@@ -697,6 +751,7 @@ class Longhand(Property):
                 "ScrollSnapAlign",
                 "ScrollSnapAxis",
                 "ScrollSnapStop",
+                "ScrollInitialTarget",
                 "ScrollSnapStrictness",
                 "ScrollSnapType",
                 "TextAlign",

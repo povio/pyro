@@ -1,0 +1,170 @@
+candidate-granted-1795356950466.json true visible [ 0, 1.1573333333333333, 2.3093333333333335 ] [
+      0,     0,     0,
+      0,     0,     0,
+  1.056, 1.056, 1.056,
+  1.056
+] {
+  underrunDuration: 0,
+  underrunEvents: 0,
+  totalDuration: 1.056,
+  averageLatency: 0,
+  minimumLatency: 0,
+  maximumLatency: 0
+} true true {
+  stable: true,
+  separate: true,
+  tag: '[object AudioPlaybackStats]',
+  instance: true,
+  keys: [
+    'constructor',
+    'underrunDuration',
+    'underrunEvents',
+    'totalDuration',
+    'averageLatency',
+    'minimumLatency',
+    'maximumLatency',
+    'resetLatency',
+    'toJSON'
+  ],
+  badGetter: 'TypeError',
+  badMethod: 'TypeError',
+  badReset: 'TypeError',
+  candidateFactory: true,
+  visibility: 'visible',
+  growth: [
+    {
+      ms: 1952.8999999761581,
+      time: 0.0026666666666666666,
+      json: [Object]
+    },
+    {
+      ms: 3105.7999999523163,
+      time: 1.1573333333333333,
+      json: [Object]
+    },
+    { ms: 4258.099999964237, time: 2.3093333333333335, json: [Object] }
+  ]
+}
+candidate-prompt-1795356946105.json true visible [ 0, 1.1573333333333333, 2.3093333333333335 ] [
+      0,     0,     0,
+      0,     0,     0,
+  1.056, 1.056, 1.056,
+  1.056
+] {
+  underrunDuration: 0,
+  underrunEvents: 0,
+  totalDuration: 1.056,
+  averageLatency: 0,
+  minimumLatency: 0,
+  maximumLatency: 0
+} true true {
+  stable: true,
+  separate: true,
+  tag: '[object AudioPlaybackStats]',
+  instance: true,
+  keys: [
+    'constructor',
+    'underrunDuration',
+    'underrunEvents',
+    'totalDuration',
+    'averageLatency',
+    'minimumLatency',
+    'maximumLatency',
+    'resetLatency',
+    'toJSON'
+  ],
+  badGetter: 'TypeError',
+  badMethod: 'TypeError',
+  badReset: 'TypeError',
+  candidateFactory: true,
+  visibility: 'visible',
+  growth: [
+    {
+      ms: 1957.4000000357628,
+      time: 0.0026666666666666666,
+      json: [Object]
+    },
+    { ms: 3110.300000011921, time: 1.1573333333333333, json: [Object] },
+    { ms: 4262.5, time: 2.3093333333333335, json: [Object] }
+  ]
+}
+native-granted-1795356941322.json false visible [ 0, 0.9997, 2.0022 ] [
+  0.0027, 0.0027,
+  0.0027, 0.0027,
+  0.0027, 0.0027,
+  0.7545, 0.7545,
+  0.7545, 0.7545
+] {
+  underrunDuration: 0,
+  underrunEvents: 0,
+  totalDuration: 0.7545,
+  averageLatency: 0.0176,
+  minimumLatency: 0,
+  maximumLatency: 0.019100000000000002
+} true true {
+  stable: true,
+  separate: true,
+  tag: '[object AudioPlaybackStats]',
+  instance: true,
+  keys: [
+    'underrunDuration',
+    'underrunEvents',
+    'totalDuration',
+    'averageLatency',
+    'minimumLatency',
+    'maximumLatency',
+    'resetLatency',
+    'toJSON',
+    'constructor'
+  ],
+  badGetter: 'TypeError',
+  badMethod: 'TypeError',
+  badReset: 'TypeError',
+  candidateFactory: false,
+  visibility: 'visible',
+  growth: [
+    { ms: 1938.8999999761581, time: 0, json: [Object] },
+    { ms: 3091.199999988079, time: 1.152, json: [Object] },
+    { ms: 4243.399999976158, time: 2.304, json: [Object] }
+  ]
+}
+native-prompt-1795356936997.json false visible [ 0, 0.9997999999999999, 2.0022 ] [
+       0, 0.0026,
+  0.0026, 0.0026,
+  0.0026, 0.0026,
+  0.7278, 0.7278,
+  0.7278, 0.7278
+] {
+  underrunDuration: 0,
+  underrunEvents: 0,
+  totalDuration: 0.7278,
+  averageLatency: 0.0176,
+  minimumLatency: 0,
+  maximumLatency: 0.0192
+} true true {
+  stable: true,
+  separate: true,
+  tag: '[object AudioPlaybackStats]',
+  instance: true,
+  keys: [
+    'underrunDuration',
+    'underrunEvents',
+    'totalDuration',
+    'averageLatency',
+    'minimumLatency',
+    'maximumLatency',
+    'resetLatency',
+    'toJSON',
+    'constructor'
+  ],
+  badGetter: 'TypeError',
+  badMethod: 'TypeError',
+  badReset: 'TypeError',
+  candidateFactory: false,
+  visibility: 'visible',
+  growth: [
+    { ms: 2041.2000000476837, time: 0, json: [Object] },
+    { ms: 3193.5, time: 1.152, json: [Object] },
+    { ms: 4345.200000047684, time: 2.304, json: [Object] }
+  ]
+}

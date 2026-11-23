@@ -1,0 +1,914 @@
+[
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "strikethrough",
+      "shape": "full",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "strikethrough",
+      "shape": "partial",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "strikethrough",
+      "shape": "two",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "strikethrough",
+      "shape": "styled",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "strikethrough",
+      "shape": "br-text",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "underline",
+      "shape": "full",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "underline",
+      "shape": "partial",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "underline",
+      "shape": "two",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "underline",
+      "shape": "styled",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "underline",
+      "shape": "br-text",
+      "reverse": false
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "strikethrough",
+      "shape": "full",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "strikethrough",
+      "shape": "partial",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "strikethrough",
+      "shape": "two",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "strikethrough",
+      "shape": "styled",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "strikethrough",
+      "shape": "br-text",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "line-through"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "underline",
+      "shape": "full",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "underline",
+      "shape": "partial",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "underline",
+      "shape": "two",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ],
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "underline",
+      "shape": "styled",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "css": true,
+      "cmd": "underline",
+      "shape": "br-text",
+      "reverse": true
+    },
+    "stage": "onceUndo",
+    "field": "breaks",
+    "values": {
+      "parent": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ],
+      "candidate": [
+        [
+          "400",
+          "normal",
+          "",
+          [
+            "underline"
+          ],
+          null
+        ]
+      ],
+      "signed": [
+        [
+          "400",
+          "normal",
+          "",
+          [],
+          null
+        ]
+      ]
+    }
+  }
+]

@@ -1,0 +1,466 @@
+[
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "000000fff"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 15, 255)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "0"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 0, 0)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "1"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 0, 1)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "01"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 0, 1)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "12"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 0, 18)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "00123"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 1, 35)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "0000001"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 0, 1)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "range",
+      "value": "+123"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 1, 35)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "000000fff"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 15, 255)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "0"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 0, 0)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "1"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 0, 1)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "01"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 0, 1)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "12"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 0, 18)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "00123"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 1, 35)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "0000001"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 0, 1)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "range",
+      "value": "+123"
+    },
+    "recovered": true,
+    "signed": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ],
+    "first": [
+      [
+        "input",
+        "formatFontColor",
+        "rgb(0, 1, 35)"
+      ]
+    ],
+    "final": [
+      [
+        "input",
+        "",
+        null
+      ]
+    ]
+  }
+]

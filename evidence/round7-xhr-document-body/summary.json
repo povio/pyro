@@ -1,0 +1,43 @@
+{
+  "urls": 19,
+  "counts": {
+    "full-base": 13,
+    "full-candidate": 17,
+    "full-chrome158": 16,
+    "named-base": 70,
+    "named-candidate": 90,
+    "named-chrome158": 87,
+    "gains": 20,
+    "losses": 0,
+    "new": 0,
+    "missing": 0,
+    "lpOnly": 12,
+    "chromeOnly": 9
+  },
+  "perEngine": {
+    "base": {
+      "pageStatus": {
+        "complete": 19
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "rawSHA256": "9e36105dc753b4603f47359b545cdddf0887c57c8fcd0a945f2bcdc0fd968898"
+    },
+    "candidate": {
+      "pageStatus": {
+        "complete": 19
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "rawSHA256": "c6c6d1c0299b1311b790dbd005874320d15959da420f47a5d3193f5cf2c91c32"
+    },
+    "chrome158": {
+      "pageStatus": {
+        "complete": 19
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "rawSHA256": "69dbd46dfdec1ffe9e34125b274a3f3995dc381c7dc17d81aeca475da7cce406"
+    }
+  }
+}

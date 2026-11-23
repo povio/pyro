@@ -1,0 +1,28 @@
+{
+  "target": [
+    "shadow-dom/reference-target/tentative/aria-labelledby.html",
+    "shadow-dom/reference-target/tentative/commandfor.html",
+    "shadow-dom/reference-target/tentative/dom-mutation.html",
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "shadow-dom/reference-target/tentative/form.html",
+    "shadow-dom/reference-target/tentative/gethtml-serialization.html",
+    "shadow-dom/reference-target/tentative/interestfor.tentative.html",
+    "shadow-dom/reference-target/tentative/label-descendant.html",
+    "shadow-dom/reference-target/tentative/label-for.html",
+    "shadow-dom/reference-target/tentative/label-lifetime.html",
+    "shadow-dom/reference-target/tentative/popovertarget.html",
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "shadow-dom/reference-target/tentative/reference-target-basics.html",
+    "shadow-dom/reference-target/tentative/shadowrootreferencetarget-idl-reflection.html"
+  ],
+  "guards": [
+    "html/semantics/forms/the-form-element/form-attribute-form-owner.html",
+    "html/semantics/forms/the-form-element/form-elements-form-owner.html",
+    "html/semantics/forms/the-input-element/radio-form-owner.html",
+    "html/semantics/forms/the-label-element/labelable-elements.html",
+    "html/semantics/forms/the-label-element/labels-live-attribute-changes.html",
+    "html/semantics/forms/the-label-element/labels-live-label-removal.html"
+  ]
+}

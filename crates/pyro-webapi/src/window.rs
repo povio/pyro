@@ -32,20 +32,36 @@ impl pyro_js::NamedProperties for WindowNamedProperties {
     fn resolve<'s>(&self, s: &Scope<'s>, name: &str) -> JsResult<Option<Value<'s>>> {
         let page = &self.0;
         let doc = page.document();
-        // Iframes by `name` stand for their child window, not for themselves.
-        let (frames, found) = {
+        // Navigable containers named by `name` (their child navigable's target name) stand for
+        // their child window, which comes first: iframe, frame, and an object or embed showing a
+        // document. An object or embed without one is a named element itself; an iframe or frame
+        // without one names nothing.
+        let named = page.dom.borrow().window_named_elements(doc, name).js()?;
+        let kinds: Vec<Option<bool>> = {
             let dom = page.dom.borrow();
-            let (frames, found): (Vec<_>, Vec<_>) =
-                dom.window_named_elements(doc, name).js()?.into_iter().partition(|&el| {
-                    dom.element(el).is_ok_and(|e| &*e.name.local == "iframe" && e.is_html() && e.id() != Some(name))
-                });
-            (frames, found)
+            named
+                .iter()
+                .map(|&el| {
+                    dom.element(el).ok().and_then(|e| {
+                        let local = &*e.name.local;
+                        let container = e.is_html()
+                            && matches!(local, "iframe" | "frame" | "object" | "embed")
+                            && e.attr("name") == Some(name);
+                        // Some(keeps itself without a window)
+                        container.then(|| matches!(local, "object" | "embed"))
+                    })
+                })
+                .collect()
         };
-        for frame in frames {
-            if let Some(window) = page.frame_window(s, frame)? {
-                return Ok(Some(window));
+        for (&el, kind) in named.iter().zip(&kinds) {
+            if kind.is_some() {
+                if let Some(window) = page.frame_window(s, el)? {
+                    return Ok(Some(window));
+                }
             }
         }
+        let found: Vec<_> =
+            named.iter().zip(&kinds).filter(|(_, kind)| kind.unwrap_or(true)).map(|(&el, _)| el).collect();
         match found[..] {
             [] => Ok(None),
             [el] => Ok(Some(crate::node::wrap_node(s, page, el)?.value())),
@@ -57,40 +73,21 @@ impl pyro_js::NamedProperties for WindowNamedProperties {
     }
 }
 
-fn scroll_xy(a: &pyro_js::Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
-    if let Some(o) = a.get(0).as_object() {
-        let l = o.get_atom("left")?;
-        let t = o.get_atom("top")?;
-        Ok((
-            (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
-            (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,
-        ))
-    } else if a.len() >= 2 {
-        Ok((Some(to_scroll_offset(a.get(0))?), Some(to_scroll_offset(a.get(1))?)))
-    } else {
-        Ok((None, None))
-    }
+/// `Window.scroll()`, `scrollTo()` (`operation`) and `scrollBy()` (`by`): returns a scroll
+/// promise (Chrome's `Promise<ScrollResult>`), settled when a smooth scroll ends.
+fn window_scroll<'s>(
+    s: &pyro_js::Scope<'s>,
+    page: &Rc<PageDom>,
+    a: &pyro_js::Args<'_>,
+    operation: &str,
+    by: bool,
+) -> JsResult<pyro_js::Value<'s>> {
+    let options = crate::layout_api::scroll_options(a, operation, "Window", to_scroll_offset)?;
+    crate::layout_api::window_scroll(s, page, options, by)
 }
 
-fn window_scroll(page: &Rc<PageDom>, a: &pyro_js::Args<'_>, by: bool) -> JsResult<()> {
-    let (l, t) = scroll_xy(a)?;
-    let moved = {
-        let dom = page.dom.borrow();
-        let mut layout = page.layout.borrow_mut();
-        if by {
-            layout.window_scroll_by(&dom, l, t)
-        } else {
-            layout.window_scroll_to(&dom, l, t)
-        }
-    };
-    if moved {
-        crate::layout_api::fire_scroll(page, None);
-    }
-    Ok(())
-}
-
-/// Setter of a [Replaceable] Window attribute: assignment shadows it with an
-/// own data property.
+/// Setter of a [Replaceable] attribute of a window or worker global:
+/// assignment shadows it with an own data property.
 pub fn replace_window_attribute<'s>(
     s: &pyro_js::Scope<'s>,
     page: &crate::page::PageDom,
@@ -106,6 +103,29 @@ pub fn replace_window_attribute<'s>(
     for k in ["writable", "enumerable", "configurable"] {
         desc.set(k, s.boolean(true))?;
     }
+    define.call(None, &[s.global().value(), s.string(name), desc.value()])?;
+    Ok(())
+}
+
+/// A lazily made interface object settling on the window: an own data
+/// property, writable and configurable but not enumerable, as Web IDL
+/// interface objects are (the getter of a `global_value_accessor` and its
+/// assignment both end here).
+pub fn replace_window_interface<'s>(
+    s: &pyro_js::Scope<'s>,
+    page: &crate::page::PageDom,
+    name: &str,
+    value: pyro_js::Value<'s>,
+) -> pyro_js::JsResult<()> {
+    let define = page.define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
+    let define = define
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| pyro_js::JsError::Type(format!("window.{name} cannot be replaced in this realm").into()))?;
+    let desc = s.object();
+    desc.set_atom("value", value)?;
+    desc.set_atom("writable", s.boolean(true))?;
+    desc.set_atom("enumerable", s.boolean(false))?;
+    desc.set_atom("configurable", s.boolean(true))?;
     define.call(None, &[s.global().value(), s.string(name), desc.value()])?;
     Ok(())
 }
@@ -146,6 +166,18 @@ where
     W::Data: WindowHost,
 {
     crate::handlers::define_window(def);
+    macro_rules! bar_prop {
+        ($property:literal, $slot:literal) => {
+            def.accessor($property, |s, w| bar_prop(s, w.page(), $slot),
+                |s, w, value| replace_window_attribute(s, w.page(), $property, value));
+        };
+    }
+    bar_prop!("locationbar", 5);
+    bar_prop!("menubar", 6);
+    bar_prop!("personalbar", 7);
+    bar_prop!("scrollbars", 8);
+    bar_prop!("statusbar", 9);
+    bar_prop!("toolbar", 10);
     // `install` makes `document` the global's own constant attribute where
     // the JavaScriptCore can (`has_window_constants`). Otherwise (the system
     // framework) this getter serves it: the lean dispatch, which finds the
@@ -162,21 +194,29 @@ where
         |s, _w| crate::target::current_event(s),
         |s, w, value| replace_window_attribute(s, w.page(), "event", value),
     );
-    def.getter("indexedDB", |s, w| crate::indexeddb::window_factory(s, w.page()));
+    def.global_getter("indexedDB", |s, w| crate::indexeddb::window_factory(s, w.page()));
+    def.global_getter("cookieStore", |s, w| crate::cookie_store::member(s, w.page(), "cookieStore"));
     def.getter("caches", |s, w| crate::cache_storage::caches(s, w.page()));
     def.getter("localStorage", |s, w| crate::storage::window_storage(s, w.page(), false));
     def.getter("sessionStorage", |s, w| crate::storage::window_storage(s, w.page(), true));
     def.getter("customElements", |s, w| crate::custom::registry(s, w.page()));
     def.getter("navigator", |s, w| navigator(s, w.page()));
     def.getter("crypto", |s, _w| crate::crypto::crypto_value(s));
-    def.getter("clientInformation", |s, w| navigator(s, w.page()));
+    // [Replaceable]: assignment shadows it with an own data property.
+    def.accessor(
+        "clientInformation",
+        |s, w| navigator(s, w.page()),
+        |s, w, value| replace_window_attribute(s, w.page(), "clientInformation", value),
+    );
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
     crate::streams::define_globals(def);
+    crate::scheduler::define_global(def);
     crate::observable::define_globals(def);
-    crate::lazy_module::lazy_globals!(def, crate::view_transition::MODULE, "ViewTransition");
+    crate::lazy_module::lazy_globals!(def, crate::view_transition::MODULE, "ViewTransition", "ViewTransitionTypeSet");
     crate::crypto::define_globals(def);
     crate::storage_manager::define_globals(def);
+    crate::storage_manager::define_file_system_globals(def);
     crate::service_worker::define_globals(def);
     crate::cache_storage::define_globals(def);
     crate::event_source::define_globals(def);
@@ -187,8 +227,11 @@ where
     crate::web_locks::define_globals(def);
     crate::media_devices::define_globals(def);
     crate::paint_worklet::define_globals(def);
+    crate::audio_worklet::define_globals(def);
+    crate::lazy_module::lazy_globals!(def, crate::pseudo_element::MODULE, "CSSPseudoElement");
     crate::typed_om::define_globals(def);
     crate::trusted_types::define_globals(def);
+    crate::trusted_types::define_parser_options_global(def);
     // `Highlight` and `HighlightRegistry` (CSS Custom Highlight API), made on first use.
     def.global_value_accessor(
         "Highlight",
@@ -213,8 +256,14 @@ where
         |s, w, value| css_namespace_property(s, w.page(), value),
     );
     crate::animations::define_globals(def);
+    crate::reporting::define(def);
+    crate::audio_decoder::define(def);
+    crate::audio_encoder::define(def);
+    crate::video_encoder::define(def);
+    crate::image_decoder::define(def);
     crate::canvas::define_globals(def);
     crate::media::define_globals(def);
+    crate::media_source::define_globals(def);
     crate::webaudio::define_globals(def);
     def.getter("screen", |s, w| {
         let key = pyro_js::IdentityKey(w.page().id() | (1 << 57), 1);
@@ -226,9 +275,10 @@ where
             s.wrap::<VisualViewport>(ViewportTargetData::new(w.page(), ViewportTarget::VisualViewport), Some(key))
         })
     });
-    def.method("getComputedStyle", 1, |s, w, a| {
-        let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
-        Ok(crate::layout_api::get_computed_style(s, w.page(), el, a.get(1))?.value())
+    def.method("getComputedStyle", 1, |s, _, a| {
+        let element = s.unwrap::<crate::node::Element>(a.get(0))
+            .ok_or_else(|| JsError::Type("Window.getComputedStyle requires an Element".into()))?;
+        Ok(crate::layout_api::get_computed_style(s, element.page(), element.id, a.get(1))?.value())
     });
     def.method("matchMedia", 1, |s, w, a| {
         let q = arg_string(&a, 0, "Window.matchMedia")?;
@@ -254,32 +304,70 @@ where
     def.getter("scrollY", |s, w| Ok(s.number(w.page().layout.borrow().scroll_y() as f64)));
     def.getter("pageXOffset", |s, w| Ok(s.number(w.page().layout.borrow().scroll_x() as f64)));
     def.getter("pageYOffset", |s, w| Ok(s.number(w.page().layout.borrow().scroll_y() as f64)));
-    def.getter("screenX", |s, _w| Ok(s.number(0.0)));
-    def.getter("screenY", |s, _w| Ok(s.number(0.0)));
-    def.getter("screenLeft", |s, _w| Ok(s.number(0.0)));
-    def.getter("screenTop", |s, _w| Ok(s.number(0.0)));
-    def.method("scroll", 0, |s, w, a| window_scroll(w.page(), &a, false).map(|_| s.undefined()));
-    def.method("scrollTo", 0, |s, w, a| window_scroll(w.page(), &a, false).map(|_| s.undefined()));
-    def.method("scrollBy", 0, |s, w, a| window_scroll(w.page(), &a, true).map(|_| s.undefined()));
+    def.getter("screenX", |s, w| Ok(s.number(f64::from(w.page().screen_position().0))));
+    def.getter("screenY", |s, w| Ok(s.number(f64::from(w.page().screen_position().1))));
+    def.getter("screenLeft", |s, w| Ok(s.number(f64::from(w.page().screen_position().0))));
+    def.getter("screenTop", |s, w| Ok(s.number(f64::from(w.page().screen_position().1))));
+    // The scroll methods return promises (Chrome's `Promise<ScrollResult>`): a bad argument
+    // rejects.
+    def.promise_method("scroll", 0, |s, w, a| window_scroll(s, w.page(), &a, "scroll", false));
+    def.promise_method("scrollTo", 0, |s, w, a| window_scroll(s, w.page(), &a, "scrollTo", false));
+    def.promise_method("scrollBy", 0, |s, w, a| window_scroll(s, w.page(), &a, "scrollBy", true));
     def.method("atob", 1, |s, _w, a| Ok(s.string(&crate::encoding::atob(&arg_string(&a, 0, "Window.atob")?)?)));
     def.method("btoa", 1, |s, _w, a| Ok(s.string(&crate::encoding::btoa(&arg_string(&a, 0, "Window.btoa")?)?)));
     def.getter("frameElement", |s, _w| Ok(s.null()));
     def.getter("opener", |s, _w| Ok(s.null()));
     def.getter("closed", |s, _w| Ok(s.boolean(false)));
+    // `status`: the empty string until a script sets it (no status bar shows it); a set value
+    // reads back, as an own data property of the window.
+    def.accessor(
+        "status",
+        |s, _w| Ok(s.string("")),
+        |s, w, v| {
+            let v = s.string(&crate::util::dom_string(v)?);
+            // The own property goes on the calling realm's global: only a window's own script
+            // can store one (another window's assignment is dropped).
+            if !crate::target::page_of(s).is_ok_and(|p| Rc::ptr_eq(&p, w.page())) {
+                return Ok(());
+            }
+            replace_window_attribute(s, w.page(), "status", v)
+        },
+    );
     def.getter("length", |s, _w| Ok(s.number(0.0)));
-    def.getter("origin", |s, w| {
-        let url =
-            w.page().dom.borrow().document_data(w.page().document()).map(|d| d.url.to_string()).unwrap_or_default();
-        Ok(s.string(
-            &pyro_net::Url::parse(&url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into()),
-        ))
-    });
+    // [Replaceable] (WindowOrWorkerGlobalScope): assignment shadows it with
+    // an own data property; the document's origin is left as it is.
+    def.accessor(
+        "origin",
+        |s, w| {
+            let url = w.page().dom.borrow().document_data(w.page().document()).map(|d| d.url.to_string()).unwrap_or_default();
+            Ok(s.string(
+                &pyro_net::Url::parse(&url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into()),
+            ))
+        },
+        |s, w, value| replace_window_attribute(s, w.page(), "origin", value),
+    );
     def.method("focus", 0, |s, w, _a| {
         crate::input::focus_window(w.page());
         Ok(s.undefined())
     });
     def.method("blur", 0, |s, _w, _a| Ok(s.undefined()));
     def.method("print", 0, |s, _w, _a| Ok(s.undefined()));
+    // pyro: css-sizing-4 responsive iframes: a responsively embedded document (one that opted in with
+    // `<meta name="responsive-embedded-sizing">`) in a child frame asks its iframe to take its
+    // content's size again. That size is read whenever the embedder reads its layout or renders
+    // (`PageDom::sync_responsive_frames`), so nothing is queued; anything else throws (WPT css-sizing
+    // `responsive-iframe/responsive-iframe-request-resize-error`).
+    def.method("requestResize", 0, |s, w, _a| {
+        let page = w.page();
+        let embedded = page.is_nested_frame() && page.dom.borrow().is_responsively_embedded(page.document());
+        if !embedded {
+            return Err(JsError::dom(
+                "NotAllowedError",
+                "Failed to execute 'requestResize' on 'Window': The document is not responsively embedded.",
+            ));
+        }
+        Ok(s.undefined())
+    });
     // The embedder may block until the dialog is answered (CDP with a
     // session that has Page enabled); otherwise each returns what a
     // dismissed one gives (Chrome's results when Playwright auto-dismisses)
@@ -300,7 +388,21 @@ where
             _ => Ok(s.null()),
         }
     });
-    def.method("stop", 0, |s, _w, _a| Ok(s.undefined()));
+    // HTML `window.stop()`: "stop loading" the navigable. The embedder cancels its ongoing
+    // navigation and aborts the document (no more parsing, no DOMContentLoaded, load or
+    // pageshow); an aborted document's readiness is "complete" at once (Chromium, WPT
+    // abort-document-load, window-stop-in-image-load-handler).
+    def.method("stop", 0, |s, w, _a| {
+        let page = w.page().clone();
+        if let Some(hooks) = page.hooks() {
+            hooks.stop_loading();
+            let doc = page.document();
+            if page.ready_state(doc) != "complete" {
+                crate::lifecycle::set_ready_state(&page, doc, "complete");
+            }
+        }
+        Ok(s.undefined())
+    });
     // Closes a script-closable top-level browsing context (a popup); the
     // embedder decides and closes the page later. No-op elsewhere.
     def.method("close", 0, |s, w, _a| {
@@ -313,12 +415,11 @@ where
 /// `postMessage` of a window outside a frame tree, which only reaches
 /// itself (the embedder's Window class replaces it with a frame-aware one).
 pub fn post_message_to_self<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> JsResult<()> {
-    let origin = crate::storage::document_origin(page).unwrap_or_else(|| "null".into());
     let key = page.origin_key();
     let (message, target_origin, options) = crate::window_message::post_message_args(s, a, &key)?;
     let realm = page.main_world_realm().unwrap_or_else(|| s.realm());
     let deliver = target_origin.allows(&key);
-    crate::window_message::send_window_message(s, message, options, page, &realm, origin, None, deliver)
+    crate::window_message::send_window_message(s, message, options, page, &realm, Some(key), None, deliver)
 }
 
 /// A Window [SameObject] attribute value for this realm: looked up by
@@ -412,12 +513,23 @@ impl JsClass for Navigator {
         def.getter("permissions", |s, p| crate::navigator_extras::member(s, p, "permissions"));
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
         def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
+        def.getter("storageBuckets", |s, p| crate::storage_buckets::manager(s, p));
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
         def.getter("locks", |s, p| crate::web_locks::locks(s, p));
         def.getter("mediaDevices", |s, p| crate::media_devices::media_devices(s, p));
+        def.getter("userActivation", |s, p| crate::user_activation::user_activation(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));
+        // HTML: without a PDF viewer the plugin and MIME type lists are empty ([SameObject]).
+        def.getter("plugins", |s, p| {
+            let key = pyro_js::IdentityKey(p.id() | (1 << 57), 12);
+            same_object(s, p, key, || s.wrap::<PluginArray>((), Some(key)))
+        });
+        def.getter("mimeTypes", |s, p| {
+            let key = pyro_js::IdentityKey(p.id() | (1 << 57), 13);
+            same_object(s, p, key, || s.wrap::<MimeTypeArray>((), Some(key)))
+        });
         def.method("javaEnabled", 0, |s, _p, _a| Ok(s.boolean(false)));
         def.method("sendBeacon", 1, |s, p, a| {
             a.require(1, "Navigator.sendBeacon")?;
@@ -428,8 +540,72 @@ impl JsClass for Navigator {
             };
             Ok(s.boolean(crate::fetch::send_beacon(s, p, url, a.get(1))?))
         });
+        for name in ["registerProtocolHandler", "unregisterProtocolHandler"] {
+            def.method(name, 2, protocol_handler);
+        }
         def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
     }
+}
+
+/// HTML's normalize protocol handler parameters. This headless browser declines
+/// registration requests, so a successful registration or removal needs no UI.
+fn protocol_handler<'s>(s: &Scope<'s>, page: &Rc<PageDom>, args: pyro_js::Args<'s>) -> JsResult<Value<'s>> {
+    args.require(2, "Navigator protocol handler")?;
+    let scheme = dom_string(args.get(0))?.to_ascii_lowercase();
+    let url = dom_string(args.get(1))?;
+    let safelisted = matches!(
+        scheme.as_str(),
+        "bitcoin"
+            | "ftp"
+            | "ftps"
+            | "geo"
+            | "im"
+            | "irc"
+            | "ircs"
+            | "magnet"
+            | "mailto"
+            | "matrix"
+            | "mms"
+            | "news"
+            | "nntp"
+            | "openpgp4fpr"
+            | "sftp"
+            | "sip"
+            | "sms"
+            | "smsto"
+            | "ssh"
+            | "tel"
+            | "urn"
+            | "webcal"
+            | "wtai"
+            | "xmpp"
+            // Chromium's decentralized schemes (whatwg/html#5482, WPT protocol.tentative).
+            | "cabal"
+            | "dat"
+            | "did"
+            | "dweb"
+            | "ethereum"
+            | "hyper"
+            | "ipfs"
+            | "ipns"
+            | "ssb"
+    );
+    let custom = scheme
+        .strip_prefix("web+")
+        .is_some_and(|name| !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase()));
+    if !safelisted && !custom {
+        return Err(JsError::dom("SecurityError", "Unsupported protocol handler scheme."));
+    }
+    if !url.contains("%s") {
+        return Err(JsError::dom("SyntaxError", "A protocol handler URL must contain %s."));
+    }
+    let resolved = crate::html::resolve_url(&page.dom.borrow(), page.document(), &url);
+    let handler =
+        pyro_net::Url::parse(&resolved).map_err(|_| JsError::dom("SyntaxError", "Invalid protocol handler URL."))?;
+    if !matches!(handler.scheme(), "http" | "https") || handler.origin().ascii_serialization() != page.origin_key() {
+        return Err(JsError::dom("SecurityError", "A protocol handler must use a same-origin HTTP(S) URL."));
+    }
+    Ok(s.undefined())
 }
 
 fn dialog(
@@ -678,24 +854,36 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
             return Ok(s.boolean(pyro_dom::stylo::supports_declaration(&property, &value)));
         }
         let text = dom_string(a.get(0))?;
-        let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
-        if let Some(selector) = selector {
-            if pyro_dom::cssom::normalize_selector(selector, &Vec::new()).is_some() {
-                return Ok(s.boolean(true));
-            }
-        }
         Ok(s.boolean(pyro_dom::stylo::supports_condition(&text)))
     })?;
     o.set_atom("supports", supports.value())?;
     let escape = s.function("escape", |s, _this, a| {
-        let v = arg_string(&a, 0, "CSS.escape")?;
-        let mut out = String::new();
-        cssparser::serialize_identifier(&v, &mut out).map_err(|_| JsError::Type("CSS.escape failed".into()))?;
-        Ok(s.string(&out))
+        a.require(1, "CSS.escape")?;
+        let input = a.get(0).to_js_string()?;
+        let units = input.utf16();
+        let mut escaped = Vec::with_capacity(units.len());
+        for (index, &unit) in units.iter().enumerate() {
+            match unit {
+                0 => escaped.push(0xfffd),
+                1..=31 | 127 => escaped.extend(format!("\\{unit:x} ").encode_utf16()),
+                48..=57 if index == 0 || (index == 1 && units[0] == 45) => {
+                    escaped.extend(format!("\\{unit:x} ").encode_utf16());
+                },
+                45 if units.len() == 1 => escaped.extend([92, unit]),
+                45 | 48..=57 | 65..=90 | 95 | 97..=122 | 128.. => escaped.push(unit),
+                _ => escaped.extend([92, unit]),
+            }
+        }
+        Ok(s.string_utf16(&escaped))
     })?;
     o.set_atom("escape", escape.value())?;
     // escape(CSSOMString ident): length 1.
     let define = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("defineProperty")?;
+    let tag = s.global().get_atom("Symbol")?.as_object().expect("Symbol").get_atom("toStringTag")?;
+    let tag_descriptor = s.object();
+    tag_descriptor.set_atom("value", s.string("CSS"))?;
+    tag_descriptor.set_atom("configurable", s.boolean(true))?;
+    define.as_object().expect("Object.defineProperty").call(None, &[o.value(), tag, tag_descriptor.value()])?;
     let descriptor = s.object();
     descriptor.set_atom("value", s.number(1.0))?;
     define.as_object().expect("Object.defineProperty").call(None, &[escape.value(), s.string("length"), descriptor.value()])?;
@@ -750,8 +938,86 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     Ok(o.value())
 }
 
+/// `window.external` (HTML obsolete `External`): its search provider methods do nothing.
+pub struct External;
+impl JsClass for External {
+    const NAME: &'static str = "External";
+    type Data = ();
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.method("AddSearchProvider", 0, |s, _d, _a| Ok(s.undefined()));
+        def.method("IsSearchProviderInstalled", 0, |s, _d, _a| Ok(s.undefined()));
+    }
+}
+
+/// `window.external`, [SameObject].
+pub fn external<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
+    let key = pyro_js::IdentityKey(page.id() | (1 << 57), 14);
+    same_object(s, page, key, || s.wrap::<External>((), Some(key)))
+}
+
+/// `navigator.plugins`: always empty (no PDF viewer).
+pub struct PluginArray;
+impl JsClass for PluginArray {
+    const NAME: &'static str = "PluginArray";
+    type Data = ();
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("length", |s, _d| Ok(s.number(0.0)));
+        def.method("item", 1, |s, _d, a| {
+            a.require(1, "PluginArray.item")?;
+            Ok(s.null())
+        });
+        def.method("namedItem", 1, |s, _d, a| {
+            a.require(1, "PluginArray.namedItem")?;
+            Ok(s.null())
+        });
+        def.method("refresh", 0, |s, _d, _a| Ok(s.undefined()));
+    }
+}
+
+/// `navigator.mimeTypes`: always empty (no PDF viewer).
+pub struct MimeTypeArray;
+impl JsClass for MimeTypeArray {
+    const NAME: &'static str = "MimeTypeArray";
+    type Data = ();
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("length", |s, _d| Ok(s.number(0.0)));
+        def.method("item", 1, |s, _d, a| {
+            a.require(1, "MimeTypeArray.item")?;
+            Ok(s.null())
+        });
+        def.method("namedItem", 1, |s, _d, a| {
+            a.require(1, "MimeTypeArray.namedItem")?;
+            Ok(s.null())
+        });
+    }
+}
+
+struct BarProp;
+impl JsClass for BarProp {
+    const NAME: &'static str = "BarProp";
+    type Data = std::rc::Weak<PageDom>;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("visible", |s, page| Ok(s.boolean(page.upgrade().is_some_and(|p| p.bars_visible()))));
+    }
+}
+
+fn bar_prop<'s>(s: &Scope<'s>, page: &Rc<PageDom>, slot: u64) -> JsResult<Value<'s>> {
+    let key = pyro_js::IdentityKey(page.id() | (1 << 57), slot);
+    same_object(s, page, key, || s.wrap::<BarProp>(Rc::downgrade(page), Some(key)))
+}
+
 pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<BarProp>();
     engine.register::<Navigator>();
+    engine.register::<PluginArray>();
+    engine.register::<External>();
+    engine.register::<MimeTypeArray>();
+    engine.register::<crate::user_activation::UserActivation>();
     engine.register::<Screen>();
     engine.register::<VisualViewport>();
     engine.register::<ScreenOrientation>();
@@ -763,18 +1029,16 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 /// otherwise it returns this realm's [`crate::popup::PopupWindow`] for the
 /// popup (see that module for what it reaches). A named popup this document
 /// opened earlier and still open is reused: the same object comes back and
-/// the popup navigates to `url` unless it is empty (HTML "navigable target
-/// name" lookup, limited to this document's own popups). The popup's session
-/// storage is copied from this document's now. `_self`/`_top`/`_parent`
-/// navigate this page.
-fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> JsResult<Value<'s>> {
+/// the popup navigates to `url` unless it is empty. An existing frame of the
+/// page that the name chooses (`_parent`, `_top`, a frame's target name; the
+/// embedder's `target_window` hook) comes back the same way. The popup's
+/// session storage is copied from this document's now. `_self` navigates this
+/// document.
+pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> JsResult<Value<'s>> {
     let url = crate::util::opt_dom_string(a.get(0))?.unwrap_or_default();
     let target = crate::util::opt_dom_string(a.get(1))?.filter(|t| !t.is_empty()).unwrap_or_else(|| "_blank".into());
-    let features = crate::util::opt_dom_string(a.get(2))?.unwrap_or_default().to_ascii_lowercase();
-    let no_opener = features
-        .split(|c: char| c == ',' || c.is_ascii_whitespace())
-        .filter_map(|f| f.split('=').next())
-        .any(|f| f == "noopener" || f == "noreferrer");
+    let features = crate::window_features::WindowFeatures::parse(&crate::util::opt_dom_string(a.get(2))?.unwrap_or_default());
+    let no_opener = features.noopener;
     let url_given = !url.is_empty();
     let url = if url.is_empty() {
         "about:blank".to_owned()
@@ -792,17 +1056,51 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
     let lower = target.to_ascii_lowercase();
     let same_context = matches!(lower.as_str(), "_self" | "_top" | "_parent");
     let named = !same_context && lower != "_blank";
+    // An existing frame of this page the name chooses (`_parent`, `_top`, a frame's target
+    // name): it navigates when there is a URL, and window.open returns its WindowProxy.
+    if lower == "_parent" || lower == "_top" || (named && !no_opener) {
+        if let Some(window) = page.hooks().and_then(|h| h.target_window(s, &target)) {
+            if url_given {
+                page.navigate(crate::page::NavigationRequest {
+                    url,
+                    target: Some(target.clone()),
+                    method: "GET".into(),
+                    body: None,
+                    content_type: None,
+                    opener: false,
+                    popup: None,
+                    window_features: features,
+                    referrer_policy: features.noreferrer.then_some(pyro_net::ReferrerPolicy::NoReferrer),
+                    source: None,
+                    form_entries: None,
+                    replace: false,
+                });
+            }
+            return Ok(window);
+        }
+    }
     if named && !no_opener {
         let existing =
             page.popups.borrow().iter().find(|(n, p)| *n == target && !p.is_closed()).map(|(_, p)| p.clone());
         if let Some(popup) = existing {
             if url_given {
-                page.popup_command(popup.clone(), crate::popup::PopupCommand::Navigate(url));
+                page.popup_command(popup.clone(), crate::popup::PopupCommand::OpenNamed {
+                    url,
+                    referrer: page.client_referrer().map(Into::into),
+                    policy: page.referrer_policy(),
+                });
             }
             return crate::popup::wrap_popup(s, page, &popup);
         }
     }
-    let (ticket, popup) = if same_context || no_opener {
+    // HTML "the rules for choosing a navigable": a document with the sandboxed auxiliary
+    // navigation browsing context flag (a sandbox without `allow-popups`) gets no new window,
+    // and window.open returns null. An existing frame the name chooses was handled above (with
+    // noopener, by the embedder's navigate lookup, which window.open answers with null); without
+    // the embedder's hook the navigation is still asked for (the embedder looks the name up first
+    // and blocks only a new window), without a popup ticket.
+    let sandboxed = !same_context && page.popups_sandboxed();
+    let (ticket, popup) = if same_context || no_opener || sandboxed {
         (None, None)
     } else {
         let name = if named { target.clone() } else { String::new() };
@@ -819,15 +1117,15 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
         opener,
         popup: ticket,
         // The `noreferrer` feature: no referrer (the others: the document's policy).
-        referrer_policy: features
-            .split(|c: char| c == ',' || c.is_ascii_whitespace())
-            .filter_map(|f| f.split('=').next())
-            .any(|f| f == "noreferrer")
-            .then_some(pyro_net::ReferrerPolicy::NoReferrer),
+        window_features: features,
+        referrer_policy: features.noreferrer.then_some(pyro_net::ReferrerPolicy::NoReferrer),
         source: None,
         form_entries: None,
         replace: false,
     });
+    if sandboxed {
+        return Ok(s.null());
+    }
     match popup {
         Some(popup) => {
             if named {
@@ -840,6 +1138,46 @@ fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>) -> 
         None if same_context => Ok(s.global().value()),
         None => Ok(s.null()),
     }
+}
+
+/// HTML "get an element's noopener" for a hyperlink or form that targets `target` with link
+/// types `rel`: rel=noopener or noreferrer, or `_blank` without rel=opener.
+pub(crate) fn element_noopener(rel: &str, target: Option<&str>) -> bool {
+    let rel = rel.to_ascii_lowercase();
+    let has = |t: &str| rel.split_ascii_whitespace().any(|r| r == t);
+    if has("noopener") || has("noreferrer") {
+        return true;
+    }
+    !has("opener") && target.is_some_and(|t| t.eq_ignore_ascii_case("_blank"))
+}
+
+/// The popup ticket for a hyperlink or form submission whose target may create a new
+/// auxiliary browsing context (HTML "rules for choosing a navigable" with a new top-level
+/// traversable): like `window.open`'s, it gives the popup its opener, its name ("" for
+/// `_blank`) and a copy of this document's session storage. It goes unused when the name turns
+/// out to be an existing frame. None for `_self`/`_top`/`_parent`, no target, or noopener (the
+/// popup then has no opener and no name).
+pub(crate) fn element_popup_ticket(
+    page: &Rc<PageDom>,
+    target: Option<&str>,
+    noopener: bool,
+) -> Option<Rc<crate::popup::PopupTicket>> {
+    let target = target.filter(|t| !t.is_empty())?;
+    let lower = target.to_ascii_lowercase();
+    if noopener || matches!(lower.as_str(), "_self" | "_top" | "_parent") {
+        return None;
+    }
+    let named = lower != "_blank";
+    let mut session = crate::storage::StorageNamespace::default();
+    if let Some(realm) = page.main_world_realm() {
+        let scope = realm.scope();
+        if let Ok(s) = &scope {
+            session = copy_session_storage(s, page);
+        }
+    }
+    let name = if named { target.to_owned() } else { String::new() };
+    let (ticket, _popup) = crate::popup::PopupTicket::new(name, session);
+    Some(ticket)
 }
 
 /// A new session storage namespace holding a copy of this document's
@@ -932,6 +1270,14 @@ fn find_text(page: &Rc<PageDom>, needle: &str, case_sensitive: bool, backwards: 
             true => (lo..=hi).rev().find(|&at| matches(text, at)),
         };
         if let Some(at) = found {
+            let searchable = {
+                let dom = page.dom.borrow();
+                dom.parent_element(*node).ok().flatten().is_some_and(|parent| {
+                    page.layout().style().computed(&dom, parent).is_some_and(|s|
+                        !s.inert && !s.in_display_none && !s.visibility_hidden)
+                })
+            };
+            if !searchable { continue; }
             // As Chromium: selecting the match starts a selection (`selectstart` at its text, which
             // a listener may cancel).
             if !crate::input::fire_simple(page, *node, "selectstart", true, true) {

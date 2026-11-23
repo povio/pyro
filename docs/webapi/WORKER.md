@@ -128,14 +128,35 @@ connected to it goes away.
 - Module workers have no import maps of their own, and `import.meta.resolve` follows
   the engine. Without the engine's module loader (system JavaScriptCore),
   `{type: 'module'}` throws NotSupportedError.
-- Module shared workers (`new SharedWorker(url, {type: 'module'})`) throw
-  NotSupportedError. Uncaught errors inside a shared worker reach its console only,
-  as in browsers, and it has no inspector target.
+- Module shared workers (`new SharedWorker(url, {type: 'module'})`) need the
+  engine's module loader in its two steps (`Scope::has_module_phases`, JSC
+  patch 0037), so that a graph that fails to fetch, parse or link (`error` at
+  every connected `SharedWorker`, no `connect`) is told from a throw of its
+  evaluation (the worker's own exception); without them the constructor throws
+  NotSupportedError. Their `credentials` is the credentials mode of the main
+  script and every module they fetch. A `SharedWorker` whose type or
+  `credentials` differ from the live worker it matches gets `error` and no
+  connection. Module dedicated workers still ignore `credentials`. Uncaught
+  errors inside a shared worker reach its console only, as in browsers, and it
+  has no inspector target.
 - Service workers reuse this machinery (threads, the cross-VM message format and
   cross-thread ports): see [Service workers](SERVICE_WORKER.md).
 - Host objects other than Blob, File, FileList, CryptoKey, ImageBitmap and
   OffscreenCanvas do not cross (DataCloneError), ImageData included.
-- Nested workers. `Worker` is undefined inside a worker.
+- Nested workers from shared workers: `Worker` is undefined inside a
+  `SharedWorkerGlobalScope`. Dedicated workers start nested workers (see
+  `crates/pyro-webapi/src/worker.rs`); they get no inspector target, and at most
+  64 live in the process (past that, a nested worker fails like one whose script
+  did not load). The place is held by the nested worker's thread until it exits,
+  however the worker ended (close, load failure, terminate, its creator's end),
+  even while script still holds its `Worker`. An ending worker waits at most 1 s
+  for its nested workers' threads (once per level of nesting); one still running
+  then, like any worker thread a `join_stopped` call outlasts, stays tracked and is
+  joined by a later `join_stopped`. A nested worker's script request is sent with
+  its creator's script response URL (after redirects) as the referrer, under the
+  creator's policy. The creator's own `location` and base URL are still its
+  request URL. An uncanceled error on the nested `Worker` does not propagate
+  to its creator's global scope.
 - `importScripts` of a page-created `blob:` URL (the store is the owner document's).
 - A worker whose wrapper became unreachable runs until its document goes.
 - Virtual time (`Emulation.setVirtualTimePolicy`) and the page clock do not reach a

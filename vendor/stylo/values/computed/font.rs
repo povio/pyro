@@ -32,11 +32,14 @@ use std::fmt::{self, Write};
 use style_traits::{CssWriter, ParseError, ToCss};
 use thin_vec::ThinVec;
 
+/// A palette with element-dependent percentages resolved for the current style.
+pub type FontPalette = specified::GenericFontPalette<Percentage>;
+
 pub use crate::values::computed::Length as MozScriptMinSize;
 pub use crate::values::specified::Integer as SpecifiedInteger;
 pub use crate::values::specified::Number as SpecifiedNumber;
 pub use crate::values::specified::font::{
-    FontKerning, FontOpticalSizing, FontPalette, FontSmoothing, FontSynthesis, FontSynthesisStyle,
+    FontKerning, FontOpticalSizing, FontSmoothing, FontSynthesis, FontSynthesisStyle,
     FontVariantCaps, FontVariantEmoji, FontVariantPosition, MathShift, MathStyle, MathVariant,
     MozScriptSizeMultiplier,
 };

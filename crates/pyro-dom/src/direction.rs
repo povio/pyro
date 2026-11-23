@@ -36,6 +36,13 @@ impl Dom {
         Ok(self.directionality_idx(idx))
     }
 
+    /// The language of element `id` (HTML "the language"): its nearest inclusive ancestor's
+    /// `xml:lang` or `lang`, else the document's default language; `None` when unknown.
+    pub fn language(&self, id: NodeId) -> DomResult<Option<String>> {
+        let idx = self.check(id)?;
+        Ok(self.language_idx(idx))
+    }
+
     fn dir_attr(&self, idx: u32) -> Option<&str> {
         let value = self.n(idx).element()?.attr_local(&local_name!("dir"))?;
         for k in ["ltr", "rtl", "auto"] {
@@ -232,7 +239,10 @@ impl Dom {
         let doc = self.n(idx).owner_doc;
         match &self.n(doc).kind {
             NodeKind::Document(d) => {
-                self.pragma_language(d.head).or_else(|| d.content_language.as_deref()).map(str::to_owned)
+                self.pragma_language(d.head)
+                    .or(d.pragma_language.as_deref())
+                    .or_else(|| d.content_language.as_deref())
+                    .map(str::to_owned)
             }
             _ => None,
         }
@@ -277,6 +287,11 @@ pub fn lang_range_matches(tag: &str, range: &str) -> bool {
     if range.is_empty() || tag.is_empty() {
         return false;
     }
+    // A subtag longer than 8 characters makes the tag ill-formed (BCP 47): Chrome matches no
+    // range against it (WPT css/selectors/selectors-4 `lang-singleton-subtag-matching`).
+    if tag.split('-').any(|t| t.len() > 8) {
+        return false;
+    }
     let mut tags = tag.split('-');
     let mut ranges = range.split('-');
     let (Some(t0), Some(r0)) = (tags.next(), ranges.next()) else { return false };
@@ -316,6 +331,8 @@ mod tests {
         assert!(!lang_range_matches("fr-x-standard", "fr-standard"));
         assert!(lang_range_matches("de-CH-1996", "de-*-1996"));
         assert!(lang_range_matches("zh-Hant-TW", "*-Hant"));
+        assert!(!lang_range_matches("fr-ninechars", "fr"), "a subtag over 8 characters");
+        assert!(lang_range_matches("fr-eightchr", "fr"), "8 characters are allowed");
     }
 
     #[test]

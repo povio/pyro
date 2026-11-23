@@ -1,0 +1,30 @@
+randtrans-main-candidate 8082 page passes 5664 named passes 181151 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+randtrans-main-parent 8082 page passes 5660 named passes 181130 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+randtrans-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+randtrans-main-parent pages left only 4 right only 0
+randtrans-main-parent passes left only 21 right only 0
+randtrans-main-parent observed left only 0 right only 0
+randtrans-main-stable pages left only 276 right only 1562
+randtrans-main-stable passes left only 5897 right only 7709
+randtrans-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+randtrans-focus-candidate 130 page passes 53 named passes 1302 observed names 1739 statuses {'complete:0': 130}
+randtrans-focus-parent 130 page passes 50 named passes 1293 observed names 1739 statuses {'complete:0': 130}
+randtrans-focus-stable 130 page passes 81 named passes 1383 observed names 1739 statuses {'complete:0': 130}
+randtrans-focus-parent pages left only 3 right only 0
+randtrans-focus-parent passes left only 9 right only 0
+randtrans-focus-parent observed left only 0 right only 0
+randtrans-focus-stable pages left only 4 right only 32
+randtrans-focus-stable passes left only 76 right only 157
+randtrans-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+randtrans-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+randtrans-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+randtrans-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+randtrans-supplement-parent pages left only 0 right only 0
+randtrans-supplement-parent passes left only 0 right only 0
+randtrans-supplement-parent observed left only 0 right only 0
+randtrans-supplement-stable pages left only 0 right only 8
+randtrans-supplement-stable passes left only 0 right only 42
+randtrans-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

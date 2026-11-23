@@ -80,6 +80,10 @@ pub const kJSClassAttributeImpureNamedProperties: JSClassAttributes = 1 << 30;
 /// bit): the class is never released, so its objects count no reference to
 /// it (one atomic word every thread making or sweeping its wrappers writes).
 pub const kJSClassAttributeImmortal: JSClassAttributes = 1 << 29;
+/// Patched JSC only (patch 0043, `JSForkPrivate.h`; other builds ignore the bit): the
+/// wrappers keep their prototype (SetImmutablePrototype) and refuse [[PreventExtensions]], as
+/// HTML's Location and cross-origin objects do. `JSObjectSetPrototype` still sets it.
+pub const kJSClassAttributeImmutablePrototype: JSClassAttributes = 1 << 28;
 
 pub type JSRelationCondition = c_uint;
 
@@ -611,6 +615,16 @@ pub mod spi {
         filter: JSNamedPropertyFilter,
         getter: JSObjectGetPropertyCallback,
     );
+    /// Patch 0041: re-links the global of `ctx` (whose prototype is its named properties object)
+    /// as global -> `interface_prototype` -> named properties object -> `parent_prototype`,
+    /// keeping its global proxy. False, changing nothing, when it cannot.
+    pub type JSGlobalContextSetNamedPropertiesChainFn = unsafe extern "C" fn(
+        ctx: JSGlobalContextRef,
+        interface_prototype: JSObjectRef,
+        parent_prototype: JSObjectRef,
+    ) -> bool;
+    /// Patch 0043: the global proxy of `ctx` refuses [[PreventExtensions]] (a WindowProxy).
+    pub type JSGlobalContextSetGlobalProxyRefusesPreventExtensionsFn = unsafe extern "C" fn(ctx: JSGlobalContextRef);
 
     /// Patch 0035: an object passed to eval as code (a TrustedScript), as a new
     /// string the caller releases, or null to leave it unevaluated.
@@ -644,6 +658,20 @@ pub mod spi {
         callback: Option<JSPromiseRejectionTrackerCallback>,
         operations: std::os::raw::c_uint,
     ) -> bool;
+    /// Patch 0042: called inside a class's `deleteProperty` callback that then
+    /// returns `false`, makes the delete fail (`false`, a `TypeError` in strict
+    /// mode code) instead of running the ordinary `[[Delete]]`.
+    pub type JSObjectRefuseDeletePropertyFn = unsafe extern "C" fn(ctx: JSContextRef);
+
+    /// Patch 0040: called whenever a VM's deferred work (the settling of WebAssembly.compile,
+    /// instantiate and their streaming forms) is scheduled, from any thread and with JavaScriptCore
+    /// locks held: it may only wake the embedder's loop.
+    pub type JSDeferredWorkCallback = unsafe extern "C" fn(info: *mut c_void);
+    /// A later call replaces the callback; `None` removes it.
+    pub type JSContextGroupSetDeferredWorkCallbackFn =
+        unsafe extern "C" fn(group: JSContextGroupRef, callback: Option<JSDeferredWorkCallback>, info: *mut c_void);
+    /// Runs the group's ready deferred work on its VM's thread; true while work is still pending.
+    pub type JSContextGroupRunDeferredWorkFn = unsafe extern "C" fn(group: JSContextGroupRef) -> bool;
 
     /// A custom accessor's getter (patched JSC, `JSObjectSetCustomAccessor`):
     /// called by inline caches with the receiver as `this_value` (any value,
@@ -1014,6 +1042,11 @@ pub mod spi {
         pub set_time_zone: Option<JSContextGroupSetTimeZoneFn>,
         pub set_wrapper_property_added: Option<JSSetWrapperPropertyAddedCallbackFn>,
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
+        /// Patch 0041: WebIDL's chain for a window with a named properties object.
+        pub set_named_properties_chain: Option<JSGlobalContextSetNamedPropertiesChainFn>,
+        /// Patch 0043: a window's global proxy refuses [[PreventExtensions]].
+        pub set_global_proxy_refuses_prevent_extensions:
+            Option<JSGlobalContextSetGlobalProxyRefusesPreventExtensionsFn>,
         pub adopt_global_proxy: Option<JSGlobalContextAdoptGlobalProxyFn>,
         pub add_impure_property: Option<JSAddImpurePropertyFn>,
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
@@ -1024,6 +1057,11 @@ pub mod spi {
         pub set_trusted_types_enforcement: Option<JSGlobalContextSetTrustedTypesEnforcementFn>,
         /// Patch 0036: the promise rejection tracker (Reject and Handle).
         pub set_promise_rejection_tracker: Option<JSGlobalContextSetPromiseRejectionTrackerFn>,
+        /// Patch 0040: the VM's deferred work, which settles WebAssembly promises.
+        pub set_deferred_work_callback: Option<JSContextGroupSetDeferredWorkCallbackFn>,
+        pub run_deferred_work: Option<JSContextGroupRunDeferredWorkFn>,
+        /// Patch 0042: a `deleteProperty` callback refuses the delete.
+        pub refuse_delete_property: Option<JSObjectRefuseDeletePropertyFn>,
         pub set_fast_getter: Option<JSObjectSetFastGetterFn>,
         pub set_constant_accessor: Option<JSObjectSetConstantAccessorFn>,
         pub set_lazy_constant_accessor: Option<JSObjectSetLazyConstantAccessorFn>,
@@ -1210,6 +1248,16 @@ pub mod spi {
             set_time_zone: resolve!("JSContextGroupSetTimeZone"),
             set_wrapper_property_added: resolve!("JSSetWrapperPropertyAddedCallback"),
             install_named_properties: resolve!("JSGlobalContextInstallNamedProperties"),
+            #[cfg(any(pyro_jsc_named_properties_chain, not(pyro_jsc_static)))]
+            set_named_properties_chain: resolve!("JSGlobalContextSetNamedPropertiesChain"),
+            #[cfg(not(any(pyro_jsc_named_properties_chain, not(pyro_jsc_static))))]
+            set_named_properties_chain: None,
+            #[cfg(any(pyro_jsc_immutable_prototype_wrappers, not(pyro_jsc_static)))]
+            set_global_proxy_refuses_prevent_extensions: resolve!(
+                "JSGlobalContextSetGlobalProxyRefusesPreventExtensions"
+            ),
+            #[cfg(not(any(pyro_jsc_immutable_prototype_wrappers, not(pyro_jsc_static))))]
+            set_global_proxy_refuses_prevent_extensions: None,
             #[cfg(any(pyro_jsc_adopt_global_proxy, not(pyro_jsc_static)))]
             adopt_global_proxy: resolve!("JSGlobalContextAdoptGlobalProxy"),
             #[cfg(not(any(pyro_jsc_adopt_global_proxy, not(pyro_jsc_static))))]
@@ -1232,6 +1280,18 @@ pub mod spi {
             set_promise_rejection_tracker: resolve!("JSGlobalContextSetPromiseRejectionTracker"),
             #[cfg(not(any(pyro_jsc_rejection_tracker, not(pyro_jsc_static))))]
             set_promise_rejection_tracker: None,
+            #[cfg(any(pyro_jsc_deferred_work, not(pyro_jsc_static)))]
+            set_deferred_work_callback: resolve!("JSContextGroupSetDeferredWorkCallback"),
+            #[cfg(not(any(pyro_jsc_deferred_work, not(pyro_jsc_static))))]
+            set_deferred_work_callback: None,
+            #[cfg(any(pyro_jsc_deferred_work, not(pyro_jsc_static)))]
+            run_deferred_work: resolve!("JSContextGroupRunDeferredWork"),
+            #[cfg(not(any(pyro_jsc_deferred_work, not(pyro_jsc_static))))]
+            run_deferred_work: None,
+            #[cfg(any(pyro_jsc_refuse_delete, not(pyro_jsc_static)))]
+            refuse_delete_property: resolve!("JSObjectRefuseDeleteProperty"),
+            #[cfg(not(any(pyro_jsc_refuse_delete, not(pyro_jsc_static))))]
+            refuse_delete_property: None,
             set_fast_getter: resolve!("JSObjectSetFastGetter"),
             set_constant_accessor: resolve!("JSObjectSetConstantAccessor"),
             set_lazy_constant_accessor: resolve!("JSObjectSetLazyConstantAccessor"),
@@ -1325,6 +1385,22 @@ pub mod modules {
         /// 1 when fetch callbacks see the `type` import attribute and JSON
         /// and CSS module scripts can load (source-built JavaScriptCore).
         pub fn pyro_jsc_typed_modules_available() -> c_int;
+        /// Registers `id` as an inline module script's registry identity
+        /// whose specifiers resolve against `base` (patch 0038); loading `id`
+        /// keeps it as it is. 1 when registered, 0 without the patch.
+        pub fn pyro_jsc_inline_module_base_set(
+            ctx: JSGlobalContextRef,
+            id: *const c_char,
+            id_len: usize,
+            base: *const c_char,
+            base_len: usize,
+        ) -> c_int;
+        /// The referrer of the module fetch whose fetch callback is running
+        /// (patch 0039): the referring module's registry key (an inline module
+        /// script's identity included) or the `import()` caller's source URL,
+        /// owned by the caller; null for a fetch without a referring script,
+        /// outside a fetch callback, and without the patch.
+        pub fn pyro_jsc_module_fetch_referrer(ctx: JSContextRef) -> JSStringRef;
         pub fn pyro_jsc_import_map_add(
             ctx: JSGlobalContextRef,
             src: *const c_char,

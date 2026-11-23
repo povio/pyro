@@ -131,6 +131,7 @@ impl LayoutPassState<'_> {
         let mut output = if node_wm.is_vertical() == parent_wm.is_vertical() {
             let mut output = self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx);
             if node_wm.is_vertical() && node_wm.is_vertical_lr() != parent_wm.is_vertical_lr() {
+                core::mem::swap(&mut output.top_margin, &mut output.bottom_margin);
                 // Parallel writing modes with opposite block directions (`vertical-lr` in `vertical-rl`
                 // or vice versa) share Taffy's axes but run the block axis the other way.
                 let extent = output.size.height;
@@ -211,6 +212,23 @@ impl LayoutPassState<'_> {
         })
     }
 
+    /// pyro: whether the in-flow block-level box `node_id` resolves its `justify-self` to `stretch`
+    /// in its block container (`auto` takes the container's `justify-items`), as Taffy's block
+    /// layout resolves it from the same styles (`justify_self.unwrap_or(justify_items)`).
+    fn block_child_justify_self_is_stretch(&self, node_id: NodeId) -> bool {
+        let node = &self.nodes[dom_node_id(node_id)];
+        let Some(parent) = node.layout_parent.get() else {
+            return false;
+        };
+        // Read as the container's block layout reads them: the item's style in the container's
+        // writing mode, the container's in its own.
+        let parent_wm = self.layout_wm_of(parent);
+        let justify_self = taffy::BlockItemStyle::justify_self(&node.layout_style_in(parent_wm)).unwrap_or_else(|| {
+            taffy::BlockContainerStyle::justify_items(&self.nodes[parent].layout_style_in(parent_wm))
+        });
+        justify_self.keyword == taffy::AlignItemsKeyword::Stretch
+    }
+
     #[inline(never)]
     fn compute_orthogonal_child_layout(
         &mut self,
@@ -252,10 +270,14 @@ impl LayoutPassState<'_> {
         if placed_by_block_container && inputs.parent_size.width.is_none() {
             inputs.parent_size.width = Some(icb_inline);
         }
+        // pyro: unless the box is stretched in that axis (`justify-self: stretch`, or `auto` taking
+        // the container's `justify-items: stretch`): its block size is then the stretched size the
+        // container passes (css-align-3 §6.1.1; WPT css-align `blocks/justify-self-htb-ltr-vrl`).
         if placed_by_block_container
             && taffy::CoreStyle::size(&node.layout_style())
                 .height
                 .is_auto()
+            && !self.block_child_justify_self_is_stretch(node_id)
         {
             inputs.known_dimensions.height = None;
             inputs.known_dimensions_are_definite.height = false;
@@ -415,7 +437,7 @@ impl LayoutPassState<'_> {
         let position = computed.get_position();
         let block_size = if parent_wm.is_vertical() { &position.width } else { &position.height };
         matches!(block_size, style::values::computed::Size::Auto)
-            && computed.get_box().slow_clone_contain().intersects(style::values::computed::Contain::SIZE | style::values::computed::Contain::BLOCK_SIZE)
+            && computed.get_box().used_containment().intersects(style::values::computed::Contain::SIZE | style::values::computed::Contain::BLOCK_SIZE)
     }
 
     /// pyro: the limit an indefinite containing block (the box's layout parent) puts on an

@@ -314,7 +314,12 @@ export class Executor {
     const version = spawnSync(bin, ['version'], { encoding: 'utf8' });
     const fork = /\bfork: true\b/.test(version.stdout ?? '');
     if (!fork) console.warn(`pyro e2e: ${bin} has no fork mode; every page boots its profile`);
-    const lp = await Pyro.launch({ bin, args: [...(fork ? ['--fork'] : []), ...connections, ...extra] });
+    // No navigation rate limit, as Playwright's Chromium (wright's playwrightServeEnv); flags and the environment win.
+    const lp = await Pyro.launch({
+      bin,
+      args: [...(fork ? ['--fork'] : []), ...connections, ...extra],
+      env: { PYRO_NAVIGATION_RATE_LIMIT: process.env.PYRO_NAVIGATION_RATE_LIMIT ?? 'off' },
+    });
     if (this.aborted) {
       lp.close();
       throw new Error('the run was interrupted');

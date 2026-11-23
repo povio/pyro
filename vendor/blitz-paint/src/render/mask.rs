@@ -173,15 +173,10 @@ impl ElementCx<'_, '_> {
         // stays hidden, all of its layers waiting (as Chromium shows it; WPT css-masking
         // `mask-image-multi-layer-while-loading`). A `url(#mask)` of this document is drawn from
         // its `<mask>`, never waited for; a mask that failed is not loading.
-        let this_document = |url: &str| {
-            let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
-            let url = document(url);
-            url == document(self.context.dom.url().as_str()) || url == document(self.context.dom.base_url().as_str())
-        };
         if image_data
             .iter()
             .flatten()
-            .any(|image| image.status == blitz_dom::node::Status::Loading && !this_document(image.url.as_str()))
+            .any(|image| image.status == blitz_dom::node::Status::Loading && !self.context.dom.is_document_url(&image.url))
         {
             return;
         }

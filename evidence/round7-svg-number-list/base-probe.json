@@ -1,0 +1,42 @@
+[
+  {
+    "tag": "text",
+    "attr": "rotate",
+    "supported": false
+  },
+  {
+    "tag": "tspan",
+    "attr": "rotate",
+    "supported": false
+  },
+  {
+    "tag": "feColorMatrix",
+    "attr": "values",
+    "supported": false
+  },
+  {
+    "tag": "feConvolveMatrix",
+    "attr": "kernelMatrix",
+    "supported": false
+  },
+  {
+    "tag": "feFuncR",
+    "attr": "tableValues",
+    "supported": false
+  },
+  {
+    "tag": "feFuncG",
+    "attr": "tableValues",
+    "supported": false
+  },
+  {
+    "tag": "feFuncB",
+    "attr": "tableValues",
+    "supported": false
+  },
+  {
+    "tag": "feFuncA",
+    "attr": "tableValues",
+    "supported": false
+  }
+]

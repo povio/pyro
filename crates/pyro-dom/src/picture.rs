@@ -14,68 +14,199 @@ pub struct Candidate {
 }
 
 /// HTML "parse a srcset attribute". A width descriptor becomes a density
-/// against `source_width` (CSS px; `sizes` is not read, so the default
-/// `100vw` applies). Candidates with an invalid descriptor are dropped.
+/// against `source_width` (CSS px, the `sizes` source size). Candidates whose
+/// descriptors are invalid (HTML's descriptor parser: a `w` integer above 0,
+/// an `x` floating-point number of 0 or more, an `h` integer above 0 only
+/// with a `w`, each at most once, numbers without `+`) are dropped; a
+/// parenthesized run inside the descriptors does not end the candidate at
+/// its commas.
 pub fn parse_srcset(input: &str, source_width: f64) -> Vec<Candidate> {
     let is_space = |c: char| matches!(c, ' ' | '\t' | '\n' | '\x0c' | '\r');
+    let chars: Vec<char> = input.chars().collect();
     let mut out = Vec::new();
-    let mut rest = input;
+    let mut pos = 0;
     loop {
-        rest = rest.trim_start_matches(|c| is_space(c) || c == ',');
-        if rest.is_empty() {
+        while pos < chars.len() && (is_space(chars[pos]) || chars[pos] == ',') {
+            pos += 1;
+        }
+        if pos >= chars.len() {
             return out;
         }
-        let end = rest.find(is_space).unwrap_or(rest.len());
-        let (mut url, mut tail) = rest.split_at(end);
-        let descriptors = if url.ends_with(',') {
-            // The URL's trailing commas end the candidate.
-            url = url.trim_end_matches(',');
-            ""
+        let start = pos;
+        while pos < chars.len() && !is_space(chars[pos]) {
+            pos += 1;
+        }
+        let mut url: String = chars[start..pos].iter().collect();
+        let mut descriptors = Vec::new();
+        if url.ends_with(',') {
+            url = url.trim_end_matches(',').to_owned();
         } else {
-            tail = tail.trim_start_matches(is_space);
-            let stop = tail.find(',').unwrap_or(tail.len());
-            let (d, after) = tail.split_at(stop);
-            tail = after;
-            d
-        };
-        rest = tail;
-        let mut density = None;
-        let mut width = None;
-        let mut valid = true;
-        for token in descriptors.split(is_space).filter(|t| !t.is_empty()) {
-            let (number, unit) = token.split_at(token.len() - 1);
-            match unit {
-                "x" if density.is_none() && width.is_none() => match number.parse::<f64>() {
-                    Ok(v) if v >= 0.0 => density = Some(v),
-                    _ => valid = false,
-                },
-                "w" if density.is_none() && width.is_none() => match number.parse::<u32>() {
-                    Ok(v) if v > 0 => width = Some(v),
-                    _ => valid = false,
-                },
-                // A height descriptor is parsed and ignored.
-                "h" if number.parse::<u32>().is_ok() => {}
-                _ => valid = false,
+            // The descriptor tokenizer.
+            enum State {
+                Descriptor,
+                InParens,
+                After,
+            }
+            let mut state = State::Descriptor;
+            let mut current = String::new();
+            while pos < chars.len() && is_space(chars[pos]) {
+                pos += 1;
+            }
+            loop {
+                let c = chars.get(pos).copied();
+                match state {
+                    State::Descriptor => match c {
+                        Some(c) if is_space(c) => {
+                            if !current.is_empty() {
+                                descriptors.push(std::mem::take(&mut current));
+                            }
+                            state = State::After;
+                        }
+                        Some(',') => {
+                            pos += 1;
+                            if !current.is_empty() {
+                                descriptors.push(std::mem::take(&mut current));
+                            }
+                            break;
+                        }
+                        Some('(') => {
+                            current.push('(');
+                            state = State::InParens;
+                        }
+                        None => {
+                            if !current.is_empty() {
+                                descriptors.push(std::mem::take(&mut current));
+                            }
+                            break;
+                        }
+                        Some(c) => current.push(c),
+                    },
+                    State::InParens => match c {
+                        Some(')') => {
+                            current.push(')');
+                            state = State::Descriptor;
+                        }
+                        None => {
+                            if !current.is_empty() {
+                                descriptors.push(std::mem::take(&mut current));
+                            }
+                            break;
+                        }
+                        Some(c) => current.push(c),
+                    },
+                    State::After => match c {
+                        Some(c) if is_space(c) => {}
+                        None => break,
+                        Some(_) => {
+                            state = State::Descriptor;
+                            continue;
+                        }
+                    },
+                }
+                pos += 1;
             }
         }
-        if !valid || url.is_empty() {
+        if url.is_empty() {
             continue;
         }
+        let Some((density, width)) = parse_descriptors(&descriptors) else { continue };
         let density = match (density, width) {
             (Some(d), _) => d,
             // A zero source size makes the density infinite (natural size 0).
-            (None, Some(w)) if source_width >= 0.0 => f64::from(w) / source_width,
+            (None, Some(w)) if source_width >= 0.0 => w / source_width,
             _ => 1.0,
         };
-        out.push(Candidate { url: url.to_owned(), density });
+        out.push(Candidate { url, density });
     }
 }
 
-/// The candidate for a device pixel ratio: the lowest density that is at
-/// least `dpr`, else the highest.
+/// HTML's srcset descriptor parser: the `x` density and `w` width, or `None`
+/// on an error. Integers of any size are valid (read as f64).
+fn parse_descriptors(descriptors: &[String]) -> Option<(Option<f64>, Option<f64>)> {
+    let (mut density, mut width, mut height) = (None, None::<f64>, None::<f64>);
+    for descriptor in descriptors {
+        let (number, unit) = descriptor.split_at(descriptor.len() - descriptor.chars().last()?.len_utf8());
+        match unit {
+            "w" if valid_integer(number) => {
+                if width.is_some() || density.is_some() {
+                    return None;
+                }
+                width = Some(number.parse::<f64>().ok().filter(|w| *w > 0.0)?);
+            }
+            "x" if valid_float(number) => {
+                if width.is_some() || density.is_some() || height.is_some() {
+                    return None;
+                }
+                density = Some(number.parse::<f64>().ok().filter(|d| d.is_finite() && *d >= 0.0)?);
+            }
+            "h" if valid_integer(number) => {
+                if height.is_some() || density.is_some() {
+                    return None;
+                }
+                height = Some(number.parse::<f64>().ok().filter(|h| *h > 0.0)?);
+            }
+            _ => return None,
+        }
+    }
+    if height.is_some() && width.is_none() {
+        return None;
+    }
+    Some((density, width))
+}
+
+/// An HTML valid non-negative integer: ASCII digits only.
+fn valid_integer(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// An HTML valid floating-point number: `-`? digits (`.` digits)? or `-`?
+/// `.` digits, then an optional exponent; no `+`, no `Infinity`.
+fn valid_float(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = usize::from(b.first() == Some(&b'-'));
+    let digits = |i: &mut usize| {
+        let start = *i;
+        while b.get(*i).is_some_and(u8::is_ascii_digit) {
+            *i += 1;
+        }
+        *i > start
+    };
+    let whole = digits(&mut i);
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        if !digits(&mut i) {
+            return false;
+        }
+    } else if !whole {
+        return false;
+    }
+    if matches!(b.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        if matches!(b.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        if !digits(&mut i) {
+            return false;
+        }
+    }
+    i == b.len()
+}
+
+/// HTML "select an image source": the candidate for a device pixel ratio,
+/// the lowest density that is at least `dpr`, else the highest; of
+/// candidates with the same density only the first counts.
 pub fn pick_candidate(candidates: &[Candidate], dpr: f64) -> Option<&Candidate> {
-    let enough = candidates.iter().filter(|c| c.density >= dpr).min_by(|a, b| a.density.total_cmp(&b.density));
-    enough.or_else(|| candidates.iter().max_by(|a, b| a.density.total_cmp(&b.density)))
+    let mut enough: Option<&Candidate> = None;
+    let mut highest: Option<&Candidate> = None;
+    for c in candidates {
+        if c.density >= dpr && enough.is_none_or(|e| c.density < e.density) {
+            enough = Some(c);
+        }
+        if highest.is_none_or(|h| c.density > h.density) {
+            highest = Some(c);
+        }
+    }
+    enough.or(highest)
 }
 
 impl Dom {
@@ -261,7 +392,17 @@ fn divides_by_zero(entry: &str) -> bool {
     false
 }
 
-/// Font metrics for a sizes attribute's font-relative units: none known, so Stylo's fallbacks.
+type MediaFontMetrics = Box<dyn style::device::servo::FontMetricsProvider>;
+
+thread_local! {
+    static MEDIA_FONTS: std::cell::Cell<Option<fn() -> MediaFontMetrics>> = const { std::cell::Cell::new(None) };
+}
+
+pub fn set_media_font_provider(provider: Option<fn() -> MediaFontMetrics>) {
+    MEDIA_FONTS.set(provider);
+}
+
+/// Fallback metrics for embedders without a font provider.
 #[derive(Debug)]
 struct NoFontMetrics;
 impl style::device::servo::FontMetricsProvider for NoFontMetrics {
@@ -284,27 +425,35 @@ impl style::device::servo::FontMetricsProvider for NoFontMetrics {
 }
 
 /// A Stylo device for `viewport`'s media conditions and viewport units.
-fn sizes_device(viewport: &Viewport) -> style::device::Device {
+pub(crate) fn sizes_device(viewport: &Viewport) -> style::device::Device {
+    use style::servo::media_features::PointerCapabilities;
     use style::properties::ComputedValues;
     use style::properties::style_structs::Font;
     let size = euclid::Size2D::new(viewport.width as f32, viewport.height as f32);
     let scale = viewport.device_scale_factor as f32;
+    let mut pointer = match viewport.pointer {
+        crate::media::Pointer::None => PointerCapabilities::empty(),
+        crate::media::Pointer::Fine => PointerCapabilities::FINE,
+        crate::media::Pointer::Coarse => PointerCapabilities::COARSE,
+    };
+    if viewport.hover { pointer |= PointerCapabilities::HOVER; }
     style::device::Device::new(
         ComputedValues::initial_values_with_font_override(Font::initial_values()),
-        Box::new(NoFontMetrics),
+        MEDIA_FONTS.get().map_or_else(|| Box::new(NoFontMetrics) as MediaFontMetrics, |make| make()),
         "Submit".into(),
         style::device::servo::MediaData {
-            media_type: style::media_queries::MediaType::screen(),
+            media_type: if viewport.print { style::media_queries::MediaType::print() } else { style::media_queries::MediaType::screen() },
             viewport_size: size,
-            device_size: euclid::Size2D::new(size.width * scale, size.height * scale),
+            device_size: euclid::Size2D::new(viewport.screen_width.unwrap_or(viewport.width) as f32 * scale, viewport.screen_height.unwrap_or(viewport.height) as f32 * scale),
             device_pixel_ratio: euclid::Scale::new(scale),
             quirks_mode: style::context::QuirksMode::NoQuirks,
             prefers_color_scheme: match viewport.color_scheme {
                 crate::media::ColorScheme::Dark => style::queries::values::PrefersColorScheme::Dark,
                 _ => style::queries::values::PrefersColorScheme::Light,
             },
-            primary_pointer_capabilities: Default::default(),
-            all_pointer_capabilities: Default::default(),
+            prefers_reduced_motion: viewport.reduced_motion,
+            primary_pointer_capabilities: pointer,
+            all_pointer_capabilities: pointer,
         },
     )
 }

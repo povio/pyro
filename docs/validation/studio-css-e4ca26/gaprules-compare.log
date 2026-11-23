@@ -1,0 +1,30 @@
+gaprules-main-candidate 8082 page passes 5583 named passes 179864 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+gaprules-main-parent 8082 page passes 5556 named passes 178661 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+gaprules-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+gaprules-main-parent pages left only 27 right only 0
+gaprules-main-parent passes left only 1205 right only 2
+gaprules-main-parent observed left only 2 right only 2
+gaprules-main-stable pages left only 272 right only 1639
+gaprules-main-stable passes left only 5802 right only 8901
+gaprules-main-stable observed left only 311 right only 683
+Losses vs parent by URL: Counter({'css/css-viewport/zoom/explicit-inherit/all-length-properties.html': 2})
+gaprules-focus-candidate 169 page passes 134 named passes 5624 observed names 5771 statuses {'complete:0': 169}
+gaprules-focus-parent 169 page passes 107 named passes 4421 observed names 5771 statuses {'complete:0': 169}
+gaprules-focus-stable 169 page passes 163 named passes 5764 observed names 5771 statuses {'complete:0': 169}
+gaprules-focus-parent pages left only 27 right only 0
+gaprules-focus-parent passes left only 1203 right only 0
+gaprules-focus-parent observed left only 0 right only 0
+gaprules-focus-stable pages left only 0 right only 29
+gaprules-focus-stable passes left only 0 right only 140
+gaprules-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+gaprules-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+gaprules-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+gaprules-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+gaprules-supplement-parent pages left only 0 right only 0
+gaprules-supplement-parent passes left only 0 right only 0
+gaprules-supplement-parent observed left only 0 right only 0
+gaprules-supplement-stable pages left only 0 right only 8
+gaprules-supplement-stable passes left only 0 right only 42
+gaprules-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

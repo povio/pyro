@@ -1,0 +1,2086 @@
+[
+  {
+    "parent": {
+      "tag": "h6",
+      "separator": "div",
+      "kind": "end",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6>abc</h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6>abc</h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6>abc</h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "first": {
+      "tag": "h6",
+      "separator": "div",
+      "kind": "end",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6>abc</h6><div><br></div><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6>abc</h6><div>X</div><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6>abc</h6><div><br></div><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "signed": {
+      "tag": "h6",
+      "separator": "div",
+      "kind": "end",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6>abc</h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6>abc</h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      }
+    }
+  },
+  {
+    "parent": {
+      "tag": "h6",
+      "separator": "div",
+      "kind": "selected",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "first": {
+      "tag": "h6",
+      "separator": "div",
+      "kind": "selected",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><div><br></div><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><div>X</div><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6><br></h6><div><br></div><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "signed": {
+      "tag": "h6",
+      "separator": "div",
+      "kind": "selected",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      }
+    }
+  },
+  {
+    "parent": {
+      "tag": "h6",
+      "separator": "div",
+      "kind": "empty",
+      "before": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "first": {
+      "tag": "h6",
+      "separator": "div",
+      "kind": "empty",
+      "before": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><div><br></div><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><div>X</div><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6><br></h6><div><br></div><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "signed": {
+      "tag": "h6",
+      "separator": "div",
+      "kind": "empty",
+      "before": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "restored": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      }
+    }
+  },
+  {
+    "parent": {
+      "tag": "h6",
+      "separator": "p",
+      "kind": "end",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6>abc</h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6>abc</h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6>abc</h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "first": {
+      "tag": "h6",
+      "separator": "p",
+      "kind": "end",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6>abc</h6><p><br></p><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6>abc</h6><p>X</p><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6>abc</h6><p><br></p><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "signed": {
+      "tag": "h6",
+      "separator": "p",
+      "kind": "end",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6>abc</h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6>abc</h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      }
+    }
+  },
+  {
+    "parent": {
+      "tag": "h6",
+      "separator": "p",
+      "kind": "selected",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "first": {
+      "tag": "h6",
+      "separator": "p",
+      "kind": "selected",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><p><br></p><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><p>X</p><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6><br></h6><p><br></p><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "signed": {
+      "tag": "h6",
+      "separator": "p",
+      "kind": "selected",
+      "before": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "restored": {
+        "html": "<h6>abc</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0,
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0,
+            0
+          ],
+          3
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      }
+    }
+  },
+  {
+    "parent": {
+      "tag": "h6",
+      "separator": "p",
+      "kind": "empty",
+      "before": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          false,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "first": {
+      "tag": "h6",
+      "separator": "p",
+      "kind": "empty",
+      "before": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><p><br></p><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><p>X</p><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6><br></h6><p><br></p><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      },
+      "restored": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    "signed": {
+      "tag": "h6",
+      "separator": "p",
+      "kind": "empty",
+      "before": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "split": {
+        "html": "<h6><br></h6><h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1
+          ],
+          0
+        ],
+        "focus": [
+          [
+            1
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "typed": {
+        "html": "<h6><br></h6><h6>X</h6><p>neighbor</p>",
+        "anchor": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "focus": [
+          [
+            1,
+            0
+          ],
+          1
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "undoType": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      },
+      "restored": {
+        "html": "<h6><br></h6><p>neighbor</p>",
+        "anchor": [
+          [
+            0
+          ],
+          0
+        ],
+        "focus": [
+          [
+            0
+          ],
+          0
+        ],
+        "ids": 0,
+        "connected": [
+          true,
+          true,
+          true
+        ]
+      }
+    }
+  }
+]

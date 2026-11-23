@@ -71,8 +71,8 @@ pub struct ExternalWord {
     pub width: f64,
     pub height: f64,
     pub fixed: bool,
-    /// Caret positions: UTF-16 offset into the node's data and its x, from
-    /// the word's start to its end.
+    pub vertical_edges: bool,
+    /// UTF-16 offsets and their document coordinate on the physical inline axis.
     pub edges: Vec<(u32, f64)>,
 }
 
@@ -100,6 +100,31 @@ pub struct ExternalGeometry {
     /// Scroll size (at least the viewport).
     pub document_width: f64,
     pub document_height: f64,
+}
+
+/// Generated box identified by the renderer for an already selected DOM owner.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GeneratedHit { Before, After, Marker, BeforeMarker, AfterMarker }
+
+impl GeneratedHit {
+    /// The common pseudo ancestor for a press and release on the same DOM owner.
+    pub fn common(self, other: Self) -> Option<Self> {
+        use GeneratedHit::*;
+        match (self, other) {
+            (a, b) if a == b => Some(a),
+            (Before, BeforeMarker) | (BeforeMarker, Before) => Some(Before),
+            (After, AfterMarker) | (AfterMarker, After) => Some(After),
+            _ => None,
+        }
+    }
+
+    pub fn selectors(self) -> (&'static str, bool) {
+        use GeneratedHit::*;
+        match self {
+            Before => ("::before", false), BeforeMarker => ("::before", true),
+            After => ("::after", false), AfterMarker => ("::after", true), Marker => ("::marker", false),
+        }
+    }
 }
 
 /// A viewport point to hit-test ([`GeometrySource::hit_candidates`]).
@@ -667,6 +692,21 @@ pub struct TransitionFrame {
     pub job: Option<std::sync::Arc<TransitionJob>>,
 }
 
+/// HTML-in-Canvas `drawElementImage`: an element painted alone ([`GeometrySource::element_image`]).
+#[derive(Clone, Debug)]
+pub struct ElementImage {
+    /// Its border box in CSS px, as laid out (no transform).
+    pub width: f64,
+    pub height: f64,
+    /// Straight-alpha RGBA pixels.
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+    pub rgba: Vec<u8>,
+    /// The paint may hold content a page must not read back (an image of unknown origin, a
+    /// nested document, a visited link).
+    pub taints: bool,
+}
+
 /// The engine laying the document out (Blitz in `render` builds).
 pub trait GeometrySource {
     fn set_transition_samples(&self, _root: u64, _values: &[(usize,usize,f64)]) -> bool { true }
@@ -675,6 +715,9 @@ pub trait GeometrySource {
     fn clear_transition_boxes(&self, _root: u64) {}
     /// Whether the painted subtree can participate in a named view transition.
     fn view_transition_names_valid(&self, _root: u64) -> bool { true }
+    /// Whether element `key` can take layout containment (css-contain-2 § 3.2), as the scope of
+    /// an element-scoped view transition must.
+    fn layout_containment_eligible(&self, _key: u64) -> bool { true }
     fn capture_transition(&self, _root: u64, _old: bool, _pixels: u64, _work: &mut u64) -> Option<Vec<TransitionBox>> { Some(Vec::new()) }
     /// Brings the engine's layout up to the document; the other queries
     /// answer from it.
@@ -688,6 +731,13 @@ pub trait GeometrySource {
     fn set_scroll(&self, _elements: Vec<(u64, (f64, f64))>, _viewport: (f64, f64)) {}
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
+    /// HTML-in-Canvas `drawElementImage`: the element `key` painted alone (its subtree only, its
+    /// own transform cancelled, its border box's top left at the origin) as of the last sync, at
+    /// `scale` device pixels per CSS px. `None` (the default): no renderer, or no such element
+    /// with an area to paint.
+    fn element_image(&self, _key: u64, _scale: f64) -> Option<ElementImage> {
+        None
+    }
     fn overflowing_text_hits(&self, _key: u64, _border: [f64; 4]) -> Vec<[f64; 4]> { Vec::new() }
     fn anchor_scroll_shift(&self, _key: u64, _scroll: &dyn Fn(Option<u64>) -> (f64, f64), _sticky: &dyn Fn(u64) -> (f64, f64)) -> (f64, f64) { (0.0, 0.0) }
     /// The engine's resolved value of one element's `property` as of the last sync (`None`: the engine
@@ -698,7 +748,19 @@ pub trait GeometrySource {
     }
     /// Resolves a transform using the element's layout box and a possibly
     /// sampled style, without modifying the renderer's stored style.
-    fn resolved_transform_value(&self, _key: u64, _style: &style::properties::ComputedValues) -> Option<String> {
+    fn resolved_transform_value(&self, _key: u64, _property: &str, _style: &style::properties::ComputedValues) -> Option<String> {
+        None
+    }
+    /// Authored text declarations that an editor can carry to another block.
+    fn authored_editing_style(&self, _key: u64, _properties: &[&str], _white_space: &str) -> Vec<(&'static str, String)> {
+        Vec::new()
+    }
+    /// Computed CSS geometry declarations on an SVG shape, excluding the
+    /// default values that must leave XML presentation attributes in effect.
+    fn svg_geometry_properties(&self, _key: u64) -> Vec<(&'static str, String)> {
+        Vec::new()
+    }
+    fn sampled_calc_size(&self, _key: u64, _width: bool, _style: &style::properties::ComputedValues) -> Option<f32> {
         None
     }
     /// One element's boxes as quads as of the last sync (`None`: not
@@ -757,6 +819,12 @@ pub trait GeometrySource {
     }
     /// The document's scroll size as of the last sync.
     fn document_size(&self) -> Option<(f64, f64)>;
+    /// pyro: the size of the document's content as of the last sync: its root element's border box
+    /// and the overflow it scrolls to, not widened to the viewport (what a responsively embedded
+    /// document's iframe takes; css-sizing-4). `None`: the engine does not know it.
+    fn document_content_size(&self) -> Option<(f64, f64)> {
+        None
+    }
     /// pyro: the space the viewport's shown classic scrollbars take (the vertical one's width,
     /// the horizontal one's height) as of the last sync; zero with overlay scrollbars.
     fn viewport_scrollbar_sizes(&self) -> (f64, f64) {
@@ -806,11 +874,36 @@ pub trait GeometrySource {
     fn font_load(&self, _url: &str) -> Option<FontLoad> {
         None
     }
+    /// pyro: the bytes of this document's font at `url` once its layout loaded them (the same
+    /// request as [`Self::font_load`]'s), `None` before, on failure, for an opaque response, or
+    /// when the engine loads no fonts. Canvas text draws with the document's web fonts.
+    fn font_bytes(&self, _url: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        None
+    }
     /// One element's computed style as of the last sync (`None`: the engine
     /// has none for it, and the document's own cascade answers).
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    fn generated_hit(&self, _owner: u64, _x: f64, _y: f64) -> Option<GeneratedHit> { None }
+
+    fn flex_reading_positions(&self, _owner: u64) -> Vec<(u64, usize, usize)> { Vec::new() }
+
+    fn grid_item_starts(&self, _owner: u64) -> Vec<(u64, u16, u16)> { Vec::new() }
+
+    fn css_animation_frames(&self, _key: u64, _name: &str) -> Option<Vec<crate::animation::CssKeyframeStep>> { None }
+
+    /// Recompute same-element properties with sampled font-size or line-height values.
+    fn sampled_font_style(
+        &self, _key: u64, _pseudo: Option<&style::selector_parser::PseudoElement>,
+        _size: Option<&style::properties::ComputedValues>, _line_height: Option<&style::properties::ComputedValues>,
+    ) -> Option<crate::timing::StyleSnapshot> { None }
+
+    /// Authored timing values whose computation needs the element or its pseudo-element.
+    fn element_timing_style(
+        &self, _key: u64, _pseudo: Option<&style::selector_parser::PseudoElement>,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> { None }
+
     /// One element's starting style (`@starting-style`), as of the last sync (`None`: none applies).
     fn element_starting_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
@@ -832,9 +925,28 @@ pub trait GeometrySource {
     fn mandatory_snap_containers(&self) -> Vec<u64> {
         Vec::new()
     }
+    /// pyro: the keys of the elements styled `scroll-initial-target: nearest`, in tree order (CSS
+    /// Scroll Snap 2 § 3: their nearest scroll container starts scrolled to them); empty when no
+    /// element was ever styled so, as of the last sync.
+    fn initial_scroll_targets(&self) -> Vec<u64> {
+        Vec::new()
+    }
     /// pyro: the target of the scroll marker at the document point (`x`, `y`): its element's key,
     /// or its multi-column container's and the column's index.
     fn scroll_marker_at(&self, _x: f64, _y: f64) -> Option<(u64, Option<u32>)> {
+        None
+    }
+    /// pyro: the `::scroll-button()` of the element `owner` that the painted hit test finds at the
+    /// client point (`x`, `y`), as [`Self::generated_hit`]: the physical direction it scrolls
+    /// (`(dx, dy)`, each -1, 0 or 1) and whether it is enabled (`owner` can still scroll that way).
+    fn scroll_button_hit(&self, _owner: u64, _x: f64, _y: f64) -> Option<((i8, i8), bool)> {
+        None
+    }
+    /// pyro: the key of the originating element of the `::scroll-button()` that the painted hit
+    /// test finds on top at the document point (`x`, `y`): a hit test there answers that element
+    /// (CSS Overflow 5 § 2.2). Its box is no element's, so the element-box hit test misses it
+    /// where it covers the element's content or another element.
+    fn scroll_button_owner_at(&self, _x: f64, _y: f64) -> Option<u64> {
         None
     }
     /// pyro: whether an element was ever styled with a `scroll-snap-type`, as of the last sync
@@ -842,10 +954,28 @@ pub trait GeometrySource {
     fn uses_scroll_snap(&self) -> bool {
         false
     }
+    /// pyro: whether an element was ever styled `scroll-initial-target: nearest`, as of the last
+    /// sync (no initial scroll target to look for otherwise).
+    fn uses_scroll_initial_target(&self) -> bool {
+        false
+    }
     /// pyro: the keys of the elements whose `::scroll-marker-group` scrolled to keep its active
     /// marker in view since the last call.
     fn take_scroll_group_moves(&self) -> Vec<u64> {
         Vec::new()
+    }
+    /// pyro: the elements whose used `anchor()`/`anchor-size()` values changed since the last
+    /// call, by key, with their px then and now, by slot: `left`, `right`, `top`, `bottom`,
+    /// `width`, `height`, `min-width`, `min-height`, `max-width`, `max-height` (`None`: not an
+    /// anchor value, or not resolved). CSS transitions of those values start from them, as
+    /// Chrome computes `anchor()` to px before it transitions.
+    fn take_anchor_evals(&self) -> Vec<(u64, [Option<f32>; 10], [Option<f32>; 10])> {
+        Vec::new()
+    }
+    /// pyro: the used px of the `anchor()`/`anchor-size()` values of the element keyed `key` as
+    /// of the last sync, by slot ([`Self::take_anchor_evals`]).
+    fn anchor_used(&self, _key: u64) -> Option<[Option<f32>; 10]> {
+        None
     }
     /// The elements whose style was replaced since the last call, by key,
     /// with the style before and after (and 1 or 2 for a change of its `::before` or `::after`, 0
@@ -875,14 +1005,36 @@ pub trait GeometrySource {
     fn force_content_visibility(&self, _key: u64) -> bool {
         false
     }
+    /// pyro: lays out the contents the `content-visibility: hidden` ancestors of the element keyed
+    /// `key` skip, for a geometry query that needs its box (CSS Contain 2 § 4.1, as Chromium
+    /// forces a locked subtree's layout); until the next frame, unpainted and unhit. Whether any
+    /// were skipped (laid out again then).
+    fn force_hidden_contents(&self, _key: u64) -> bool {
+        false
+    }
     /// pyro: a rendering frame starts: `content-visibility: auto` relevance is determined anew
     /// (what queries forced to render since the last frame no longer is).
     fn content_visibility_frame(&self) {}
     /// pyro: the `content-visibility: auto` elements as of the last sync, by key: whether they
-    /// skip their contents, and their last remembered size (for the renderer that paints).
-    fn content_visibility_state(&self) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+    /// skip their contents, and their last remembered size (logical: inline, block; per axis),
+    /// then the other elements a size is remembered for (for the renderer that paints).
+    fn content_visibility_state(&self) -> Vec<(u64, bool, [Option<f32>; 2])> {
         Vec::new()
     }
+    /// pyro: the `content-visibility: auto` elements whose relevance was determined, as of the
+    /// last sync, by key, and whether they skip their contents (`contentvisibilityautostatechange`).
+    fn content_visibility_auto_states(&self) -> Vec<(u64, bool)> {
+        Vec::new()
+    }
+    /// pyro: whether, as of the last sync, some element may remember a size
+    /// (`contain-intrinsic-size: auto`, CSS Sizing 4 § 5.1).
+    fn has_remembered_size_candidates(&self) -> bool {
+        false
+    }
+    /// pyro: the rendering update's ResizeObserver step: the elements with
+    /// `contain-intrinsic-size: auto` remember their sizes, on the current layout when `synced`
+    /// (it is the page's), else at the end of the next one (none is made for them).
+    fn record_remembered_sizes(&self, _synced: bool) {}
     fn timeline_state(
         &self,
         _source: Option<u64>,
@@ -973,21 +1125,20 @@ pub struct TextRun {
     pub end: u32,
     pub rect: Rect,
     pub fixed: bool,
-    /// Caret positions (offset, document x) from `start` to `end`.
+    pub vertical_edges: bool,
+    /// Caret positions (offset, physical inline coordinate) from `start` to `end`.
     edges: Rc<[(u32, f64)]>,
 }
 
 impl TextRun {
-    /// Caret positions (UTF-16 offset, document x) from `start` to `end`.
+    /// UTF-16 offsets paired with document x (horizontal) or y (vertical).
     pub fn edges(&self) -> &[(u32, f64)] {
         &self.edges
     }
 
-    /// The offset of the character boundary nearest to `dx` px from the
-    /// run's left edge, as Chromium places a caret under a point.
-    pub fn offset_at(&self, dx: f64) -> u32 {
-        let x = self.rect.x + dx;
-        self.edges.iter().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(self.start, |e| e.0)
+    pub fn offset_at(&self, distance: f64) -> u32 {
+        let coord = distance + if self.vertical_edges { self.rect.y } else { self.rect.x };
+        self.edges.iter().min_by(|a, b| (a.1 - coord).abs().total_cmp(&(b.1 - coord).abs())).map_or(self.start, |e| e.0)
     }
 }
 
@@ -1034,7 +1185,7 @@ impl TextResult {
                 let (x1, y1) = ((r.x + r.width).max(rect.x + rect.width), (r.y + r.height).max(rect.y + rect.height));
                 union.0 = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
             }
-            out.text_runs.push(TextRun { node, start, end, rect, fixed: w.fixed, edges: w.edges.into() });
+            out.text_runs.push(TextRun { node, start, end, rect, fixed: w.fixed, vertical_edges: w.vertical_edges, edges: w.edges.into() });
         }
         out
     }

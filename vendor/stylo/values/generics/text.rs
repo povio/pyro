@@ -9,6 +9,18 @@ use crate::derives::*;
 use std::fmt::{self, Write};
 use style_traits::{CssWriter, ToCss};
 
+/// Text inflation control: a keyword or a non-negative percentage.
+#[allow(missing_docs)]
+#[derive(Animate, Clone, ComputeSquaredDistance, Copy, Debug, MallocSizeOf, Parse, PartialEq,
+         SpecifiedValueInfo, ToAnimatedValue, ToAnimatedZero, ToComputedValue, ToCss,
+         ToResolvedValue, ToShmem, ToTyped)]
+#[repr(C, u8)]
+pub enum GenericTextAdjustment<Percentage> {
+    Auto,
+    None,
+    Percentage(Percentage),
+}
+
 /// A generic value that is either a number or `auto`.
 #[derive(
     Animate,

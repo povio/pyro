@@ -21,6 +21,7 @@
   const getOwnPropertyNames = Object.getOwnPropertyNames;
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const parseColor = natives.parseColor;
+  const apply = Reflect.apply;
 
   function illegal() { return new TypeErrorC('Illegal constructor'); }
   function domError(name, message) { return new DOMExceptionC(message, name); }
@@ -37,6 +38,8 @@
       for (const name of getOwnPropertyNames(proto)) {
         if (name === 'constructor' || name === 'prototype' || name === 'length' || name === 'name') continue;
         const desc = getOwnPropertyDescriptor(proto, name);
+        if (desc.get) defineProperty(desc.get, 'name', {value: `get ${name}`, configurable: true});
+        if (desc.set) defineProperty(desc.set, 'name', {value: `set ${name}`, configurable: true});
         desc.enumerable = true;
         defineProperty(proto, name, desc);
       }
@@ -46,6 +49,8 @@
 
   // ---- DOMPointReadOnly / DOMPoint -------------------------------------
   const pointState = new WeakMap();
+  const mutableGeometry = new WeakSet();
+  let rectParts, quadPoints, quadFromPoints;
   function pt(self) {
     const p = pointState.get(self);
     if (!p) throw new TypeErrorC('Illegal invocation');
@@ -55,12 +60,12 @@
     constructor(x = 0, y = 0, z = 0, w = 1) {
       pointState.set(this, { x: +x, y: +y, z: +z, w: +w });
     }
-    static fromPoint(other) { return pointFrom(DOMPointReadOnly, other); }
+    static fromPoint(other = {}) { return pointFrom(DOMPointReadOnly, other); }
     get x() { return pt(this).x; }
     get y() { return pt(this).y; }
     get z() { return pt(this).z; }
     get w() { return pt(this).w; }
-    matrixTransform(matrix) {
+    matrixTransform(matrix = {}) {
       const m = matrixFromInit(matrix);
       const p = pt(this);
       return transformPoint(m, p.x, p.y, p.z, p.w);
@@ -68,7 +73,8 @@
     toJSON() { const p = pt(this); return { x: p.x, y: p.y, z: p.z, w: p.w }; }
   }
   class DOMPoint extends DOMPointReadOnly {
-    static fromPoint(other) { return pointFrom(DOMPoint, other); }
+    constructor(...args) { super(...args); mutableGeometry.add(this); }
+    static fromPoint(other = {}) { return pointFrom(DOMPoint, other); }
     get x() { return pt(this).x; }
     set x(v) { pt(this).x = +v; }
     get y() { return pt(this).y; }
@@ -87,6 +93,93 @@
     const o = dict(other);
     return new C(unrestricted(o.x, 0), unrestricted(o.y, 0), unrestricted(o.z, 0), unrestricted(o.w, 1));
   }
+  function rectFrom(C, other) {
+    const source = dict(other);
+    const height = unrestricted(source.height, 0), width = unrestricted(source.width, 0);
+    return new C(unrestricted(source.x, 0), unrestricted(source.y, 0), width, height);
+  }
+  let setRect;
+  class DOMRectReadOnly {
+    #x; #y; #width; #height;
+    constructor(x = 0, y = 0, width = 0, height = 0) {
+      this.#x = +x; this.#y = +y; this.#width = +width; this.#height = +height;
+    }
+    static fromRect(other = {}) { return rectFrom(DOMRectReadOnly, other); }
+    get x() { return this.#x; }
+    get y() { return this.#y; }
+    get width() { return this.#width; }
+    get height() { return this.#height; }
+    get left() { return MathC.min(this.#x, this.#x + this.#width); }
+    get right() { return MathC.max(this.#x, this.#x + this.#width); }
+    get top() { return MathC.min(this.#y, this.#y + this.#height); }
+    get bottom() { return MathC.max(this.#y, this.#y + this.#height); }
+    toJSON() {
+      return { x: this.#x, y: this.#y, width: this.#width, height: this.#height,
+        top: MathC.min(this.#y, this.#y + this.#height), right: MathC.max(this.#x, this.#x + this.#width),
+        bottom: MathC.max(this.#y, this.#y + this.#height), left: MathC.min(this.#x, this.#x + this.#width) };
+    }
+    static { rectParts = o => #x in o ? [o.#x, o.#y, o.#width, o.#height] : null; setRect = (rect, key, value) => {
+      switch (key) {
+        case 'x': rect.#x = +value; break;
+        case 'y': rect.#y = +value; break;
+        case 'width': rect.#width = +value; break;
+        case 'height': rect.#height = +value; break;
+      }
+    }; }
+  }
+  class DOMRect extends DOMRectReadOnly {
+    constructor(...args) { super(...args); mutableGeometry.add(this); }
+    static fromRect(other = {}) { return rectFrom(DOMRect, other); }
+    get x() { return super.x; } set x(value) { setRect(this, 'x', value); }
+    get y() { return super.y; } set y(value) { setRect(this, 'y', value); }
+    get width() { return super.width; } set width(value) { setRect(this, 'width', value); }
+    get height() { return super.height; } set height(value) { setRect(this, 'height', value); }
+  }
+  class DOMQuad {
+    #points;
+    static {
+      quadPoints = o => #points in o ? o.#points : null;
+      quadFromPoints = points => {
+        const quad = new DOMQuad(secret);
+        quad.#points = points;
+        return quad;
+      };
+    }
+    constructor(p1 = {}, p2 = {}, p3 = {}, p4 = {}) {
+      if (p1 === secret) return;
+      this.#points = [pointFrom(DOMPoint, p1), pointFrom(DOMPoint, p2), pointFrom(DOMPoint, p3), pointFrom(DOMPoint, p4)];
+    }
+    static fromRect(other = {}) {
+      const {x, y, width, height} = rectFrom(DOMRect, other);
+      return new DOMQuad({x,y}, {x:x+width,y}, {x:x+width,y:y+height}, {x,y:y+height});
+    }
+    static fromQuad(other = {}) {
+      const source = dict(other);
+      return new DOMQuad(source.p1, source.p2, source.p3, source.p4);
+    }
+    get p1() { return this.#points[0]; } get p2() { return this.#points[1]; }
+    get p3() { return this.#points[2]; } get p4() { return this.#points[3]; }
+    getBounds() {
+      const xs = this.#points.map(point => pt(point).x), ys = this.#points.map(point => pt(point).y);
+      const x = MathC.min(...xs), y = MathC.min(...ys);
+      return new DOMRect(x, y, MathC.max(...xs) - x, MathC.max(...ys) - y);
+    }
+    toJSON() { const [p1,p2,p3,p4] = this.#points; return {p1,p2,p3,p4}; }
+  }
+  class DOMRectList {
+    #rects;
+    constructor(...args) {
+      if (args[0] !== secret) throw illegal();
+      this.#rects = args[1];
+      this.#rects.forEach((value, index) => defineProperty(this, index, {value, enumerable: true, configurable: true}));
+    }
+    get length() { return this.#rects.length; }
+    item(index) {
+      if (!arguments.length) throw new TypeErrorC('An index is required');
+      return this.#rects[index >>> 0] ?? null;
+    }
+  }
+  defineProperty(DOMRectList.prototype, Symbol.iterator, {value: Array.prototype.values, writable: true, configurable: true});
   function transformPoint(m, x, y, z, w) {
     return new DOMPoint(
       m[0] * x + m[4] * y + m[8] * z + m[12] * w,
@@ -109,6 +202,7 @@
   function make(C, m, is2D) {
     const o = Object.create(C.prototype);
     matrixState.set(o, { m: m.slice(), is2D });
+    if (C === DOMMatrix) mutableGeometry.add(o);
     return o;
   }
   // C = A · B: the transform that applies B, then A.
@@ -217,60 +311,12 @@
     return fixup(init, false).m;
   }
 
-  // CSS <transform-list> (absolute lengths and angles only).
-  const LENGTH = { px: 1, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6, in: 96, pt: 4 / 3, pc: 16 };
-  const ANGLE = { deg: 1, rad: 180 / MathC.PI, grad: 0.9, turn: 360 };
   function parseTransform(text) {
-    const syntax = () => domError('SyntaxError', `Failed to parse '${text}'.`);
-    const source = String(text).trim();
-    if (source === '' || source.toLowerCase() === 'none') return { m: IDENTITY.slice(), is2D: true };
-    const fn = /^([a-zA-Z0-9]+)\(([^()]*)\)\s*/;
-    let rest = source, m = IDENTITY.slice(), is2D = true;
-    while (rest.length) {
-      const match = fn.exec(rest);
-      if (!match) throw syntax();
-      rest = rest.slice(match[0].length);
-      const name = match[1].toLowerCase();
-      const args = match[2].trim() === '' ? [] : match[2].split(',').map((a) => a.trim());
-      const value = (arg, kind) => {
-        const unit = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)$/i.exec(arg);
-        if (!unit) throw syntax();
-        const n = +unit[1], u = unit[2].toLowerCase();
-        if (kind === 'number') { if (u) throw syntax(); return n; }
-        if (kind === 'length') { if (u === '' && n === 0) return 0; if (!(u in LENGTH)) throw syntax(); return n * LENGTH[u]; }
-        if (u === '' && n === 0) return 0;
-        if (!(u in ANGLE)) throw syntax();
-        return n * ANGLE[u];
-      };
-      const need = (min, max) => { if (args.length < min || args.length > max) throw syntax(); };
-      let t, flat = true;
-      switch (name) {
-        case 'matrix': need(6, 6); t = from2D(...args.map((a) => value(a, 'number'))); break;
-        case 'matrix3d': need(16, 16); t = args.map((a) => value(a, 'number')); flat = false; break;
-        case 'translate': need(1, 2); t = translation(value(args[0], 'length'), args[1] ? value(args[1], 'length') : 0, 0); break;
-        case 'translatex': need(1, 1); t = translation(value(args[0], 'length'), 0, 0); break;
-        case 'translatey': need(1, 1); t = translation(0, value(args[0], 'length'), 0); break;
-        case 'translatez': need(1, 1); t = translation(0, 0, value(args[0], 'length')); flat = false; break;
-        case 'translate3d': need(3, 3); t = translation(value(args[0], 'length'), value(args[1], 'length'), value(args[2], 'length')); flat = false; break;
-        case 'scale': { need(1, 2); const x = value(args[0], 'number'); t = scaling(x, args[1] ? value(args[1], 'number') : x, 1); break; }
-        case 'scalex': need(1, 1); t = scaling(value(args[0], 'number'), 1, 1); break;
-        case 'scaley': need(1, 1); t = scaling(1, value(args[0], 'number'), 1); break;
-        case 'scalez': need(1, 1); t = scaling(1, 1, value(args[0], 'number')); flat = false; break;
-        case 'scale3d': need(3, 3); t = scaling(value(args[0], 'number'), value(args[1], 'number'), value(args[2], 'number')); flat = false; break;
-        case 'rotate': case 'rotatez': need(1, 1); t = axisRotation(0, 0, 1, value(args[0], 'angle')); flat = name === 'rotate'; break;
-        case 'rotatex': need(1, 1); t = axisRotation(1, 0, 0, value(args[0], 'angle')); flat = false; break;
-        case 'rotatey': need(1, 1); t = axisRotation(0, 1, 0, value(args[0], 'angle')); flat = false; break;
-        case 'rotate3d': need(4, 4); t = axisRotation(value(args[0], 'number'), value(args[1], 'number'), value(args[2], 'number'), value(args[3], 'angle')); flat = false; break;
-        case 'skew': { need(1, 2); const ax = value(args[0], 'angle'), ay = args[1] ? value(args[1], 'angle') : 0; t = from2D(1, MathC.tan(ay * RAD), MathC.tan(ax * RAD), 1, 0, 0); break; }
-        case 'skewx': need(1, 1); t = from2D(1, 0, MathC.tan(value(args[0], 'angle') * RAD), 1, 0, 0); break;
-        case 'skewy': need(1, 1); t = from2D(1, MathC.tan(value(args[0], 'angle') * RAD), 0, 1, 0, 0); break;
-        case 'perspective': { need(1, 1); const d = value(args[0], 'length'); t = IDENTITY.slice(); if (d !== 0) t[11] = -1 / d; flat = false; break; }
-        default: throw syntax();
-      }
-      if (!flat) is2D = false;
-      m = multiply(m, t);
-    }
-    return { m, is2D };
+    if (natives.worker) throw new TypeErrorC('CSS transform strings require a Window.');
+    if (text === '') return { m: IDENTITY.slice(), is2D: true };
+    const parsed = natives.parseTransform(text);
+    if (!parsed) throw domError('SyntaxError', `Failed to parse '${text}'.`);
+    return { m: parsed[0], is2D: parsed[1] };
   }
   function initToState(init) {
     if (init === undefined) return { m: IDENTITY.slice(), is2D: true };
@@ -286,11 +332,11 @@
 
   function number(v, fallback) { return v === undefined ? fallback : +v; }
   class DOMMatrixReadOnly {
-    constructor(init) {
+    constructor(init = undefined) {
       const s = initToState(init);
       matrixState.set(this, s);
     }
-    static fromMatrix(other) { const s = fixup(other, false); return make(DOMMatrixReadOnly, s.m, s.is2D); }
+    static fromMatrix(other = {}) { const s = fixup(other, false); return make(DOMMatrixReadOnly, s.m, s.is2D); }
     static fromFloat32Array(array) { return fromArray(DOMMatrixReadOnly, array, Float32ArrayC); }
     static fromFloat64Array(array) { return fromArray(DOMMatrixReadOnly, array, Float64ArrayC); }
     get a() { return st(this).m[0]; }
@@ -301,20 +347,20 @@
     get f() { return st(this).m[13]; }
     get is2D() { return st(this).is2D; }
     get isIdentity() { const m = st(this).m; return m.every((v, i) => v === IDENTITY[i]); }
-    translate(tx, ty, tz) { return copy(this).translateSelf(tx, ty, tz); }
-    scale(sx, sy, sz, ox, oy, oz) { return copy(this).scaleSelf(sx, sy, sz, ox, oy, oz); }
+    translate(tx = 0, ty, tz) { return copy(this).translateSelf(tx, ty, tz); }
+    scale(sx = 1, sy, sz, ox, oy, oz) { return copy(this).scaleSelf(sx, sy, sz, ox, oy, oz); }
     scaleNonUniform(sx = 1, sy = 1) { return copy(this).scaleSelf(sx, sy, 1, 0, 0, 0); }
-    scale3d(scale, ox, oy, oz) { return copy(this).scale3dSelf(scale, ox, oy, oz); }
-    rotate(rx, ry, rz) { return copy(this).rotateSelf(rx, ry, rz); }
-    rotateFromVector(x, y) { return copy(this).rotateFromVectorSelf(x, y); }
-    rotateAxisAngle(x, y, z, angle) { return copy(this).rotateAxisAngleSelf(x, y, z, angle); }
-    skewX(sx) { return copy(this).skewXSelf(sx); }
-    skewY(sy) { return copy(this).skewYSelf(sy); }
-    multiply(other) { return copy(this).multiplySelf(other); }
+    scale3d(scale = 1, ox, oy, oz) { return copy(this).scale3dSelf(scale, ox, oy, oz); }
+    rotate(rx = 0, ry, rz) { return copy(this).rotateSelf(rx, ry, rz); }
+    rotateFromVector(x = 0, y) { return copy(this).rotateFromVectorSelf(x, y); }
+    rotateAxisAngle(x = 0, y, z, angle) { return copy(this).rotateAxisAngleSelf(x, y, z, angle); }
+    skewX(sx = 0) { return copy(this).skewXSelf(sx); }
+    skewY(sy = 0) { return copy(this).skewYSelf(sy); }
+    multiply(other = {}) { return copy(this).multiplySelf(other); }
     flipX() { const s = st(this); return make(DOMMatrix, multiply(s.m, scaling(-1, 1, 1)), s.is2D); }
     flipY() { const s = st(this); return make(DOMMatrix, multiply(s.m, scaling(1, -1, 1)), s.is2D); }
     inverse() { return copy(this).invertSelf(); }
-    transformPoint(point) {
+    transformPoint(point = {}) {
       const o = dict(point);
       return transformPoint(st(this).m, number(o.x, 0), number(o.y, 0), number(o.z, 0), number(o.w, 1));
     }
@@ -349,17 +395,18 @@
   function copy(self) { const s = st(self); return make(DOMMatrix, s.m, s.is2D); }
 
   class DOMMatrix extends DOMMatrixReadOnly {
-    static fromMatrix(other) { const s = fixup(other, false); return make(DOMMatrix, s.m, s.is2D); }
+    constructor(...args) { super(...args); mutableGeometry.add(this); }
+    static fromMatrix(other = {}) { const s = fixup(other, false); return make(DOMMatrix, s.m, s.is2D); }
     static fromFloat32Array(array) { return fromArray(DOMMatrix, array, Float32ArrayC); }
     static fromFloat64Array(array) { return fromArray(DOMMatrix, array, Float64ArrayC); }
-    multiplySelf(other) {
+    multiplySelf(other = {}) {
       const s = st(this);
       const o = matrixState.has(other) ? matrixState.get(other) : fixup(other, false);
       s.m = multiply(s.m, o.m);
       if (!o.is2D) s.is2D = false;
       return this;
     }
-    preMultiplySelf(other) {
+    preMultiplySelf(other = {}) {
       const s = st(this);
       const o = matrixState.has(other) ? matrixState.get(other) : fixup(other, false);
       s.m = multiply(o.m, s.m);
@@ -434,6 +481,10 @@
       return this;
     }
   }
+  if (natives.worker) {
+    delete DOMMatrix.prototype.setMatrixValue;
+    delete DOMMatrixReadOnly.prototype.toString;
+  }
   const SHORT_INDEX = { a: 0, b: 1, c: 4, d: 5, e: 12, f: 13 };
   for (const name of Object.keys(SHORT_INDEX)) {
     const index = SHORT_INDEX[name];
@@ -456,6 +507,10 @@
       enumerable: true, configurable: true,
     });
   });
+  webidl(DOMRectList, 'DOMRectList');
+  webidl(DOMRectReadOnly, 'DOMRectReadOnly');
+  webidl(DOMRect, 'DOMRect');
+  webidl(DOMQuad, 'DOMQuad');
   webidl(DOMPointReadOnly, 'DOMPointReadOnly');
   webidl(DOMPoint, 'DOMPoint');
   webidl(DOMMatrixReadOnly, 'DOMMatrixReadOnly');
@@ -573,43 +628,97 @@
     if (!s) throw new TypeErrorC('Illegal invocation');
     return s;
   }
-  const COLOR_SPACES = ['srgb', 'display-p3'];
+  const COLOR_SPACES = ['srgb', 'srgb-linear', 'display-p3', 'display-p3-linear'];
+  // CanvasRenderingContext2DSettings converted member by member in
+  // dictionary order (alpha, colorSpace, colorType, desynchronized,
+  // willReadFrequently): the color space, followed by " float16" for
+  // colorType "float16". A DOMString conversion of a Symbol throws TypeError.
+  function contextSettings(options) {
+    // getContext's options is `any`: a value that is not an object (false, 123, 'test', a
+    // Symbol) gives the default settings, as Chromium converts it, not a TypeError (WPT
+    // 2d.canvas.context.extraargs.{create,cache}).
+    const d = options !== null && (typeof options === 'object' || typeof options === 'function') ? options : {};
+    void !!d.alpha;
+    const raw = d.colorSpace;
+    const space = raw === undefined ? 'srgb' : `${raw}`;
+    if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
+    const rawType = d.colorType;
+    const type = rawType === undefined ? 'unorm8' : `${rawType}`;
+    if (type !== 'unorm8' && type !== 'float16') throw new TypeErrorC(`The provided value '${type}' is not a valid enum value of type CanvasColorType.`);
+    void !!d.desynchronized;
+    void !!d.willReadFrequently;
+    return type === 'float16' ? `${space} float16` : space;
+  }
   function colorSpace(settings) {
     const o = dict(settings);
     if (o.colorSpace === undefined) return 'srgb';
-    const space = String(o.colorSpace);
+    const space = `${o.colorSpace}`;
     if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
     return space;
   }
-  function dimension(value, what) {
-    const n = finite(value, what) >>> 0;
-    return n;
+  // pyro: ImageDataPixelFormat. Float data is stored as given; canvases
+  // read and write it through 8-bit conversions (unorm8Of / imageDataOf).
+  const Float16ArrayC = globalThis.Float16Array;
+  const u8From = Uint8ClampedArrayC.from;
+  const PIXEL_FORMATS = ['rgba-unorm8', 'rgba-float16'];
+  function isFloat16(data) { return !!Float16ArrayC && data instanceof Float16ArrayC; }
+  // ImageDataSettings, converted member by member (colorSpace, pixelFormat).
+  function imageSettings(settings) {
+    const o = dict(settings);
+    const rawSpace = o.colorSpace;
+    const space = rawSpace === undefined ? 'srgb' : `${rawSpace}`;
+    if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
+    const rawFormat = o.pixelFormat;
+    const format = rawFormat === undefined ? 'rgba-unorm8' : `${rawFormat}`;
+    if (!PIXEL_FORMATS.includes(format)) throw new TypeErrorC(`The provided value '${format}' is not a valid enum value of type ImageDataPixelFormat.`);
+    if (format === 'rgba-float16' && !Float16ArrayC) throw new TypeErrorC('Float16Array is not supported.');
+    return { space, format };
+  }
+  // Web IDL `unsigned long` (no [EnforceRange]): ToNumber, then modulo 2^32
+  // (NaN and infinities are 0).
+  function uint32(value) { return +value >>> 0; }
+  // 8-bit copy of float pixel data (clamped to 0..1).
+  function unorm8Of(data) { return isFloat16(data) ? apply(u8From, Uint8ClampedArrayC, [data, (v) => v * 255]) : data; }
+  // Float copy of 8-bit pixel data.
+  function float16Of(data) {
+    const out = new Float16ArrayC(data.length);
+    for (let i = 0; i < data.length; i++) out[i] = data[i] / 255;
+    return out;
   }
   const MAX_PIXELS = 0x10000000;
   class ImageData {
     constructor(a, b, c, d) {
       if (arguments.length < 2) throw new TypeErrorC(`Failed to construct 'ImageData': 2 arguments required, but only ${arguments.length} present.`);
-      if (a instanceof Uint8ClampedArrayC) {
+      // Web IDL converts every argument before the constructor's steps run.
+      if (a instanceof Uint8ClampedArrayC || isFloat16(a)) {
+        const width = uint32(b);
+        const wantHeight = c === undefined ? undefined : uint32(c);
+        const settings = imageSettings(d);
+        if (isFloat16(a) !== (settings.format === 'rgba-float16')) {
+          throw domError('InvalidStateError', 'The input data type is not compatible with the requested pixel format.');
+        }
         const length = a.length;
         if (length === 0 || length % 4 !== 0) throw domError('InvalidStateError', 'The input data length is not a multiple of 4.');
-        const width = dimension(b, 'width');
         if (width === 0) throw domError('IndexSizeError', 'The source width is zero or not a number.');
         if ((length / 4) % width !== 0) throw domError('IndexSizeError', 'The input data length is not a multiple of (4 * width).');
         const height = length / 4 / width;
-        if (c !== undefined && dimension(c, 'height') !== height) throw domError('IndexSizeError', 'The input data length is not equal to (4 * width * height).');
-        images.set(this, { width, height, data: a, colorSpace: colorSpace(d) });
+        if (wantHeight !== undefined && wantHeight !== height) throw domError('IndexSizeError', 'The input data length is not equal to (4 * width * height).');
+        images.set(this, { width, height, data: a, colorSpace: settings.space, pixelFormat: settings.format });
         return;
       }
-      const width = dimension(a, 'width'), height = dimension(b, 'height');
+      const width = uint32(a), height = uint32(b);
+      const settings = imageSettings(c);
       if (width === 0) throw domError('IndexSizeError', 'The source width is 0.');
       if (height === 0) throw domError('IndexSizeError', 'The source height is 0.');
-      if (width * height > MAX_PIXELS) throw new RangeErrorC('Out of memory at ImageData creation.');
-      images.set(this, { width, height, data: new Uint8ClampedArrayC(width * height * 4), colorSpace: colorSpace(c) });
+      if (width * height > MAX_PIXELS) throw domError('IndexSizeError', 'The requested image size exceeds the supported range.');
+      const data = settings.format === 'rgba-float16' ? new Float16ArrayC(width * height * 4) : new Uint8ClampedArrayC(width * height * 4);
+      images.set(this, { width, height, data, colorSpace: settings.space, pixelFormat: settings.format });
     }
     get width() { return img(this).width; }
     get height() { return img(this).height; }
     get data() { return img(this).data; }
     get colorSpace() { return img(this).colorSpace; }
+    get pixelFormat() { return img(this).pixelFormat; }
   }
   webidl(ImageData, 'ImageData');
 
@@ -672,7 +781,56 @@
   }
   webidl(ImageBitmap, 'ImageBitmap');
   function newBitmap(made) { return new ImageBitmap(secret, made[0], made[1], made[2]); }
+
+  // ---- ImageBitmapRenderingContext -------------------------------------
+  // getContext('bitmaprenderer') of a <canvas> (made through canvas.rs,
+  // which keeps it on the element) or of an OffscreenCanvas. Its output is
+  // the last ImageBitmap transferred to it, at that bitmap's size (`image`:
+  // the bitmap's native handle), or transparent black of the canvas's size
+  // (`image` null).
+  const renderers = new WeakMap();
+  function rc(self) {
+    const r = renderers.get(self);
+    if (!r) throw new TypeErrorC('Illegal invocation');
+    return r;
+  }
+  class ImageBitmapRenderingContext {
+    constructor(token, canvas) {
+      if (token !== secret) throw illegal();
+      renderers.set(this, { canvas, image: null, width: 0, height: 0 });
+    }
+    get canvas() { return rc(this).canvas; }
+    transferFromImageBitmap(bitmap) {
+      const r = rc(this);
+      if (arguments.length < 1) throw new TypeErrorC(`Failed to execute 'transferFromImageBitmap' on 'ImageBitmapRenderingContext': 1 argument required, but only 0 present.`);
+      // ImageBitmap? : null (or undefined) resets the output to transparent black.
+      if (bitmap === null || bitmap === undefined) {
+        r.image = null;
+        return;
+      }
+      const b = bitmaps.get(bitmap);
+      if (!b) throw new TypeErrorC(`Failed to execute 'transferFromImageBitmap' on 'ImageBitmapRenderingContext': parameter 1 is not of type 'ImageBitmap'.`);
+      if (!b.image) throw domError('InvalidStateError', 'The input ImageBitmap has been detached');
+      r.image = b.image;
+      r.width = b.width;
+      r.height = b.height;
+      // The bitmap is transferred: detached (width and height read 0).
+      b.image = null;
+    }
+  }
+  webidl(ImageBitmapRenderingContext, 'ImageBitmapRenderingContext');
+  // [handle, width, height] of what a renderer shows, or null (transparent black).
+  function rendererImage(ctx) {
+    const r = renderers.get(ctx);
+    return r && r.image ? [r.image, r.width, r.height] : null;
+  }
   const PromiseC = Promise;
+  // HTML: createImageBitmap snapshots its source now and resolves (or, for
+  // a Blob that does not decode, rejects) in a later task.
+  const setTimeoutC = globalThis.setTimeout;
+  const queueTask = (f) => {
+    try { setTimeoutC(f, 0); } catch (e) { /* the global is closing */ }
+  };
   function createImageBitmap(image, sx, sy, sw, sh, options) {
     try {
       if (arguments.length < 1) throw new TypeErrorC(`Failed to execute 'createImageBitmap' on 'Window': 1 argument required, but only 0 present.`);
@@ -696,15 +854,21 @@
       }
       const flip = o.imageOrientation === 'flipY';
       const smooth = o.resizeQuality !== 'pixelated';
-      const made = natives.makeBitmap(image, crop, rw, rh, flip, smooth);
-      return PromiseC.resolve(newBitmap(made));
+      let made;
+      try {
+        made = natives.makeBitmap(image, crop, rw, rh, flip, smooth);
+      } catch (e) {
+        if (!natives.isBlob(image)) throw e;
+        return new PromiseC((resolve, reject) => queueTask(() => reject(e)));
+      }
+      return new PromiseC((resolve) => queueTask(() => resolve(newBitmap(made))));
     } catch (e) {
       return PromiseC.reject(e);
     }
   }
   // An image argument that is not an element as canvas.rs takes it, or null:
   // [0, handle] for an ImageBitmap, [1, context or null, width, height] for
-  // an OffscreenCanvas, [2, data, width, height] for an ImageData (only
+  // an OffscreenCanvas, [2, data, width, height, colorSpace] for an ImageData (only
   // where `imageData` allows it), [3, blob] for a Blob.
   function sourceOf(image, imageData) {
     const b = bitmaps.get(image);
@@ -715,6 +879,9 @@
     const o = offscreens.get(image);
     if (o) {
       if (o.detached) throw domError('InvalidStateError', 'The image source is detached.');
+      // A bitmaprenderer canvas is its bitmap (at the bitmap's size), or transparent black.
+      const shown = o.renderer ? rendererImage(o.renderer) : null;
+      if (shown) return [0, shown[0]];
       return [1, o.context, o.width, o.height];
     }
     // pyro: a CSSImageValue (Typed OM) draws the image its url() names, once loaded.
@@ -722,20 +889,18 @@
     if (typeof CSSImageValueC === 'function' && image instanceof CSSImageValueC) return [4, String(image)];
     if (imageData) {
       const d = images.get(image);
-      if (d) return [2, d.data, d.width, d.height];
+      if (d) return [2, unorm8Of(d.data), d.width, d.height, d.colorSpace];
       if (natives.isBlob(image)) return [3, image];
     }
     return null;
   }
 
   // ---- OffscreenCanvas -------------------------------------------------
-  // Its 2D context is a CanvasRenderingContext2D (canvas.rs) drawing into
-  // its own bitmap; `OffscreenCanvasRenderingContext2D` recognizes it.
+  // Its native 2D context (canvas.rs) draws into the offscreen bitmap.
   // `placeholder` is the native handle of the `<canvas>` it shows on (made
   // by `transferControlToOffscreen`), or null. A transferred OffscreenCanvas
   // is detached: its size reads 0 and using it throws InvalidStateError.
   const offscreens = new WeakMap();
-  const offscreenContexts = new WeakSet();
   function oc(self) {
     const o = offscreens.get(self);
     if (!o) throw new TypeErrorC('Illegal invocation');
@@ -757,7 +922,7 @@
   class OffscreenCanvas {
     constructor(width, height) {
       if (arguments.length < 2) throw new TypeErrorC(`Failed to construct 'OffscreenCanvas': 2 arguments required, but only ${arguments.length} present.`);
-      offscreens.set(this, { width: offscreenSize(width, 'width'), height: offscreenSize(height, 'height'), context: null, detached: false, placeholder: null });
+      offscreens.set(this, { width: offscreenSize(width, 'width'), height: offscreenSize(height, 'height'), context: null, renderer: null, detached: false, placeholder: null });
     }
     get width() { return oc(this).width; }
     set width(v) { const o = live(this); o.width = offscreenSize(v, 'width'); if (o.context) natives.resizeContext(o.context, o.width, o.height); }
@@ -771,16 +936,31 @@
         throw new TypeErrorC(`Failed to execute 'getContext' on 'OffscreenCanvas': The provided value '${type}' is not a valid enum value of type OffscreenRenderingContextType.`);
       }
       if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
-      if (type !== '2d') return null;
+      // One context per canvas: another type than the first one asked for is null.
+      if (type === 'bitmaprenderer') {
+        if (o.context) return null;
+        if (!o.renderer) o.renderer = new ImageBitmapRenderingContext(secret, this);
+        return o.renderer;
+      }
+      if (type !== '2d' || o.renderer) return null;
+      // CanvasRenderingContext2DSettings, converted on every call (the
+      // argument of a cached context is converted and then ignored).
+      const space = contextSettings(options);
       if (!o.context) {
-        o.context = natives.offscreenContext(this, o.width, o.height, o.placeholder);
-        offscreenContexts.add(o.context);
+        o.context = natives.offscreenContext(this, o.width, o.height, o.placeholder, space);
       }
       return o.context;
     }
     transferToImageBitmap() {
       const o = oc(this);
       if (o.detached) throw domError('InvalidStateError', 'Cannot transfer an ImageBitmap from a detached OffscreenCanvas');
+      // A bitmaprenderer gives its bitmap away and shows transparent black after.
+      if (o.renderer) {
+        const r = renderers.get(o.renderer);
+        const made = r.image ? [r.image, r.width, r.height] : natives.blankBitmap(o.width, o.height);
+        r.image = null;
+        return newBitmap(made);
+      }
       if (!o.context) throw domError('InvalidStateError', 'Cannot transfer an ImageBitmap from an OffscreenCanvas with no context');
       return newBitmap(natives.transferContext(o.context));
     }
@@ -792,6 +972,10 @@
         const d = dict(options);
         const type = d.type === undefined ? 'image/png' : String(d.type);
         const quality = d.quality === undefined ? undefined : +d.quality;
+        if (o.renderer) {
+          const shown = rendererImage(o.renderer);
+          return PromiseC.resolve(natives.encodeImage(shown ? shown[0] : null, o.width, o.height, type, quality));
+        }
         return PromiseC.resolve(natives.encodeContext(o.context, o.width, o.height, type, quality));
       } catch (e) {
         return PromiseC.reject(e);
@@ -799,12 +983,6 @@
     }
   }
   webidl(OffscreenCanvas, 'OffscreenCanvas');
-  function OffscreenCanvasRenderingContext2D() { throw illegal(); }
-  defineProperty(OffscreenCanvasRenderingContext2D, Symbol.hasInstance, {
-    value: (v) => offscreenContexts.has(v), configurable: true,
-  });
-  defineProperty(OffscreenCanvasRenderingContext2D, 'prototype', { value: Object.create(null), writable: false });
-  defineProperty(OffscreenCanvasRenderingContext2D.prototype, Symbol.toStringTag, { value: 'OffscreenCanvasRenderingContext2D', configurable: true });
   const metrics = new WeakMap();
   const METRICS = [
     'width', 'actualBoundingBoxLeft', 'actualBoundingBoxRight', 'fontBoundingBoxAscent', 'fontBoundingBoxDescent',
@@ -830,18 +1008,69 @@
   webidl(TextMetrics, 'TextMetrics');
 
   return {
-    DOMPointReadOnly, DOMPoint, DOMMatrixReadOnly, DOMMatrix, WebKitCSSMatrix: DOMMatrix,
+    DOMRectList, DOMRectReadOnly, DOMRect, SVGRect: DOMRect, DOMQuad, DOMPointReadOnly, DOMPoint, DOMMatrixReadOnly, DOMMatrix, WebKitCSSMatrix: DOMMatrix,
+    geometryParts(value) {
+      const mutable = mutableGeometry.has(value);
+      const p = pointState.get(value);
+      if (p) return [mutable ? 'DOMPoint' : 'DOMPointReadOnly', [p.x, p.y, p.z, p.w]];
+      const rect = rectParts(value);
+      if (rect) return [mutable ? 'DOMRect' : 'DOMRectReadOnly', rect];
+      const points = quadPoints(value);
+      if (points) return ['DOMQuad', [points[0], points[1], points[2], points[3]]];
+      const matrix = matrixState.get(value);
+      if (!matrix) return undefined;
+      const m = matrix.m;
+      return [mutable ? 'DOMMatrix' : 'DOMMatrixReadOnly', matrix.is2D ? [m[0], m[1], m[4], m[5], m[12], m[13]] : m.slice()];
+    },
+    geometryFromParts(name, v) {
+      switch (name) {
+        case 'DOMPoint': return new DOMPoint(v[0], v[1], v[2], v[3]);
+        case 'DOMPointReadOnly': return new DOMPointReadOnly(v[0], v[1], v[2], v[3]);
+        case 'DOMRect': return new DOMRect(v[0], v[1], v[2], v[3]);
+        case 'DOMRectReadOnly': return new DOMRectReadOnly(v[0], v[1], v[2], v[3]);
+        case 'DOMQuad': return quadFromPoints(v);
+        case 'DOMMatrix': case 'DOMMatrixReadOnly':
+          return make(name === 'DOMMatrix' ? DOMMatrix : DOMMatrixReadOnly,
+            v.length === 6 ? from2D(v[0],v[1],v[2],v[3],v[4],v[5]) : v, v.length === 6);
+        default: throw domError('DataCloneError', 'Unknown geometry value');
+      }
+    },
+    rectList(rects) { return new DOMRectList(secret, rects); },
+    rectValue(x,y,width,height,readonly) { return readonly ? new DOMRectReadOnly(x,y,width,height) : new DOMRect(x,y,width,height); },
     Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics,
-    ImageBitmap, OffscreenCanvas, OffscreenCanvasRenderingContext2D, createImageBitmap,
+    ImageBitmap, ImageBitmapRenderingContext, OffscreenCanvas, createImageBitmap,
     // Helpers for canvas.rs.
+    // A <canvas>'s bitmaprenderer context, and what one shows ([handle, width, height] or null).
+    bitmapRenderer(canvas) { return new ImageBitmapRenderingContext(secret, canvas); },
+    rendererImage,
     gradient(kind, args) { return new CanvasGradient(secret, kind, args); },
     pattern(repetition, image) { return new CanvasPattern(secret, repetition, image); },
     textMetrics(values) { return new TextMetrics(secret, values); },
     imageData(width, height, settings) { return new ImageData(width, height, settings); },
+    // createImageData: ImageDataSettings with the context's color space as
+    // the default; the 8-bit copy of an ImageData's data (putImageData);
+    // the pixel format check of getImageData's settings.
+    imageDataIn(width, height, settings, space) {
+      const o = dict(settings);
+      const colorSpace = o.colorSpace;
+      const pixelFormat = o.pixelFormat;
+      return new ImageData(width, height, { colorSpace: colorSpace === undefined ? space : colorSpace, pixelFormat });
+    },
+    unorm8Of,
+    pixelFormatOf(settings) {
+      const raw = dict(settings).pixelFormat;
+      const format = raw === undefined ? 'rgba-unorm8' : `${raw}`;
+      if (!PIXEL_FORMATS.includes(format)) throw new TypeErrorC(`The provided value '${format}' is not a valid enum value of type ImageDataPixelFormat.`);
+      if (format === 'rgba-float16' && !Float16ArrayC) throw new TypeErrorC('Float16Array is not supported.');
+      return format;
+    },
     // An ImageData over `data` (a Uint8ClampedArray the native side filled).
-    imageDataOf(data, width, height, space) {
+    // `format` 'rgba-float16' turns 8-bit data into floats; the pixel format
+    // otherwise follows the data's type (a cloned float ImageData).
+    imageDataOf(data, width, height, space, format) {
+      if (format === 'rgba-float16' && !isFloat16(data)) data = float16Of(data);
       const o = Object.create(ImageData.prototype);
-      images.set(o, { width, height, data, colorSpace: space });
+      images.set(o, { width, height, data, colorSpace: space, pixelFormat: isFloat16(data) ? 'rgba-float16' : 'rgba-unorm8' });
       return o;
     },
     // Structured serialization and transfer (canvas.rs `canvas_object_of`):
@@ -858,7 +1087,7 @@
       const o = offscreens.get(value);
       if (!o || !transfer) return undefined;
       if (o.detached) throw domError('DataCloneError', 'An OffscreenCanvas is detached and could not be transferred.');
-      if (o.context) throw domError('InvalidStateError', 'An OffscreenCanvas could not be transferred because it had a rendering context.');
+      if (o.context || o.renderer) throw domError('InvalidStateError', 'An OffscreenCanvas could not be transferred because it had a rendering context.');
       return [1, o.width, o.height, o.placeholder];
     },
     // A transferred ImageBitmap or OffscreenCanvas: detached here.
@@ -881,11 +1110,13 @@
       oc(canvas).placeholder = placeholder;
       return canvas;
     },
-    // [width, height, data] of an ImageData, or null.
-    imageInfo(value) { const s = images.get(value); return s ? [s.width, s.height, s.data] : null; },
+    // [width, height, data, colorSpace] of an ImageData, or null.
+    imageInfo(value) { const s = images.get(value); return s ? [s.width, s.height, s.data, s.colorSpace, s.pixelFormat] : null; },
     // The gradient or pattern record of a fill/stroke style.
     paintRecord(value) { return gradients.get(value) || patterns.get(value) || null; },
+    frameCanvasSource(image) { return bitmaps.has(image) || offscreens.has(image); },
     sourceOf,
+    contextSettings,
     // [a, b, c, d, e, f] of a DOMMatrix2DInit (validated), for setTransform.
     matrix2D(init) {
       const m = matrixState.has(init) ? matrixState.get(init).m : fixup(init, true).m;
@@ -894,7 +1125,7 @@
     matrix(a, b, c, d, e, f) { return make(DOMMatrix, from2D(a, b, c, d, e, f), true); },
     pathOps(value) { return paths.get(value) || null; },
     isFillStyle(value) { return gradients.has(value) || patterns.has(value); },
-    imageSize(value) { const s = images.get(value); return s ? [s.width, s.height, s.colorSpace] : null; },
+    imageSize(value) { const s = images.get(value); return s ? [s.width, s.height, s.colorSpace, s.pixelFormat] : null; },
     roundRectRadii,
   };
 })

@@ -20,6 +20,21 @@ impl Seen {
     }
 }
 
+/// A worker script that starts `/child.js?{tag}` and passes its message on.
+macro_rules! nested_parent {
+    ($tag:literal) => {
+        concat!(
+            "const w = new Worker('/child.js?", $tag, "');",
+            "w.onmessage = (e) => postMessage('", $tag, ":' + e.data);",
+            "w.onerror = () => postMessage('", $tag, ":error');"
+        )
+    };
+}
+const NESTED_PARENT_UNSET: &str = nested_parent!("unset");
+const NESTED_PARENT_ORIGIN: &str = nested_parent!("origin");
+const NESTED_PARENT_NONE: &str = nested_parent!("none");
+const NESTED_PARENT_FINAL: &str = nested_parent!("final");
+
 struct Server {
     origin: String,
     seen: Arc<Mutex<Vec<Seen>>>,
@@ -55,6 +70,16 @@ impl Server {
                 if path == "/stop" {
                     break;
                 }
+                // A worker script reached through a redirect.
+                if path == "/to-parent.js" {
+                    log.lock().unwrap().push(Seen { path, headers });
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 302 Found\r\nLocation: /parent-final.js\r\n\
+                         Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    );
+                    continue;
+                }
                 // Content negotiation as a dev server does it: raw CSS only for
                 // an Accept naming text/css, a JavaScript wrapper otherwise.
                 let accepts_css = headers.iter().any(|(n, v)| n == "accept" && v.contains("text/css"));
@@ -69,6 +94,13 @@ impl Server {
                         "<head><meta name=referrer content=no-referrer><script src=\"/s.js\"></script></head><p>c</p>",
                     ),
                     "/s.js" => ("text/javascript", "", "globalThis.script = true;"),
+                    // Dedicated workers that each start a nested worker,
+                    // under their own script's Referrer-Policy.
+                    "/parent-unset.js" => ("text/javascript", "", NESTED_PARENT_UNSET),
+                    "/parent-origin.js" => ("text/javascript", "Referrer-Policy: origin\r\n", NESTED_PARENT_ORIGIN),
+                    "/parent-none.js" => ("text/javascript", "Referrer-Policy: no-referrer\r\n", NESTED_PARENT_NONE),
+                    "/parent-final.js" => ("text/javascript", "", NESTED_PARENT_FINAL),
+                    "/child.js" => ("text/javascript", "", "postMessage('child');"),
                     _ => ("application/json", "", "{\"ok\":true}"),
                 };
                 log.lock().unwrap().push(Seen { path, headers });
@@ -185,4 +217,45 @@ fn module_script_fetch_destinations() {
         (json.get("accept"), json.get("sec-fetch-dest"), json.get("sec-fetch-mode")),
         (Some("application/json,*/*;q=0.5"), Some("json"), Some("cors"))
     );
+}
+
+/// A dedicated worker's script request is sent with its creator's referrer
+/// under its creator's policy: the document's for a worker the page starts,
+/// and, for a nested worker, the creating worker's script response URL
+/// (after redirects) under the policy of that response (not the page's).
+#[test]
+fn worker_scripts_use_their_creators_referrer_and_policy() {
+    let server = Server::new();
+    let mut thread = crate::browser_thread().unwrap();
+    thread.enable_network(Default::default()).unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let origin = server.origin.clone();
+    // /b's Referrer-Policy is origin.
+    thread.browser.navigate(page, NavigateOpts::address_bar(format!("{origin}/b"))).unwrap();
+    until(&mut thread, page, "location.pathname === '/b' && document.readyState === 'complete'");
+    eval(
+        &thread,
+        page,
+        "globalThis.got = [];\
+         for (const p of ['/parent-unset.js', '/parent-origin.js', '/parent-none.js', '/to-parent.js']) {\
+           const w = new Worker(p); w.onmessage = (e) => got.push(e.data); w.onerror = () => got.push(p + ':error');\
+         } 0",
+    );
+    until(&mut thread, page, "globalThis.got.length === 4");
+    assert_eq!(eval(&thread, page, "got.slice().sort().join()"), "final:child,none:child,origin:child,unset:child");
+    // Each parent script: the page's origin policy cuts /b to its origin.
+    let page_origin = format!("{origin}/");
+    for parent in ["/parent-unset.js", "/parent-origin.js", "/parent-none.js", "/to-parent.js"] {
+        let seen = server.request(parent);
+        assert_eq!(seen.get("referer"), Some(page_origin.as_str()), "{parent}: {seen:?}");
+    }
+    // Each child script: its creating worker's URL under that worker's policy.
+    let unset_parent = format!("{origin}/parent-unset.js");
+    let unset_child = server.request("/child.js?unset");
+    assert_eq!(unset_child.get("referer"), Some(unset_parent.as_str()), "the parent's default policy, not /b's");
+    assert_eq!(server.request("/child.js?origin").get("referer"), Some(page_origin.as_str()));
+    assert_eq!(server.request("/child.js?none").get("referer"), None);
+    // The redirected worker's URL is its response's, not its request's.
+    let final_parent = format!("{origin}/parent-final.js");
+    assert_eq!(server.request("/child.js?final").get("referer"), Some(final_parent.as_str()));
 }

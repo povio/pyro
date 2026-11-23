@@ -128,6 +128,79 @@ const HELPERS: &str = r#"
 "#;
 
 #[test]
+fn ordinary_transaction_creation_ends_between_listener_invocations() {
+    let env = Env::new();
+    let owner = env.doc("http://idb.test/creation-turn");
+    owner.eval(HELPERS);
+    let got = env.run(
+        &owner,
+        r#"
+        const db = await openDb('activity', 1, db => db.createObjectStore('s'));
+        const outer = db.transaction('s', 'readwrite'), finished = done(outer);
+        const store = outer.objectStore('s'), request = store.put('first', 1), log = [];
+        let inner, innerDone;
+        request.addEventListener('success', () => {
+          Promise.resolve().then(() => {
+            inner = db.transaction('s'); innerDone = done(inner);
+            Promise.resolve().then(() => { inner.objectStore('s').get(1); log.push('microtask'); });
+          });
+        });
+        request.addEventListener('success', () => {
+          try { inner.objectStore('s').get(1); log.push('still active'); } catch (e) { log.push(e.name); }
+          try { inner.commit(); log.push('committed'); } catch (e) { log.push(e.name); }
+          store.put('second', 2);
+        });
+        log.push(await finished, await innerDone); db.close();
+        const reopened = await openDb('activity', 1);
+        log.push(await req(reopened.transaction('s').objectStore('s').get(2)));
+        reopened.close(); out = log.join('|');
+        "#,
+    );
+    assert_eq!(got, "microtask|TransactionInactiveError|InvalidStateError|complete|complete|second");
+}
+
+#[test]
+fn borrowed_request_methods_use_receiver_realm_after_detach() {
+    let env = Env::new();
+    let owner = env.doc("http://idb.test/owner");
+    let lender = env.doc("http://idb.test/lender");
+    {
+        let source = lender.realm.scope().unwrap();
+        let dest = owner.realm.scope().unwrap();
+        let methods = source.eval("[IDBObjectStore.prototype.put, IDBIndex.prototype.openCursor]", None, 1).unwrap();
+        dest.global().set("borrowed", methods).unwrap();
+    }
+    lifecycle::realm_disposed(&lender.page, lender.realm.id());
+    lender.realm.dispose();
+    owner.eval(HELPERS);
+    let got = env.run(
+        &owner,
+        r#"
+        const db = await openDb('borrowed', 1, db => db.createObjectStore('s').createIndex('i', 'name'));
+        const tx = db.transaction('s', 'readwrite'), finished = done(tx);
+        const store = tx.objectStore('s'), index = store.index('i');
+        const [put, cursor] = borrowed;
+        for (const wrong of [index, Object.create(store), new Proxy(store, {})]) {
+          try { put.call(wrong, {}, 0); return out = 'accepted wrong receiver'; }
+          catch (e) { if (e.name !== 'TypeError') throw e; }
+        }
+        store.put = index.openCursor = () => { throw Error('looked up overridden method'); };
+        const write = put.call(store, {name:'abc'}, 3);
+        const read = cursor.call(index, IDBKeyRange.only('abc'));
+        const record = await req(read);
+        const checks = [write instanceof IDBRequest, write.source === store, write.transaction === tx,
+          read instanceof IDBRequest, read.source === index, record instanceof IDBCursorWithValue,
+          record.key, record.primaryKey, record.value.name, await finished];
+        db.close();
+        const reopened = await openDb('borrowed', 1);
+        checks.push((await req(reopened.transaction('s').objectStore('s').get(3))).name);
+        reopened.close(); out = checks.join('|');
+        "#,
+    );
+    assert_eq!(got, "true|true|true|true|true|true|abc|3|abc|complete|abc");
+}
+
+#[test]
 fn records_survive_navigation_and_appear_in_databases() {
     let env = Env::new();
     let a = env.doc("http://idb.test/a");
@@ -173,6 +246,45 @@ fn records_survive_navigation_and_appear_in_databases() {
     assert_eq!(env.run(&other, "out = JSON.stringify(await indexedDB.databases())"), "[]");
     let isolated = doc(&env.engine, &env.tasks, "http://idb.test/", &StorageNamespace::default());
     assert_eq!(env.run(&isolated, "out = (await indexedDB.databases()).length"), "0");
+}
+
+#[test]
+fn databases_exposes_only_committed_upgrades() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const catalog = () => indexedDB.databases().then(rows => rows.map(row => `${row.name}:${row.version}`).sort().join(','));
+        const stable = await openDb('stable', 1);
+        const log = [];
+        let snapshot;
+        let db = await openDb('changing', 1, conn => {
+          conn.createObjectStore('rows').put('kept', 1);
+          snapshot = catalog();
+        });
+        log.push(await snapshot, await catalog());
+        db.close();
+        db = await openDb('changing', 2, () => { snapshot = catalog(); });
+        log.push(await snapshot, await catalog());
+        db.close();
+        const failure = await openDb('changing', 3, (conn, tx) => {
+          snapshot = catalog();
+          conn.deleteObjectStore('rows');
+          tx.abort();
+        }).catch(error => error.name);
+        log.push(await snapshot, failure, await catalog());
+        db = await openDb('changing');
+        log.push(db.version, await req(db.transaction('rows').objectStore('rows').get(1)));
+        db.close(); stable.close();
+        out = log.join('|');
+    "#,
+    );
+    assert_eq!(
+        got,
+        "stable:1|changing:1,stable:1|changing:1,stable:1|changing:2,stable:1|changing:2,stable:1|AbortError|changing:2,stable:1|2|kept"
+    );
 }
 
 #[test]
@@ -246,6 +358,188 @@ fn key_paths_generators_and_constraints() {
 }
 
 #[test]
+fn terminal_events_precede_waiting_transaction_events() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const db = await openDb('terminal-order', 1, db => db.createObjectStore('rows'));
+        const events = [];
+        for (const abort of [false, true]) {
+          const writer = db.transaction('rows', 'readwrite');
+          const terminal = done(writer).then(() => events.push('commit'), e => events.push(e.name));
+          const rows = writer.objectStore('rows');
+          await req(rows.put(abort ? 'temporary' : 'saved', 1));
+          const first = db.transaction('rows');
+          const empty = done(first).then(() => events.push('empty'));
+          const second = db.transaction('rows');
+          const read = req(second.objectStore('rows').get(1)).then(value => events.push(value));
+          const finished = done(second);
+          if (abort) {
+            const duplicate = rows.add('bad', 1);
+            duplicate.onerror = () => events.push('error');
+          } else {
+            await req(rows.put('also saved', 2));
+          }
+          await Promise.all([terminal, empty, read, finished]);
+          const successors = events.splice(-2).sort();
+          events.push(...successors);
+        }
+        db.close();
+        const reopened = await openDb('terminal-order', 1);
+        events.push(await req(reopened.transaction('rows').objectStore('rows').count()));
+        out = events.join('|');
+        "#,
+    );
+    assert_eq!(got, "commit|empty|saved|error|ConstraintError|empty|saved|2");
+}
+
+#[test]
+fn array_key_conversion_rejects_proxies_without_traps() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const db = await openDb('array-key-brand', 1, db => db.createObjectStore('rows'));
+        const tx = db.transaction('rows', 'readwrite');
+        const completed = done(tx);
+        const rows = tx.objectStore('rows');
+        let traps = 0, reads = 0;
+        const trap = () => { traps++; throw new Error('unexpected trap'); };
+        const proxy = new Proxy([1], {get: trap, getOwnPropertyDescriptor: trap});
+        const revoked = Proxy.revocable([], {});
+        revoked.revoke();
+        const error = operation => { try { operation(); return 'accepted'; } catch (e) { return e.name; } };
+        const failures = [error(() => rows.add('bad', proxy)), error(() => indexedDB.cmp([proxy], [])),
+                          error(() => IDBKeyRange.only(revoked.proxy))];
+        class Keys extends Array {}
+        const key = new Keys();
+        Object.defineProperty(key, 0, {get() { reads++; return 17; }});
+        await req(rows.add('stored', key));
+        await completed;
+        db.close();
+        const reopened = await openDb('array-key-brand', 1);
+        const stored = await req(reopened.transaction('rows').objectStore('rows').get([17]));
+        out = [...failures, traps, reads, stored].join('|');
+        "#,
+    );
+    assert_eq!(got, "DataError|DataError|DataError|0|1|stored");
+}
+
+#[test]
+fn decoded_keys_bypass_inherited_index_setters() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const db = await openDb('returned-keys', 1, db => db.createObjectStore('rows'));
+        const tx = db.transaction('rows', 'readwrite');
+        const completed = done(tx);
+        const rows = tx.objectStore('rows');
+        const key = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, ['abcdefghijk', Uint8Array.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 255)]];
+        let calls = 0;
+        Object.defineProperty(Object.prototype, '10', {configurable: true, set() { calls++; }});
+        try {
+          const result = await req(rows.put('saved', key));
+          out = [calls, Object.hasOwn(result, 10), indexedDB.cmp(result, key)].join('|');
+        } finally {
+          delete Object.prototype[10];
+        }
+        await completed;
+        db.close();
+        const reopened = await openDb('returned-keys', 1);
+        out += '|' + await req(reopened.transaction('rows').objectStore('rows').get(key));
+        "#,
+    );
+    assert_eq!(got, "0|true|0|saved");
+}
+
+#[test]
+fn blob_file_key_paths_use_stored_metadata() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const db = await openDb('file-keys', 1, db => {
+          const store = db.createObjectStore('rows', {keyPath: ['payload.size', 'payload.type']});
+          store.createIndex('files', ['payload.name', 'payload.lastModified']);
+        });
+        const tx = db.transaction('rows', 'readwrite');
+        const rows = tx.objectStore('rows');
+        const completed = done(tx);
+        const blobKey = await req(rows.add({payload: new Blob([])}));
+        const fileKey = await req(rows.add({payload: new File(['ab'], 'record', {type: 'text/plain', lastModified: 0})}));
+        await completed;
+        const aborted = db.transaction('rows', 'readwrite');
+        const rolledBack = done(aborted).catch(error => error.name);
+        await req(aborted.objectStore('rows').delete(fileKey));
+        aborted.abort();
+        await rolledBack;
+        db.close();
+        const reopened = await openDb('file-keys', 1);
+        const index = reopened.transaction('rows').objectStore('rows').index('files');
+        const count = await req(index.count());
+        const restored = await req(index.get(['record', 0]));
+        out = JSON.stringify([blobKey, fileKey, count, restored.payload.name, restored.payload.size]);
+        "#,
+    );
+    assert_eq!(got, r#"[[0,""],[2,"text/plain"],1,"record",2]"#);
+}
+
+#[test]
+fn failed_unique_writes_preserve_the_generator() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const db = await openDb('failed-writes', 1, db => {
+          db.createObjectStore('rows', {autoIncrement: true}).createIndex('tag', 'tag', {unique: true});
+        });
+        const tx = db.transaction('rows', 'readwrite');
+        const rows = tx.objectStore('rows');
+        const canceled = request => new Promise(resolve => {
+          request.onerror = event => { event.preventDefault(); resolve(request.error.name); };
+          request.onsuccess = () => resolve('unexpected success');
+        });
+        await req(rows.add({tag: 'original'}));
+        const generatedError = await canceled(rows.add({tag: 'original'}));
+        const afterGenerated = await req(rows.add({tag: 'second'}));
+        const explicitError = await canceled(rows.put({tag: 'original'}, 2 ** 53));
+        const afterExplicit = await req(rows.add({tag: 'third'}));
+        const explicit = await req(rows.put({tag: 'explicit'}, 10.5));
+        const advanced = await req(rows.add({tag: 'advanced'}));
+        await done(tx);
+        const aborted = db.transaction('rows', 'readwrite');
+        const abortResult = done(aborted).catch(error => error.name);
+        const tentative = aborted.objectStore('rows');
+        await req(tentative.put({tag: 'temporary'}, 100));
+        tentative.add({tag: 'original'});
+        const abortError = await abortResult;
+        db.close();
+        const reopened = await openDb('failed-writes', 1);
+        const nextTx = reopened.transaction('rows', 'readwrite');
+        const nextRows = nextTx.objectStore('rows');
+        const count = await req(nextRows.count());
+        const rolledBack = await req(nextRows.get(100)) === undefined;
+        const next = await req(nextRows.add({tag: 'reopened'}));
+        out = [generatedError, afterGenerated, explicitError, afterExplicit, explicit, advanced,
+               abortError, count, rolledBack, next, await done(nextTx)].join('|');
+        "#,
+    );
+    assert_eq!(got, "ConstraintError|2|ConstraintError|3|10.5|11|ConstraintError|5|true|12|complete");
+}
+
+#[test]
 fn key_generator_exhausts_after_2_pow_53() {
     let env = Env::new();
     let d = env.doc("http://idb.test/");
@@ -271,6 +565,38 @@ fn key_generator_exhausts_after_2_pow_53() {
     "#,
     );
     assert_eq!(got, "9007199254740992|ConstraintError|ConstraintError|ConstraintError|2|complete");
+}
+
+#[test]
+fn request_callback_exception_respects_explicit_commit() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        let db = await openDb('callbacks', 1, db => db.createObjectStore('rows'));
+        const log = [];
+        for (const mode of ['before', 'inside', 'implicit', 'duplicate']) {
+          const tx = db.transaction('rows', 'readwrite');
+          const rows = tx.objectStore('rows');
+          const first = rows.add(mode, mode);
+          if (mode === 'duplicate') rows.add('replacement', 'before');
+          else first.onsuccess = () => {
+            if (mode === 'inside') tx.commit();
+            throw new Error('listener');
+          };
+          if (mode === 'before' || mode === 'duplicate') tx.commit();
+          log.push(await done(tx).catch(error => error.name));
+        }
+        db.close();
+        db = await openDb('callbacks');
+        log.push((await req(db.transaction('rows').objectStore('rows').getAll())).join(','));
+        db.close();
+        out = log.join('|');
+    "#,
+    );
+    assert_eq!(got, "complete|complete|AbortError|ConstraintError|before,inside");
 }
 
 #[test]
@@ -530,6 +856,27 @@ fn version_change_blocks_until_other_documents_close() {
 }
 
 #[test]
+fn window_indexeddb_is_an_own_readonly_accessor() {
+    let env = Env::new();
+    let document = env.doc("http://idb.test/");
+    assert_eq!(
+        document.eval(
+            r#"
+            const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB');
+            const get = descriptor.get;
+            let wrongReceiver;
+            try { get.call({}); } catch (error) { wrongReceiver = error.name; }
+            [!('indexedDB' in Window.prototype), descriptor.enumerable, descriptor.configurable,
+             descriptor.set === undefined, get.name, get.length, get.call(undefined) === indexedDB,
+             get.call(globalThis) === indexedDB, wrongReceiver, Reflect.set(globalThis, 'indexedDB', 1),
+             delete globalThis.indexedDB, !('indexedDB' in globalThis)].join('|')
+        "#
+        ),
+        "true|true|true|true|get indexedDB|0|true|true|TypeError|false|true|true"
+    );
+}
+
+#[test]
 fn interfaces_are_lazy_globals_and_opaque_origins_reject() {
     let env = Env::new();
     let d = env.doc("http://idb.test/");
@@ -561,6 +908,71 @@ fn interfaces_are_lazy_globals_and_opaque_origins_reject() {
 }
 
 #[test]
+fn worker_idb_interfaces_start_as_own_data_properties() {
+    let env = crate::support::network::Env::new("http://idb.test/page");
+    env.eval(
+        r#"
+        const source = `
+          const failures = [];
+          for (const name of ['IDBCursor', 'IDBCursorWithValue', 'IDBDatabase', 'IDBIndex',
+            'IDBKeyRange', 'IDBObjectStore', 'IDBOpenDBRequest', 'IDBRecord', 'IDBRequest',
+            'IDBTransaction', 'IDBVersionChangeEvent']) {
+            const desc = Object.getOwnPropertyDescriptor(self, name);
+            if (!desc || typeof desc.value !== 'function' || desc.value !== self[name] ||
+                !desc.writable || desc.enumerable || !desc.configurable || 'get' in desc ||
+                Object.hasOwn(WorkerGlobalScope.prototype, name)) failures.push(name);
+          }
+          const open = indexedDB.open('worker-interface-identity', 1);
+          if (Object.getPrototypeOf(open) !== IDBOpenDBRequest.prototype) failures.push('request identity');
+          open.onupgradeneeded = () => {
+            if (Object.getPrototypeOf(open.transaction) !== IDBTransaction.prototype) failures.push('tx identity');
+          };
+          open.onerror = () => postMessage(open.error.name);
+          open.onsuccess = () => {
+            if (Object.getPrototypeOf(open.result) !== IDBDatabase.prototype) failures.push('db identity');
+            open.result.close();
+            postMessage(failures.join(',') || 'ok');
+          };`;
+        globalThis.reply = null;
+        globalThis.worker = new Worker(URL.createObjectURL(new Blob([source])));
+        worker.onmessage = event => { reply = event.data; };
+        worker.onerror = event => { reply = 'error: ' + event.message; };
+    "#,
+    );
+    env.until("reply !== null");
+    assert_eq!(env.eval("reply"), "ok");
+    env.eval("worker.terminate()");
+}
+
+#[test]
+fn data_worker_uses_opaque_origin_for_indexeddb() {
+    let env = crate::support::network::Env::with_engine_origin(
+        "http://idb.test/page",
+        Rc::new(Engine::new().unwrap()),
+        Some("http://idb.test".into()),
+    );
+    env.eval(
+        r#"
+        globalThis.reply = null;
+        const source = `
+          const syncResult = fn => { try { fn(); return 'returned'; } catch (error) { return error.name; } };
+          const results = [self.origin, typeof IDBKeyRange, indexedDB.cmp(1, 2),
+            syncResult(() => indexedDB.open('worker-db')),
+            syncResult(() => indexedDB.deleteDatabase('worker-db'))];
+          indexedDB.databases().then(() => results.push('resolved'), error => results.push(error.name))
+            .then(() => postMessage(results.join('|')));`;
+        globalThis.worker = new Worker('data:text/javascript,' + encodeURIComponent(source));
+        worker.onmessage = event => { reply = event.data; };
+        worker.onerror = event => { reply = 'error: ' + event.message; };
+        "#,
+    );
+    env.until("reply !== null");
+    let reply = env.eval("reply");
+    env.eval("worker.terminate()");
+    assert_eq!(reply, "null|function|-1|SecurityError|SecurityError|SecurityError");
+}
+
+#[test]
 fn dedicated_workers_share_the_owner_partition() {
     let env = crate::support::network::Env::new("http://idb.test/page");
     env.eval(
@@ -584,6 +996,83 @@ fn dedicated_workers_share_the_owner_partition() {
     env.until("msgs.length >= 2 || msgs[0].startsWith('error')");
     assert_eq!(env.eval("msgs.join('|')"), r#"function,true,1|[{"name":"from-worker","version":3}]"#);
     env.eval("w.terminate()");
+}
+
+#[test]
+fn upgrade_complete_listener_requests_follow_open_success() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let trace = env.run(
+        &doc,
+        r#"
+        const events = [];
+        const open = indexedDB.open('upgrade-order');
+        let writeFinished;
+        open.onupgradeneeded = () => {
+          const db = open.result;
+          db.createObjectStore('rows');
+          const upgrade = open.transaction;
+          upgrade.oncomplete = () => {
+            events.push('complete:' + (open.transaction === upgrade));
+            const write = db.transaction('rows', 'readwrite');
+            writeFinished = done(write);
+            const put = write.objectStore('rows').put('saved', 1);
+            put.onsuccess = () => events.push('put:' + put.result);
+            Promise.resolve().then(() => events.push('microtask:' + (open.transaction === upgrade)));
+          };
+        };
+        const db = await req(open);
+        events.push('open:' + (open.transaction === null));
+        await writeFinished;
+        db.close();
+        const reopened = await openDb('upgrade-order');
+        events.push(await req(reopened.transaction('rows').objectStore('rows').get(1)));
+        reopened.close();
+        out = events.join('|');
+        "#,
+    );
+    assert_eq!(trace, "complete:true|microtask:true|open:true|put:1|saved");
+}
+
+#[test]
+fn open_request_releases_transaction_after_terminal_dispatch() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    for path in ["commit", "abort", "constraint"] {
+        doc.eval(&format!("globalThis.path = '{path}'"));
+        doc.eval(
+            r#"
+            globalThis.trace = [];
+            globalThis.openRequest = indexedDB.open(path, 1);
+            openRequest.onupgradeneeded = () => {
+              const tx = openRequest.transaction;
+              const store = openRequest.result.createObjectStore('rows');
+              const terminal = event => {
+                trace.push(event.type, openRequest.transaction === tx);
+                Promise.resolve().then(() => trace.push(openRequest.transaction === tx));
+              };
+              tx.oncomplete = tx.onabort = terminal;
+              if (path === 'abort') tx.abort();
+              if (path === 'constraint') { store.add('one', 1); store.add('duplicate', 1); }
+            };
+            openRequest.onsuccess = openRequest.onerror = event => {
+              trace.push(event.type, openRequest.transaction === null);
+              if (event.type === 'success') openRequest.result.close();
+            };
+            "#,
+        );
+        while doc.eval("trace.length") == "0" {
+            let task = env.tasks.0.borrow_mut().pop_front().expect("expected an upgrade task");
+            task();
+        }
+        let terminal = if path == "commit" { "complete" } else { "abort" };
+        assert_eq!(doc.eval("trace.join('|')"), format!("{terminal}|true|true"), "{path}");
+        assert_eq!(doc.eval("openRequest.transaction === null"), "true", "{path}: before open result task");
+        env.tasks.drain();
+        let outcome = if path == "commit" { "success" } else { "error" };
+        assert_eq!(doc.eval("trace.join('|')"), format!("{terminal}|true|true|{outcome}|true"), "{path}");
+    }
 }
 
 #[test]

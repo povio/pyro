@@ -36,24 +36,157 @@ pub fn dom_content_loaded(page: &Rc<PageDom>, doc: NodeId) {
     page.note_timing(|t| &mut t.dom_content_loaded_end);
 }
 
-/// HTML "flush autofocus candidates" (simplified): the first `autofocus`
-/// element of the top-level document gets focus when nothing has it.
-fn flush_autofocus(page: &Rc<PageDom>, doc: NodeId) {
-    if page.scripting_disabled() {
+/// After parsing: the autofocus elements the parser inserted are flushed at the next rendering
+/// update (HTML "flush autofocus candidates"), which the page may not have asked for yet.
+fn flush_autofocus(page: &Rc<PageDom>, _doc: NodeId) {
+    if page.dom.borrow().has_autofocus_insertions() {
+        request_top_level_frames(page);
+    }
+}
+
+/// Asks for a rendering update of the top-level page(s) sharing `page`'s DOM, whose flush
+/// handles the autofocus candidates: a child frame's candidates join its top-level
+/// document's, whose page may be idle (no animation frame of its own pending).
+pub(crate) fn request_top_level_frames(page: &Rc<PageDom>) {
+    if !page.is_nested_frame() {
+        if let Some(hooks) = page.hooks() {
+            hooks.request_animation_frame();
+        }
         return;
     }
-    let candidate = {
-        let dom = page.dom.borrow();
-        if dom.focused(doc).ok().flatten().is_some() {
-            return;
+    let Some(realm) = page.main_world_realm() else { return };
+    let Ok(scope) = realm.scope() else { return };
+    for sibling in page.sibling_realms(&scope) {
+        let Ok(s) = sibling.scope() else { continue };
+        let Ok(other) = crate::target::page_of(&s) else { continue };
+        if Rc::ptr_eq(&other.dom, &page.dom) && !other.is_nested_frame() && !other.is_disposed() {
+            if let Some(hooks) = other.hooks() {
+                hooks.request_animation_frame();
+            }
         }
-        let Ok(mut desc) = dom.descendants(doc) else { return };
-        desc.find(|&id| dom.element(id).is_ok_and(|e| e.is_html() && e.attr("autofocus").is_some()))
-            .filter(|&id| dom.is_focusable(id).unwrap_or(false))
-    };
-    if let Some(el) = candidate {
-        crate::input::focus_element(page, el);
     }
+}
+
+/// The page whose top-level document's autofocus candidates `el` joins: its own document's
+/// when that is a top-level one, the top-level `page`'s for a child frame of the same origin,
+/// none in a cross-origin frame or a document without a browsing context.
+fn autofocus_top_page(page: &Rc<PageDom>, el: NodeId) -> Option<Rc<PageDom>> {
+    let doc = page.dom.borrow().node_document(el).ok()?;
+    let owner = crate::custom::document_page(page, doc)?;
+    if !owner.is_nested_frame() {
+        return Some(owner);
+    }
+    (!page.is_nested_frame() && owner.origin_key() == page.origin_key()).then(|| page.clone())
+}
+
+/// The last of HTML's dialog focusing steps: the dialog's top-level document (when same origin)
+/// empties its autofocus candidates and has its autofocus processed.
+pub(crate) fn dialog_processed_autofocus(page: &Rc<PageDom>, dialog: NodeId) {
+    // Candidates already inserted are among those emptied (a child frame's page leaves its
+    // insertions to the top-level page's flush).
+    if !page.is_nested_frame() {
+        collect_autofocus_candidates(page);
+    }
+    if let Some(top) = autofocus_top_page(page, dialog) {
+        top.autofocus_candidates.borrow_mut().clear();
+        top.autofocus_processed.set(true);
+    }
+}
+
+/// HTML's autofocus insertion steps for the elements inserted since the last flush: each
+/// moves to the end of its top-level document's candidates, unless that document already
+/// processed autofocus.
+fn collect_autofocus_candidates(page: &Rc<PageDom>) {
+    let inserted = page.dom.borrow_mut().take_autofocus_insertions();
+    for el in inserted {
+        let Some(top) = autofocus_top_page(page, el) else { continue };
+        if top.autofocus_processed.get() {
+            continue;
+        }
+        let mut candidates = top.autofocus_candidates.borrow_mut();
+        candidates.retain(|&c| c != el);
+        candidates.push(el);
+    }
+}
+
+/// HTML "flush autofocus candidates" for the top-level document of `page`, at its rendering
+/// update (before the scroll steps and the animation frame callbacks). The first candidate
+/// that is (or delegates to) a focusable area in a fully active document of this top-level
+/// one gets focus, unless something is focused already or a URL fragment targets an element;
+/// either way autofocus is then processed for good. An element in a `<dialog>` is left to
+/// the dialog's own focusing steps.
+pub fn flush_autofocus_candidates(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
+    // A child frame's rendering update hands its document's new candidates to the top-level
+    // page's next one.
+    if page.is_nested_frame() {
+        if page.dom.borrow().has_autofocus_insertions() {
+            request_top_level_frames(page);
+        }
+        return;
+    }
+    collect_autofocus_candidates(page);
+    if page.autofocus_processed.get() || page.autofocus_candidates.borrow().is_empty() {
+        return;
+    }
+    let doc = page.document();
+    let settled = {
+        let dom = page.dom.borrow();
+        dom.focused(doc).ok().flatten().is_some() || dom.url_target_element(doc).is_some()
+    };
+    if settled {
+        page.autofocus_candidates.borrow_mut().clear();
+        page.autofocus_processed.set(true);
+        return;
+    }
+    loop {
+        let el = {
+            let mut candidates = page.autofocus_candidates.borrow_mut();
+            if candidates.is_empty() {
+                return;
+            }
+            candidates.remove(0)
+        };
+        let Some((owner, target)) = autofocus_target(page, el) else { continue };
+        page.autofocus_candidates.borrow_mut().clear();
+        page.autofocus_processed.set(true);
+        crate::input::focus_element(&owner, target);
+        return;
+    }
+}
+
+/// The candidate `el`'s page and what takes focus for it, if anything.
+fn autofocus_target(page: &Rc<PageDom>, el: NodeId) -> Option<(Rc<PageDom>, NodeId)> {
+    let doc = page.dom.borrow().node_document(el).ok()?;
+    let owner = crate::custom::document_page(page, doc)?;
+    if !owner.is_fully_active() {
+        return None;
+    }
+    let target = {
+        let layout = owner.layout();
+        let dom = page.dom.borrow();
+        if !dom.is_connected(el).unwrap_or(false) || dom.url_target_element(doc).is_some() {
+            return None;
+        }
+        let mut ancestor = dom.parent(el).ok().flatten();
+        while let Some(a) = ancestor {
+            if dom.element(a).is_ok_and(|e| e.is_html() && &*e.name.local == "dialog") {
+                return None;
+            }
+            ancestor = dom.parent(a).ok().flatten();
+        }
+        let area = |n: NodeId| crate::input::is_focusable_area(&layout, &dom, n);
+        if area(el) {
+            Some(el)
+        } else if dom.is_delegates_focus_host(el) {
+            dom.focus_delegate(el, &area)
+        } else {
+            None
+        }
+    }?;
+    Some((owner, target))
 }
 
 /// readyState=complete, then `load` and `pageshow` at the window (with
@@ -111,7 +244,9 @@ pub fn before_unload(page: &Rc<PageDom>) -> bool {
         return false;
     }
     let ev = EventCore::trusted(page, EventInterface::BeforeUnloadEvent, "beforeunload", false, true);
+    page.enter_before_unload();
     let canceled = !fire_for_document(page, window, page.document(), &ev);
+    page.leave_before_unload();
     let asked = ev.fields.borrow().data.as_deref().is_some_and(|text| !text.is_empty());
     canceled || asked
 }
@@ -165,6 +300,9 @@ fn unload_document(page: &Rc<PageDom>, fire_unload: bool) {
         let ev = EventCore::trusted(page, EventInterface::Event, "unload", false, false);
         fire_for_document(page, window, doc, &ev);
     }
+    // The document is no longer fully active: its deferred fetches go out now, those its
+    // `pagehide` and `unload` listeners queued included (Fetch "process deferred fetches").
+    crate::fetch_later::flush(page);
 }
 
 fn window_key(page: &PageDom, _doc: NodeId) -> Option<pyro_dom::events::TargetKey> {
@@ -206,7 +344,16 @@ pub fn report_exception(s: &Scope<'_>, exception: &JsException) -> bool {
         return true;
     }
     let ev = EventCore::trusted(&page, EventInterface::ErrorEvent, "error", false, true);
-    {
+    // HTML "muted errors": an exception from a classic script fetched CORS-cross-origin reports
+    // "Script error." with no location and a null error (the console report keeps the details).
+    if exception.url.as_deref().is_some_and(|url| page.script_errors_muted(url)) {
+        let mut fields = ev.fields.borrow_mut();
+        fields.message = "Script error.".to_owned();
+        fields.filename = String::new();
+        fields.lineno = 0;
+        fields.colno = 0;
+        fields.error = None;
+    } else {
         let mut fields = ev.fields.borrow_mut();
         fields.message = format!("Uncaught {}", exception.text());
         fields.filename = match &exception.url {
@@ -241,6 +388,46 @@ pub fn report_diagnostic(s: &Scope<'_>, error: &JsError) {
     let was = page.error_reporting.replace(true);
     s.report_exception(error);
     page.error_reporting.set(was);
+}
+
+/// HTML "reveal" (update the rendering, before the animation frame callbacks): the first
+/// rendering update of a document fires `pagereveal` at its Window, once: a PageRevealEvent whose
+/// `viewTransition` is null (there are no view transitions here). A document that requests no
+/// animation frame gets one after its load when it listens ([`reveal_pending`]). Pyro has no
+/// back/forward cache, so no restored document is revealed again.
+pub fn reveal(page: &Rc<PageDom>) {
+    if page.revealed.replace(true) {
+        return;
+    }
+    let Some(w) = page.window_target() else { return };
+    let ev = EventCore::trusted(page, EventInterface::PageRevealEvent, "pagereveal", false, false);
+    fire(page, w, &ev);
+}
+
+/// Whether the document is still to be revealed and its Window listens for `pagereveal`: the
+/// embedder then asks for a rendering opportunity once the document has loaded, so a document that
+/// never requests an animation frame is revealed too.
+pub fn reveal_pending(page: &PageDom) -> bool {
+    !page.revealed.get()
+        && !page.is_disposed()
+        && page.window_target().is_some_and(|w| page.dom.try_borrow().is_ok_and(|dom| dom.has_listeners(w)))
+}
+
+/// HTML `pageswap` at the Window of a document that a cross-document navigation is about to
+/// replace, before it unloads. `activation` makes the event's NavigationActivation (null for a
+/// navigation to another origin); it runs only when the Window has listeners, which is all the
+/// event costs otherwise.
+pub fn page_swap(page: &Rc<PageDom>, activation: impl FnOnce() -> Option<pyro_js::Persistent>) {
+    if page.is_disposed() || page.scripting_disabled() {
+        return;
+    }
+    let Some(window) = page.window_target() else { return };
+    if !page.dom.try_borrow().is_ok_and(|dom| dom.has_listeners(window)) {
+        return;
+    }
+    let ev = EventCore::trusted(page, EventInterface::PageSwapEvent, "pageswap", false, false);
+    ev.fields.borrow_mut().activation = activation();
+    fire(page, window, &ev);
 }
 
 /// `popstate` at the window (history traversal / back-forward).
@@ -290,14 +477,17 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
 /// bindings drop their roots into it, but its wrappers stay registered, so
 /// a node keeps its wrapper while script still reaches the document.
 pub fn realm_detached(page: &PageDom, realm: RealmId) {
+    page.web_tasks.cancel_realm(realm);
+    crate::crypto_subtle::public_key::cancel(page.id(), Some(realm));
     crate::fetch::cancel_realm(page, realm);
     crate::websocket::cancel_realm(realm);
+    crate::cookie_store::events::detach(page, realm);
     crate::xhr::cancel_realm(page, realm);
     crate::file_reader::cancel_realm(page, realm);
     crate::mutation_observer::cancel_realm(page, realm);
     crate::intersection_observer::cancel_realm(page, realm);
     crate::resize_observer::cancel_realm(page, realm);
-    page.data_view_readers.borrow_mut().remove(&realm);
+    page.encoding_helpers.borrow_mut().remove(&realm);
     page.blob_parts.borrow_mut().remove(&realm);
     page.header_helpers.borrow_mut().remove(&realm);
     page.url_params_helpers.borrow_mut().remove(&realm);

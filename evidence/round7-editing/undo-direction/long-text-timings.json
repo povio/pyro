@@ -1,0 +1,742 @@
+[
+  {
+    "round": 1,
+    "arm": "465c02ed3",
+    "startedUTC": "2026-11-21T21:16:12Z",
+    "endedUTC": "2026-11-21T21:16:33Z",
+    "rows": [
+      {
+        "units": 4096,
+        "cmd": "insertText",
+        "elapsedMs": 1.5,
+        "startUTC": "2026-11-21T21:16:13.150Z",
+        "endUTC": "2026-11-21T21:16:13.152Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4160
+      },
+      {
+        "units": 4096,
+        "cmd": "delete",
+        "elapsedMs": 2.5,
+        "startUTC": "2026-11-21T21:16:13.165Z",
+        "endUTC": "2026-11-21T21:16:13.167Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4010
+      },
+      {
+        "units": 32768,
+        "cmd": "insertText",
+        "elapsedMs": 11.599999999999994,
+        "startUTC": "2026-11-21T21:16:13.249Z",
+        "endUTC": "2026-11-21T21:16:13.260Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32832
+      },
+      {
+        "units": 32768,
+        "cmd": "delete",
+        "elapsedMs": 19.80000000000001,
+        "startUTC": "2026-11-21T21:16:13.342Z",
+        "endUTC": "2026-11-21T21:16:13.362Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32682
+      },
+      {
+        "units": 262144,
+        "cmd": "insertText",
+        "elapsedMs": 91.5,
+        "startUTC": "2026-11-21T21:16:23.307Z",
+        "endUTC": "2026-11-21T21:16:23.399Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262208
+      },
+      {
+        "units": 262144,
+        "cmd": "delete",
+        "elapsedMs": 158.10000000000036,
+        "startUTC": "2026-11-21T21:16:33.073Z",
+        "endUTC": "2026-11-21T21:16:33.232Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262058
+      }
+    ]
+  },
+  {
+    "round": 1,
+    "arm": "dc68a019e",
+    "startedUTC": "2026-11-21T21:16:33Z",
+    "endedUTC": "2026-11-21T21:16:53Z",
+    "rows": [
+      {
+        "units": 4096,
+        "cmd": "insertText",
+        "elapsedMs": 0.8999999999999986,
+        "startUTC": "2026-11-21T21:16:33.680Z",
+        "endUTC": "2026-11-21T21:16:33.681Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4160
+      },
+      {
+        "units": 4096,
+        "cmd": "delete",
+        "elapsedMs": 1.3000000000000007,
+        "startUTC": "2026-11-21T21:16:33.693Z",
+        "endUTC": "2026-11-21T21:16:33.694Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4010
+      },
+      {
+        "units": 32768,
+        "cmd": "insertText",
+        "elapsedMs": 7.3999999999999915,
+        "startUTC": "2026-11-21T21:16:33.774Z",
+        "endUTC": "2026-11-21T21:16:33.781Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32832
+      },
+      {
+        "units": 32768,
+        "cmd": "delete",
+        "elapsedMs": 10.200000000000003,
+        "startUTC": "2026-11-21T21:16:33.861Z",
+        "endUTC": "2026-11-21T21:16:33.871Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32682
+      },
+      {
+        "units": 262144,
+        "cmd": "insertText",
+        "elapsedMs": 58,
+        "startUTC": "2026-11-21T21:16:43.540Z",
+        "endUTC": "2026-11-21T21:16:43.598Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262208
+      },
+      {
+        "units": 262144,
+        "cmd": "delete",
+        "elapsedMs": 80.79999999999927,
+        "startUTC": "2026-11-21T21:16:53.437Z",
+        "endUTC": "2026-11-21T21:16:53.518Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262058
+      }
+    ]
+  },
+  {
+    "round": 2,
+    "arm": "dc68a019e",
+    "startedUTC": "2026-11-21T21:16:53Z",
+    "endedUTC": "2026-11-21T21:17:13Z",
+    "rows": [
+      {
+        "units": 4096,
+        "cmd": "insertText",
+        "elapsedMs": 1,
+        "startUTC": "2026-11-21T21:16:53.955Z",
+        "endUTC": "2026-11-21T21:16:53.956Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4160
+      },
+      {
+        "units": 4096,
+        "cmd": "delete",
+        "elapsedMs": 1.4000000000000004,
+        "startUTC": "2026-11-21T21:16:53.968Z",
+        "endUTC": "2026-11-21T21:16:53.969Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4010
+      },
+      {
+        "units": 32768,
+        "cmd": "insertText",
+        "elapsedMs": 7.3999999999999915,
+        "startUTC": "2026-11-21T21:16:54.049Z",
+        "endUTC": "2026-11-21T21:16:54.057Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32832
+      },
+      {
+        "units": 32768,
+        "cmd": "delete",
+        "elapsedMs": 10.200000000000003,
+        "startUTC": "2026-11-21T21:16:54.136Z",
+        "endUTC": "2026-11-21T21:16:54.147Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32682
+      },
+      {
+        "units": 262144,
+        "cmd": "insertText",
+        "elapsedMs": 58.100000000000364,
+        "startUTC": "2026-11-21T21:17:03.856Z",
+        "endUTC": "2026-11-21T21:17:03.914Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262208
+      },
+      {
+        "units": 262144,
+        "cmd": "delete",
+        "elapsedMs": 80.60000000000036,
+        "startUTC": "2026-11-21T21:17:13.466Z",
+        "endUTC": "2026-11-21T21:17:13.547Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262058
+      }
+    ]
+  },
+  {
+    "round": 2,
+    "arm": "465c02ed3",
+    "startedUTC": "2026-11-21T21:17:13Z",
+    "endedUTC": "2026-11-21T21:17:33Z",
+    "rows": [
+      {
+        "units": 4096,
+        "cmd": "insertText",
+        "elapsedMs": 1.5,
+        "startUTC": "2026-11-21T21:17:13.983Z",
+        "endUTC": "2026-11-21T21:17:13.984Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4160
+      },
+      {
+        "units": 4096,
+        "cmd": "delete",
+        "elapsedMs": 2.5,
+        "startUTC": "2026-11-21T21:17:13.996Z",
+        "endUTC": "2026-11-21T21:17:13.999Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4010
+      },
+      {
+        "units": 32768,
+        "cmd": "insertText",
+        "elapsedMs": 12,
+        "startUTC": "2026-11-21T21:17:14.082Z",
+        "endUTC": "2026-11-21T21:17:14.094Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32832
+      },
+      {
+        "units": 32768,
+        "cmd": "delete",
+        "elapsedMs": 20.799999999999997,
+        "startUTC": "2026-11-21T21:17:14.178Z",
+        "endUTC": "2026-11-21T21:17:14.199Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32682
+      },
+      {
+        "units": 262144,
+        "cmd": "insertText",
+        "elapsedMs": 90.89999999999964,
+        "startUTC": "2026-11-21T21:17:23.797Z",
+        "endUTC": "2026-11-21T21:17:23.888Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262208
+      },
+      {
+        "units": 262144,
+        "cmd": "delete",
+        "elapsedMs": 157.89999999999964,
+        "startUTC": "2026-11-21T21:17:33.574Z",
+        "endUTC": "2026-11-21T21:17:33.731Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262058
+      }
+    ]
+  },
+  {
+    "round": 3,
+    "arm": "465c02ed3",
+    "startedUTC": "2026-11-21T21:17:33Z",
+    "endedUTC": "2026-11-21T21:17:53Z",
+    "rows": [
+      {
+        "units": 4096,
+        "cmd": "insertText",
+        "elapsedMs": 1.5,
+        "startUTC": "2026-11-21T21:17:34.168Z",
+        "endUTC": "2026-11-21T21:17:34.170Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4160
+      },
+      {
+        "units": 4096,
+        "cmd": "delete",
+        "elapsedMs": 2.5999999999999996,
+        "startUTC": "2026-11-21T21:17:34.182Z",
+        "endUTC": "2026-11-21T21:17:34.185Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4010
+      },
+      {
+        "units": 32768,
+        "cmd": "insertText",
+        "elapsedMs": 11.5,
+        "startUTC": "2026-11-21T21:17:34.265Z",
+        "endUTC": "2026-11-21T21:17:34.277Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32832
+      },
+      {
+        "units": 32768,
+        "cmd": "delete",
+        "elapsedMs": 19.799999999999997,
+        "startUTC": "2026-11-21T21:17:34.358Z",
+        "endUTC": "2026-11-21T21:17:34.378Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32682
+      },
+      {
+        "units": 262144,
+        "cmd": "insertText",
+        "elapsedMs": 91,
+        "startUTC": "2026-11-21T21:17:44.049Z",
+        "endUTC": "2026-11-21T21:17:44.141Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262208
+      },
+      {
+        "units": 262144,
+        "cmd": "delete",
+        "elapsedMs": 156.70000000000073,
+        "startUTC": "2026-11-21T21:17:53.775Z",
+        "endUTC": "2026-11-21T21:17:53.932Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262058
+      }
+    ]
+  },
+  {
+    "round": 3,
+    "arm": "dc68a019e",
+    "startedUTC": "2026-11-21T21:17:53Z",
+    "endedUTC": "2026-11-21T21:18:14Z",
+    "rows": [
+      {
+        "units": 4096,
+        "cmd": "insertText",
+        "elapsedMs": 0.8999999999999986,
+        "startUTC": "2026-11-21T21:17:54.368Z",
+        "endUTC": "2026-11-21T21:17:54.369Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4160
+      },
+      {
+        "units": 4096,
+        "cmd": "delete",
+        "elapsedMs": 1.3000000000000007,
+        "startUTC": "2026-11-21T21:17:54.381Z",
+        "endUTC": "2026-11-21T21:17:54.382Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4010
+      },
+      {
+        "units": 32768,
+        "cmd": "insertText",
+        "elapsedMs": 7.400000000000006,
+        "startUTC": "2026-11-21T21:17:54.463Z",
+        "endUTC": "2026-11-21T21:17:54.470Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32832
+      },
+      {
+        "units": 32768,
+        "cmd": "delete",
+        "elapsedMs": 10.200000000000003,
+        "startUTC": "2026-11-21T21:17:54.551Z",
+        "endUTC": "2026-11-21T21:17:54.561Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32682
+      },
+      {
+        "units": 262144,
+        "cmd": "insertText",
+        "elapsedMs": 59,
+        "startUTC": "2026-11-21T21:18:04.207Z",
+        "endUTC": "2026-11-21T21:18:04.266Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262208
+      },
+      {
+        "units": 262144,
+        "cmd": "delete",
+        "elapsedMs": 80.60000000000036,
+        "startUTC": "2026-11-21T21:18:13.947Z",
+        "endUTC": "2026-11-21T21:18:14.028Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262058
+      }
+    ]
+  },
+  {
+    "round": 4,
+    "arm": "dc68a019e",
+    "startedUTC": "2026-11-21T21:18:14Z",
+    "endedUTC": "2026-11-21T21:18:34Z",
+    "rows": [
+      {
+        "units": 4096,
+        "cmd": "insertText",
+        "elapsedMs": 1,
+        "startUTC": "2026-11-21T21:18:14.469Z",
+        "endUTC": "2026-11-21T21:18:14.470Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4160
+      },
+      {
+        "units": 4096,
+        "cmd": "delete",
+        "elapsedMs": 1.4000000000000004,
+        "startUTC": "2026-11-21T21:18:14.482Z",
+        "endUTC": "2026-11-21T21:18:14.484Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4010
+      },
+      {
+        "units": 32768,
+        "cmd": "insertText",
+        "elapsedMs": 7.5,
+        "startUTC": "2026-11-21T21:18:14.565Z",
+        "endUTC": "2026-11-21T21:18:14.572Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32832
+      },
+      {
+        "units": 32768,
+        "cmd": "delete",
+        "elapsedMs": 10.100000000000009,
+        "startUTC": "2026-11-21T21:18:14.654Z",
+        "endUTC": "2026-11-21T21:18:14.664Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32682
+      },
+      {
+        "units": 262144,
+        "cmd": "insertText",
+        "elapsedMs": 58.19999999999891,
+        "startUTC": "2026-11-21T21:18:24.285Z",
+        "endUTC": "2026-11-21T21:18:24.343Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262208
+      },
+      {
+        "units": 262144,
+        "cmd": "delete",
+        "elapsedMs": 83.60000000000036,
+        "startUTC": "2026-11-21T21:18:34.073Z",
+        "endUTC": "2026-11-21T21:18:34.157Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262058
+      }
+    ]
+  },
+  {
+    "round": 4,
+    "arm": "465c02ed3",
+    "startedUTC": "2026-11-21T21:18:34Z",
+    "endedUTC": "2026-11-21T21:18:54Z",
+    "rows": [
+      {
+        "units": 4096,
+        "cmd": "insertText",
+        "elapsedMs": 1.5,
+        "startUTC": "2026-11-21T21:18:34.598Z",
+        "endUTC": "2026-11-21T21:18:34.600Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4160
+      },
+      {
+        "units": 4096,
+        "cmd": "delete",
+        "elapsedMs": 2.5999999999999996,
+        "startUTC": "2026-11-21T21:18:34.612Z",
+        "endUTC": "2026-11-21T21:18:34.615Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4010
+      },
+      {
+        "units": 32768,
+        "cmd": "insertText",
+        "elapsedMs": 12,
+        "startUTC": "2026-11-21T21:18:34.697Z",
+        "endUTC": "2026-11-21T21:18:34.709Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32832
+      },
+      {
+        "units": 32768,
+        "cmd": "delete",
+        "elapsedMs": 20.89999999999999,
+        "startUTC": "2026-11-21T21:18:34.792Z",
+        "endUTC": "2026-11-21T21:18:34.813Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32682
+      },
+      {
+        "units": 262144,
+        "cmd": "insertText",
+        "elapsedMs": 93.80000000000109,
+        "startUTC": "2026-11-21T21:18:44.718Z",
+        "endUTC": "2026-11-21T21:18:44.812Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262208
+      },
+      {
+        "units": 262144,
+        "cmd": "delete",
+        "elapsedMs": 160.6999999999989,
+        "startUTC": "2026-11-21T21:18:54.694Z",
+        "endUTC": "2026-11-21T21:18:54.855Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262058
+      }
+    ]
+  },
+  {
+    "round": 5,
+    "arm": "465c02ed3",
+    "startedUTC": "2026-11-21T21:18:54Z",
+    "endedUTC": "2026-11-21T21:19:15Z",
+    "rows": [
+      {
+        "units": 4096,
+        "cmd": "insertText",
+        "elapsedMs": 1.5,
+        "startUTC": "2026-11-21T21:18:55.295Z",
+        "endUTC": "2026-11-21T21:18:55.297Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4160
+      },
+      {
+        "units": 4096,
+        "cmd": "delete",
+        "elapsedMs": 2.5999999999999996,
+        "startUTC": "2026-11-21T21:18:55.308Z",
+        "endUTC": "2026-11-21T21:18:55.311Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4010
+      },
+      {
+        "units": 32768,
+        "cmd": "insertText",
+        "elapsedMs": 12.200000000000003,
+        "startUTC": "2026-11-21T21:18:55.392Z",
+        "endUTC": "2026-11-21T21:18:55.405Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32832
+      },
+      {
+        "units": 32768,
+        "cmd": "delete",
+        "elapsedMs": 19.700000000000003,
+        "startUTC": "2026-11-21T21:18:55.487Z",
+        "endUTC": "2026-11-21T21:18:55.507Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32682
+      },
+      {
+        "units": 262144,
+        "cmd": "insertText",
+        "elapsedMs": 96.5,
+        "startUTC": "2026-11-21T21:19:05.359Z",
+        "endUTC": "2026-11-21T21:19:05.455Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262208
+      },
+      {
+        "units": 262144,
+        "cmd": "delete",
+        "elapsedMs": 157,
+        "startUTC": "2026-11-21T21:19:15.069Z",
+        "endUTC": "2026-11-21T21:19:15.226Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262058
+      }
+    ]
+  },
+  {
+    "round": 5,
+    "arm": "dc68a019e",
+    "startedUTC": "2026-11-21T21:19:15Z",
+    "endedUTC": "2026-11-21T21:19:35Z",
+    "rows": [
+      {
+        "units": 4096,
+        "cmd": "insertText",
+        "elapsedMs": 1,
+        "startUTC": "2026-11-21T21:19:15.663Z",
+        "endUTC": "2026-11-21T21:19:15.664Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4160
+      },
+      {
+        "units": 4096,
+        "cmd": "delete",
+        "elapsedMs": 1.4000000000000004,
+        "startUTC": "2026-11-21T21:19:15.676Z",
+        "endUTC": "2026-11-21T21:19:15.678Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 4010
+      },
+      {
+        "units": 32768,
+        "cmd": "insertText",
+        "elapsedMs": 7.5,
+        "startUTC": "2026-11-21T21:19:15.758Z",
+        "endUTC": "2026-11-21T21:19:15.766Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32832
+      },
+      {
+        "units": 32768,
+        "cmd": "delete",
+        "elapsedMs": 10.299999999999997,
+        "startUTC": "2026-11-21T21:19:15.847Z",
+        "endUTC": "2026-11-21T21:19:15.857Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 32682
+      },
+      {
+        "units": 262144,
+        "cmd": "insertText",
+        "elapsedMs": 58,
+        "startUTC": "2026-11-21T21:19:25.595Z",
+        "endUTC": "2026-11-21T21:19:25.653Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262208
+      },
+      {
+        "units": 262144,
+        "cmd": "delete",
+        "elapsedMs": 81.10000000000036,
+        "startUTC": "2026-11-21T21:19:35.263Z",
+        "endUTC": "2026-11-21T21:19:35.344Z",
+        "count": 64,
+        "accepted": 64,
+        "valid": true,
+        "unitsAfter": 262058
+      }
+    ]
+  }
+]

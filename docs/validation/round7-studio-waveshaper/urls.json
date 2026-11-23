@@ -1,0 +1,10 @@
+[
+  "webaudio/the-audio-api/the-waveshapernode-interface/ctor-waveshaper.html",
+  "webaudio/the-audio-api/the-waveshapernode-interface/curve-tests.html",
+  "webaudio/the-audio-api/the-waveshapernode-interface/silent-inputs.html",
+  "webaudio/the-audio-api/the-waveshapernode-interface/waveshaper-copy-curve.html",
+  "webaudio/the-audio-api/the-waveshapernode-interface/waveshaper-simple.html",
+  "webaudio/the-audio-api/the-waveshapernode-interface/waveshaper.html",
+  "webaudio/the-audio-api/the-audioparam-interface/k-rate-gain.html",
+  "webaudio/the-audio-api/the-audioparam-interface/audioparam-nominal-range.html"
+]

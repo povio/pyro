@@ -1,0 +1,48 @@
+{
+  "base": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "wallMs": 2129,
+    "browserCpuS": 5.72,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "commit": "64debfc97a8c63e81e9ef9d1cf9b828617f5dd14",
+    "tree": "e5bafedc0271c3ed0bcf8bc6a361b351e85f9676",
+    "binarySHA256": "94f36d5f198b50c84ec7155d85b1a743ff44463ffab360f616737468f457716f",
+    "bytes": 138419696
+  },
+  "candidate": {
+    "jobs": 4,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "skipped": [],
+    "excluded": {},
+    "info": {
+      "inventoryOnly": []
+    },
+    "wallMs": 5187,
+    "browserCpuS": 7.56,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "commit": "682d66d2a2af6f9e6d311dc15b400bcdef669a55",
+    "tree": "1646586c60b548a90fe2c5469aebbbaccec2f603",
+    "binarySHA256": "5a008e9a96f685891de369695198e3174ba0c1b0756864e1c3f3d877335261e5",
+    "bytes": 138629280
+  },
+  "jscArchiveKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "profile": "wptiter (release-fast; no LTO; 16 codegen units; incremental; render; 1 Cargo job)",
+  "urlsSHA256": "0b179ad6fd7bce432b45dafafc6d4f569eeb5546d32433751357fa438a87bd5f",
+  "release": {
+    "commit": "abc384c382cc4449938aeda482b5f0de1338cec6",
+    "tree": "33dbef875ea9e62b648d86fff1094055f28b42e6",
+    "deltaFromMeasuredCandidate": [
+      "crates/pyro-dom/tests/custom_reactions.rs"
+    ],
+    "nativeTestTarget": "pyro-dom --test integration custom_reactions::"
+  }
+}

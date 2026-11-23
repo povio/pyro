@@ -1,0 +1,132 @@
+{
+  "pages": 43,
+  "names": 3142,
+  "old": 3033,
+  "new": 3045,
+  "gained": [
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/grid-start-end.html",
+      "Setting 'grid-column-end' to a number: calc(2 + 3) throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/grid-start-end.html",
+      "Setting 'grid-column-start' to a number: calc(2 + 3) throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/grid-start-end.html",
+      "Setting 'grid-row-end' to a number: calc(2 + 3) throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/grid-start-end.html",
+      "Setting 'grid-row-start' to a number: calc(2 + 3) throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+      "Setting 'margin' to a length: -3.14em throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+      "Setting 'margin' to a length: 0px throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+      "Setting 'margin' to a length: 3.14cm throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+      "Setting 'margin' to a length: calc(0px + 0em) throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+      "Setting 'margin' to a percent: -3.14% throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+      "Setting 'margin' to a percent: 0% throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+      "Setting 'margin' to a percent: 3.14% throws TypeError",
+      1
+    ],
+    [
+      "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+      "Setting 'margin' to a percent: calc(0% + 0%) throws TypeError",
+      1
+    ]
+  ],
+  "lost": [],
+  "parentPassingPages": [
+    "css/css-typed-om/the-stylepropertymap/computed/get-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/computed/getAll-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/declared/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/declared/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/append.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+    "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-count.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/fill-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/flood-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/line-height.html",
+    "css/css-typed-om/the-stylepropertymap/properties/opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/order.html",
+    "css/css-typed-om/the-stylepropertymap/properties/orphans.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stop-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stroke-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/transition-property.html",
+    "css/css-typed-om/the-stylepropertymap/properties/widows.html",
+    "css/css-typed-om/the-stylepropertymap/properties/z-index.html"
+  ],
+  "candidatePassingPages": [
+    "css/css-typed-om/the-stylepropertymap/computed/get-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/computed/getAll-shorthand.html",
+    "css/css-typed-om/the-stylepropertymap/declared/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/declared/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/append.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/iterable.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/inline/set.tentative.html",
+    "css/css-typed-om/the-stylepropertymap/properties/background-size.html",
+    "css/css-typed-om/the-stylepropertymap/properties/border-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-count.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-style.html",
+    "css/css-typed-om/the-stylepropertymap/properties/column-rule-width.html",
+    "css/css-typed-om/the-stylepropertymap/properties/fill-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/flood-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/grid-start-end.html",
+    "css/css-typed-om/the-stylepropertymap/properties/line-height.html",
+    "css/css-typed-om/the-stylepropertymap/properties/margin.html",
+    "css/css-typed-om/the-stylepropertymap/properties/opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/order.html",
+    "css/css-typed-om/the-stylepropertymap/properties/orphans.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stop-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/stroke-opacity.html",
+    "css/css-typed-om/the-stylepropertymap/properties/transition-property.html",
+    "css/css-typed-om/the-stylepropertymap/properties/widows.html",
+    "css/css-typed-om/the-stylepropertymap/properties/z-index.html"
+  ],
+  "gainedPages": [
+    "css/css-typed-om/the-stylepropertymap/properties/grid-start-end.html",
+    "css/css-typed-om/the-stylepropertymap/properties/margin.html"
+  ],
+  "lostPages": [],
+  "statusChanges": {},
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "wallMs": [
+    1015,
+    1452
+  ]
+}

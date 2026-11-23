@@ -1,0 +1,7 @@
+# IndexedDB open-result ordering
+
+Independent macOS ARM64 QA ran from 02:32:55 to 02:37:05 UTC on November 22, 2026. The tested source is 69fc6fc57e2bfb8e1883f676a63f8f38fe659ec7, directly based on 57ee7e118fd6327bcf8851771f82c021564c431e. Both executables used the locked Cargo dev profile, one build job and the pinned static JavaScriptCore archive recorded here. The parent checkout received only the candidate's regression test. The candidate checkout was clean. The embedded-source log verifies each executable contains its own complete idb.js and excludes the other revision's copy.
+
+The four frozen transaction-create_in_versionchange WPT variants ran with one worker using wptserve, testdriver, HTTP/2 and the pinned manifest. All four harnesses completed normally in Window, dedicated worker, shared worker and service worker. The parent passed 0/4. The candidate passed 4/4 on two runs. The four archived signed Chrome 158 reference observations also passed. The reference source map records the original reports and their SHA-256 digests.
+
+The native regression on the parent observed the put result before open success. On the candidate, the completion listener and its microtask retained the upgrade transaction, open success observed a null transaction, and the put result followed. Closing and reopening the database returned the saved value. The transaction-release and abort-rollback guards passed on both arms. Compressed logs and the original raw WPT receipts are included. No checks were rerun to publish this evidence.

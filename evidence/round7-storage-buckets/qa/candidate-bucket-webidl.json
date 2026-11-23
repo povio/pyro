@@ -1,0 +1,68 @@
+{
+  "surface": true,
+  "foreign": [
+    "child",
+    false,
+    true,
+    "foreign"
+  ],
+  "illegal": [
+    [
+      "rejected",
+      "TypeError",
+      true
+    ],
+    [
+      "rejected",
+      "TypeError",
+      true
+    ],
+    [
+      "rejected",
+      "TypeError",
+      true
+    ],
+    [
+      "rejected",
+      "TypeError",
+      true
+    ],
+    [
+      "rejected",
+      "TypeError",
+      true
+    ]
+  ],
+  "options": [
+    [
+      "name",
+      "expires",
+      "to-number",
+      "persisted",
+      "quota"
+    ],
+    1000
+  ],
+  "bad": [
+    [
+      "rejected",
+      "TypeError",
+      true
+    ],
+    [
+      "rejected",
+      "TypeError",
+      true
+    ],
+    [
+      "rejected",
+      "TypeError",
+      true
+    ]
+  ],
+  "detached": [
+    "rejected",
+    "TypeError",
+    true
+  ]
+}

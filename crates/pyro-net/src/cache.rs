@@ -13,6 +13,12 @@
 //! - Request directives `no-store`, `no-cache`, `max-age`, `min-fresh` and
 //!   `only-if-cached`, `Pragma: no-cache` (§5.4), and the Fetch cache modes.
 //! - Revalidation with `ETag`/`Last-Modified` and a 304 header merge (§4.3).
+//! - `stale-while-revalidate` (RFC 5861): a stale entry inside the window is
+//!   served while the client revalidates it in the background.
+//! - Redirects (301, 302, 303, 307, 308 with a `Location`) with an explicit
+//!   lifetime: served while fresh, or to `force-cache`/`only-if-cached`, and
+//!   the client follows them as it would a network redirect; a stale one is
+//!   refetched, never revalidated.
 //! - Invalidation by unsafe methods (§4.4).
 //! - Byte-bounded with LRU eviction.
 //!
@@ -20,10 +26,9 @@
 //! revalidated, never served unsafely):
 //! - heuristic freshness: no explicit lifetime means revalidate when there
 //!   are validators, otherwise do not store;
-//! - serving stale content (`max-stale`, `stale-while-revalidate`,
-//!   `stale-if-error`);
+//! - serving stale content otherwise (`max-stale`, `stale-if-error`);
 //! - partial content and `Range`;
-//! - storing redirects;
+//! - redirects without an explicit lifetime;
 //! - `Vary: *`;
 //! - responses carrying `Set-Cookie`;
 //! - partitioning within a context by top-level site;
@@ -56,6 +61,13 @@ pub(crate) struct Directives {
     pub public: bool,
     pub private: bool,
     pub s_maxage: Option<Option<u64>>,
+    /// Response-only `stale-while-revalidate` seconds (RFC 5861 §3).
+    pub stale_while_revalidate: Option<u64>,
+    /// Response-only `must-revalidate` (RFC 9111 §5.2.2.2): once stale, the
+    /// entry is never served without revalidation (`proxy-revalidate`, its
+    /// shared-cache form, matters only where stale entries are served, which
+    /// is the private cache).
+    pub must_revalidate: bool,
 }
 
 impl Directives {
@@ -82,7 +94,9 @@ impl Directives {
                     "max-age" => d.max_age = Some(if d.max_age.is_some() { None } else { seconds() }),
                     "s-maxage" if !request => d.s_maxage = Some(if d.s_maxage.is_some() { None } else { seconds() }),
                     "public" if !request => d.public = true,
+                    "stale-while-revalidate" if !request => d.stale_while_revalidate = seconds(),
                     "private" if !request => d.private = true,
+                    "must-revalidate" if !request => d.must_revalidate = true,
                     "min-fresh" if request => d.min_fresh = seconds(),
                     "only-if-cached" if request => d.only_if_cached = true,
                     _ => {}
@@ -130,6 +144,9 @@ pub(crate) enum Lookup {
     Hit(Cached),
     /// Stored but must be revalidated with these validators first.
     Revalidate(Cached),
+    /// Stale, but inside its `stale-while-revalidate` window: usable as-is
+    /// while the caller revalidates it in the background.
+    StaleWhileRevalidate(Cached),
 }
 
 struct Entry {
@@ -245,6 +262,19 @@ impl HttpCache {
         self.bytes = 0;
     }
 
+    /// Removes the responses of `url`'s origin (`Clear-Site-Data: "cache"`).
+    pub fn clear_origin(&mut self, url: &Url) {
+        let origin = url.origin();
+        let bytes = &mut self.bytes;
+        self.entries.retain(|key, variants| {
+            let keep = Url::parse(key).map_or(true, |k| k.origin() != origin);
+            if !keep {
+                *bytes -= variants.iter().map(|e| e.size).sum::<usize>();
+            }
+            keep
+        });
+    }
+
     /// `credentialed`: the request carries credentials ([`Entry::credentialed`]).
     pub fn lookup(&mut self, url: &Url, request: &HeaderMap, credentialed: bool, mode: CacheMode, now: f64) -> Lookup {
         if matches!(mode, CacheMode::NoStore | CacheMode::Reload) || !self.enabled() {
@@ -269,15 +299,32 @@ impl HttpCache {
         if matches!(mode, CacheMode::ForceCache | CacheMode::OnlyIfCached) {
             return Lookup::Hit(entry.cached(age));
         }
-        let response_no_cache = Directives::parse(&entry.headers, false).no_cache;
+        let redirect = entry.status.is_redirection();
+        let response = Directives::parse(&entry.headers, false);
+        let response_no_cache = response.no_cache;
         let fresh_enough = lifetime > age
             && !response_no_cache
             && !req.no_cache
             && mode != CacheMode::NoCache
             && req.max_age.is_none_or(|m| m.is_some_and(|m| age <= m as f64))
             && req.min_fresh.is_none_or(|m| lifetime - age >= m as f64);
+        // RFC 5861 §3: a request that asks for nothing fresher than the
+        // default takes a stale entry inside the window (the private cache).
+        let stale_while_revalidate = !self.shared
+            && mode == CacheMode::Default
+            && !response_no_cache
+            && !req.no_cache
+            && req.max_age.is_none()
+            && req.min_fresh.is_none()
+            && !response.must_revalidate
+            && response.stale_while_revalidate.is_some_and(|window| age < lifetime + window as f64);
         if fresh_enough {
             Lookup::Hit(entry.cached(age))
+        } else if redirect {
+            // A 304 to a redirect would be served as the final response.
+            Lookup::Miss
+        } else if stale_while_revalidate {
+            Lookup::StaleWhileRevalidate(entry.cached(age))
         } else if entry.has_validators() {
             Lookup::Revalidate(entry.cached(age))
         } else {
@@ -293,7 +340,15 @@ impl HttpCache {
         if self.shared {
             return shared_storable(status, response, request);
         }
-        if !matches!(status.as_u16(), 200 | 203 | 204 | 404 | 410) {
+        // RFC 9111 §3: any final status the cache understands, partial content
+        // (`Range` is unsupported) aside; a redirect only with a `Location` it
+        // can be followed to (and, below, an explicit lifetime).
+        let followable = matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) && response.contains_key(header::LOCATION);
+        if status.is_informational()
+            || (status.is_redirection() && !followable)
+            || status == StatusCode::PARTIAL_CONTENT
+            || !(200..600).contains(&status.as_u16())
+        {
             return false;
         }
         let (req, resp) = (Directives::parse(request, true), Directives::parse(response, false));
@@ -307,7 +362,10 @@ impl HttpCache {
             return false; // Vary: *
         }
         let explicit = resp.max_age.is_some() || response.contains_key(header::EXPIRES);
-        explicit || response.contains_key(header::ETAG) || response.contains_key(header::LAST_MODIFIED)
+        // Without an explicit lifetime an entry is kept only to revalidate it,
+        // for the statuses that are heuristically cacheable (RFC 9110 §15.1).
+        let heuristic = matches!(status.as_u16(), 200 | 203 | 204 | 404 | 405 | 410 | 414 | 501);
+        explicit || (heuristic && (response.contains_key(header::ETAG) || response.contains_key(header::LAST_MODIFIED)))
     }
 
     /// Stores a complete response. `request` is the header map actually sent,
@@ -532,13 +590,20 @@ fn key(url: &Url) -> &str {
     &s[..s.find('#').unwrap_or(s.len())]
 }
 
-/// `Vary` field names, `None` for `Vary: *`.
+/// `Vary` field names, `None` for `Vary: *`. `Accept-Encoding` and
+/// `Available-Dictionary` do not count: entries keep decoded bodies, the
+/// same whatever coding carried them, and a dictionary registered by a
+/// response would otherwise keep that very response from being reused (as
+/// Chromium, WPT fetch/compression-dictionary's registration test).
 fn vary_names(headers: &HeaderMap) -> Option<Vec<HeaderName>> {
     let mut out = Vec::new();
     for v in headers.get_all(header::VARY) {
         for name in v.to_str().unwrap_or("*").split(',').map(str::trim).filter(|n| !n.is_empty()) {
             if name == "*" {
                 return None;
+            }
+            if name.eq_ignore_ascii_case("accept-encoding") || name.eq_ignore_ascii_case("available-dictionary") {
+                continue;
             }
             if let Ok(n) = HeaderName::from_bytes(name.to_ascii_lowercase().as_bytes()) {
                 if !out.contains(&n) {
@@ -601,7 +666,7 @@ fn header_date(headers: &HeaderMap, name: HeaderName) -> Option<f64> {
 
 /// HTTP-date (RFC 9110 §5.6.7): IMF-fixdate, plus the obsolete RFC 850 and
 /// asctime forms recipients must accept. Returns Unix seconds.
-pub(crate) fn parse_http_date(s: &str) -> Option<f64> {
+pub fn parse_http_date(s: &str) -> Option<f64> {
     let s = s.trim();
     let month = |m: &str| {
         ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
@@ -750,6 +815,41 @@ mod tests {
     }
 
     #[test]
+    fn stale_while_revalidate_window() {
+        let mut c = HttpCache::new(1 << 20, 1 << 20);
+        let req = HeaderMap::new();
+        let insert = |c: &mut HttpCache, path: &str, cc: &str| {
+            c.insert(
+                &url(path),
+                &req,
+                false,
+                StatusCode::OK,
+                &h(&[("cache-control", cc)]),
+                Bytes::from_static(b"x"),
+                T0,
+                T0,
+                Version::HTTP_11,
+            )
+        };
+        insert(&mut c, "/swr", "max-age=10, stale-while-revalidate=60");
+        let lookup = |c: &mut HttpCache, path: &str, req: &HeaderMap, mode: CacheMode, t: f64| {
+            c.lookup(&url(path), req, false, mode, t)
+        };
+        assert!(matches!(lookup(&mut c, "/swr", &req, CacheMode::Default, T0 + 5.0), Lookup::Hit(_)), "fresh");
+        assert!(matches!(lookup(&mut c, "/swr", &req, CacheMode::Default, T0 + 30.0), Lookup::StaleWhileRevalidate(_)));
+        assert!(matches!(lookup(&mut c, "/swr", &req, CacheMode::Default, T0 + 75.0), Lookup::Miss), "past the window");
+        // A request that asks for something fresher, or another cache mode, does not take it.
+        let no_cache = h(&[("cache-control", "no-cache")]);
+        assert!(matches!(lookup(&mut c, "/swr", &no_cache, CacheMode::Default, T0 + 30.0), Lookup::Miss));
+        assert!(matches!(lookup(&mut c, "/swr", &req, CacheMode::NoCache, T0 + 30.0), Lookup::Miss));
+        // must-revalidate (RFC 9111 §5.2.2.2) and response no-cache keep it out of the window.
+        insert(&mut c, "/must", "max-age=10, stale-while-revalidate=60, must-revalidate");
+        assert!(matches!(lookup(&mut c, "/must", &req, CacheMode::Default, T0 + 30.0), Lookup::Miss));
+        insert(&mut c, "/nc", "max-age=10, stale-while-revalidate=60, no-cache");
+        assert!(matches!(lookup(&mut c, "/nc", &req, CacheMode::Default, T0 + 30.0), Lookup::Miss));
+    }
+
+    #[test]
     fn freshness_and_age_follow_rfc9111() {
         let mut c = HttpCache::new(1 << 20, 1 << 20);
         let date = "Sun, 06 Nov 1994 08:49:37 GMT";
@@ -838,6 +938,16 @@ mod tests {
             CacheMode::Default
         ));
         assert!(!c.storable(StatusCode::OK, &h(&[("cache-control", "max-age=60")]), &none, CacheMode::NoStore));
+        let status = |code: u16, resp: &[(&'static str, &str)]| {
+            c.storable(StatusCode::from_u16(code).unwrap(), &h(resp), &none, CacheMode::Default)
+        };
+        assert!(status(500, &[("cache-control", "max-age=60")]), "any final status with an explicit lifetime");
+        assert!(status(299, &[("expires", "Thu, 01 Dec 2094 16:00:00 GMT")]));
+        assert!(!status(500, &[("etag", "\"v\"")]), "not heuristically cacheable: nothing to revalidate");
+        assert!(!status(304, &[("cache-control", "max-age=60")]));
+        assert!(status(302, &[("location", "/b"), ("expires", "Thu, 01 Dec 2094 16:00:00 GMT")]), "a followable redirect");
+        assert!(!status(302, &[("location", "/b"), ("etag", "\"v\"")]), "a redirect is never revalidated");
+        assert!(!status(300, &[("location", "/b"), ("cache-control", "max-age=60")]));
         assert!(!HttpCache::new(0, 0).storable(
             StatusCode::OK,
             &h(&[("cache-control", "max-age=60")]),

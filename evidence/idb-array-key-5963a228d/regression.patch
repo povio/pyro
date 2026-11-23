@@ -1,0 +1,45 @@
+diff --git a/crates/pyro-webapi/tests/indexeddb_js.rs b/crates/pyro-webapi/tests/indexeddb_js.rs
+index 013fe6af3..ff167cf62 100644
+--- a/crates/pyro-webapi/tests/indexeddb_js.rs
++++ b/crates/pyro-webapi/tests/indexeddb_js.rs
+@@ -245,6 +245,40 @@ fn key_paths_generators_and_constraints() {
+     );
+ }
+ 
++#[test]
++fn array_key_conversion_rejects_proxies_without_traps() {
++    let env = Env::new();
++    let doc = env.doc("http://idb.test/");
++    doc.eval(HELPERS);
++    let got = env.run(
++        &doc,
++        r#"
++        const db = await openDb('array-key-brand', 1, db => db.createObjectStore('rows'));
++        const tx = db.transaction('rows', 'readwrite');
++        const completed = done(tx);
++        const rows = tx.objectStore('rows');
++        let traps = 0, reads = 0;
++        const trap = () => { traps++; throw new Error('unexpected trap'); };
++        const proxy = new Proxy([1], {get: trap, getOwnPropertyDescriptor: trap});
++        const revoked = Proxy.revocable([], {});
++        revoked.revoke();
++        const error = operation => { try { operation(); return 'accepted'; } catch (e) { return e.name; } };
++        const failures = [error(() => rows.add('bad', proxy)), error(() => indexedDB.cmp([proxy], [])),
++                          error(() => IDBKeyRange.only(revoked.proxy))];
++        class Keys extends Array {}
++        const key = new Keys();
++        Object.defineProperty(key, 0, {get() { reads++; return 17; }});
++        await req(rows.add('stored', key));
++        await completed;
++        db.close();
++        const reopened = await openDb('array-key-brand', 1);
++        const stored = await req(reopened.transaction('rows').objectStore('rows').get([17]));
++        out = [...failures, traps, reads, stored].join('|');
++        "#,
++    );
++    assert_eq!(got, "DataError|DataError|DataError|0|1|stored");
++}
++
+ #[test]
+ fn decoded_keys_bypass_inherited_index_setters() {
+     let env = Env::new();

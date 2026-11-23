@@ -1,0 +1,104 @@
+{
+  "legacyParent": {
+    "parentCharset": "windows-1251",
+    "app": {
+      "encoding": "UTF-8",
+      "type": "application/json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "text": {
+      "encoding": "UTF-8",
+      "type": "text/json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "plus": {
+      "encoding": "UTF-8",
+      "type": "application/problem+json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "upper": {
+      "encoding": "UTF-8",
+      "type": "application/json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "legacy": {
+      "encoding": "windows-1251",
+      "type": "application/json",
+      "text": "{\"label\":\"й›Є в‚¬ <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "utf8": {
+      "encoding": "UTF-8",
+      "type": "application/json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "bom": {
+      "encoding": "UTF-8",
+      "type": "application/json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "plain": {
+      "encoding": "windows-1251",
+      "type": "text/plain",
+      "text": "Яр",
+      "literalMarkup": true
+    }
+  },
+  "utf8Parent": {
+    "parentCharset": "UTF-8",
+    "app": {
+      "encoding": "UTF-8",
+      "type": "application/json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "text": {
+      "encoding": "UTF-8",
+      "type": "text/json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "plus": {
+      "encoding": "UTF-8",
+      "type": "application/problem+json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "upper": {
+      "encoding": "UTF-8",
+      "type": "application/json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "legacy": {
+      "encoding": "windows-1251",
+      "type": "application/json",
+      "text": "{\"label\":\"й›Є в‚¬ <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "utf8": {
+      "encoding": "UTF-8",
+      "type": "application/json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "bom": {
+      "encoding": "UTF-8",
+      "type": "application/json",
+      "text": "{\"label\":\"雪 € <b> &amp;\"}",
+      "literalMarkup": true
+    },
+    "plain": {
+      "encoding": "windows-1251",
+      "type": "text/plain",
+      "text": "Яр",
+      "literalMarkup": true
+    }
+  }
+}

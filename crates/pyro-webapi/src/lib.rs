@@ -15,11 +15,14 @@
 //! 6. Before disposing a document's realms on navigation/page teardown:
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
+mod task_signal;
 pub mod abort;
 mod animation_events;
 mod animation_frame;
 mod animations;
 mod cache_storage;
+mod cookie_store;
+mod opfs;
 pub mod canvas;
 mod canvas_path;
 mod clipboard;
@@ -29,27 +32,40 @@ mod computed_properties;
 pub mod crypto;
 mod crypto_subtle;
 pub mod css;
+pub mod csp;
 pub mod custom;
 pub mod data_transfer;
 pub mod dom_parser;
 mod edit_commands;
 pub mod editing;
 mod editing_globals;
+mod encoded_chunks;
+mod audio_data;
+mod audio_decoder;
+mod audio_encoder;
+mod image_decoder;
+mod video_decoder;
+mod video_encoder;
 pub mod encoding;
 pub mod event;
 mod event_source;
 pub mod fetch;
+pub mod fetch_later;
 pub mod file;
 pub mod file_reader;
 pub mod font_loading;
+mod pseudo_element;
 pub mod typed_om;
 pub mod trusted_types;
+pub mod csp_report;
+pub mod reporting;
 pub mod form_data;
 pub mod formdata;
 pub mod fullscreen;
 mod web_locks;
 mod media_devices;
 mod paint_worklet;
+mod audio_worklet;
 /// Hooks only tests use (feature `test-hooks`, enabled by test builds through dev-dependencies).
 #[cfg(feature = "test-hooks")]
 pub mod test_hooks {
@@ -61,6 +77,7 @@ pub mod headers;
 pub mod highlights;
 pub mod view_transition;
 pub mod html;
+pub mod html_in_canvas;
 pub mod identity;
 mod image_decode;
 pub mod indexeddb;
@@ -72,6 +89,7 @@ pub mod layout_api;
 pub(crate) mod lazy_module;
 pub mod lifecycle;
 pub mod media;
+mod text_tracks;
 pub(crate) mod media_format;
 pub mod media_source;
 pub mod message_channel;
@@ -80,9 +98,14 @@ pub mod mutation_observer;
 mod names;
 pub mod navigator_extras;
 pub mod node;
+mod positional_html;
+mod scheduler;
+mod sanitizer_options;
+mod streaming_html;
 pub mod observable;
 pub mod page;
 pub mod performance;
+pub mod server_timing;
 mod pointer_capture;
 mod popover;
 mod popup;
@@ -96,23 +119,32 @@ pub mod resize_observer;
 pub mod resource_timing;
 pub mod response;
 mod service_worker;
+mod show_picker;
 mod service_worker_scope;
 mod smil;
+pub mod smooth_scroll;
 pub mod sri;
 pub mod storage;
 mod storage_manager;
+mod storage_buckets;
 mod streams;
 mod structured_clone;
 pub mod target;
 pub mod thread_state;
 pub mod traversal;
+mod origin;
+mod origin_globals;
+mod origin_urls;
 pub mod url;
+mod url_pattern;
 pub mod url_search_params;
+mod user_activation;
 pub mod util;
 pub mod validity;
 pub(crate) mod webaudio;
 pub mod websocket;
 pub mod window;
+pub mod window_features;
 pub mod window_message;
 pub mod worker;
 pub(crate) mod shared_worker;
@@ -128,24 +160,29 @@ use pyro_js::{JsResult, Object, Scope, Value};
 pub use event::{EventCore, EventData, EventInterface};
 pub use fetch::{FetchLimits, RequestContext};
 pub use file_reader::FileReaderLimits;
+pub use scheduler::with_idle_scheduling_state;
 pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
-pub use page::{AvailableImage, FrameContainer,
+pub use page::{AgentClusterGroup, AvailableImage, FrameContainer,
     BodyPart, DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource,
+    ResponsiveFramesSource,
     IframeAttribute, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, Partial,
     RemotePoster,
 };
-pub use popup::{popup_window_proxy, PopupCommand, PopupState, PopupTicket};
+pub use popup::{navigate_named_popup, popup_window_proxy, PopupCommand, PopupState, PopupTicket};
 pub use render_blocking::RenderBlocker;
 pub use service_worker::{navigation_route, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};
-pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
+pub use structured_clone::{
+    decode_message as deserialize_message, encode_for_storage as serialize_for_storage, encode_message as serialize_message,
+    WireMessage,
+};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
 pub use worker::{
-    hold_for_fork, join_stopped, release_after_fork, take_worker_ended, worker_ended, InspectTask, WorkerEvent,
-    WorkerHandle, MAX_WORKERS_PER_DOCUMENT,
+    hold_for_fork, join_stopped, live_nested_workers, release_after_fork, take_worker_ended, worker_ended,
+    InspectTask, WorkerEvent, WorkerHandle, MAX_NESTED_WORKERS, MAX_WORKERS_PER_DOCUMENT,
 };
 pub use worker_scope::{BufferedEvent, WorkerContext, WorkerEvents};
 pub use xhr::XhrLimits;
@@ -154,6 +191,8 @@ pub use xhr::XhrLimits;
 pub fn register(engine: &pyro_js::Engine) {
     engine.set_wrapper_property_hook(target::pin_wrapper_with_properties);
     engine.register::<target::EventTarget>();
+    trusted_types::register(engine);
+    engine.register::<scheduler::WebScheduler>();
     event::register(engine);
     popup::register(engine);
     node::register(engine);
@@ -175,21 +214,29 @@ pub fn register(engine: &pyro_js::Engine) {
     engine.register::<file_reader::FileReader>();
     data_transfer::register(engine);
     encoding::register(engine);
+    audio_data::register(engine);
+    encoded_chunks::register(engine);
     validity::register(engine);
+    fetch_later::register(engine);
     window::register(engine);
+    engine.register::<origin::Origin>();
     mutation_observer::register(engine);
     intersection_observer::register(engine);
     crypto::register(engine);
     form_data::register(engine);
     dom_parser::register(engine);
     resize_observer::register(engine);
+    html_in_canvas::register(engine);
     xpath::register(engine);
     engine.register::<storage::Storage>();
+    storage_buckets::register(engine);
     engine.register::<indexeddb::IdbFactory>();
+    opfs::register(engine);
     engine.register::<cache_storage::CacheHandle>();
     engine.register::<cache_storage::StoredBody>();
     engine.register::<headers::Headers>();
     engine.register::<url::URL>();
+    engine.register::<url_pattern::URLPattern>();
     engine.register::<url_search_params::URLSearchParams>();
     engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
@@ -291,6 +338,8 @@ pub fn rebind_window(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     page.dom.borrow_mut().set_named_item_hook(Some(Rc::new(move |name: &str| names.announce(name))));
     install_listener_connected_hook(&page);
     realm.set_embedder(page.clone());
+    cookie_store::bind_environment(scope, &page)?;
+    cookie_store::events::install_window(scope, &page);
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     mutation_observer::bind(scope, &page)
 }
@@ -325,7 +374,7 @@ pub fn adopt_window(old: &PageDom, new: &Rc<PageDom>, realm: pyro_js::RealmId) -
     // The realm's helpers (made by install.js once) and roots go along.
     for (from, to) in [
         (&old.window_holders, &new.window_holders),
-        (&old.data_view_readers, &new.data_view_readers),
+        (&old.encoding_helpers, &new.encoding_helpers),
         (&old.header_helpers, &new.header_helpers),
         (&old.url_params_helpers, &new.url_params_helpers),
         (&old.structured_clones, &new.structured_clones),
@@ -356,6 +405,8 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     install_listener_connected_hook(&page);
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
+    cookie_store::bind_environment(scope, &page)?;
+    cookie_store::events::install_window(scope, &page);
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
     realm.set_rejection_hooks(event::REJECTION_HOOKS);
@@ -363,17 +414,26 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     file::install(scope, helpers.get_atom("blobParts")?)?;
     mutation_observer::install(scope, &page, helpers.get_atom("mutationOptions")?)?;
     intersection_observer::install(scope, &page, helpers.get_atom("intersection")?)?;
-    encoding::install(scope, helpers.get_atom("dataView")?)?;
+    encoding::install(scope, helpers.get_atom("encoding")?)?;
     headers::install(scope, helpers.get_atom("headers")?)?;
+    scope.after_populate::<css::CssFontFeatureValuesMap>(helpers.get_atom("fontFeatureMap")?.as_object().expect("font feature map hook"))?;
+    scope.after_populate::<media_source::MediaSource>(
+        helpers.get_atom("mediaSourceStatics")?.as_object().expect("MediaSource constructor hook"),
+    )?;
     url_search_params::install(scope, helpers.get_atom("urlSearchParams")?)?;
     form_data::install(scope, helpers.get_atom("formData")?)?;
     fetch::install(scope)?;
+    fetch::install_wasm_streaming(scope, helpers.get_atom("wasmStreaming")?)?;
     structured_clone::install(scope, &page, helpers.get_atom("structuredClone")?)?;
     secure_context::hide_if_insecure(scope, &page)?;
     if let Some(define) =
         scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?
     {
         page.define_properties.borrow_mut().insert(scope.realm_id(), pyro_js::Persistent::new(scope, define));
+    }
+    if secure_context::secure(scope, &page) {
+        cookie_store::exposure::install(scope, false)?;
+        fetch_later::install(scope)?;
     }
     if page.max_touch_points() > 0 {
         handlers::define_touch_handlers(scope)?;

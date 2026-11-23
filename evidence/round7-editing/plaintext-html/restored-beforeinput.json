@@ -1,0 +1,56 @@
+[
+  [
+    "editing/other/exec-command-with-text-editor.tentative.html?type=password",
+    "In <input type=\"password\"> in contenteditable, execCommand(\"inserthtml\", false, <b>inserted</b>), a[b]c): should not fire beforeinput event",
+    1,
+    "Pass",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/other/exec-command-with-text-editor.tentative.html?type=password",
+    "In <input type=\"password\">, execCommand(\"inserthtml\", false, <b>inserted</b>), a[b]c): should not fire beforeinput event",
+    1,
+    "Pass",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/other/exec-command-with-text-editor.tentative.html?type=text",
+    "In <input type=\"text\"> in contenteditable, execCommand(\"inserthtml\", false, <b>inserted</b>), a[b]c): should not fire beforeinput event",
+    1,
+    "Pass",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/other/exec-command-with-text-editor.tentative.html?type=text",
+    "In <input type=\"text\">, execCommand(\"inserthtml\", false, <b>inserted</b>), a[b]c): should not fire beforeinput event",
+    1,
+    "Pass",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/other/exec-command-with-text-editor.tentative.html?type=textarea",
+    "In <textarea> in contenteditable, execCommand(\"inserthtml\", false, <b>inserted</b>), a[b]c): should not fire beforeinput event",
+    1,
+    "Pass",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/other/exec-command-with-text-editor.tentative.html?type=textarea",
+    "In <textarea>, execCommand(\"inserthtml\", false, <b>inserted</b>), a[b]c): should not fire beforeinput event",
+    1,
+    "Pass",
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]

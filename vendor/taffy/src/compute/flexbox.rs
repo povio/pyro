@@ -127,8 +127,24 @@ struct FlexItem {
     /// position of this item's central baseline (synthesized in its middle without one), for the
     /// container's `Baselines::dominant_first`.
     dominant_baseline: Option<f32>,
-    /// pyro: the distance from this item's last baseline to its outer cross-end edge, for `last baseline`
-    last_baseline_descent: f32,
+    /// pyro: the position of this item's last baseline in the container's block axis (synthesized at its block-end
+    /// edge without one), for the container's `Baselines::last` (css-align-3 §9.1, Blink `BaselineAccumulator`)
+    last_baseline: f32,
+    /// pyro: on a central baseline (rows), the position of this item's central last baseline (synthesized in its
+    /// middle), for the container's `Baselines::dominant_last`
+    dominant_last_baseline: Option<f32>,
+    /// pyro: in a row, for an item in baseline alignment, the position (in the container's block axis) of the
+    /// baseline its baseline-sharing group aligns on, at its final place: the line's shared baseline
+    aligned_baseline: Option<f32>,
+    /// pyro: the item's block flow across the cross axis (`FlexboxItemStyle::baseline_flow`): `Some(far)` when it
+    /// has baselines in that axis, `far` being whether its block-start is the line's far (right, bottom) side
+    baseline_flow: Option<bool>,
+    /// pyro: whether the item's baseline-sharing group (css-align-3 §9.1) aligns to the far side of its line
+    /// (`FlexItem::baseline_group_is_far`), set with `baseline_distance` for items in baseline alignment
+    baseline_group_is_far: bool,
+    /// pyro: the distance from the item's outer (margin-box) edge on its baseline-sharing group's side to its
+    /// baseline; 0 when its group has no other item in its line (the alignment is that of the side then)
+    baseline_distance: f32,
 
     /// A temporary value for the main offset
     ///
@@ -187,6 +203,32 @@ impl FlexItem {
             && !self.margin_is_auto.cross_start(dir)
             && !self.margin_is_auto.cross_end(dir)
     }
+
+    /// pyro: whether the item takes part in first- or last-baseline alignment
+    fn participates_in_any_baseline_alignment(&self, dir: FlexDirection) -> bool {
+        self.participates_in_baseline_alignment(dir) || self.participates_in_last_baseline_alignment(dir)
+    }
+
+    /// pyro: whether the item measures its baseline from its far (right, bottom) edge in the cross axis: the
+    /// block-start of the writing mode its baseline is read in (Blink `DetermineBaselineWritingMode`) is there.
+    /// That is its own for an item with baselines in the cross axis (`baseline_flow`); for one without, the
+    /// container's in a row (its block-start, the top), and in a column the writing mode orthogonal to the
+    /// container's (`FlexboxContainerStyle::inline_baseline_synthesis`).
+    fn baseline_start_is_far(&self, constants: &AlgoConstants) -> bool {
+        match self.baseline_flow {
+            Some(far) => far,
+            None => constants.is_column && constants.inline_baseline_start_is_far,
+        }
+    }
+
+    /// pyro: whether the item's baseline-sharing group aligns to the far side of its line (css-align-3 §9.1,
+    /// Blink `DetermineBaselineGroup`): items measure a first baseline from the block-start and a last one from
+    /// the block-end of the writing mode they read it in, and align to that side; `wrap-reverse` swaps the two
+    /// (Blink measures from the other side and puts the group at the other end of the line).
+    fn baseline_group_is_far(&self, constants: &AlgoConstants) -> bool {
+        let from_end = (self.align_self.keyword == AlignItemsKeyword::LastBaseline) != constants.is_wrap_reverse;
+        self.baseline_start_is_far(constants) != from_end
+    }
 }
 
 /// A line of [`FlexItem`] used for intermediate computation
@@ -205,6 +247,11 @@ struct AlgoConstants {
     /// pyro: where items without a baseline synthesize one in the block axis
     /// (`FlexboxContainerStyle::block_baseline_synthesis`): 0.5 on a central baseline.
     block_baseline_synthesis: f32,
+    /// pyro: in a column, where items without a baseline across the cross (inline) axis synthesize one, as a
+    /// fraction of their border box from its left edge (`FlexboxContainerStyle::inline_baseline_synthesis`)
+    inline_baseline_synthesis: f32,
+    /// pyro: whether such items measure their baseline from the right edge (see `FlexItem::baseline_start_is_far`)
+    inline_baseline_start_is_far: bool,
     /// The direction of the current segment being laid out
     dir: FlexDirection,
     /// The layout direction of the current segment being laid out
@@ -343,8 +390,38 @@ pub fn compute_flexbox_layout(
     });
 
     // The size of the container should be floored by the padding and border
-    let styled_based_known_dimensions =
+    let mut styled_based_known_dimensions =
         known_dimensions.or(min_max_definite_size.or(clamped_style_size).maybe_max(padding_border_sum));
+
+    debug_log!("FLEX:", dbg:style.flex_direction());
+    let height_from_ratio = aspect_ratio.is_some() && style.size().height.is_auto();
+    drop(style);
+    if let Some(preferred) = styled_based_known_dimensions.height.filter(|_| {
+        inputs.sizing_mode == SizingMode::InherentSize && known_dimensions.height.is_none() && !height_from_ratio
+    }) {
+        let bounds = tree.get_flexbox_child_style(node);
+        let content = |keyword: Dimension| {
+            matches!(keyword.tag(), crate::CompactLength::MIN_CONTENT_TAG | crate::CompactLength::MAX_CONTENT_TAG)
+        };
+        let minimum = content(bounds.min_size_keyword().height);
+        let maximum = content(bounds.max_size_keyword().height);
+        drop(bounds);
+        if minimum || maximum {
+            let intrinsic = tree.measure_child_size(
+                node,
+                Size { width: styled_based_known_dimensions.width, height: None },
+                parent_size,
+                Size { height: AvailableSpace::MaxContent, ..inputs.available_space },
+                SizingMode::ContentSize,
+                AbsoluteAxis::Vertical,
+                inputs.vertical_margins_are_collapsible,
+            );
+            styled_based_known_dimensions.height = Some(preferred
+                .maybe_min(maximum.then_some(intrinsic))
+                .maybe_max(minimum.then_some(intrinsic))
+                .maybe_max(min_size.height));
+        }
+    }
 
     // pyro: a container whose width is not known yet (it shrinks to fit) resolves its items'
     // percentage padding and margins against zero while it finds its width, then lays them out
@@ -365,7 +442,6 @@ pub fn compute_flexbox_layout(
                         .any(|m| m.into_raw().uses_percentage()))
         })
     {
-        drop(style);
         let width = compute_flexbox_layout(
             tree,
             node,
@@ -402,9 +478,6 @@ pub fn compute_flexbox_layout(
             return LayoutOutput::from_outer_size(Size { width, height });
         }
     }
-
-    debug_log!("FLEX:", dbg:style.flex_direction());
-    drop(style);
 
     // Normalize the definiteness flags: they only apply to dimensions which were passed in as known
     // by the parent. Dimensions resolved from the node's own style are always definite.
@@ -486,7 +559,7 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
             item.frozen = false;
             item.violation = 0.0;
             item.baseline = 0.0;
-            item.last_baseline_descent = 0.0;
+            item.baseline_distance = 0.0;
             if item.collapse {
                 item.strut = Some(item.strut.unwrap_or(0.0));
                 item.hypothetical_outer_size.set_main(constants.dir, 0.0);
@@ -606,6 +679,10 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
     debug_log!("final_layout_pass");
     let inflow_overflow_rect = final_layout_pass(tree, &mut flex_lines, &constants);
 
+    tree.record_flex_item_positions(node, flex_lines.iter().enumerate().flat_map(|(line_index, line)| {
+        line.items.iter().enumerate().map(move |(index, item)| (item.node, line_index, index))
+    }));
+
     // Collect out-of-flow candidates in document order (direct out-of-flow children interleaved
     // with candidates bubbled from in-flow children's subtrees). These are laid out by the
     // out-of-flow positioning pass (`compute_oof_layout`), which runs after this algorithm.
@@ -635,35 +712,88 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
         }
     }
 
-    // 8.5. Flex Container Baselines: calculate the flex container's first baseline
-    // See https://www.w3.org/TR/css-flexbox-1/#flex-baselines
-    // The baselines are generated from the startmost flex line, where "startmost" refers to the
-    // line's visual position: for wrap-reverse containers the cross axis is flipped, so the
-    // startmost line is the last line in flex-line order rather than the first.
-    let first_line = if constants.is_wrap_reverse { flex_lines.last() } else { flex_lines.first() };
-    let first_vertical_baseline = first_line.and_then(|line| {
-        if constants.is_column {
-            // For column containers the baseline is generated from the startmost item in the line,
-            // which for reverse-direction containers is the last item in flex order.
-            let item = if constants.dir.is_reverse() { line.items.last() } else { line.items.first() };
-            item.map(|child| child.baseline)
-        } else {
-            line.items
-                .iter()
-                .find(|item| item.participates_in_baseline_alignment(constants.dir))
-                .or_else(|| line.items.iter().next())
-                .map(|child| child.baseline)
+    // 8.5. Flex Container Baselines (css-flexbox-1 §8.5, css-align-3 §9.1; as Blink's `BaselineAccumulator`):
+    // the first baseline comes from the startmost flex line, the last baseline from the endmost one, where
+    // "startmost" refers to the line's visual position: for wrap-reverse containers the cross axis is flipped,
+    // so the startmost line is the last line in flex-line order rather than the first.
+    // pyro: in a row, from the line's shared baseline of the baseline-sharing group aligned to its cross-start
+    // side (to its cross-end side for the last baseline), else of the other group, else from the line's
+    // main-start item (main-end item for the last baseline). In a column, from the line's main-start (main-end)
+    // item. "Main-start" is visual too: the last item in flex order for reverse directions.
+    let (first_line, last_line) = match constants.is_wrap_reverse {
+        true => (flex_lines.last(), flex_lines.first()),
+        false => (flex_lines.first(), flex_lines.last()),
+    };
+    let main_start_item = |line: &FlexLine<'_>| -> Option<usize> {
+        match line.items.is_empty() {
+            true => None,
+            false => Some(if constants.dir.is_reverse() { line.items.len() - 1 } else { 0 }),
         }
-    });
-
-    // pyro: and its central baseline, from the same item (rows on a central baseline).
-    let first_dominant_baseline = first_line.filter(|_| !constants.is_column).and_then(|line| {
+    };
+    let main_end_item = |line: &FlexLine<'_>| -> Option<usize> {
+        match line.items.is_empty() {
+            true => None,
+            false => Some(if constants.dir.is_reverse() { 0 } else { line.items.len() - 1 }),
+        }
+    };
+    // The aligned baseline of the line's group on the far (`true`) or near side, if it has items
+    let group_baseline = |line: &FlexLine<'_>, far: bool| -> Option<f32> {
         line.items
             .iter()
-            .find(|item| item.participates_in_baseline_alignment(constants.dir))
-            .or_else(|| line.items.iter().next())
-            .and_then(|child| child.dominant_baseline)
-    });
+            .filter(|item| item.participates_in_any_baseline_alignment(constants.dir))
+            .find(|item| item.baseline_group_is_far == far)
+            .and_then(|item| item.aligned_baseline)
+    };
+    let central = constants.block_baseline_synthesis == 0.5;
+    let (mut first_vertical_baseline, mut first_dominant_baseline) = (None, None);
+    if let Some(line) = first_line {
+        let group = match constants.is_column {
+            true => None,
+            false => group_baseline(line, false).or_else(|| group_baseline(line, true)),
+        };
+        let item = main_start_item(line).map(|index| &line.items[index]);
+        match group {
+            // (on a central baseline the group's is the central one; the alphabetic first baseline stays the
+            // first participating item's own)
+            Some(group) if central => {
+                first_vertical_baseline = line
+                    .items
+                    .iter()
+                    .find(|item| item.participates_in_any_baseline_alignment(constants.dir))
+                    .map(|child| child.baseline);
+                first_dominant_baseline = Some(group);
+            }
+            Some(group) => first_vertical_baseline = Some(group),
+            None => {
+                first_vertical_baseline = item.map(|child| child.baseline);
+                first_dominant_baseline = item.and_then(|child| child.dominant_baseline);
+            }
+        }
+    }
+    let (mut last_vertical_baseline, mut last_dominant_baseline) = (None, None);
+    if let Some(line) = last_line {
+        let group = match constants.is_column {
+            true => None,
+            false => group_baseline(line, true).or_else(|| group_baseline(line, false)),
+        };
+        let item = main_end_item(line).map(|index| &line.items[index]);
+        match group {
+            Some(group) if central => {
+                last_vertical_baseline = line
+                    .items
+                    .iter()
+                    .rev()
+                    .find(|item| item.participates_in_any_baseline_alignment(constants.dir))
+                    .map(|child| child.last_baseline);
+                last_dominant_baseline = Some(group);
+            }
+            Some(group) => last_vertical_baseline = Some(group),
+            None => {
+                last_vertical_baseline = item.map(|child| child.last_baseline);
+                last_dominant_baseline = item.and_then(|child| child.dominant_last_baseline);
+            }
+        }
+    }
 
     let mut output = LayoutOutput::from_sizes_and_baselines(
         constants.container_size,
@@ -685,7 +815,11 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
                 crate::tree::ScrollableOverflow::ZERO
             }
         },
-        Baselines { dominant_first: first_dominant_baseline, ..Baselines::from_first(first_vertical_baseline) },
+        Baselines {
+            dominant_first: first_dominant_baseline,
+            dominant_last: last_dominant_baseline,
+            ..Baselines::new(first_vertical_baseline, last_vertical_baseline)
+        },
     );
     output.oof_candidates = candidates;
     output.oof_positioning_area =
@@ -865,6 +999,7 @@ fn compute_constants(
 ) -> AlgoConstants {
     let dir = style.flex_direction();
     let block_baseline_synthesis = style.block_baseline_synthesis();
+    let (inline_baseline_synthesis, inline_baseline_start_is_far) = style.inline_baseline_synthesis();
     let is_row = dir.is_row();
     let is_column = dir.is_column();
     let flex_wrap = style.flex_wrap();
@@ -945,6 +1080,8 @@ fn compute_constants(
 
     AlgoConstants {
         block_baseline_synthesis,
+        inline_baseline_synthesis,
+        inline_baseline_start_is_far,
         dir,
         layout_direction,
         is_row,
@@ -1147,7 +1284,16 @@ fn generate_anonymous_flex_items(
 
                 baseline: 0.0,
                 dominant_baseline: None,
-                last_baseline_descent: 0.0,
+                last_baseline: 0.0,
+                dominant_last_baseline: None,
+                aligned_baseline: None,
+                baseline_flow: child_style.baseline_flow(if constants.is_row {
+                    AbsoluteAxis::Vertical
+                } else {
+                    AbsoluteAxis::Horizontal
+                }),
+                baseline_group_is_far: false,
+                baseline_distance: 0.0,
 
                 offset_main: 0.0,
                 offset_cross: 0.0,
@@ -1334,6 +1480,7 @@ fn determine_flex_base_size(
         let percent_resolution_main_size =
             if constants.known_main_size_is_definite { constants.node_inner_size.main(dir) } else { None };
         let flex_basis_style = child_style.flex_basis();
+        let basis_calculation = child_style.flex_basis_calculation();
         let flex_basis = flex_basis_style
             .maybe_resolve(percent_resolution_main_size, |val, basis| tree.calc(val, basis))
             .maybe_add(box_sizing_adjustment);
@@ -1506,6 +1653,9 @@ fn determine_flex_base_size(
         // Spec: https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions
         // Spec: https://www.w3.org/TR/css-flexbox-1/#change-2016-max-contribution
         let padding_border_sum = child.padding.main_axis_sum(constants.dir) + child.border.main_axis_sum(constants.dir);
+        if let Some(calculation) = basis_calculation {
+            child.flex_basis = calculation.apply((child.flex_basis - box_sizing_adjustment).max(0.0), percent_resolution_main_size, |val, size, percent| tree.resolve_size_calculation(val, size, percent)) + box_sizing_adjustment;
+        }
         child.flex_basis = child.flex_basis.max(padding_border_sum);
 
         // The hypothetical main size is the item’s flex base size clamped according to its
@@ -1602,6 +1752,8 @@ fn determine_flex_base_size(
             // suggestion); the min and max cross sizes bound it through the ratio.
             let specified_main_size = match content_ratio_item && child.size_style.main(dir).is_auto() {
                 true => None,
+                false if child.size_style.main(dir).is_stretch() => percent_resolution_main_size
+                    .map(|size| (size - child.margin.main_axis_sum(dir)).max(padding_border_sum)),
                 false => child.size.main(dir),
             };
             let clamped_min_content_size = min_content_main_size
@@ -1615,7 +1767,7 @@ fn determine_flex_base_size(
         if style_min_main_size.is_none() {
             if let Some(function) = tree.get_flexbox_child_style(child.node).calc_size_min().main(dir) {
                 child.resolved_minimum_main_size =
-                    function.apply(child.resolved_minimum_main_size, |val, basis| tree.calc(val, basis));
+                    function.apply(child.resolved_minimum_main_size, percent_resolution_main_size, |val, size, percent| tree.resolve_size_calculation(val, size, percent));
             }
         }
 
@@ -2672,6 +2824,13 @@ fn determine_hypothetical_cross_size(
 }
 
 /// Calculate the base lines of the children.
+///
+/// pyro: for each item in baseline alignment, its baseline-sharing group (`FlexItem::baseline_group_is_far`)
+/// and the distance from its margin edge on that group's side to its baseline (`FlexItem::baseline_distance`),
+/// in both axes (css-align-3 §9, Blink `FlexLayoutAlgorithm::BaselineAscent`): in a row the cross axis is the
+/// container's block axis and items whose block flow runs the other way (`vertical-lr` in `vertical-rl`) form
+/// the other group; in a column it is the container's inline axis, where orthogonal items have baselines
+/// (`Baselines::orthogonal_first`/`_last`, from `Baselines::transpose`) and parallel ones synthesize one.
 #[inline]
 fn calculate_children_base_lines(
     tree: &mut impl LayoutFlexboxContainer,
@@ -2680,29 +2839,25 @@ fn calculate_children_base_lines(
     flex_lines: &mut [FlexLine],
     constants: &AlgoConstants,
 ) {
-    // Only compute baselines for flex rows because we only support baseline alignment in the cross axis
-    // where that axis is also the inline axis
-    // TODO: this may need revisiting if/when we support vertical writing modes
-    if !constants.is_row {
-        return;
-    }
-
     for line in flex_lines {
-        // If a flex line has one or zero items participating in baseline alignment then baseline alignment is a no-op so we skip
-        // (pyro: for each of the first-baseline and last-baseline groups)
-        let line_baseline_child_count =
-            line.items.iter().filter(|child| child.participates_in_baseline_alignment(constants.dir)).count();
-        let line_last_baseline_child_count =
-            line.items.iter().filter(|child| child.participates_in_last_baseline_alignment(constants.dir)).count();
-        if line_baseline_child_count <= 1 && line_last_baseline_child_count <= 1 {
+        // If a baseline-sharing group of a line has one or zero items then its baseline alignment is a no-op
+        // (the item aligns to its group's side), so only items with another one in their group are measured
+        let mut group_counts = [0usize; 2];
+        for child in line.items.iter_mut() {
+            child.baseline_distance = 0.0;
+            if child.participates_in_any_baseline_alignment(constants.dir) {
+                child.baseline_group_is_far = child.baseline_group_is_far(constants);
+                group_counts[child.baseline_group_is_far as usize] += 1;
+            }
+        }
+        if group_counts[0] <= 1 && group_counts[1] <= 1 {
             continue;
         }
 
         for child in line.items.iter_mut() {
-            // Only calculate baselines for children participating in baseline alignment
-            let first = line_baseline_child_count > 1 && child.participates_in_baseline_alignment(constants.dir);
-            let last = line_last_baseline_child_count > 1 && child.participates_in_last_baseline_alignment(constants.dir);
-            if !first && !last {
+            if !child.participates_in_any_baseline_alignment(constants.dir)
+                || group_counts[child.baseline_group_is_far as usize] <= 1
+            {
                 continue;
             }
 
@@ -2745,31 +2900,94 @@ fn calculate_children_base_lines(
                 },
             );
 
-            let height = measured_size_and_baselines.size.height;
-            if last {
-                // pyro: a box without a last baseline (or a scroll container) has one synthesized from its
-                // border box's bottom edge
-                let last_baseline = match child.overflow.y.is_scroll_container() {
-                    true => height,
-                    false => measured_size_and_baselines.baselines.last.unwrap_or(height).min(height),
-                };
-                child.last_baseline_descent = height - last_baseline + child.margin.bottom;
-                continue;
-            }
-            // pyro: on a central baseline (vertical writing modes, text not sideways), an item's
-            // central baseline, else its baseline, else one synthesized in its middle (Blink).
-            let baselines = &measured_size_and_baselines.baselines;
-            let baseline = if constants.block_baseline_synthesis == 0.5 {
-                child_first_baseline(baselines.dominant_first.or(baselines.first), height, child.overflow.y)
-                    .unwrap_or(height * 0.5)
-            } else {
-                child_first_baseline(baselines.first, height, child.overflow.y)
-                    .unwrap_or(height * constants.block_baseline_synthesis)
+            let size = match constants.is_row {
+                true => measured_size_and_baselines.size.height,
+                false => measured_size_and_baselines.size.width,
             };
-
-            child.baseline = baseline + child.margin.top;
+            let from_near = item_baseline_from_near(child, &measured_size_and_baselines.baselines, size, constants);
+            let (margin_near, margin_far) = match constants.is_row {
+                true => (child.margin.top, child.margin.bottom),
+                false => (child.margin.left, child.margin.right),
+            };
+            child.baseline_distance = match child.baseline_group_is_far {
+                true => margin_far + size - from_near,
+                false => margin_near + from_near,
+            };
         }
     }
+}
+
+/// pyro: an item's last baseline from its block-start edge for the container's baselines: a scroll container's is
+/// synthesized from its border box (as for `last baseline` alignment, `item_baseline_from_near`)
+#[inline]
+fn item_last_baseline(last_baseline: Option<f32>, overflow_y: Overflow) -> Option<f32> {
+    match overflow_y.is_scroll_container() {
+        true => None,
+        false => last_baseline,
+    }
+}
+
+/// pyro: the distance from an item's near (left, top) border edge in the cross axis to the baseline it aligns on
+/// (`calculate_children_base_lines`): its first or last baseline (per `align-self`), from the block-start of the
+/// writing mode it is read in, or one synthesized; `size` is its cross size, `baselines` those of its layout
+fn item_baseline_from_near(child: &FlexItem, baselines: &Baselines, size: f32, constants: &AlgoConstants) -> f32 {
+    let is_last = child.align_self.keyword == AlignItemsKeyword::LastBaseline;
+    // The item's baseline from the block-start of the writing mode it is read in (`None`:
+    // synthesized), and where a synthesized one is, as a fraction of the cross size from the near edge
+    let (baseline, synthesis) = if constants.is_row {
+        // pyro: on a central baseline (vertical writing modes, text not sideways), an item's
+        // central baseline, else its baseline, else one synthesized in its middle (Blink).
+        let central = constants.block_baseline_synthesis == 0.5;
+        let baseline = child.baseline_flow.and_then(|_| match is_last {
+            false => child_first_baseline(
+                if central { baselines.dominant_first.or(baselines.first) } else { baselines.first },
+                size,
+                child.overflow.y,
+            ),
+            // pyro: a box without a last baseline (or a scroll container) has one synthesized
+            true => match child.overflow.y.is_scroll_container() {
+                true => Some(size),
+                false => {
+                    let last = if central { baselines.dominant_last.or(baselines.last) } else { baselines.last };
+                    last.map(|last| last.min(size))
+                }
+            },
+        });
+        // (synthesized from the block-start of the item's writing mode, the container's for an
+        // orthogonal item)
+        let synthesis = match child.baseline_start_is_far(constants) {
+            true => 1.0 - constants.block_baseline_synthesis,
+            false => constants.block_baseline_synthesis,
+        };
+        (baseline, synthesis)
+    } else {
+        let baseline = child.baseline_flow.and_then(|_| {
+            let raw = if is_last { baselines.orthogonal_last } else { baselines.orthogonal_first };
+            match is_last && child.overflow.x.is_scroll_container() {
+                true => Some(size),
+                false => child_first_baseline(raw, size, child.overflow.x).map(|baseline| baseline.min(size)),
+            }
+        });
+        (baseline, constants.inline_baseline_synthesis)
+    };
+    // The baseline's distance from the item's near (left, top) border edge
+    match baseline {
+        Some(baseline) if child.baseline_start_is_far(constants) => size - baseline,
+        Some(baseline) => baseline,
+        None => size * synthesis,
+    }
+}
+
+/// pyro: the largest `FlexItem::baseline_distance` of the items of `line` in each baseline-sharing group (`[near,
+/// far]`), 0 for a group without items
+#[inline]
+fn baseline_group_max_distances(line: &FlexLine, constants: &AlgoConstants) -> [f32; 2] {
+    let mut max_distances = [0.0f32; 2];
+    for child in line.items.iter().filter(|child| child.participates_in_any_baseline_alignment(constants.dir)) {
+        let max = &mut max_distances[child.baseline_group_is_far as usize];
+        *max = max.max(child.baseline_distance);
+    }
+    max_distances
 }
 
 /// Calculate the cross size of each flex line.
@@ -2806,22 +3024,16 @@ fn calculate_cross_size(flex_lines: &mut [FlexLine], node_size: Size<Option<f32>
         //    3. The used cross-size of the flex line is the largest of the numbers found in the
         //       previous two steps and zero.
         for line in flex_lines.iter_mut() {
-            let max_baseline: f32 = line.items.iter().map(|child| child.baseline).fold(0.0, |acc, x| acc.max(x));
-            // pyro: the last-baseline group as the first-baseline group, from the line's cross end
-            let max_last_descent: f32 = line
-                .items
-                .iter()
-                .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
-                .map(|child| child.last_baseline_descent)
-                .fold(0.0, |acc, x| acc.max(x));
+            // pyro: per baseline-sharing group (near and far side of the line), the largest distance from an
+            // item's margin edge on that side to its baseline
+            let max_distances = baseline_group_max_distances(line, constants);
             line.cross_size = line
                 .items
                 .iter()
                 .map(|child| {
-                    if child.participates_in_baseline_alignment(constants.dir) {
-                        max_baseline - child.baseline + child.hypothetical_outer_size.cross(constants.dir)
-                    } else if constants.is_row && child.participates_in_last_baseline_alignment(constants.dir) {
-                        max_last_descent - child.last_baseline_descent + child.hypothetical_outer_size.cross(constants.dir)
+                    if child.participates_in_any_baseline_alignment(constants.dir) {
+                        max_distances[child.baseline_group_is_far as usize] - child.baseline_distance
+                            + child.hypothetical_outer_size.cross(constants.dir)
                     } else {
                         child.hypothetical_outer_size.cross(constants.dir)
                     }
@@ -2898,6 +3110,8 @@ fn determine_used_cross_size(
         for child in line.items.iter_mut() {
             // A cross size of `stretch` stretches to the flex line like align-self: stretch
             // (but regardless of the alignment style)
+            let stretch = (line_cross_size - child.margin.cross_axis_sum(constants.dir))
+                .max((child.padding + child.border).cross_axis_sum(constants.dir));
             child.target_size.set_cross(
                 constants.dir,
                 if child.is_stretched(constants.dir) {
@@ -2954,7 +3168,23 @@ fn determine_used_cross_size(
                     fit.maybe_clamp(child.min_size.width, child.max_size.width)
                         .max(child.hypothetical_inner_size.cross(constants.dir))
                 } else {
-                    child.hypothetical_inner_size.cross(constants.dir)
+                    let hypothetical = child.hypothetical_inner_size.cross(constants.dir);
+                    if child.min_size_keyword.cross(constants.dir).is_stretch() {
+                        hypothetical.max(stretch)
+                    } else if child.max_size_keyword.cross(constants.dir).is_stretch() {
+                        // pyro: `max-*: stretch` clamped the hypothetical cross size against the container
+                        // (`determine_flex_base_size`); against the line, a definite preferred size is clamped
+                        // anew, so a line a sibling of a wrapping container made larger lets the item grow
+                        // back to it (Blink; WPT css-sizing stretch/stretch-max-{block,inline}-size-001)
+                        child
+                            .size
+                            .cross(constants.dir)
+                            .unwrap_or(hypothetical)
+                            .min(stretch)
+                            .maybe_max(child.min_size.cross(constants.dir))
+                    } else {
+                        hypothetical
+                    }
                 },
             );
 
@@ -3061,34 +3291,7 @@ fn distribute_remaining_free_space(flex_lines: &mut [FlexLine], constants: &Algo
 fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &AlgoConstants) {
     for line in flex_lines {
         let line_cross_size = line.cross_size;
-        let max_baseline: f32 = line.items.iter_mut().map(|child| child.baseline).fold(0.0, |acc, x| acc.max(x));
-        let max_baseline_to_bottom_distance: f32 = line
-            .items
-            .iter_mut()
-            .filter(|child| child.participates_in_baseline_alignment(constants.dir))
-            .map(|child| child.outer_target_size.cross(constants.dir) - child.baseline)
-            .fold(0.0, |acc, x| acc.max(x));
-        let max_last_descent: f32 = line
-            .items
-            .iter()
-            .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
-            .map(|child| child.last_baseline_descent)
-            .fold(0.0, |acc, x| acc.max(x));
-        // pyro: in a wrap-reverse row, the last-baseline group's largest distance from its cross end (the
-        // top) to its last baseline (`align_flex_items_along_cross_axis`)
-        let max_last_ascent: f32 = line
-            .items
-            .iter()
-            .filter(|child| child.participates_in_last_baseline_alignment(constants.dir))
-            .map(|child| child.outer_target_size.cross(constants.dir) - child.last_baseline_descent)
-            .fold(0.0, |acc, x| acc.max(x));
-        // pyro: in a column, the widest `baseline` item's outer cross size (`align_flex_items_along_cross_axis`)
-        let max_baseline_cross: f32 = line
-            .items
-            .iter()
-            .filter(|child| child.align_self.keyword == AlignItemsKeyword::Baseline)
-            .map(|child| child.outer_target_size.cross(constants.dir))
-            .fold(0.0, |acc, x| acc.max(x));
+        let max_baseline_distances = baseline_group_max_distances(line, constants);
 
         for child in line.items.iter_mut() {
             let free_space = line_cross_size - child.outer_target_size.cross(constants.dir);
@@ -3115,16 +3318,8 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
                 }
             } else {
                 // 14. Align all flex items along the cross-axis.
-                child.offset_cross = align_flex_items_along_cross_axis(
-                    child,
-                    free_space,
-                    max_baseline,
-                    max_baseline_to_bottom_distance,
-                    max_last_descent,
-                    max_last_ascent,
-                    max_baseline_cross,
-                    constants,
-                );
+                child.offset_cross =
+                    align_flex_items_along_cross_axis(child, free_space, max_baseline_distances, constants);
             }
         }
     }
@@ -3140,11 +3335,7 @@ fn resolve_cross_axis_auto_margins(flex_lines: &mut [FlexLine], constants: &Algo
 fn align_flex_items_along_cross_axis(
     child: &FlexItem,
     free_space: f32,
-    max_baseline: f32,
-    max_baseline_to_bottom_distance: f32,
-    max_last_descent: f32,
-    max_last_ascent: f32,
-    max_baseline_cross: f32,
+    max_baseline_distances: [f32; 2],
     constants: &AlgoConstants,
 ) -> f32 {
     let cross_axis_should_reverse = constants.is_column && matches!(constants.layout_direction, Direction::Rtl);
@@ -3189,48 +3380,15 @@ fn align_flex_items_along_cross_axis(
             }
         }
         AlignItemsKeyword::Center => free_space / 2.0,
-        AlignItemsKeyword::Baseline => {
-            if constants.is_row {
-                if constants.is_wrap_reverse {
-                    // In a wrap-reverse container the cross axis is flipped, so the baseline-aligned
-                    // group of items is aligned to the cross-start edge, which is the bottom of the line.
-                    let line_cross_size = free_space + child.outer_target_size.cross(constants.dir);
-                    line_cross_size - max_baseline_to_bottom_distance - child.baseline
-                } else {
-                    max_baseline - child.baseline
-                }
+        // pyro: the item's baseline on its baseline-sharing group's, which aligns to the near or far side of the
+        // line (`calculate_children_base_lines`; css-align-3 §9.3, Blink `FlexLayoutAlgorithm`): rows and columns,
+        // first and last baselines, `wrap-reverse` and `rtl` alike
+        AlignItemsKeyword::Baseline | AlignItemsKeyword::LastBaseline => {
+            let delta = max_baseline_distances[child.baseline_group_is_far as usize] - child.baseline_distance;
+            if child.baseline_group_is_far {
+                free_space - delta
             } else {
-                // Until we support vertical writing modes, baseline alignment only makes sense if
-                // the constants.direction is row, so we treat it as flex-start alignment in columns.
-                let baseline_column_should_reverse = cross_axis_should_reverse && !constants.is_wrap;
-                if (baseline_column_should_reverse && !constants.is_wrap_reverse)
-                    || (constants.is_wrap_reverse && !cross_axis_should_reverse)
-                {
-                    // pyro: the items share a baseline synthesized at their line-left edges, and their
-                    // group goes to the cross start, the right (Chromium; WPT css-flexbox
-                    // `flexbox-align-self-vert-rtl-*`, and `align-baseline` for an ltr wrap-reverse column)
-                    free_space - (max_baseline_cross - child.outer_target_size.cross(constants.dir)).max(0.0)
-                } else if constants.is_wrap_reverse ^ baseline_column_should_reverse {
-                    free_space
-                } else {
-                    0.0
-                }
-            }
-        }
-        // pyro: the item's last baseline on the line's last baseline (its group's largest descent above the
-        // line's cross end); otherwise (a column, wrap-reverse) its fallback alignment, `end`
-        AlignItemsKeyword::LastBaseline => {
-            if constants.is_row && !constants.is_wrap_reverse {
-                free_space - (max_last_descent - child.last_baseline_descent).max(0.0)
-            } else if constants.is_row {
-                // pyro: wrap-reverse puts the cross end at the top: the group aligns its last baselines
-                // from there (WPT css-flexbox `flexbox-align-self-baseline-horiz-001b`)
-                (max_last_ascent - (child.outer_target_size.cross(constants.dir) - child.last_baseline_descent))
-                    .max(0.0)
-            } else if cross_axis_should_reverse {
-                0.0
-            } else {
-                free_space
+                delta
             }
         }
         AlignItemsKeyword::Stretch => {
@@ -3378,6 +3536,9 @@ fn calculate_flex_item(
 
     let inner_baseline =
         child_first_baseline(layout_output.baselines.first, size.height, item.overflow.y).unwrap_or(size.height);
+    // pyro: its last baseline, synthesized at its block-end edge without one
+    let inner_last_baseline =
+        item_last_baseline(layout_output.baselines.last, item.overflow.y).unwrap_or(size.height);
     if direction.is_row() {
         let baseline_offset_cross =
             total_offset_cross + item.offset_cross + effective_line_offset_cross + item.margin.cross_start(direction);
@@ -3388,9 +3549,23 @@ fn calculate_flex_item(
                 + child_first_baseline(baselines.dominant_first.or(baselines.first), size.height, item.overflow.y)
                     .unwrap_or(size.height * 0.5)
         });
+        item.last_baseline = baseline_offset_cross + inner_last_baseline;
+        item.dominant_last_baseline = (constants.block_baseline_synthesis == 0.5).then(|| {
+            let baselines = &layout_output.baselines;
+            baseline_offset_cross
+                + item_last_baseline(baselines.dominant_last.or(baselines.last), item.overflow.y)
+                    .unwrap_or(size.height * 0.5)
+        });
+        // pyro: the baseline the item aligned on, where its group's shared baseline is
+        item.aligned_baseline = item.participates_in_any_baseline_alignment(direction).then(|| {
+            baseline_offset_cross + item_baseline_from_near(item, &layout_output.baselines, size.height, constants)
+        });
     } else {
         let baseline_offset_main = *total_offset_main + item.offset_main + item.margin.main_start(direction);
         item.baseline = baseline_offset_main + inner_baseline;
+        item.last_baseline = baseline_offset_main + inner_last_baseline;
+        item.dominant_last_baseline = None;
+        item.aligned_baseline = None;
     }
 
     let location = if direction.is_row() {

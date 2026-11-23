@@ -107,14 +107,24 @@ impl Builder<'_> {
         end: f64,
         ccw: bool,
     ) {
+        // HTML: the whole circumference when the angles are 2π or more apart
+        // in the drawing direction; otherwise from start to end that way.
+        // pyro: as Blink (AdjustEndAngle), angles apart by a multiple of 2π
+        // against the drawing direction (`ellipse(..., 2π, 0)` clockwise)
+        // also draw the whole circumference, not nothing (WPT
+        // 2d.line.join.round, 2d.path.isPointInStroke.scaleddashes).
         let sweep = if !ccw && end - start >= TAU {
             TAU
         } else if ccw && start - end >= TAU {
             -TAU
+        } else if !ccw && start > end {
+            TAU - (start - end).rem_euclid(TAU)
+        } else if ccw && start < end {
+            -(TAU - (end - start).rem_euclid(TAU))
         } else if ccw {
-            -(start - end).rem_euclid(TAU)
+            -(start - end)
         } else {
-            (end - start).rem_euclid(TAU)
+            end - start
         };
         let center = Point::new(cx, cy);
         let radii = Vec2::new(rx, ry);
@@ -176,6 +186,11 @@ impl Builder<'_> {
     /// `roundRect` with radii [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y].
     pub(crate) fn round_rect(&mut self, mut x: f64, mut y: f64, mut w: f64, mut h: f64, r: [f64; 8]) {
         let (mut tl, mut tr, mut br, mut bl) = ((r[0], r[1]), (r[2], r[3]), (r[4], r[5]), (r[6], r[7]));
+        // pyro: HTML traces the subpath with the signed width and height, so one negative side
+        // mirrors it and turns it counter-clockwise (WPT 2d.path.roundrect.winding); the new
+        // subpath after it starts at the (x, y) given.
+        let (x0, y0) = (x, y);
+        let reversed = (w < 0.0) != (h < 0.0);
         if w < 0.0 {
             x += w;
             w = -w;
@@ -197,16 +212,26 @@ impl Builder<'_> {
         let s = |c: (f64, f64)| (c.0 * scale, c.1 * scale);
         let (tl, tr, br, bl) = (s(tl), s(tr), s(br), s(bl));
         self.move_to(x + tl.0, y);
-        self.line_to(x + w - tr.0, y);
-        self.ellipse(x + w - tr.0, y + tr.1, tr.0, tr.1, 0.0, -FRAC_PI_2, 0.0, false);
-        self.line_to(x + w, y + h - br.1);
-        self.ellipse(x + w - br.0, y + h - br.1, br.0, br.1, 0.0, 0.0, FRAC_PI_2, false);
-        self.line_to(x + bl.0, y + h);
-        self.ellipse(x + bl.0, y + h - bl.1, bl.0, bl.1, 0.0, FRAC_PI_2, PI, false);
-        self.line_to(x, y + tl.1);
-        self.ellipse(x + tl.0, y + tl.1, tl.0, tl.1, 0.0, PI, PI + FRAC_PI_2, false);
+        if reversed {
+            self.ellipse(x + tl.0, y + tl.1, tl.0, tl.1, 0.0, PI + FRAC_PI_2, PI, true);
+            self.line_to(x, y + h - bl.1);
+            self.ellipse(x + bl.0, y + h - bl.1, bl.0, bl.1, 0.0, PI, FRAC_PI_2, true);
+            self.line_to(x + w - br.0, y + h);
+            self.ellipse(x + w - br.0, y + h - br.1, br.0, br.1, 0.0, FRAC_PI_2, 0.0, true);
+            self.line_to(x + w, y + tr.1);
+            self.ellipse(x + w - tr.0, y + tr.1, tr.0, tr.1, 0.0, 0.0, -FRAC_PI_2, true);
+        } else {
+            self.line_to(x + w - tr.0, y);
+            self.ellipse(x + w - tr.0, y + tr.1, tr.0, tr.1, 0.0, -FRAC_PI_2, 0.0, false);
+            self.line_to(x + w, y + h - br.1);
+            self.ellipse(x + w - br.0, y + h - br.1, br.0, br.1, 0.0, 0.0, FRAC_PI_2, false);
+            self.line_to(x + bl.0, y + h);
+            self.ellipse(x + bl.0, y + h - bl.1, bl.0, bl.1, 0.0, FRAC_PI_2, PI, false);
+            self.line_to(x, y + tl.1);
+            self.ellipse(x + tl.0, y + tl.1, tl.0, tl.1, 0.0, PI, PI + FRAC_PI_2, false);
+        }
         self.path.close();
-        self.move_to(x, y);
+        self.move_to(x0, y0);
     }
     pub(crate) fn svg(&mut self, data: &str) {
         // A path whose data has an error draws nothing here (HTML keeps the
@@ -356,32 +381,86 @@ pub(crate) fn point_in_fill(path: &BezPath, p: Point, evenodd: bool) -> bool {
     if !p.x.is_finite() || !p.y.is_finite() {
         return false;
     }
-    let path = closed(path);
+    // Points the transform carried past the range of f64 (a rect under
+    // `scale(Number.MAX_VALUE)`) are kept at a finite distance far past any
+    // canvas, so the winding still sees the shape around the point; the
+    // bound leaves products of two coordinates finite.
+    let far = |q: &mut Point| {
+        let bound = |v: f64| if v.is_infinite() { v.signum() * 1e150 } else { v };
+        *q = Point::new(bound(q.x), bound(q.y));
+    };
+    let mut path = path.clone();
+    for el in path.elements_mut() {
+        match el {
+            PathEl::MoveTo(a) | PathEl::LineTo(a) => far(a),
+            PathEl::QuadTo(a, b) => {
+                far(a);
+                far(b);
+            }
+            PathEl::CurveTo(a, b, c) => {
+                far(a);
+                far(b);
+                far(c);
+            }
+            PathEl::ClosePath => {}
+        }
+    }
+    let path = closed(&path);
     let winding = path.winding(p);
     (if evenodd { winding % 2 != 0 } else { winding != 0 }) || on_outline(&path, p)
 }
 
-/// The outline of `path` stroked with `state`'s line settings, and the
-/// factor it was scaled by: wide strokes are computed scaled down to a width
-/// of 1 (scale the query point by the same factor), because kurbo flattens
-/// round joins and caps at a fixed tolerance and a page's
-/// `lineWidth = 1e300` would otherwise never finish.
+/// Dash periods along one stroke past which a query ignores the dashes (as
+/// drawing does, pyro-canvas `MAX_DASHES`).
+const MAX_DASHES: f64 = 100_000.0;
+
+/// The length of `path`'s control polygon: at least its length.
+fn control_length(path: &BezPath) -> f64 {
+    let (mut last, mut start, mut length) = (Point::ZERO, Point::ZERO, 0.0);
+    let mut to = |p: Point, last: &mut Point| {
+        length += last.distance(p);
+        *last = p;
+    };
+    for el in path.elements() {
+        match *el {
+            PathEl::MoveTo(p) => (last, start) = (p, p),
+            PathEl::LineTo(p) => to(p, &mut last),
+            PathEl::QuadTo(a, b) => {
+                to(a, &mut last);
+                to(b, &mut last);
+            }
+            PathEl::CurveTo(a, b, c) => {
+                to(a, &mut last);
+                to(b, &mut last);
+                to(c, &mut last);
+            }
+            PathEl::ClosePath => to(start, &mut last),
+        }
+    }
+    length
+}
+
+/// The outline of `path` (user space: the space the line settings apply
+/// in) stroked with `state`'s line settings and dashes, and the factor it was
+/// scaled by: wide strokes are computed scaled down to a width of 1 (scale
+/// the query point by the same factor), because kurbo flattens round joins
+/// and caps at a fixed tolerance and a page's `lineWidth = 1e300` would
+/// otherwise never finish.
 pub(crate) fn stroke_outline(path: &BezPath, state: &State) -> (BezPath, f64) {
-    let t = state.transform;
-    let scale = t.determinant().abs().sqrt();
-    let width = state.line_width * scale;
+    let width = state.line_width;
     let k = if width > 1.0 { 1.0 / width } else { 1.0 };
-    let cap = match state.line_cap {
-        "round" => kurbo::Cap::Round,
-        "square" => kurbo::Cap::Square,
-        _ => kurbo::Cap::Butt,
-    };
-    let join = match state.line_join {
-        "round" => kurbo::Join::Round,
-        "bevel" => kurbo::Join::Bevel,
-        _ => kurbo::Join::Miter,
-    };
-    let style = kurbo::Stroke::new(width * k).with_caps(cap).with_join(join).with_miter_limit(state.miter_limit);
+    let mut style = state.stroke();
+    if !style.dash_pattern.is_empty() {
+        let period: f64 = style.dash_pattern.iter().sum();
+        if period.is_nan() || period <= 0.0 || control_length(path) / period > MAX_DASHES {
+            style.dash_pattern.clear();
+        }
+    }
+    style.width *= k;
+    style.dash_offset *= k;
+    for dash in style.dash_pattern.iter_mut() {
+        *dash *= k;
+    }
     let scaled = Affine::scale(k);
     let outline = kurbo::stroke(
         path.elements().iter().map(|el| scaled * *el),

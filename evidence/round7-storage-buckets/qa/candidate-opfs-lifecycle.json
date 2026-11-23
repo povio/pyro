@@ -1,0 +1,18 @@
+{
+  "surface": true,
+  "before": [
+    0,
+    true
+  ],
+  "deletion": "ok",
+  "commit": "InvalidStateError",
+  "old": [
+    "NotFoundError",
+    "NotFoundError",
+    "InvalidStateError"
+  ],
+  "fresh": [
+    "NotFoundError",
+    false
+  ]
+}

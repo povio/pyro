@@ -20,6 +20,7 @@ use crate::values::generics::font::{
 use crate::values::specified::calc::{Leaf, PercentageContext};
 use crate::values::specified::length::{FontBaseSize, LengthUnit, LineHeightBase, PX_PER_PT};
 use crate::values::specified::number::parse_number_with_clamping_mode;
+use crate::values::specified::percentage::ToPercentage;
 use crate::values::specified::{AllowQuirks, Angle, Integer, LengthPercentage};
 use crate::values::specified::{
     NoCalcLength, NonNegativeLengthPercentage, NonNegativeNumber, NonNegativePercentage, Number,
@@ -46,7 +47,7 @@ macro_rules! system_font_methods {
             }
             #[cfg(feature = "servo")]
             {
-                unreachable!()
+                _context.device().system_font(self.get_system().unwrap()).$field
             }
         }
     };
@@ -74,7 +75,6 @@ macro_rules! system_font_methods {
     Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
 )]
 #[allow(missing_docs)]
-#[cfg(feature = "gecko")]
 pub enum SystemFont {
     /// https://drafts.csswg.org/css-fonts/#valdef-font-caption
     Caption,
@@ -89,42 +89,24 @@ pub enum SystemFont {
     /// https://drafts.csswg.org/css-fonts/#valdef-font-status-bar
     StatusBar,
     /// Internal system font, used by the `<menupopup>`s on macOS.
+    #[cfg(feature = "gecko")]
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     MozPullDownMenu,
     /// Internal system font, used for `<button>` elements.
+    #[cfg(feature = "gecko")]
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     MozButton,
     /// Internal font, used by `<select>` elements.
+    #[cfg(feature = "gecko")]
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     MozList,
     /// Internal font, used by `<input>` elements.
+    #[cfg(feature = "gecko")]
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     MozField,
+    #[cfg(feature = "gecko")]
     #[css(skip)]
     End, // Just for indexing purposes.
-}
-
-// We don't parse system fonts in servo, but in the interest of not
-// littering a lot of code with `if engine == "gecko"` conditionals,
-// we have a dummy system font module that does nothing
-
-#[derive(
-    Clone, Copy, Debug, Eq, Hash, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
-)]
-#[allow(missing_docs)]
-#[cfg(feature = "servo")]
-/// Dummy struct for system font, can never be constructed.
-pub struct SystemFont {
-    #[css(skip)]
-    _forbid_construction: (),
-}
-
-#[allow(missing_docs)]
-#[cfg(feature = "servo")]
-impl SystemFont {
-    pub fn parse(_context: &ParserContext, _input: &mut Parser) -> Result<Self, ()> {
-        Err(())
-    }
 }
 
 const DEFAULT_SCRIPT_MIN_SIZE_PT: u32 = 8;
@@ -964,10 +946,10 @@ impl FontSize {
                         line_height_base,
                     )
                 },
-                FontSize::System(_) => {
+                FontSize::System(_role) => {
                     #[cfg(feature = "servo")]
                     {
-                        unreachable!()
+                        context.device().system_font(_role).font_size.zoom(context.builder.effective_zoom)
                     }
                     #[cfg(feature = "gecko")]
                     {
@@ -1646,14 +1628,17 @@ pub enum FontSynthesisStyle {
 #[typed(todo_derive_fields)]
 /// Allows authors to choose a palette from those supported by a color font
 /// (and potentially @font-palette-values overrides).
-pub enum FontPalette {
+pub enum GenericFontPalette<P> {
     /// `normal`, `light`, `dark` or a `<dashed-ident>`.
     Named(Atom),
-    /// pyro: `palette-mix()` (CSS Fonts 5): two palettes mixed entry by entry.
-    Mix(Box<FontPaletteMix>),
+    /// `palette-mix()` mixes the entries of one or more palettes.
+    Mix(Box<FontPaletteMix<P>>),
 }
 
-/// pyro: `palette-mix(<color-interpolation-method>, [<palette> && <percentage>?]#{2})`.
+/// A specified palette retains percentage expressions until the element is styled.
+pub type FontPalette = GenericFontPalette<crate::values::specified::Percentage>;
+
+/// An ordered palette mix and its interpolation method.
 #[derive(
     Clone,
     Debug,
@@ -1663,34 +1648,60 @@ pub enum FontPalette {
     Serialize,
     ToShmem,
 )]
-pub struct FontPaletteMix {
+pub struct FontPaletteMix<P> {
     /// The colour space the entries are mixed in.
     pub interpolation: crate::color::mix::ColorInterpolationMethod,
-    /// The first palette and its percentage (0 to 100), if given.
-    pub left: (FontPalette, Option<f32>),
-    /// The second palette and its percentage, if given.
-    pub right: (FontPalette, Option<f32>),
+    /// Palettes and their optional percentages, in source order.
+    pub items: Vec<PaletteMixItem<P>>,
 }
 
-impl SpecifiedValueInfo for FontPaletteMix {}
+#[derive(Clone, Debug, Deserialize, MallocSizeOf, PartialEq, Serialize, ToShmem)]
+#[allow(missing_docs)]
+pub struct PaletteMixItem<P> {
+    pub palette: GenericFontPalette<P>,
+    pub weight: Option<P>,
+}
 
-// pyro: the computed and resolved values are the specified one (written out: deriving them
-// recurses through `palette-mix()` without end).
+impl<P> SpecifiedValueInfo for FontPaletteMix<P> {}
+
+impl crate::values::animated::Animate for computed::FontPalette {
+    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
+        let crate::values::animated::Procedure::Interpolate { progress } = procedure else { return Err(()) };
+        if progress <= 0.0 || self == other { return Ok(self.clone()); }
+        if progress >= 1.0 { return Ok(other.clone()); }
+        Ok(Self::Mix(Box::new(FontPaletteMix {
+            interpolation: Default::default(),
+            items: vec![
+                PaletteMixItem { palette: self.clone(), weight: None },
+                PaletteMixItem { palette: other.clone(), weight: Some(ComputedPercentage(progress as f32)) },
+            ],
+        })))
+    }
+}
+
+impl crate::values::distance::ComputeSquaredDistance for computed::FontPalette {
+    fn compute_squared_distance(&self, other: &Self) -> Result<crate::values::distance::SquaredDistance, ()> {
+        if self == other { Ok(crate::values::distance::SquaredDistance::from_sqrt(0.0)) } else { Err(()) }
+    }
+}
+
+impl crate::values::animated::ToAnimatedZero for computed::FontPalette {
+    fn to_animated_zero(&self) -> Result<Self, ()> { Err(()) }
+}
+
 impl ToComputedValue for FontPalette {
-    type ComputedValue = Self;
+    type ComputedValue = computed::FontPalette;
 
-    #[inline]
-    fn to_computed_value(&self, _: &Context) -> Self {
-        self.clone()
+    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
+        self.map_weights(&|weight| weight.to_computed_value(context))
     }
 
-    #[inline]
-    fn from_computed_value(computed: &Self) -> Self {
-        computed.clone()
+    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
+        computed.map_weights(&crate::values::specified::Percentage::from_computed_value)
     }
 }
 
-impl crate::values::resolved::ToResolvedValue for FontPalette {
+impl crate::values::resolved::ToResolvedValue for computed::FontPalette {
     type ResolvedValue = Self;
 
     #[inline]
@@ -1704,26 +1715,30 @@ impl crate::values::resolved::ToResolvedValue for FontPalette {
     }
 }
 
-impl FontPaletteMix {
-    /// The weights of the two palettes (CSS Color 5 §2.1, percentage normalization), or `None`
-    /// when they add up to zero (an invalid mix).
-    pub fn weights(&self) -> Option<(f32, f32)> {
-        let (p1, p2) = match (self.left.1, self.right.1) {
-            (None, None) => (50.0, 50.0),
-            (Some(p1), None) => (p1, 100.0 - p1),
-            (None, Some(p2)) => (100.0 - p2, p2),
-            (Some(p1), Some(p2)) => (p1, p2),
-        };
-        let sum = p1 + p2;
-        if sum <= 0.0 {
-            return None;
-        }
-        Some((p1 / sum, p2 / sum))
+impl<P: ToPercentage> FontPaletteMix<P> {
+    /// Each omitted weight receives an equal share of the remaining percentage.
+    pub fn omitted_weight(&self) -> f32 {
+        let missing = self.items.iter().filter(|item| item.weight.is_none()).count();
+        if missing == 0 { return 0.0; }
+        (1.0 - self.items.iter().filter_map(|item| item.weight.as_ref()?.to_percentage()).sum::<f32>()).max(0.0) / missing as f32
     }
 }
 
 #[allow(missing_docs)]
-impl FontPalette {
+impl<P> GenericFontPalette<P> {
+    fn map_weights<Q>(&self, convert: &impl Fn(&P) -> Q) -> GenericFontPalette<Q> {
+        match self {
+            Self::Named(name) => GenericFontPalette::Named(name.clone()),
+            Self::Mix(mix) => GenericFontPalette::Mix(Box::new(FontPaletteMix {
+                interpolation: mix.interpolation,
+                items: mix.items.iter().map(|item| PaletteMixItem {
+                    palette: item.palette.map_weights(convert),
+                    weight: item.weight.as_ref().map(convert),
+                }).collect(),
+            })),
+        }
+    }
+
     pub fn normal() -> Self {
         Self::Named(atom!("normal"))
     }
@@ -1741,39 +1756,30 @@ impl FontPalette {
         }
     }
 
+}
+
+impl FontPalette {
     fn parse_one(context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
         if input
             .try_parse(|input| input.expect_function_matching("palette-mix"))
             .is_ok()
         {
             return input.parse_nested_block(|input| {
-                let interpolation = crate::color::mix::ColorInterpolationMethod::parse(context, input)?;
-                input.expect_comma()?;
-                let item = |input: &mut Parser<'_>| -> Result<(FontPalette, Option<f32>), ParseError> {
+                let interpolation = input.try_parse(|input| -> Result<_, ParseError> {
+                    let method = crate::color::mix::ColorInterpolationMethod::parse(context, input)?;
+                    input.expect_comma()?;
+                    Ok(method)
+                }).unwrap_or_default();
+                let items = input.parse_comma_separated(|input| {
                     let percentage = |input: &mut Parser<'_>| {
-                        input.try_parse(|input| -> Result<f32, ParseError> {
-                            let p = crate::values::specified::Percentage::parse(context, input)?;
-                            p.resolve()
-                                .map(|p| p * 100.0)
-                                .ok_or(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-                        })
+                        input.try_parse(|input| crate::values::specified::Percentage::parse_zero_to_a_hundred(context, input))
                     };
                     let first = percentage(input).ok();
                     let palette = Self::parse_one(context, input)?;
                     let percentage = first.or_else(|| percentage(input).ok());
-                    if percentage.is_some_and(|p| !(0.0..=100.0).contains(&p)) {
-                        return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
-                    }
-                    Ok((palette, percentage))
-                };
-                let left = item(input)?;
-                input.expect_comma()?;
-                let right = item(input)?;
-                let mix = FontPaletteMix { interpolation, left, right };
-                if mix.left.1.is_some() && mix.right.1.is_some() && mix.weights().is_none() {
-                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
-                }
-                Ok(Self::Mix(Box::new(mix)))
+                    Ok(PaletteMixItem { palette, weight: percentage })
+                })?;
+                Ok(Self::Mix(Box::new(FontPaletteMix { interpolation, items })))
             });
         }
         let ident = input.expect_ident()?;
@@ -1797,7 +1803,7 @@ impl Parse for FontPalette {
     }
 }
 
-impl ToCss for FontPalette {
+impl<P: ToCss + ToPercentage> ToCss for GenericFontPalette<P> {
     fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
     where
         W: Write,
@@ -1806,13 +1812,27 @@ impl ToCss for FontPalette {
             Self::Named(name) => serialize_atom_identifier(name, dest),
             Self::Mix(mix) => {
                 dest.write_str("palette-mix(")?;
-                mix.interpolation.to_css(dest)?;
-                for (palette, percentage) in [&mix.left, &mix.right] {
+                if !mix.interpolation.is_default() {
+                    mix.interpolation.to_css(dest)?;
                     dest.write_str(", ")?;
-                    palette.to_css(dest)?;
-                    if let Some(percentage) = percentage {
-                        dest.write_char(' ')?;
-                        crate::values::serialize_percentage(*percentage / 100.0, dest)?;
+                }
+                let has_math = mix.items.iter().any(|item| item.weight.as_ref().is_some_and(ToPercentage::is_calc));
+                let missing = mix.omitted_weight();
+                let uniform = !has_math && mix.items.iter().all(|item| {
+                    item.weight.as_ref().and_then(ToPercentage::to_percentage).unwrap_or(missing)
+                        == 1.0 / mix.items.len() as f32
+                });
+                for (index, item) in mix.items.iter().enumerate() {
+                    if index != 0 { dest.write_str(", ")?; }
+                    item.palette.to_css(dest)?;
+                    if !uniform {
+                        if let Some(weight) = &item.weight {
+                            dest.write_char(' ')?;
+                            weight.to_css(dest)?;
+                        } else if !has_math {
+                            dest.write_char(' ')?;
+                            crate::values::serialize_percentage(missing, dest)?;
+                        }
                     }
                 }
                 dest.write_char(')')

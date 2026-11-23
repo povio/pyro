@@ -1,0 +1,102 @@
+{
+  "surface": [
+    "function",
+    "function"
+  ],
+  "ex": [
+    {
+      "specified": 10,
+      "unit": 4,
+      "svg": 90.72,
+      "css": 90.72,
+      "match": true
+    },
+    {
+      "specified": 10,
+      "unit": 4,
+      "svg": 136.08,
+      "css": 136.08,
+      "match": true
+    }
+  ],
+  "ch": [
+    {
+      "specified": 10,
+      "unit": 0,
+      "svg": 100,
+      "css": 100,
+      "match": true
+    },
+    {
+      "specified": 10,
+      "unit": 0,
+      "svg": 150,
+      "css": 150,
+      "match": true
+    }
+  ],
+  "cap": [
+    {
+      "specified": 10,
+      "unit": 0,
+      "svg": 132.32,
+      "css": 132.31,
+      "match": true
+    },
+    {
+      "specified": 10,
+      "unit": 0,
+      "svg": 198.49,
+      "css": 198.48,
+      "match": true
+    }
+  ],
+  "ic": [
+    {
+      "specified": 10,
+      "unit": 0,
+      "svg": 200,
+      "css": 200,
+      "match": true
+    },
+    {
+      "specified": 10,
+      "unit": 0,
+      "svg": 300,
+      "css": 300,
+      "match": true
+    }
+  ],
+  "lh": [
+    {
+      "specified": 10,
+      "unit": 0,
+      "svg": 320,
+      "css": 320,
+      "match": true
+    },
+    {
+      "specified": 10,
+      "unit": 0,
+      "svg": 480,
+      "css": 480,
+      "match": true
+    }
+  ],
+  "rlh": [
+    {
+      "specified": 10,
+      "unit": 0,
+      "svg": 180,
+      "css": 180,
+      "match": true
+    },
+    {
+      "specified": 10,
+      "unit": 0,
+      "svg": 180,
+      "css": 180,
+      "match": true
+    }
+  ]
+}

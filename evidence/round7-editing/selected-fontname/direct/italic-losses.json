@@ -1,0 +1,32 @@
+[
+  {
+    "fixture": {
+      "shape": "inherited",
+      "css": true,
+      "reverse": false,
+      "selection": "full"
+    },
+    "stage": "undo",
+    "field": "undo",
+    "previous": [
+      "R3"
+    ],
+    "candidate": false,
+    "signed": true
+  },
+  {
+    "fixture": {
+      "shape": "inherited",
+      "css": true,
+      "reverse": true,
+      "selection": "full"
+    },
+    "stage": "undo",
+    "field": "undo",
+    "previous": [
+      "R3"
+    ],
+    "candidate": false,
+    "signed": true
+  }
+]

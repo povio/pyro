@@ -13,7 +13,7 @@ use crate::use_counters::UseCounters;
 use cssparser::{Parser, SourceLocation, UnicodeRange};
 use selectors::parser::ParseRelative;
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use style_traits::{OneOrMoreSeparated, ParseError, ParsingMode, Separator};
 
 /// Nesting context for parsing rules.
@@ -70,6 +70,40 @@ impl NestingContext {
     }
 }
 
+/// Positions of random functions parsed while substituting one conditional prelude.
+/// Parsers may try the same token under different numeric grammars before one succeeds.
+pub(crate) struct EarlyRandomIndices<'a> {
+    stylist: &'a crate::stylist::Stylist,
+    pub(crate) function_rule: Option<&'a crate::stylesheets::FunctionRule>,
+    start: i32,
+    positions: RefCell<smallvec::SmallVec<[usize; 4]>>,
+}
+
+impl std::fmt::Debug for EarlyRandomIndices<'_> {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt.debug_struct("EarlyRandomIndices").field("start", &self.start).field("positions", &self.positions).finish()
+    }
+}
+
+impl<'a> EarlyRandomIndices<'a> {
+    pub(crate) fn new(start: i32, stylist: &'a crate::stylist::Stylist) -> Self {
+        Self { start, stylist, function_rule: None, positions: Default::default() }
+    }
+
+    pub(crate) fn end(&self) -> i32 {
+        self.start + self.positions.borrow().len() as i32
+    }
+
+    fn index(&self, position: usize) -> i32 {
+        let mut positions = self.positions.borrow_mut();
+        let index = positions.binary_search(&position).unwrap_or_else(|i| {
+            positions.insert(i, position);
+            i
+        });
+        self.start + index as i32 + 1
+    }
+}
+
 /// Context for the property declaration that is currently being parsed.
 #[derive(Debug, Default)]
 pub struct PropertyDeclarationContext<'a> {
@@ -79,6 +113,8 @@ pub struct PropertyDeclarationContext<'a> {
     /// in the current property declaration. Used when a random() function
     /// has a `property-index-scoped` key.
     random_count: Cell<i32>,
+    pub(crate) function_invocation_seed: Option<u64>,
+    early_random_indices: Option<&'a EarlyRandomIndices<'a>>,
 }
 
 impl<'a> PropertyDeclarationContext<'a> {
@@ -92,11 +128,24 @@ impl<'a> PropertyDeclarationContext<'a> {
         self.random_count.get()
     }
 
+    pub(crate) fn is_early_random(&self) -> bool {
+        self.early_random_indices.is_some()
+    }
+
+    pub(crate) fn inline_style_syntax(&self, name: &crate::custom_properties::Name)
+        -> Option<&crate::properties_and_values::syntax::Descriptor> {
+        let indices = self.early_random_indices?;
+        if let Some(rule) = indices.function_rule {
+            return rule.parameters.iter().find(|p| &p.name == name).map(|p| &p.syntax);
+        }
+        indices.stylist.get_custom_property_registration(name).syntax.as_ref()
+    }
+
     /// Claims the next index for a random() function in this declaration. The
     /// index is 1-based and follows the order the functions appear in the
     /// parsed value.
-    pub fn increment_random_count(&self) -> i32 {
-        let index = self.random_count.get() + 1;
+    pub fn increment_random_count(&self, position: usize) -> i32 {
+        let index = self.early_random_indices.map_or_else(|| self.random_count.get() + 1, |indices| indices.index(position));
         self.random_count.set(index);
         index
     }
@@ -193,6 +242,15 @@ impl<'a> ParserContext<'a> {
         property_id: Option<PropertyIdRef<'b>>,
         cb: impl FnOnce(&ParserContext<'b>) -> R,
     ) -> R {
+        self.with_random_scope(property_id, None, cb)
+    }
+
+    pub(crate) fn with_random_scope<'b, R>(
+        &'b self,
+        property_id: Option<PropertyIdRef<'b>>,
+        early_random_indices: Option<&'b EarlyRandomIndices<'b>>,
+        cb: impl FnOnce(&ParserContext<'b>) -> R,
+    ) -> R {
         cb(&ParserContext {
             stylesheet_origin: self.stylesheet_origin,
             url_data: self.url_data,
@@ -205,9 +263,18 @@ impl<'a> ParserContext<'a> {
             attr_tainted_regions: Cow::Borrowed(&*self.attr_tainted_regions),
             property_declaration_context: PropertyDeclarationContext {
                 property_id,
+                early_random_indices,
                 ..Default::default()
             },
         })
+    }
+
+    pub(crate) fn with_function_invocation<R>(&self, seed: u64, tainted: bool, length: usize, f: impl FnOnce(&ParserContext) -> R) -> R {
+        let mut cx = ParserContext::new_with_property_id(self.stylesheet_origin, self.url_data, Some(CssRuleType::Style),
+            self.parsing_mode, self.quirks_mode, Cow::Borrowed(&self.namespaces), self.error_reporter, self.use_counters,
+            if tainted { AttrTaint::new_fully_tainted(length) } else { AttrTaint::default() }, self.property_declaration_context.property_id());
+        cx.property_declaration_context.function_invocation_seed = Some(seed);
+        f(&cx)
     }
 
     /// Temporarily sets the rule_type and executes the callback function, returning its result.

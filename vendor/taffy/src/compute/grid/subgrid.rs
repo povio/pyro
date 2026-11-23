@@ -1006,8 +1006,8 @@ fn resolve_owner<Tree: LayoutGridContainer>(
 
 /// Give each subgrid item of a grid its tracks in `axis` from the grid's sized `tracks`: each spanned track less
 /// the subgrid's margin, border and padding at the subgrid's edges, and less half the difference of the subgrid's
-/// gap to the grid's gutter (as `aligned` tracks are placed, alignment's distributed space included) at its other
-/// edges, so that the subgrid's gutters are centred on the grid's
+/// gap to the grid's gap at its other edges (where `aligned` tracks are placed, alignment's distributed space
+/// staying between them), so that the subgrid's gutters are centred on the grid's
 pub(super) fn update_subgrid_track_sizes<Tree: LayoutGridContainer>(
     tree: &mut Tree,
     items: &[GridItem],
@@ -1059,12 +1059,16 @@ pub(super) fn update_subgrid_track_sizes<Tree: LayoutGridContainer>(
             };
             spans.push(span);
         }
-        // The subgrid's tracks: its margin, border and padding in from its edges, its gutters centred on the grid's
+        // The subgrid's tracks: its margin, border and padding in from its edges, its gutters centred on the grid's.
+        // pyro: the half difference is to the grid's gap (its gutter's size), not to the aligned space between the
+        // tracks: space the grid's content distribution adds there stays between the subgrid's tracks too, as in
+        // Chromium (WPT css-grid `subgrid/subgridded-axis-content-distribution-001`)
+        let gutter = |index: usize| tracks[index].base_size;
         let mut sub_spans: Vec<(f32, f32)> = (0..count)
             .map(|k| {
                 let (start, end) = spans[k];
-                let gap_start = if k == 0 { start } else { start + (sub.gap - (start - spans[k - 1].1)) / 2.0 };
-                let gap_end = if k + 1 == count { end } else { end - (sub.gap - (spans[k + 1].0 - end)) / 2.0 };
+                let gap_start = if k == 0 { start } else { start + (sub.gap - gutter(first + 2 * k - 1)) / 2.0 };
+                let gap_end = if k + 1 == count { end } else { end - (sub.gap - gutter(first + 2 * k + 1)) / 2.0 };
                 let start = if k == 0 { start + edge_start } else { gap_start };
                 let end = if k + 1 == count { end - edge_end } else { gap_end };
                 // pyro: an edge track that its margin, border and padding (not its gutters) cover more than whole

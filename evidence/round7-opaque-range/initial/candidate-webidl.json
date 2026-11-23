@@ -1,0 +1,53 @@
+{
+  "present": true,
+  "descriptors": [
+    2,
+    0,
+    false,
+    false,
+    false,
+    1,
+    true
+  ],
+  "brand": [
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "TypeError",
+    "ok",
+    "TypeError",
+    "TypeError"
+  ],
+  "conversions": [
+    [
+      0,
+      2
+    ],
+    [
+      0,
+      0
+    ],
+    [
+      1,
+      2
+    ],
+    [
+      0,
+      1
+    ],
+    "IndexSizeError"
+  ],
+  "changedType": "NotSupportedError",
+  "changedValue": [
+    1,
+    4
+  ],
+  "abrupt": "RangeError",
+  "order": [
+    "start",
+    "end"
+  ]
+}

@@ -8,6 +8,9 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 pub mod demux;
+pub mod encode;
+mod packet;
+pub use packet::{PacketConfig, PacketDecoder, PacketFrame, PacketPixels};
 #[cfg(any(feature = "av1", feature = "h264"))]
 mod yuv;
 
@@ -33,7 +36,7 @@ pub fn decodes(codec: &Codec) -> bool {
 }
 
 /// A decoded picture coming out of a decoder: the tag of the sample it
-/// was sent with, and its RGBA if it was asked for.
+/// was sent with, and the requested output pixels (RGBA for media elements).
 pub(crate) struct Decoded {
     pub tag: u64,
     pub image: Option<(u32, u32, Vec<u8>)>,
@@ -46,11 +49,11 @@ pub(crate) trait Decoder {
         &mut self,
         sample: &[u8],
         tag: u64,
-        want: &mut dyn FnMut(u64) -> bool,
+        want: &mut dyn FnMut(u64, u32, u32) -> bool,
         out: &mut Vec<Decoded>,
     ) -> Result<(), String>;
     /// The end of the stream: the pictures still held.
-    fn finish(&mut self, want: &mut dyn FnMut(u64) -> bool, out: &mut Vec<Decoded>) -> Result<(), String>;
+    fn finish(&mut self, want: &mut dyn FnMut(u64, u32, u32) -> bool, out: &mut Vec<Decoded>) -> Result<(), String>;
 }
 
 /// A decoded frame: its index in presentation order, its time, and straight
@@ -156,7 +159,7 @@ impl Player {
         let time = self.frame_time(target);
         let rank = &self.rank;
         let samples = &self.track.samples;
-        let mut want = |tag: u64| rank.get(tag as usize) == Some(&target);
+        let mut want = |tag: u64, _: u32, _: u32| rank.get(tag as usize) == Some(&target);
         let mut out = Vec::new();
         let mut found = None;
         let mut done = false;

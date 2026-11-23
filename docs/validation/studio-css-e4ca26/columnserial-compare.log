@@ -1,0 +1,30 @@
+columnserial-main-candidate 8082 page passes 5531 named passes 178214 observed names 194540 statuses {'complete:0': 7866, 'complete:2': 106, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+columnserial-main-parent 8082 page passes 5531 named passes 178206 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+columnserial-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+columnserial-main-parent pages left only 2 right only 2
+columnserial-main-parent passes left only 11 right only 3
+columnserial-main-parent observed left only 0 right only 0
+columnserial-main-stable pages left only 264 right only 1683
+columnserial-main-stable passes left only 5732 right only 10481
+columnserial-main-stable observed left only 309 right only 681
+Losses vs parent by URL: Counter({'css/css-animations/transition-ready-time-offscreen.html': 1, 'css/css-overflow/scroll-markers/root-scroll-marker-activation-in-iframe.html': 1, 'css/css-transitions/CSSTransition-startTime.tentative.html': 1})
+columnserial-focus-candidate 75 page passes 60 named passes 1518 observed names 2037 statuses {'complete:0': 75}
+columnserial-focus-parent 75 page passes 58 named passes 1507 observed names 2037 statuses {'complete:0': 75}
+columnserial-focus-stable 75 page passes 74 named passes 2036 observed names 2037 statuses {'complete:0': 75}
+columnserial-focus-parent pages left only 2 right only 0
+columnserial-focus-parent passes left only 11 right only 0
+columnserial-focus-parent observed left only 0 right only 0
+columnserial-focus-stable pages left only 0 right only 14
+columnserial-focus-stable passes left only 0 right only 518
+columnserial-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+columnserial-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+columnserial-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+columnserial-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+columnserial-supplement-parent pages left only 0 right only 0
+columnserial-supplement-parent passes left only 0 right only 0
+columnserial-supplement-parent observed left only 0 right only 0
+columnserial-supplement-stable pages left only 0 right only 8
+columnserial-supplement-stable passes left only 0 right only 42
+columnserial-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

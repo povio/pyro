@@ -1,0 +1,23 @@
+{
+  "surface": "function",
+  "preAbort": [
+    "AbortError",
+    "AbortError"
+  ],
+  "postOpen": "after opening",
+  "writerClose": [
+    1005,
+    "",
+    true
+  ],
+  "remote": [
+    4001,
+    "server done",
+    true,
+    "InvalidStateError"
+  ],
+  "cancel": [
+    4002,
+    "end"
+  ]
+}

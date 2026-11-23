@@ -117,6 +117,22 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })
     })?;
     natives.set_atom("parse", f.value())?;
+    let f = s.function("typedNumericText", |s, _, a| {
+        let data = s.unwrap::<crate::css::CssStyleProperties>(a.get(0))
+            .ok_or_else(|| pyro_js::JsError::Type("Expected a CSS declaration block".into()))?;
+        let name = crate::util::dom_string(a.get(1))?;
+        Ok(data.typed_text(&name)?.as_deref().map_or(s.null(), |text| s.string(text)))
+    })?;
+    natives.set_atom("typedNumericText", f.value())?;
+    let f = s.function("setTypedNumeric", |s, _, a| {
+        let name = crate::util::dom_string(a.get(1))?;
+        let text = crate::util::dom_string(a.get(2))?;
+        let data = s.unwrap::<crate::css::CssStyleProperties>(a.get(0))
+            .ok_or_else(|| pyro_js::JsError::Type("Expected a CSS declaration block".into()))?;
+        data.set_typed(&name, &text)?;
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("setTypedNumeric", f.value())?;
     // namedColor(name): [r, g, b] of a CSS named color, or null.
     let f = s.function("namedColor", |s, _this, a| {
         let name = crate::util::dom_string(a.get(0))?.to_ascii_lowercase();

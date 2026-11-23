@@ -1,0 +1,36 @@
+PASS uncut curve
+FAIL curve cut with queued ramp Error {"f":1,"got":0.9971550703048706,"want":1,"max":5.637268841266632}
+FAIL new curve at cut Error {"f":96,"got":1,"want":2,"max":5}
+FAIL overlap before cut rejected; later set accepted Error overlap: undefined
+FAIL repeated earlier/same/later cut Error {"f":96,"got":1,"want":2,"max":5}
+PASS linear cut 227.5
+PASS linear cut 512
+PASS target held then linear ramp
+PASS exp cut 227.5
+PASS exp cut 512
+PASS target held then exp ramp
+FAIL new ramp from held curve Error {"f":96,"got":1,"want":2,"max":5}
+FAIL nonbinary exact-cut reschedule Error {"f":3,"got":1,"want":0,"max":1}
+FAIL one frame after nonbinary cut Error {"f":3,"got":1,"want":0,"max":1}
+PASS exact SET retained
+FAIL idle hold on empty timeline Error {"f":1,"got":1,"want":1.0078125,"max":2}
+FAIL idle hold after SET Error {"f":65,"got":2,"want":2.0066964285714284,"max":1.2857142857142856}
+/tmp/r7-hold.exOB/base.js 8/17
+PASS uncut curve
+PASS curve cut with queued ramp
+PASS new curve at cut
+PASS overlap before cut rejected; later set accepted
+PASS repeated earlier/same/later cut
+PASS linear cut 227.5
+PASS linear cut 512
+PASS target held then linear ramp
+PASS exp cut 227.5
+PASS exp cut 512
+PASS target held then exp ramp
+PASS new ramp from held curve
+PASS nonbinary exact-cut reschedule
+PASS one frame after nonbinary cut
+PASS exact SET retained
+PASS idle hold on empty timeline
+PASS idle hold after SET
+crates/pyro-webapi/src/webaudio.js 17/17

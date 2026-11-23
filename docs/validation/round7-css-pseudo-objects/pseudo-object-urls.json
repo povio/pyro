@@ -1,0 +1,9 @@
+[
+  "css/css-pseudo/CSSPseudoElement-identity.html",
+  "css/css-pseudo/CSSPseudoElement-selectorText.html",
+  "css/css-pseudo/CSSPseudoElement-geometry-edge-cases.tentative.html",
+  "css/css-pseudo/CSSPseudoElement-scroll-button.html",
+  "css/css-pseudo/CSSPseudoElement-view-transitions.tentative.html",
+  "css/css-pseudo/CSSPseudoElement-view-transitions-scoped.tentative.html",
+  "css/css-pseudo/events-on-pseudo-element-shadow-dom.html"
+]

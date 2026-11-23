@@ -1,0 +1,138 @@
+{
+  "values": {
+    "series": [
+      {
+        "name": "header",
+        "encoding": [
+          "windows-1252",
+          "windows-1252",
+          "windows-1252"
+        ],
+        "text": "€é"
+      },
+      {
+        "name": "meta",
+        "encoding": [
+          "windows-1252",
+          "windows-1252",
+          "windows-1252"
+        ],
+        "text": "€é"
+      },
+      {
+        "name": "plain",
+        "encoding": [
+          "windows-1252",
+          "windows-1252",
+          "windows-1252"
+        ],
+        "text": "€é"
+      },
+      {
+        "name": "shiftjis",
+        "encoding": [
+          "Shift_JIS",
+          "Shift_JIS",
+          "Shift_JIS"
+        ],
+        "text": "あ"
+      },
+      {
+        "name": "bom",
+        "encoding": [
+          "UTF-8",
+          "UTF-8",
+          "UTF-8"
+        ],
+        "text": "π"
+      },
+      {
+        "name": "utf8",
+        "encoding": [
+          "UTF-8",
+          "UTF-8",
+          "UTF-8"
+        ],
+        "text": "π"
+      }
+    ],
+    "parallel": [
+      {
+        "name": "header",
+        "encoding": [
+          "windows-1252",
+          "windows-1252",
+          "windows-1252"
+        ],
+        "text": "€é"
+      },
+      {
+        "name": "meta",
+        "encoding": [
+          "windows-1252",
+          "windows-1252",
+          "windows-1252"
+        ],
+        "text": "€é"
+      },
+      {
+        "name": "plain",
+        "encoding": [
+          "windows-1252",
+          "windows-1252",
+          "windows-1252"
+        ],
+        "text": "€é"
+      },
+      {
+        "name": "shiftjis",
+        "encoding": [
+          "Shift_JIS",
+          "Shift_JIS",
+          "Shift_JIS"
+        ],
+        "text": "あ"
+      },
+      {
+        "name": "bom",
+        "encoding": [
+          "UTF-8",
+          "UTF-8",
+          "UTF-8"
+        ],
+        "text": "π"
+      },
+      {
+        "name": "utf8",
+        "encoding": [
+          "UTF-8",
+          "UTF-8",
+          "UTF-8"
+        ],
+        "text": "π"
+      }
+    ],
+    "xhr": "€é",
+    "bytes": [
+      128,
+      233
+    ],
+    "textDecoder": "€é"
+  },
+  "requests": [
+    "/header?single",
+    "/meta?single",
+    "/plain?single",
+    "/shiftjis?single",
+    "/bom?single",
+    "/utf8?single",
+    "/header?parallel",
+    "/meta?parallel",
+    "/plain?parallel",
+    "/shiftjis?parallel",
+    "/bom?parallel",
+    "/utf8?parallel",
+    "/plain?xhr",
+    "/plain?bytes"
+  ]
+}

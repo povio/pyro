@@ -207,7 +207,9 @@ impl FetchSite {
         }
         let same_site = initiator.scheme() == target.scheme()
             && match (initiator.host_str(), target.host_str()) {
-                (Some(a), Some(b)) => site_of(a) == site_of(b),
+                // A host's registrable domain keeps its trailing dot (URL "host public
+                // suffix"): `example.com.` and `example.com` are different sites.
+                (Some(a), Some(b)) => site_of(a) == site_of(b) && a.ends_with('.') == b.ends_with('.'),
                 _ => false,
             };
         if same_site {
@@ -244,16 +246,24 @@ pub fn fetch_dest(destination: Destination) -> &'static str {
         Destination::Document => "document",
         Destination::Iframe => "iframe",
         Destination::Script => "script",
+        Destination::Worker => "worker",
+        Destination::SharedWorker => "sharedworker",
+        Destination::ServiceWorker => "serviceworker",
         Destination::Style => "style",
         Destination::Json => "json",
+        Destination::Text => "text",
         Destination::Image => "image",
         Destination::Font => "font",
         Destination::Audio => "audio",
         Destination::Video => "video",
+        Destination::Track => "track",
         Destination::WebSocket => "websocket",
-        Destination::Xhr | Destination::Fetch | Destination::EventSource | Destination::Beacon | Destination::Other => {
-            "empty"
-        }
+        Destination::Xhr
+        | Destination::Fetch
+        | Destination::EventSource
+        | Destination::Beacon
+        | Destination::CompressionDictionary
+        | Destination::Other => "empty",
     }
 }
 
@@ -394,6 +404,8 @@ mod tests {
         let a = u("https://www.example.com/");
         assert_eq!(FetchSite::of(Some(&a), &u("https://www.example.com/x")), FetchSite::SameOrigin);
         assert_eq!(FetchSite::of(Some(&a), &u("https://api.example.com/")), FetchSite::SameSite);
+        assert_eq!(FetchSite::of(Some(&a), &u("https://www.example.com./x")), FetchSite::CrossSite, "trailing dot");
+        assert_eq!(FetchSite::of(Some(&a), &u("https://api.example.com./")), FetchSite::CrossSite, "trailing dot");
         assert_eq!(FetchSite::of(Some(&a), &u("http://www.example.com/")), FetchSite::CrossSite);
         assert_eq!(FetchSite::of(Some(&a), &u("https://other.test/")), FetchSite::CrossSite);
         assert_eq!(FetchSite::of(None, &a), FetchSite::CrossSite);

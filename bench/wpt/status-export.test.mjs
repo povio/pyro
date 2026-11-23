@@ -49,13 +49,15 @@ test('rollup: WPT is the denominator, not-run pages count, Chrome per page', () 
   // [WPT, run, passed, sub passed, subs, Chrome passed, Chrome ran, Chrome passed of run, Chrome sub passed, Chrome subs]
   expect(r.get('').reftest).toEqual([2, 1, 1, 1, 1, 1, 2, 1, 1, 2]);
   expect(r.get('css/x').reftest).toEqual([2, 1, 1, 1, 1, 1, 2, 1, 1, 2]);
-  expect(r.get('dom').testharness).toEqual([3, 2, 0, 4, 7, 1, 1, 1, 3, 3]);
+  // A worker variant counts on its own line (testharness-workers): the window pages' denominator leaves it out.
+  expect(r.get('dom').testharness).toEqual([2, 2, 0, 4, 7, 1, 1, 1, 3, 3]);
+  expect(r.get('dom')['testharness-workers']).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
   expect(r.get('svg/crashtests').crashtest).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 });
 
 test('a page pyro runs that the manifest lacks still counts once', () => {
   const run = runFromBaselines({ testharness: { ...head, tests: { 'dom/extra.html': { status: 'complete', ms: 1, n: 1, fail: [], h: '0' } } } }, { sha: 's', date: 'd' });
-  expect(rollup(run, universe, null).get('dom').testharness.slice(0, 3)).toEqual([4, 1, 1]);
+  expect(rollup(run, universe, null).get('dom').testharness.slice(0, 3)).toEqual([3, 1, 1]);
 });
 
 test('index: totals per kind, top-level dirs with a run page, sorted by date, a sha replaces itself', () => {
@@ -81,7 +83,7 @@ test('siteData: one page per directory, children, tests, history', () => {
   expect(pages.get('dom').tests).toEqual([
     { n: 'a.html', k: 'testharness', s: 'complete', p: 2, t: 3, f: ['x'] },
     { n: 'b.any.html', k: 'testharness', s: 'timeout', p: 2, t: 4 },
-    { n: 'b.any.worker.html', k: 'testharness', s: null },
+    { n: 'b.any.worker.html', k: 'testharness-workers', s: null },
   ]);
   expect(pages.get('css').history.length).toBe(2);
   expect(pages.get('css').history[1][2].reftest).toEqual([1, 2, 1, 1]);

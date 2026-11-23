@@ -1,0 +1,45 @@
+{
+  "activation": [
+    [
+      "root",
+      true,
+      true,
+      false,
+      "button"
+    ],
+    [
+      "target",
+      true,
+      true,
+      false,
+      "button"
+    ]
+  ],
+  "after": "host",
+  "synthetic": [
+    false,
+    "host"
+  ],
+  "explicit": [
+    [
+      "root",
+      true,
+      false,
+      false,
+      "button"
+    ],
+    [
+      "target",
+      true,
+      false,
+      false,
+      "button"
+    ]
+  ],
+  "inapplicablePopover": [
+    1,
+    false
+  ],
+  "detachedAction": false,
+  "inaccessibleRef": true
+}

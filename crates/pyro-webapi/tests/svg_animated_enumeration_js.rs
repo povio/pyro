@@ -440,6 +440,33 @@ fn relative_colors_keep_missing_components() {
     );
 }
 
+#[test]
+fn missing_polar_colors_across_declaration_paths() {
+    let env = Env::new("http://color.test/");
+    assert_eq!(env.eval(r#"(() => {
+        const target = document.body.appendChild(document.createElement('div'));
+        target.id = 'polar';
+        const sheet = document.head.appendChild(document.createElement('style'));
+        for (const [value, expected] of [
+            ['hsl(none 160% 120%)', 'hsl(none 160% 120%)'],
+            ['hsl(none -10% 40%)', 'hsl(none 0% 40%)'],
+            ['hsl(from hwb(180 none 25%) h s l)', 'color(srgb 0 0.75 0.75)'],
+            ['color-mix(in hwb, red, red)', 'color(srgb 1 0 0)'],
+        ]) {
+            target.style.setProperty('color', value);
+            if (getComputedStyle(target).color !== expected) return 'setProperty: ' + value;
+            target.setAttribute('style', 'color: ' + value);
+            if (getComputedStyle(target).color !== expected) return 'attribute: ' + value;
+            target.removeAttribute('style');
+            sheet.textContent = '#polar {color: ' + value + '}';
+            if (getComputedStyle(target).color !== expected) return 'stylesheet: ' + value;
+            sheet.textContent = '';
+        }
+        target.style.setProperty('color', 'color-mix(in hsl, hsl(120 100% 50%), red)');
+        return target.style.getPropertyValue('color');
+    })()"#), "color-mix(in hsl, rgb(0, 255, 0), red)");
+}
+
 /// A color function with a `calc()` component keeps its function form as its specified value, the
 /// `calc()`s simplified and the other components as the numbers the function resolves them to
 /// (css-color-4 § 15, as Chromium); legacy `rgb()`, `hsl()` and `hwb()` with numeric `calc()`s
@@ -482,7 +509,7 @@ fn color_functions_keep_calc_in_their_specified_value() {
 
 /// DOM IDL details (WPT dom/idlharness): operations throw a TypeError when called with fewer
 /// arguments than they require; Range and StaticRange inherit their boundary points from
-/// AbstractRange; Element's `slot` is unscopable; the Fullscreen API exists, with nothing ever
+/// AbstractRange, which an OpaqueRange's undefined containers shadow; Element's `slot` is unscopable; the Fullscreen API exists, with nothing ever
 /// fullscreen (requests and exits reject).
 #[test]
 fn dom_idl_arguments_abstract_range_and_fullscreen() {
@@ -498,8 +525,10 @@ fn dom_idl_arguments_abstract_range_and_fullscreen() {
                        name(() => document.evaluate("/")), name(() => AbortSignal.timeout()));
               out.push(name(() => document.body.contains(null)));
               const r = document.createRange();
-              out.push(Object.getPrototypeOf(Range.prototype) === AbstractRange.prototype,
-                       Object.getPrototypeOf(StaticRange.prototype) === AbstractRange.prototype,
+              out.push(Object.getPrototypeOf(Range.prototype) === AbstractRange.prototype &&
+                         typeof NodeRange === "undefined",
+                       Object.getPrototypeOf(StaticRange.prototype) === AbstractRange.prototype &&
+                         Object.hasOwn(AbstractRange.prototype, "startContainer"),
                        !Object.hasOwn(Range.prototype, "startOffset"), r.collapsed, r.startContainer === document);
               const sr = new StaticRange({ startContainer: document.body, startOffset: 0, endContainer: document.body, endOffset: 0 });
               out.push(sr.collapsed, sr.endContainer === document.body);
@@ -670,6 +699,40 @@ fn web_locks_abort_uses_the_signal_algorithm() {
     );
     env.until("globalThis.abortDone !== undefined");
     assert_eq!(env.eval("abortDone"), "AbortError|two|false|true");
+}
+
+/// The no-hook embedding runs local posted tasks inline. A synchronous
+/// grant must not retain the signal as though the request were still queued.
+#[test]
+fn web_locks_inline_grant_does_not_register_abort_after_delivery() {
+    let env = Env::new("https://locks.test/");
+    env.page.set_hooks(None);
+    assert_eq!(env.eval(r#"
+        globalThis.controller = new AbortController();
+        globalThis.fresh = new AbortController();
+        globalThis.entered = false;
+        globalThis.result = "pending";
+        navigator.locks.request("inline", {signal: controller.signal}, () => {
+          entered = true;
+          return new Promise(r => { globalThis.finish = r; });
+        }).then(v => { result = v; }, e => { result = e.name; });
+        entered
+    "#), "true");
+    {
+        let scope = env.realm.scope().unwrap();
+        let next_hook = |name| {
+            let controller = scope.global().get(name).unwrap().as_object().unwrap();
+            let signal = scope.unwrap::<pyro_webapi::abort::AbortSignal>(controller.get("signal").unwrap()).unwrap();
+            let id = signal.add_abort_hook(Box::new(|_| {})).unwrap();
+            signal.remove_abort_hook(id);
+            id
+        };
+        assert!(next_hook("controller") == next_hook("fresh"));
+    }
+    env.eval("controller.abort(); finish('released')");
+    env.until("result === 'released'");
+    env.eval("navigator.locks.query().then(s => { globalThis.clean = !s.held.length && !s.pending.length; })");
+    env.until("globalThis.clean === true");
 }
 
 /// A range slider follows the pointer along its inline axis: x in a horizontal writing mode (from
@@ -925,5 +988,41 @@ fn promise_operations_reject_on_a_wrong_receiver_and_other_idl_details() {
             })()"#
         ),
         "true|true|true|true|false|1|target|data|true|TypeError|InvalidCharacterError"
+    );
+}
+
+#[test]
+fn svg_reflection_preserves_same_spelling_namespaced_attributes() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const ns = "http://www.w3.org/2000/svg", other = "urn:example:metadata";
+              const make = name => document.createElementNS(ns, name);
+              const clip = make("clipPath");
+              clip.setAttributeNS(other, "clipPathUnits", "objectBoundingBox");
+              const initial = clip.clipPathUnits.baseVal === SVGUnitTypes.SVG_UNIT_TYPE_USERSPACEONUSE;
+              clip.clipPathUnits.baseVal = SVGUnitTypes.SVG_UNIT_TYPE_USERSPACEONUSE;
+              if (!initial || clip.getAttributeNS(null, "clipPathUnits") !== "userSpaceOnUse" ||
+                  clip.getAttributeNS(other, "clipPathUnits") !== "objectBoundingBox") return false;
+              const angle = make("svg").createSVGAngle();
+              angle.valueAsString = "12deg";
+              return [
+                [m => { m.orientType.baseVal = SVGMarkerElement.SVG_MARKER_ORIENT_AUTO; }, "auto"],
+                [m => { m.orientAngle.baseVal.valueAsString = "13deg"; }, "13deg"],
+                [m => m.setOrientToAuto(), "auto"],
+                [m => m.setOrientToAngle(angle), "12deg"],
+                [m => { m.orient = "14deg"; }, "14deg"],
+              ].every(([write, expected]) => {
+                const m = make("marker");
+                m.setAttributeNS(other, "orient", "19deg");
+                if (m.orientAngle.baseVal.value !== 0) return false;
+                write(m);
+                return m.getAttributeNS(null, "orient") === expected &&
+                       m.getAttributeNS(other, "orient") === "19deg";
+              });
+            })()"#
+        ),
+        "true"
     );
 }

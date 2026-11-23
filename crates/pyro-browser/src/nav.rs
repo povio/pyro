@@ -62,6 +62,89 @@ struct Entry {
     key: u64,
     /// Navigation API state (`JSON.stringify`; `None` = undefined).
     nav_state: Option<String>,
+    /// HTML "step": where the entry sits on its page's joint session history
+    /// ([`JointHistory`]), shared by the entries of all its frames.
+    step: u64,
+    /// HTML "scroll restoration mode" of the entry (`history.scrollRestoration`): "manual"
+    /// when true. A new document's entry starts "auto"; pushState and replaceState keep the
+    /// current entry's.
+    scroll_manual: bool,
+}
+
+/// The ids [`PageNav::history_entries`] gives the steps only a child frame
+/// made: above any entry id, below 2^53 (a JSON number stays exact).
+const STEP_ENTRY_ID: u64 = 1 << 52;
+
+/// HTML session history of a traversable (a page and its frames): each frame
+/// keeps its own entry list ([`NavState`]), and an entry's `step` places it
+/// on the page's timeline. `history.length` counts the steps of all the
+/// page's frames, a push in any frame clears the forward steps of all of
+/// them, and a traversal moves every frame whose entry at the target step
+/// differs (an iframe's `history.back()` from the top document).
+#[derive(Default)]
+pub(crate) struct JointHistory {
+    /// The last step given out.
+    last_step: Cell<u64>,
+    /// The traversable's current session history step.
+    current: Cell<u64>,
+    /// The navigation states of the page's frames.
+    members: RefCell<Vec<std::rc::Weak<PageNav>>>,
+    /// Counts the traversals applied: of several asked for in one task the
+    /// first wins.
+    traversals: Cell<u64>,
+}
+
+impl JointHistory {
+    /// A push: the step after every other, now the current one, and the
+    /// step it was pushed from.
+    fn begin_push(&self) -> (u64, u64) {
+        let from = self.current.get();
+        let step = self.last_step.get() + 1;
+        self.last_step.set(step);
+        self.current.set(step);
+        (from, step)
+    }
+
+    /// The frames whose documents are fully active (a removed frame's
+    /// entries, or those of a document navigated away from, are gone).
+    fn members(&self) -> Vec<Rc<PageNav>> {
+        let mut members = self.members.borrow_mut();
+        members.retain(|m| m.strong_count() > 0);
+        members.iter().filter_map(std::rc::Weak::upgrade).filter(|m| m.fully_active()).collect()
+    }
+
+    /// The steps of `members`' entries, in order.
+    fn steps(members: &[Rc<PageNav>]) -> Vec<u64> {
+        let mut steps: Vec<u64> = Vec::new();
+        for m in members {
+            steps.extend(m.state.borrow().entries.iter().map(|e| e.step));
+        }
+        steps.sort_unstable();
+        steps.dedup();
+        steps
+    }
+
+    /// HTML "clear the forward session history" after a push from step
+    /// `from` in frame `except` (which dropped its own forward entries).
+    ///
+    /// Every live member, not only the fully active ones: dropping forward entries of a frame that
+    /// is gone changes nothing, and asking whether a frame is active borrows the frame host, which
+    /// a commit in progress (`Browser::commit_document`) holds.
+    fn prune_forward(&self, except: &PageNav, from: u64) {
+        let members: Vec<Rc<PageNav>> = {
+            let mut members = self.members.borrow_mut();
+            members.retain(|m| m.strong_count() > 0);
+            members.iter().filter_map(std::rc::Weak::upgrade).collect()
+        };
+        for m in members {
+            if std::ptr::eq(Rc::as_ptr(&m), except) {
+                continue;
+            }
+            let mut st = m.state.borrow_mut();
+            let keep = st.entries.iter().position(|e| e.step > from).unwrap_or(st.entries.len()).max(st.index + 1);
+            st.entries.truncate(keep);
+        }
+    }
 }
 
 /// A session-history entry as reported to automation clients.
@@ -81,7 +164,6 @@ struct NavState {
     /// replaceState and same-document traversal. `history.state` returns one
     /// deserialized object per realm until it changes.
     state_version: u64,
-    scroll_restoration_manual: bool,
     /// The viewport scroll position persisted for an entry of this document when it stopped
     /// being the current one (HTML "persist the history entry state"), by entry id.
     scroll_positions: std::collections::HashMap<u64, (i32, i32)>,
@@ -95,6 +177,9 @@ struct NavState {
     /// `document.open()` calls on the frame's documents (HTML "stop
     /// loading"): a navigation its scripts started before one is dropped.
     stops: u64,
+    /// `window.stop()` calls (HTML "stop loading" aborts the document): a
+    /// document load begun before one fires no DOMContentLoaded or load.
+    aborts: u64,
 }
 
 impl NavState {
@@ -144,6 +229,36 @@ pub struct PageNav {
     /// A navigation that navigation.js started (and fired `navigate` for)
     /// is running: the native paths fire no event of their own.
     navigation_api_call: Cell<bool>,
+    /// Chrome's navigation rate limiter (crbug.com/1038223): the start of
+    /// the current period and the history updates and navigations counted
+    /// in it.
+    rate_limit: Cell<(Instant, u32)>,
+    /// The joint session history of the page this frame belongs to.
+    joint: Rc<JointHistory>,
+    /// Script navigations queued ([`PageNav::navigate`]) whose task has not
+    /// run yet.
+    queued_navigations: Rc<Cell<u32>>,
+    /// Iframe attribute processings queued for this frame, and run
+    /// (`FrameHost::queue_attributes`).
+    pub(crate) attributes_queued: Cell<u64>,
+    pub(crate) attributes_run: Cell<u64>,
+    /// While a script navigation's task navigates: the processings queued
+    /// when it was asked for. HTML "navigate" clears the lazy load
+    /// resumption steps then, so a `src` set after it still lazy loads.
+    pub(crate) lazy_cancel_limit: Cell<Option<u64>>,
+    /// A traversal to another document's entry under way: the index it left,
+    /// the document it left and the page's step before it, restored if no
+    /// document commits.
+    traversal_from: Cell<Option<(usize, u64, u64)>>,
+    /// The container's `referrerpolicy` when the frame's next navigation
+    /// began (HTML "beginning navigation" snapshot), and that of the
+    /// navigation of the current document; `None`: not known (a navigation
+    /// the container did not start), the attribute as it is now is used.
+    container_policy_pending: Cell<Option<Option<pyro_net::ReferrerPolicy>>>,
+    container_policy: Cell<Option<Option<pyro_net::ReferrerPolicy>>>,
+    /// The current document's ancestor origins list, made when it committed
+    /// (`FrameHost::store_ancestor_origins`): `location.ancestorOrigins`.
+    ancestor_origins: RefCell<Vec<String>>,
 }
 
 /// What the listeners of a Navigation API `navigate` event decided.
@@ -168,16 +283,44 @@ pub(crate) struct NavigateSource {
     pub form_entries: Option<pyro_webapi::formdata::FormEntries>,
     /// History handling "replace" (a form submitted while its document loads).
     pub replace: bool,
+    /// The initiator is not same origin with the navigated document: a navigation to that
+    /// document's own URL is not made a "replace" (HTML navigate: the URL comparison is only
+    /// for a same-origin initiator, which can see it).
+    pub cross_origin: bool,
 }
 
 impl PageNav {
+    /// The navigation state of a page's top-level frame, with a joint
+    /// session history of its own.
     pub(crate) fn new(
         page: PageId,
         frame_id: FrameId,
         sched: Scheduler<Browser>,
         observer: ObserverCell,
     ) -> Rc<PageNav> {
-        Rc::new(PageNav {
+        Self::with_joint(page, frame_id, sched, observer, Rc::default())
+    }
+
+    /// The navigation state of a child frame of the page whose top-level
+    /// frame's state is `top`: their session histories are joint.
+    pub(crate) fn new_child(
+        top: &PageNav,
+        page: PageId,
+        frame_id: FrameId,
+        sched: Scheduler<Browser>,
+        observer: ObserverCell,
+    ) -> Rc<PageNav> {
+        Self::with_joint(page, frame_id, sched, observer, top.joint.clone())
+    }
+
+    fn with_joint(
+        page: PageId,
+        frame_id: FrameId,
+        sched: Scheduler<Browser>,
+        observer: ObserverCell,
+        joint: Rc<JointHistory>,
+    ) -> Rc<PageNav> {
+        let nav = Rc::new(PageNav {
             page,
             frame_id,
             observer,
@@ -191,11 +334,11 @@ impl PageNav {
                 doc_seq: 0,
                 entry_seq: 0,
                 state_version: 0,
-                scroll_restoration_manual: false,
                 scroll_positions: Default::default(),
                 initial: false,
                 first_blank: false,
                 stops: 0,
+                aborts: 0,
             }),
             document: RefCell::new(None),
             page_dom: RefCell::new(std::rc::Weak::new()),
@@ -207,36 +350,73 @@ impl PageNav {
             timeline_watchers: RefCell::new(Vec::new()),
             navigation_hooks: RefCell::new(Vec::new()),
             navigation_api_call: Cell::new(false),
-        })
+            rate_limit: Cell::new((Instant::now(), 0)),
+            joint,
+            queued_navigations: Rc::new(Cell::new(0)),
+            attributes_queued: Cell::new(0),
+            attributes_run: Cell::new(0),
+            lazy_cancel_limit: Cell::new(None),
+            traversal_from: Cell::new(None),
+            container_policy_pending: Cell::new(None),
+            container_policy: Cell::new(None),
+            ancestor_origins: RefCell::new(Vec::new()),
+        });
+        nav.joint.members.borrow_mut().push(Rc::downgrade(&nav));
+        nav
     }
 
     pub fn url(&self) -> String {
         self.state.borrow().url.clone()
     }
 
+    /// `history.length`: the steps of the page's joint session history.
     pub fn history_length(&self) -> usize {
-        self.state.borrow().entries.len().max(1)
+        let members = self.joint.members();
+        if members.is_empty() {
+            return self.state.borrow().entries.len().max(1);
+        }
+        JointHistory::steps(&members).len().max(1)
     }
 
-    /// The session history and the index of the current entry.
+    /// The session history as Chrome's top-level navigation entries list
+    /// it (CDP `Page.getNavigationHistory`), and the index of the current
+    /// one: one entry per step of the page's joint session history, with
+    /// this frame's URL at that step. A step of this frame's own entry has
+    /// that entry's id; a step only a child frame made has an id of its own
+    /// ([`STEP_ENTRY_ID`] plus the step).
     pub fn history_entries(&self) -> (usize, Vec<HistoryEntry>) {
         let st = self.state.borrow();
-        let entries = st.entries.iter().map(|e| HistoryEntry { id: e.id, url: e.url.clone() }).collect();
-        (st.index, entries)
+        let members = self.joint.members();
+        let steps = JointHistory::steps(&members);
+        if steps.is_empty() || st.entries.is_empty() {
+            let entries = st.entries.iter().map(|e| HistoryEntry { id: e.id, url: e.url.clone() }).collect();
+            return (st.index, entries);
+        }
+        let current = self.joint.current.get();
+        let index = steps.iter().rposition(|s| *s <= current).unwrap_or(0);
+        let entries = steps
+            .iter()
+            .map(|&step| {
+                let entry = st.entries.iter().rev().find(|e| e.step <= step).unwrap_or(&st.entries[0]);
+                let id = if entry.step == step { entry.id } else { STEP_ENTRY_ID + step };
+                HistoryEntry { id, url: entry.url.clone() }
+            })
+            .collect();
+        (index, entries)
     }
 
-    /// Queues a traversal to the entry with `id`, like `history.go()` with the
-    /// matching delta (the current entry reloads). Returns false when no entry
-    /// has that id.
+    /// Queues a traversal to the entry of [`PageNav::history_entries`] with
+    /// `id`, like `history.go()` with the matching delta (the current entry
+    /// reloads). Returns false when no entry has that id.
     pub fn traverse_to_entry(&self, id: u64) -> bool {
-        let delta = {
-            let st = self.state.borrow();
-            match st.entries.iter().position(|e| e.id == id) {
-                Some(i) => i as i64 - st.index as i64,
-                None => return false,
-            }
-        };
-        self.traverse(delta);
+        let (index, entries) = self.history_entries();
+        let Some(target) = entries.iter().position(|e| e.id == id) else { return false };
+        let delta = target as i64 - index as i64;
+        if delta == 0 {
+            self.traverse(0);
+        } else {
+            self.traverse_joint(delta);
+        }
         true
     }
 
@@ -265,6 +445,22 @@ impl PageNav {
         st.stops += 1;
     }
 
+    /// `window.stop()` aborted the active document (HTML "stop loading"),
+    /// at once: the frame's document load sees it before it parses further
+    /// or fires DOMContentLoaded or load. A navigation its scripts queued and
+    /// that has not started is dropped too ([`PageNav::stop_count`]), as one
+    /// fetching is canceled.
+    pub(crate) fn abort_document(&self) {
+        let mut st = self.state.borrow_mut();
+        st.aborts += 1;
+        st.stops += 1;
+    }
+
+    /// Changes when `window.stop()` aborts the frame's document.
+    pub(crate) fn abort_count(&self) -> u64 {
+        self.state.borrow().aborts
+    }
+
     /// Changes when the frame stops loading ([`PageNav::document_opened`]):
     /// a script navigation taken before a change is dropped after it.
     pub(crate) fn stop_count(&self) -> u64 {
@@ -287,6 +483,9 @@ impl PageNav {
         document: Option<(DomRef, NodeId)>,
     ) {
         self.pending_frame_url.borrow_mut().take();
+        self.traversal_from.set(None);
+        self.container_policy.set(self.container_policy_pending.take());
+        self.ancestor_origins.borrow_mut().clear();
         let mut st = self.state.borrow_mut();
         st.doc_seq += 1;
         let id = st.next_entry_id();
@@ -298,9 +497,20 @@ impl PageNav {
             Some(current) if replaces => current.key,
             _ => st.next_entry_id(),
         };
-        let entry = Entry { url: entry_url.to_string(), state: None, doc: st.doc_seq, id, key, nav_state: None };
+        let current_step = st.entries.get(st.index).map_or(self.joint.current.get(), |e| e.step);
+        let mut entry = Entry {
+            url: entry_url.to_string(),
+            state: None,
+            doc: st.doc_seq,
+            id,
+            key,
+            nav_state: None,
+            step: current_step,
+            scroll_manual: false,
+        };
         let initial = std::mem::take(&mut st.initial);
         st.first_blank = false;
+        let mut pushed_from = None;
         match history {
             _ if st.entries.is_empty() => {
                 st.initial = url == "about:blank";
@@ -329,6 +539,9 @@ impl PageNav {
                 st.entries[i] = entry;
             }
             HistoryHandling::Push => {
+                let (from, step) = self.joint.begin_push();
+                entry.step = step;
+                pushed_from = Some(from);
                 let i = st.index + 1;
                 st.entries.truncate(i);
                 st.entries.push(entry);
@@ -337,6 +550,9 @@ impl PageNav {
         }
         st.url = url.to_string();
         drop(st);
+        if let Some(from) = pushed_from {
+            self.joint.prune_forward(self, from);
+        }
         *self.document.borrow_mut() = document;
         // The previous document's realms are disposed with it: drop their
         // hooks now, so a frame whose later documents never fire an event
@@ -419,6 +635,25 @@ impl PageNav {
         pyro_webapi::lifecycle::popstate(&page, None);
     }
 
+    /// Initial iframe attribute processing updates the existing blank entry
+    /// for about:blank URLs with a query or fragment, without a new Document.
+    pub(crate) fn update_initial_blank_url(&self, url: &str) {
+        let mut state = self.state.borrow_mut();
+        let index = state.index;
+        if let Some(entry) = state.entries.get_mut(index) { entry.url = url.to_owned(); }
+        drop(state);
+        self.set_url_sync(url);
+    }
+
+    /// `document.open()` gave the document its entry document's URL: the
+    /// current entry takes it, without a new entry or a navigation.
+    pub(crate) fn document_opened_url(&self, url: &str) {
+        self.update_initial_blank_url(url);
+        // Frame::url (what CDP reports) follows at the next checkpoint
+        // (`Browser::apply_same_document_url`), as for a same-document change.
+        *self.pending_frame_url.borrow_mut() = Some(url.to_string());
+    }
+
     fn set_url_sync(&self, url: &str) {
         self.state.borrow_mut().url = url.to_string();
         if let Some((dom, doc)) = self.document.borrow().as_ref() {
@@ -428,7 +663,18 @@ impl PageNav {
 
     /// Same-document navigation (pushState/replaceState/fragment).
     fn same_document(&self, url: &str, state: Option<HistoryState>, kind: SameDocumentKind) {
+        // HTML "navigate": a navigation of the initial about:blank document replaces, a fragment
+        // navigation included; that leaves the document initial (the next navigation replaces it
+        // too).
+        // pushState too (HTML "URL and history update steps": the initial about:blank document
+        // makes the history handling "replace").
+        let kind = if kind != SameDocumentKind::Replace && self.state.borrow().initial {
+            SameDocumentKind::Replace
+        } else {
+            kind
+        };
         self.persist_scroll();
+        let mut pushed_from = None;
         {
             let mut st = self.state.borrow_mut();
             st.state_version += 1;
@@ -438,23 +684,34 @@ impl PageNav {
             // update steps"); a replace keeps the slot's key.
             let current = st.entries.get(st.index);
             let nav_state = current.and_then(|e| e.nav_state.clone());
-            let key = match current {
-                Some(e) if kind == SameDocumentKind::Replace => e.key,
-                _ => st.next_entry_id(),
+            let replace_key = current.filter(|_| kind == SameDocumentKind::Replace).map(|e| e.key);
+            let step = current.map_or(self.joint.current.get(), |e| e.step);
+            let scroll_manual = current.is_some_and(|e| e.scroll_manual);
+            let key = match replace_key {
+                Some(key) => key,
+                None => st.next_entry_id(),
             };
-            let entry = Entry { url: url.to_string(), state, doc, id, key, nav_state };
-            st.initial = false;
+            let mut entry = Entry { url: url.to_string(), state, doc, id, key, nav_state, step, scroll_manual };
+            if kind != SameDocumentKind::Replace {
+                st.initial = false;
+            }
             if st.entries.is_empty() {
                 st.entries.push(entry);
             } else if kind == SameDocumentKind::Replace {
                 let i = st.index;
                 st.entries[i] = entry;
             } else {
+                let (from, step) = self.joint.begin_push();
+                entry.step = step;
+                pushed_from = Some(from);
                 let i = st.index + 1;
                 st.entries.truncate(i);
                 st.entries.push(entry);
                 st.index = i;
             }
+        }
+        if let Some(from) = pushed_from {
+            self.joint.prune_forward(self, from);
         }
         self.set_url_sync(url);
         // Reported synchronously, like browsers: anything the client observes
@@ -477,33 +734,69 @@ impl PageNav {
     /// URL's script there (the document stays: a string result does not replace it). A document
     /// that requires Trusted Types for script runs what its default policy makes of the script
     /// (sink "Location href"), or nothing.
-    fn run_javascript_url(&self, url: &str) {
+    /// `initiator`: the CSP of the document that navigated (its realm's, snapshotted now), which
+    /// the URL is checked against; `None` (no realm to name one): this frame's document's.
+    fn run_javascript_url(&self, url: &str, initiator: Option<pyro_webapi::csp::NavigationInitiator>) {
         let Some(source) = crate::bindings::javascript_url_source(url) else { return };
         let page = self.page;
         let frame_id = self.frame_id.clone();
         let document = self.state.borrow().doc_seq;
+        let url = url.to_owned();
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(key) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(doc) = b.doc(key).filter(|p| p.nav.state.borrow().doc_seq == document) else { return };
             let (realm, page_dom) = (doc.main_frame.main_realm().cloned(), doc.main_frame.page_dom.clone());
             drop(doc);
             let (Some(realm), Some(page_dom)) = (realm, page_dom) else { return };
+            // CSP `script-src-elem` of the initiator for a navigation ('unsafe-inline', or with
+            // 'unsafe-hashes' a hash of the whole URL): blocked, nothing runs.
+            let initiator = initiator.unwrap_or_else(|| pyro_webapi::csp::NavigationInitiator::of(&page_dom));
+            if !initiator.allows_javascript_url(&url) {
+                return;
+            }
             let Ok(scope) = realm.scope() else { return };
             let Some(source) = pyro_webapi::trusted_types::javascript_url_script(&scope, &page_dom, &source) else { return };
-            if let Err(e) = scope.eval(&source, None, 1) {
-                scope.report_exception(&e);
+            // HTML "evaluate a javascript: URL": a string result replaces the document
+            // (a load the container sees, as for an iframe's src).
+            let started = page_dom.navigation_started();
+            let Some(html) = crate::frames::javascript_url_result(&scope, &source) else { return };
+            drop(scope);
+            // The script may have navigated or removed the frame meanwhile: a navigation it
+            // started (a form's `submit()`, `location`) wins over the result (HTML "navigate to a
+            // javascript: URL": the navigable's ongoing navigation changed).
+            if page_dom.navigation_started() == started && b.doc(key).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
+                let _ = b.begin_javascript_result(key, html);
             }
         });
     }
 
     fn navigate(&self, url: String, history: HistoryHandling) {
-        // The frame's latest navigation from now on: it supersedes those
-        // started before it (a planned form submission too), and a later
-        // one supersedes it (`PageDom::navigation_started`).
-        let started = self.page_dom.borrow().upgrade().map(|page| {
+        self.navigate_from(url, history, None);
+    }
+
+    /// `navigate` with the referrer of the source document (HTML "navigate": the document of
+    /// the script that navigates, e.g. a parent calling a child frame's `location.assign`);
+    /// `None`: the navigated frame's own document.
+    fn navigate_from(&self, url: String, history: HistoryHandling, source_referrer: Option<String>) {
+        let current = self.page_dom.borrow().upgrade();
+        let mut started = None;
+        if let Some(page) = &current {
+            // HTML "navigate": a navigable whose document's unload counter is above 0 (its
+            // `beforeunload`, `pagehide` or `unload` listeners run) does not navigate; the
+            // navigation unloading it goes on.
+            if page.in_unload() {
+                return;
+            }
             page.note_navigation_request();
-            page.navigation_started()
-        });
+            // The frame's latest navigation from now on: it supersedes those
+            // started before it (a planned form submission too), and a later
+            // one supersedes it (`PageDom::navigation_started`).
+            started = Some(page.navigation_started());
+            // "Checking if unloading is canceled" runs synchronously, before `assign()` (or the
+            // `href` setter) returns; the navigation task does not fire it again.
+            pyro_webapi::lifecycle::before_unload(page);
+            page.mark_before_unload_fired(!page.is_disposed());
+        }
         let sequence = self.script_navigation.get().wrapping_add(1);
         self.script_navigation.set(sequence);
         let page = self.page;
@@ -512,7 +805,11 @@ impl PageNav {
             (st.doc_seq, st.stops)
         };
         let frame_id = self.frame_id.clone();
+        let attributes_queued = self.attributes_queued.get();
+        let queued = self.queued_navigations.clone();
+        queued.set(queued.get().saturating_add(1));
         self.sched.post(TaskSource::Navigation, move |b| {
+            queued.set(queued.get().saturating_sub(1));
             let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             // Another document, or this one was opened since (stop loading).
             if !b.doc(page).is_some_and(|p| {
@@ -522,6 +819,21 @@ impl PageNav {
                     && p.nav.script_navigation.get() == sequence
                     && started.is_none_or(|n| p.main_frame.page_dom.as_ref().is_none_or(|d| d.navigation_started() == n))
             }) {
+                // Dropped by `document.open()` (not superseded by a later script navigation, which
+                // owns the mark): the document's next navigation fires `beforeunload` itself.
+                // Superseded by a newer navigation (`navigation_started`), the mark is that one's;
+                // stopped (`document.open()` also takes a number), it is nobody's.
+                let own = b.doc(page).filter(|p| {
+                    let st = p.nav.state.borrow();
+                    st.doc_seq == document
+                        && p.nav.script_navigation.get() == sequence
+                        && (st.stops != stops
+                            || started
+                                .is_none_or(|n| p.main_frame.page_dom.as_ref().is_none_or(|d| d.navigation_started() == n)))
+                });
+                if let Some(dom) = own.and_then(|p| p.main_frame.page_dom.clone()) {
+                    dom.take_before_unload_fired();
+                }
                 return;
             }
             let opts = NavigateOpts {
@@ -530,15 +842,111 @@ impl PageNav {
                 reason: NavigationReason::Script,
                 cdp_request_id: None,
                 // The document that navigates (`location`, `window.open`).
-                referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
+                referrer: source_referrer.or_else(|| b.doc(page).map(|p| p.main_frame.url.clone())),
                 referrer_policy: None,
             };
-            if let Err(e) = b.navigate_frame_with_handling(page, opts, history) {
+            let nav = b.doc(page).map(|p| p.nav.clone());
+            if let Some(nav) = &nav {
+                nav.lazy_cancel_limit.set(Some(attributes_queued));
+            }
+            let result = b.navigate_frame_with_handling(page, opts, history);
+            if let Some(nav) = &nav {
+                nav.lazy_cancel_limit.set(None);
+            }
+            if let Err(e) = result {
                 b.report_navigation_error(page, &e);
             }
         });
     }
 
+    /// The frame is about to leave its document for another one: a script
+    /// navigation is queued (its fetch, once started, is the frame's
+    /// pending loader). Not for the frame's initial about:blank document.
+    pub(crate) fn leaving_document(&self) -> bool {
+        self.queued_navigations.get() > 0 && !self.is_first_blank()
+    }
+
+    /// The container's referrer policy snapshotted for the current document
+    /// (`None`: its navigation was not one the container started).
+    pub(crate) fn committed_container_policy(&self) -> Option<Option<pyro_net::ReferrerPolicy>> {
+        self.container_policy.get()
+    }
+
+    /// The current document's ancestor origins list.
+    pub(crate) fn ancestor_origins(&self) -> Vec<String> {
+        self.ancestor_origins.borrow().clone()
+    }
+
+    pub(crate) fn set_ancestor_origins(&self, list: Vec<String>) {
+        *self.ancestor_origins.borrow_mut() = list;
+    }
+
+    /// Records the container's referrer policy as the frame's navigation
+    /// begins (its `location.ancestorOrigins` masking).
+    pub(crate) fn snapshot_container_policy(&self, policy: Option<pyro_net::ReferrerPolicy>) {
+        self.container_policy_pending.set(Some(policy));
+    }
+
+    /// A traversal to another document's entry ended without a document
+    /// committing (its load failed, was a download or a 204): the frame's
+    /// current entry is again the one it left, and the page's current step
+    /// that entry's.
+    pub(crate) fn abandon_traversal(&self) {
+        let Some((index, doc, step)) = self.traversal_from.take() else { return };
+        let mut st = self.state.borrow_mut();
+        if st.doc_seq != doc || index >= st.entries.len() {
+            return;
+        }
+        st.index = index;
+        st.state_version += 1;
+        drop(st);
+        self.joint.current.set(step);
+    }
+
+    /// A traversal of document `doc` to another document's entry has made
+    /// that entry the active one, and the document has not changed yet.
+    fn traversal_pending(&self, doc: u64) -> bool {
+        let st = self.state.borrow();
+        st.doc_seq == doc && st.entries.get(st.index).is_some_and(|e| e.doc != doc)
+    }
+
+    /// Counts a history update or navigation of the frame: false when it is
+    /// to be ignored, past 200 in 10 seconds, as Chrome's
+    /// NavigationRateLimiter does (HTML lets user agents limit them).
+    fn rate_limit_allows(&self) -> bool {
+        if !NAVIGATION_RATE_LIMIT.load(std::sync::atomic::Ordering::Relaxed) {
+            return true;
+        }
+        const LIMIT: u32 = 200;
+        const PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
+        let (start, count) = self.rate_limit.get();
+        let count = count.saturating_add(1);
+        if count <= LIMIT {
+            self.rate_limit.set((start, count));
+            return true;
+        }
+        let now = Instant::now();
+        if now.saturating_duration_since(start) > PERIOD {
+            self.rate_limit.set((now, 1));
+            return true;
+        }
+        self.rate_limit.set((start, count));
+        false
+    }
+
+    /// Whether the active document is fully active (HTML): its frame not
+    /// removed, the document not navigated away from. A navigation state
+    /// never bound to a document counts as active.
+    pub(crate) fn fully_active(&self) -> bool {
+        let page = self.page_dom.borrow();
+        match page.upgrade() {
+            Some(page) => page.is_fully_active(),
+            None => page.ptr_eq(&std::rc::Weak::new()),
+        }
+    }
+
+    /// A traversal of this frame alone by `delta` of its own entries
+    /// (`navigation.traverseTo()`; 0 reloads).
     fn traverse(&self, delta: i64) {
         let target = {
             let st = self.state.borrow();
@@ -561,58 +969,96 @@ impl PageNav {
         // Traversal is queued as a task, like browsers do.
         let page = self.page;
         let frame_id = self.frame_id.clone();
+        let joint = self.joint.clone();
         self.sched.post(TaskSource::Navigation, move |b| {
-            let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
-            let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return };
-            // A traversal to another document does not take the place of
-            // the frame's planned form navigation that has begun.
-            if entry.doc != current_doc
-                && b.doc(page).is_some_and(|p| p.pending_planned.is_some() && p.pending_planned.as_ref() == p.pending_loader())
-            {
+            let step = entry.step;
+            if apply_traversal(b, page, &frame_id, index, entry, current_doc, joint.current.get()) {
+                joint.current.set(step);
+                // A `history.go()` asked for before this applied loses (first wins).
+                joint.traversals.set(joint.traversals.get() + 1);
+            }
+        });
+    }
+
+    /// `history.go(delta)` (and back, forward) on any frame of the page: HTML
+    /// "traverse the history by a delta" over the page's joint session
+    /// history. Every frame whose entry at the target step differs from its
+    /// current one traverses to it, in a task.
+    fn traverse_joint(&self, delta: i64) {
+        if delta == 0 {
+            self.traverse(0);
+            return;
+        }
+        let joint = self.joint.clone();
+        let from = joint.current.get();
+        let target = {
+            let members = joint.members();
+            let steps = JointHistory::steps(&members);
+            // The current step, or the last one before it (a step only a
+            // removed frame had).
+            steps.iter().rposition(|s| *s <= from).and_then(|p| {
+                let t = p as i128 + i128::from(delta);
+                (t >= 0 && t < steps.len() as i128).then(|| steps[t as usize])
+            })
+        };
+        let Some(target) = target else { return };
+        let traversals = joint.traversals.get();
+        let source = (self.page, self.frame_id.clone());
+        self.sched.post(TaskSource::Navigation, move |b| {
+            // The target was computed when the traversal was asked for (HTML: from the original
+            // placement): a same-document navigation since does not cancel it, as long as the
+            // target step is still in the history (a push may have pruned it). A traversal
+            // applied since, or one still loading another document, wins: of `go(-3); go(-2)`
+            // (or `back(); forward()`) in one task the first wins, as in Chrome.
+            if joint.traversals.get() != traversals {
                 return;
             }
-            if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
-                // Only a same-document traversal can be canceled or intercepted.
-                let same = entry.doc == current_doc;
-                let source = NavigateSource::default();
-                if nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key), &source)
-                    == NavigateDecision::Cancel
-                    && same
-                {
-                    return;
+            let members = joint.members();
+            if members.iter().any(|m| m.traversal_pending(m.state.borrow().doc_seq)) {
+                return;
+            }
+            if !JointHistory::steps(&members).contains(&target) {
+                return;
+            }
+            let changes: Vec<_> = members
+                .into_iter()
+                .filter_map(|nav| {
+                    let change = {
+                        let st = nav.state.borrow();
+                        st.entries
+                            .iter()
+                            .rposition(|e| e.step <= target)
+                            .filter(|i| *i != st.index)
+                            .map(|i| (i, st.entries[i].clone(), st.doc_seq))
+                    };
+                    change.map(|change| (nav, change))
+                })
+                .collect();
+            // HTML "apply the traverse history step": an initiator not allowed by sandboxing to
+            // navigate a frame the traversal changes aborts it (a sandboxed iframe's
+            // `history.back()` cannot traverse its parent: WPT the-iframe-element/
+            // iframe_sandbox_navigate_history_go_back, _go_forward).
+            if let Some(host) = b.page(source.0).map(|p| p.frames.clone()) {
+                if let Some(from_key) = host.key(&source.1) {
+                    let disallowed = changes.iter().any(|(nav, _)| {
+                        host.key(&nav.frame_id).is_some_and(|to| !host.allowed_by_sandboxing(from_key, to, false))
+                    });
+                    if disallowed {
+                        return;
+                    }
                 }
             }
-            nav.persist_scroll();
-            {
-                let mut state = nav.state.borrow_mut();
-                // Navigation can replace the document, or pushState can replace
-                // a forward entry, while this task waits. Never apply an obsolete
-                // entry or write an index that is no longer in the history list.
-                if state.doc_seq != current_doc || state.entries.get(index) != Some(&entry) {
-                    return;
-                }
-                state.index = index;
-                state.state_version += 1;
+            // A traversal that takes a frame to another document does not take the place of
+            // that frame's planned form navigation that has begun: the joint step stays.
+            if changes.iter().any(|(nav, (_, entry, current_doc))| {
+                entry.doc != *current_doc && planned_navigation_begun(b, nav.page, &nav.frame_id)
+            }) {
+                return;
             }
-            if entry.doc == current_doc {
-                let old_url = nav.url();
-                nav.set_url_sync(&entry.url);
-                nav.restore_scroll(&entry);
-                b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
-                nav.navigation_committed("traverse");
-                b.fire_popstate(page, entry.state.is_some(), &old_url, &entry.url);
-            } else {
-                let opts = NavigateOpts {
-                    post: None,
-                    url: entry.url.clone(),
-                    reason: NavigationReason::History,
-                    cdp_request_id: None,
-                    referrer: None,
-                    referrer_policy: None,
-                };
-                if let Err(e) = b.navigate_frame_with_handling(page, opts, HistoryHandling::Traverse) {
-                    b.report_navigation_error(page, &e);
-                }
+            let prev = joint.current.replace(target);
+            joint.traversals.set(traversals + 1);
+            for (nav, (index, entry, current_doc)) in changes {
+                apply_traversal(b, nav.page, &nav.frame_id, index, entry, current_doc, prev);
             }
         });
     }
@@ -628,8 +1074,11 @@ impl PageNav {
             return false;
         }
         self.take_fragment_directive(&mut target);
-        let kind =
-            if current == target || source.replace { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
+        let kind = if (current == target && !source.cross_origin) || source.replace {
+            SameDocumentKind::Replace
+        } else {
+            SameDocumentKind::Fragment
+        };
         let navigation_type = if kind == SameDocumentKind::Replace { "replace" } else { "push" };
         match self.navigate_event_from(navigation_type, target.as_str(), source) {
             NavigateDecision::Cancel => return true,
@@ -674,13 +1123,22 @@ impl PageNav {
         }
     }
 
+    /// `history.scrollRestoration = mode` on the current entry.
+    fn set_scroll_manual(&self, manual: bool) {
+        let mut st = self.state.borrow_mut();
+        let index = st.index;
+        if let Some(entry) = st.entries.get_mut(index) {
+            entry.scroll_manual = manual;
+        }
+    }
+
     /// HTML "restore persisted state" of a same-document traversal to `entry`: with
     /// `history.scrollRestoration` `auto`, its persisted scroll position; else, without one,
     /// the scroll to its fragment.
     fn restore_scroll(&self, entry: &Entry) {
         let (manual, saved) = {
             let st = self.state.borrow();
-            (st.scroll_restoration_manual, st.scroll_positions.get(&entry.id).copied())
+            (entry.scroll_manual, st.scroll_positions.get(&entry.id).copied())
         };
         let Some(page) = self.page_dom.borrow().upgrade() else { return };
         match saved {
@@ -761,8 +1219,12 @@ impl PageNav {
     /// frame times and `Event.timeStamp` in a document that is not
     /// cross-origin isolated (as in Chrome).
     pub fn now_ms(&self) -> f64 {
-        let ms = crate::clock::now().saturating_duration_since(self.time_origin.get()).as_secs_f64() * 1000.0;
-        (ms * 10.0).floor() / 10.0
+        self.time_at(Instant::now())
+    }
+
+    pub(crate) fn time_at(&self, real: Instant) -> f64 {
+        let elapsed = crate::clock::at(real).saturating_duration_since(self.time_origin.get());
+        (elapsed.as_micros() / 100) as f64 / 10.0
     }
 
     /// Time of the current document's first paint, once it had one.
@@ -999,16 +1461,21 @@ impl PageNav {
 }
 
 impl Browser {
-    /// Copies a synchronous same-document commit's URL to the frame.
-    pub(crate) fn apply_same_document_url(&mut self, page: PageId) {
-        // Runs at every checkpoint: take through the shared handle first so a
-        // page with nothing pending is not marked dirty (`page_mut`).
-        let Some(url) = self.page(page).and_then(|p| p.nav.take_pending_frame_url()) else { return };
-        let Some(p) = self.page_mut(page) else { return };
-        if !matches!(p.main_frame.url.as_str(), "about:blank" | "about:srcdoc") {
-            p.main_frame.base_url = url.clone();
+    /// Apply the URL already committed by history APIs before a consumer
+    /// reads the frame's URL or fallback base. A parser-triggered resource
+    /// drain can run before the next event-loop checkpoint.
+    pub(crate) fn apply_same_document_url(&mut self, key: crate::frames::FrameKey) {
+        let Some(url) = self.doc(key).and_then(|doc| doc.nav.take_pending_frame_url()) else { return };
+        if let Some(mut doc) = self.doc_mut(key) {
+            // The DOM already committed the URL. An initial blank or srcdoc
+            // Document can retain a creator-provided fallback base.
+            let frame = &mut doc.main_frame;
+            frame.base_url = frame.page_dom.as_ref().and_then(|page| {
+                page.dom.borrow().document_fallback_base_url(page.document()).ok().map(str::to_owned)
+            }).unwrap_or_else(|| url.clone());
+            frame.url = url;
         }
-        p.main_frame.url = url;
+        if key.child.is_none() { self.sync_root(key.page); }
     }
 
     pub(crate) fn same_document_committed(
@@ -1054,8 +1521,105 @@ impl Browser {
     }
 }
 
-fn parse(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
-    let href = input.to_string()?;
+/// Whether the frame's planned form navigation has begun and is still its loading navigation.
+fn planned_navigation_begun_at(b: &Browser, page: crate::frames::FrameKey) -> bool {
+    b.doc(page).is_some_and(|p| p.pending_planned.is_some() && p.pending_planned.as_ref() == p.pending_loader())
+}
+
+/// [`planned_navigation_begun_at`] for a frame named by its page and id.
+fn planned_navigation_begun(b: &Browser, page: PageId, frame_id: &FrameId) -> bool {
+    b.page(page).and_then(|p| p.frames.key(frame_id)).is_some_and(|key| planned_navigation_begun_at(b, key))
+}
+
+/// Makes entry `index` (`entry`) of the frame `frame_id` of `page` its
+/// current one, as the traversal task of document `current_doc` asked:
+/// same-document at once (`popstate`), otherwise by loading it. False when
+/// the frame or its history changed since, or a same-document traversal was
+/// canceled.
+fn apply_traversal(
+    b: &mut Browser,
+    page: PageId,
+    frame_id: &FrameId,
+    index: usize,
+    entry: Entry,
+    current_doc: u64,
+    prev_step: u64,
+) -> bool {
+    let Some(page) = b.page(page).and_then(|p| p.frames.key(frame_id)) else { return false };
+    let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return false };
+    // A traversal to another document does not take the place of
+    // the frame's planned form navigation that has begun.
+    if entry.doc != current_doc && planned_navigation_begun_at(b, page) {
+        return false;
+    }
+    // While a traversal to another document is under way, later traversals
+    // are ignored, as in Chrome (the active entry already belongs to the next
+    // document).
+    if nav.traversal_pending(current_doc) {
+        return false;
+    }
+    let mut intercepted = false;
+    if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
+        // Only a same-document traversal can be canceled or intercepted.
+        let same = entry.doc == current_doc;
+        let source = NavigateSource::default();
+        match nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key), &source) {
+            NavigateDecision::Cancel if same => return false,
+            NavigateDecision::Intercept => intercepted = same,
+            _ => {}
+        }
+    }
+    nav.persist_scroll();
+    {
+        let mut state = nav.state.borrow_mut();
+        // Navigation can replace the document, or pushState can replace a
+        // forward entry, while this task waits. Never apply an obsolete entry
+        // or write an index that is no longer in the history list.
+        if state.doc_seq != current_doc || state.entries.get(index) != Some(&entry) {
+            return false;
+        }
+        if state.entries.get(state.index).is_some_and(|e| e.doc != current_doc) {
+            return false;
+        }
+        if entry.doc != current_doc {
+            nav.traversal_from.set(Some((state.index, current_doc, prev_step)));
+        }
+        state.index = index;
+        state.state_version += 1;
+    }
+    if entry.doc == current_doc {
+        let old_url = nav.url();
+        nav.set_url_sync(&entry.url);
+        b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
+        nav.navigation_committed("traverse");
+        // HTML "update document for history step application": popstate fires, then the
+        // persisted scroll position is restored, then hashchange (queued) fires. A traversal
+        // the Navigation API intercepted suppresses that restore: navigation.js restores after
+        // its handlers ("process scroll behavior", `scroll: "after-transition"`) or on
+        // `event.scroll()`.
+        b.fire_popstate(page, entry.state.is_some(), &old_url, &entry.url);
+        if !intercepted {
+            nav.restore_scroll(&entry);
+        }
+    } else {
+        let opts = NavigateOpts {
+            post: None,
+            url: entry.url.clone(),
+            reason: NavigationReason::History,
+            cdp_request_id: None,
+            referrer: None,
+            referrer_policy: None,
+        };
+        if let Err(e) = b.navigate_frame_with_handling(page, opts, HistoryHandling::Traverse) {
+            nav.abandon_traversal();
+            b.report_navigation_error(page, &e);
+        }
+    }
+    true
+}
+
+/// Parses `href` against the document's base URL.
+fn parse_str(nav: &PageNav, href: &str) -> JsResult<Url> {
     let base_url = nav
         .document
         .borrow()
@@ -1065,8 +1629,30 @@ fn parse(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
     let base = Url::parse(&base_url).ok();
     Url::options()
         .base_url(base.as_ref())
-        .parse(&href)
+        .parse(href)
         .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))
+}
+
+/// HTML "encoding-parse a URL" for Location (`href`, `assign()`, `replace()`), relative to the
+/// entry settings object: against the document of the script doing it (`pyro_js::entry_realm`;
+/// the Location's own document when there is none), with the query in that document's encoding
+/// (`?ÿ` is `?%FF` from a windows-1252 document, an unmappable character an escaped `&#...;`).
+fn parse_location(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
+    let href = input.to_string()?;
+    let entry = pyro_js::entry_realm()
+        .and_then(|realm| realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()));
+    let resolved = match entry {
+        Some(page) => Some(pyro_webapi::html::resolve_url(&page.dom.borrow(), page.document(), &href)),
+        None => {
+            nav.document.borrow().as_ref().map(|(dom, doc)| pyro_webapi::html::resolve_url(&dom.borrow(), *doc, &href))
+        }
+    };
+    match resolved.and_then(|resolved| Url::parse(&resolved).ok()) {
+        Some(url) => Ok(url),
+        // No document to resolve against, or one without a base URL (its relative href came back
+        // as it was): against the Location's document's base, else the navigable's URL.
+        None => parse_str(nav, &href),
+    }
 }
 
 /// HTML "can have its URL rewritten", as Chrome applies it: scheme,
@@ -1096,16 +1682,71 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 
 /// Location assignment: fragment-only changes are same-document; a `javascript:` URL runs
 /// its script in this document.
-fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
-    let target = parse(nav, input)?;
+/// `s`: the calling realm, whose document is the navigation's initiator.
+/// The document of HTML's incumbent settings object for a call into a Location member, as far as
+/// JavaScriptCore lets it be told: the entry realm (`pyro_js::entry_realm`, the script that led to
+/// the call), unless the innermost page script on the stack belongs to the Location's own document
+/// and not to the entry's: then a function of that document, called from the entry realm, is the
+/// caller (a parent calling its child frame's `go()`, which sets `location.href`: WPT
+/// navigate-child-function). Scripts are told apart by their URL, the document's for an inline
+/// script; when both documents have that URL, or the Location's is an `about:` document
+/// (about:srcdoc, about:blank: its scripts' URL tells nothing, and its referrer would be its
+/// container's anyway), the entry realm stays.
+fn incumbent_page(s: &Scope<'_>) -> Option<Rc<pyro_webapi::PageDom>> {
+    let own = pyro_webapi::target::page_of(s).ok();
+    let entry = pyro_js::entry_realm()
+        .and_then(|realm| realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()));
+    let (Some(own), Some(entry)) = (own.clone(), entry.clone()) else { return entry.or(own) };
+    if Rc::ptr_eq(&own, &entry) {
+        return Some(entry);
+    }
+    let document_url = |page: &pyro_webapi::PageDom| {
+        let dom = page.dom.borrow();
+        dom.document_data(page.document()).ok().map(|d| d.url.split('#').next().unwrap_or_default().to_owned())
+    };
+    let script = pyro_webapi::csp::running_script_location(s).map(|(url, ..)| url);
+    let script = script.as_deref().map(|url| url.split('#').next().unwrap_or_default());
+    let is_own = script.is_some_and(|url| {
+        !url.starts_with("about:")
+            && document_url(&own).as_deref() == Some(url)
+            && document_url(&entry).as_deref() != Some(url)
+    });
+    Some(if is_own { own } else { entry })
+}
+
+fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
+    // HTML: a Location whose relevant Document is gone (its browsing context removed) does
+    // nothing, before the URL is even parsed.
+    if !nav.fully_active() {
+        return Ok(());
+    }
+    let target = parse_location(nav, input)?;
+    // HTML "navigate": a navigable whose active document's unload counter is above 0 (its
+    // `beforeunload`, `pagehide` or `unload` listeners are running) ignores the navigation, so
+    // a `beforeunload` listener cannot start one of its own (WPT navigation-within-beforeunload).
+    if nav.page_dom.borrow().upgrade().is_some_and(|page| page.in_unload()) {
+        return Ok(());
+    }
     if target.scheme() == "javascript" {
-        nav.run_javascript_url(target.as_str());
+        // Located at the calling script, for a blocked URL's violation.
+        let initiator =
+            pyro_webapi::target::page_of(s).ok().map(|page| pyro_webapi::csp::NavigationInitiator::of(&page).at(s));
+        nav.run_javascript_url(target.as_str(), initiator);
         return Ok(());
     }
     // HTML "Location-object navigate": a document that has not completely
     // loaded, with no user gesture, replaces its entry.
     let loading = nav.page_dom.borrow().upgrade().is_some_and(|page| page.navigates_by_replacing());
-    navigate_to(nav, target, replace || loading);
+    // HTML "Location-object navigate": the source document is the incumbent's (the calling
+    // script's document), whose URL is the request's referrer: a parent navigating its child
+    // frame sends the parent's URL, not the child's (initial about:blank) one.
+    let source_referrer = incumbent_page(s).and_then(|page| {
+        let dom = page.dom.borrow();
+        dom.document_data(page.document()).ok().map(|d| d.url.to_string())
+    });
+    if nav.rate_limit_allows() {
+        navigate_to_from(nav, target, replace || loading, source_referrer);
+    }
     Ok(())
 }
 
@@ -1120,7 +1761,7 @@ pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>,
         .base_url(base.as_ref())
         .parse(&href)
         .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))?;
-    if target.scheme() != "javascript" {
+    if target.scheme() != "javascript" && nav.rate_limit_allows() {
         navigate_to(nav, target, replace);
     }
     Ok(())
@@ -1129,7 +1770,12 @@ pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>,
 /// HTML "navigate" from script (Location, `navigation.navigate`): a
 /// fragment change is same-document, anything else loads. Returns whether
 /// it stayed in the document.
-fn navigate_to(nav: &PageNav, mut target: Url, replace: bool) -> bool {
+fn navigate_to(nav: &PageNav, target: Url, replace: bool) -> bool {
+    navigate_to_from(nav, target, replace, None)
+}
+
+/// `navigate_to` with the source document's URL as the referrer of a loading navigation.
+fn navigate_to_from(nav: &PageNav, mut target: Url, replace: bool, source_referrer: Option<String>) -> bool {
     let current = Url::parse(&nav.url()).ok();
     if current.as_ref().is_some_and(|current| same_document_except_fragment(current, &target)) {
         nav.take_fragment_directive(&mut target);
@@ -1156,7 +1802,11 @@ fn navigate_to(nav: &PageNav, mut target: Url, replace: bool) -> bool {
             true
         }
         _ => {
-            nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push });
+            nav.navigate_from(
+                target.to_string(),
+                if replace { HistoryHandling::Replace } else { HistoryHandling::Push },
+                source_referrer,
+            );
             false
         }
     }
@@ -1169,11 +1819,51 @@ fn url_part(nav: &PageNav, f: impl Fn(&Url) -> String) -> String {
 /// A Location setter: `change` edits a copy of the URL and says whether to
 /// navigate to it (HTML "Location-object navigate").
 fn set_url_part(s: &Scope<'_>, nav: &PageNav, change: impl FnOnce(&mut Url) -> JsResult<bool>) -> JsResult<()> {
+    if !nav.fully_active() {
+        return Ok(());
+    }
     let mut url = Url::parse(&nav.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
     if change(&mut url)? {
-        assign(nav, s.string(url.as_str()), false)?;
+        assign(s, nav, s.string(url.as_str()), false)?;
     }
     Ok(())
+}
+
+/// `location.ancestorOrigins`: the origins of the frame's ancestors,
+/// parent first, while the Location's document is the frame's fully active
+/// one; empty once it is not (the frame removed, or navigated away). The
+/// same list on every read until then, a new empty one after. Chrome's list
+/// is a DOMStringList (an array here: the length, the indices, iteration).
+fn ancestor_origins<'s>(s: &Scope<'s>, nav: &Rc<PageNav>, this: pyro_js::Object<'s>) -> JsResult<Value<'s>> {
+    let window = s.global_data::<crate::Window>();
+    let active = window.is_some_and(|w| {
+        let page = pyro_webapi::WindowHost::page(w);
+        page.is_fully_active() && nav.page_dom.borrow().upgrade().is_some_and(|p| Rc::ptr_eq(&p, page))
+    });
+    let key = if active { "lpAncestorOrigins" } else { "lpAncestorOriginsInactive" };
+    if let Some(list) = s.get_hidden(this, key)? {
+        return Ok(list);
+    }
+    // The list the document got when it committed (`FrameHost::store_ancestor_origins`).
+    let stored = if active { nav.ancestor_origins.borrow().clone() } else { Vec::new() };
+    let origins: Vec<Value<'s>> = stored.iter().map(|o| s.string(o)).collect();
+    let list = s.array(&origins)?.value();
+    s.set_hidden(this, key, list)?;
+    Ok(list)
+}
+
+/// Whether the `referrerpolicy` of a frame's container (as snapshotted when
+/// the navigation began) hides its embedder (of origin `embedder`) from the
+/// frame's document (of origin `origin`) in `location.ancestorOrigins`:
+/// `no-referrer` always, `same-origin` across origins (WPT
+/// location-ancestor-origins*). Other policies hide nothing.
+pub(crate) fn masks_ancestor_origin(policy: pyro_net::ReferrerPolicy, embedder: &str, origin: &str) -> bool {
+    use pyro_net::ReferrerPolicy as P;
+    match policy {
+        P::NoReferrer => true,
+        P::SameOrigin => origin == "null" || embedder != origin,
+        _ => false,
+    }
 }
 
 pub struct Location;
@@ -1184,19 +1874,25 @@ impl JsClass for Location {
     type Parent = NoParent;
 
     fn define(def: &mut ClassDef<Self>) {
-        def.accessor("href", |s, n| Ok(s.string(&n.url())), |_s, n, v| assign(n, v, false));
+        // HTML: Location's [[SetPrototypeOf]] is SetImmutablePrototype and its [[PreventExtensions]]
+        // fails (WPT the-location-interface/location-prototype-setting-same-origin.html).
+        def.immutable_prototype();
+        def.accessor("href", |s, n| Ok(s.string(&n.url())), |s, n, v| assign(s, n, v, false));
         def.pure_method("toString", 0, |s, n, _a| Ok(s.string(&n.url())));
         def.method("assign", 1, |s, n, a| {
             a.require(1, "assign")?;
-            assign(n, a.get(0), false)?;
+            assign(s, n, a.get(0), false)?;
             Ok(s.undefined())
         });
         def.method("replace", 1, |s, n, a| {
             a.require(1, "replace")?;
-            assign(n, a.get(0), true)?;
+            assign(s, n, a.get(0), true)?;
             Ok(s.undefined())
         });
         def.method("reload", 0, |s, n, _a| {
+            if !n.fully_active() {
+                return Ok(s.undefined());
+            }
             let url = n.url();
             match n.navigate_event("reload", &url, true) {
                 NavigateDecision::Cancel => {}
@@ -1205,6 +1901,7 @@ impl JsClass for Location {
             }
             Ok(s.undefined())
         });
+        def.getter_this("ancestorOrigins", ancestor_origins);
         def.getter("origin", |s, n| {
             Ok(s.string(&url_part(n, |u| match u.origin() {
                 o @ url::Origin::Tuple(..) => o.ascii_serialization(),
@@ -1311,8 +2008,11 @@ impl JsClass for Location {
                 })))
             },
             |s, n, v| {
-                let mut u = Url::parse(&n.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
                 let h = v.to_string()?;
+                if !n.fully_active() {
+                    return Ok(());
+                }
+                let mut u = Url::parse(&n.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
                 let current = u.fragment().unwrap_or("").to_owned();
                 u.set_fragment(Some(h.strip_prefix('#').unwrap_or(&h)));
                 // The same fragment (no fragment counts as an empty one, as
@@ -1320,7 +2020,7 @@ impl JsClass for Location {
                 if u.fragment() == Some(current.as_str()) {
                     return Ok(());
                 }
-                assign(n, s.string(u.as_str()), false)
+                assign(s, n, s.string(u.as_str()), false)
             },
         );
     }
@@ -1337,15 +2037,27 @@ impl JsClass for History {
         // Browsers accept an unbound receiver here; TanStack History calls
         // `(push ? history.pushState : history.replaceState)(state, "", url)`.
         def.global_receiver(|s| s.global_data::<crate::Window>().map(|w| w.nav()));
-        def.getter("length", |s, n| Ok(s.number(n.history_length() as f64)));
-        def.getter("state", |s, n| PageNav::state_value(n, s));
+        def.getter("length", |s, n| {
+            require_fully_active(n, "length")?;
+            Ok(s.number(n.history_length() as f64))
+        });
+        def.getter("state", |s, n| {
+            require_fully_active(n, "state")?;
+            PageNav::state_value(n, s)
+        });
         def.accessor(
             "scrollRestoration",
-            |s, n| Ok(s.string(if n.state.borrow().scroll_restoration_manual { "manual" } else { "auto" })),
+            |s, n| {
+                require_fully_active(n, "scrollRestoration")?;
+                let st = n.state.borrow();
+                let manual = st.entries.get(st.index).is_some_and(|e| e.scroll_manual);
+                Ok(s.string(if manual { "manual" } else { "auto" }))
+            },
             |_s, n, v| {
+                require_fully_active(n, "scrollRestoration")?;
                 match v.to_string()?.as_str() {
-                    "manual" => n.state.borrow_mut().scroll_restoration_manual = true,
-                    "auto" => n.state.borrow_mut().scroll_restoration_manual = false,
+                    "manual" => n.set_scroll_manual(true),
+                    "auto" => n.set_scroll_manual(false),
                     _ => {} // invalid enum values are ignored
                 }
                 Ok(())
@@ -1354,31 +2066,79 @@ impl JsClass for History {
         def.method("pushState", 2, |s, n, a| change_state(s, n, a, SameDocumentKind::Push));
         def.method("replaceState", 2, |s, n, a| change_state(s, n, a, SameDocumentKind::Replace));
         def.method("back", 0, |s, n, _a| {
-            n.traverse(-1);
+            require_fully_active(n, "back")?;
+            if !in_unload(s) && n.rate_limit_allows() {
+                n.traverse_joint(-1);
+            }
             Ok(s.undefined())
         });
         def.method("forward", 0, |s, n, _a| {
-            n.traverse(1);
+            require_fully_active(n, "forward")?;
+            if !in_unload(s) && n.rate_limit_allows() {
+                n.traverse_joint(1);
+            }
             Ok(s.undefined())
         });
         def.method("go", 0, |s, n, a| {
             let d = a.get(0).to_number()?;
-            n.traverse(if d.is_finite() { d.trunc() as i64 } else { 0 });
+            require_fully_active(n, "go")?;
+            if !in_unload(s) && n.rate_limit_allows() {
+                n.traverse_joint(if d.is_finite() { d.trunc() as i64 } else { 0 });
+            }
             Ok(s.undefined())
         });
     }
 }
 
+static NAVIGATION_RATE_LIMIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Whether history updates and navigations past 200 in 10 seconds are
+/// ignored, as stock Chrome does (on by default; `serve
+/// --navigation-rate-limit off`, as Playwright's Chromium runs with
+/// `--disable-ipc-flooding-protection`). For the whole process.
+pub fn set_navigation_rate_limit(on: bool) {
+    NAVIGATION_RATE_LIMIT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// HTML "traverse the history by a delta" from a document whose unload counter is above 0 (its
+/// `beforeunload`, `pagehide` or `unload` listeners run) does nothing: the navigation that is
+/// unloading it wins (WPT the-history-interface/traverse-during-beforeunload, -unload).
+fn in_unload(s: &Scope<'_>) -> bool {
+    s.global_data::<crate::Window>().is_some_and(|w| pyro_webapi::WindowHost::page(w).in_unload())
+}
+
+/// HTML: History's methods throw a SecurityError for a document that is not
+/// fully active (checked before the rate limit).
+fn require_fully_active(n: &PageNav, method: &str) -> JsResult<()> {
+    if n.fully_active() {
+        return Ok(());
+    }
+    Err(JsError::dom(
+        "SecurityError",
+        format!(
+            "Failed to execute '{method}' on 'History': May not use a History object associated with a Document that is not fully active"
+        ),
+    ))
+}
+
 fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: pyro_js::Args<'s>, kind: SameDocumentKind) -> JsResult<Value<'s>> {
-    a.require(2, if kind == SameDocumentKind::Push { "pushState" } else { "replaceState" })?;
+    let method = if kind == SameDocumentKind::Push { "pushState" } else { "replaceState" };
+    a.require(2, method)?;
+    require_fully_active(n, method)?;
     // StructuredSerializeForStorage: functions, DOM nodes and ports throw
     // DataCloneError; Date, Map, Set, typed arrays, cycles, Blob, ... survive.
     let state = match a.get(0) {
         v if v.is_nullish() => None,
-        v => Some(HistoryState(Rc::new(pyro_webapi::serialize_message(s, v, s.undefined())?))),
+        v => Some(HistoryState(Rc::new(pyro_webapi::serialize_for_storage(s, v)?))),
     };
-    let url = match a.opt(2).filter(|v| !v.is_nullish()) {
-        Some(v) => {
+    // HTML (whatwg/html#9343): a null or empty-string URL keeps the
+    // document's URL, fragment included, whatever the base URL is.
+    let href = match a.opt(2).filter(|v| !v.is_nullish()) {
+        Some(v) => Some(v.to_string()?).filter(|h| !h.is_empty()),
+        None => None,
+    };
+    let url = match href {
+        Some(href) => {
             let document = n.url();
             let current = Url::parse(&document).ok();
             let rejected = |target: &str| {
@@ -1391,7 +2151,7 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: pyro_js::Args<'s>, kind: Same
                 )
             };
             // HTML: a URL that fails to parse is a SecurityError here.
-            let target = parse(n, v).map_err(|_| rejected(&v.to_string().unwrap_or_default()))?;
+            let target = parse_str(n, &href).map_err(|_| rejected(&href))?;
             if !current.as_ref().is_some_and(|c| can_rewrite_url(c, &target)) {
                 return Err(rejected(target.as_str()));
             }
@@ -1399,6 +2159,10 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: pyro_js::Args<'s>, kind: Same
         }
         None => n.url(),
     };
+    // After the state, the URL and whether it may be set were checked.
+    if !n.rate_limit_allows() {
+        return Ok(s.undefined());
+    }
     let navigation_type = if kind == SameDocumentKind::Push { "push" } else { "replace" };
     if n.navigate_event(navigation_type, &url, true) == NavigateDecision::Cancel {
         return Ok(s.undefined());
@@ -1497,7 +2261,12 @@ fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
     if !(url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")) {
         return None;
     }
-    let values = navigation_values(&p.target.page, &p.nav);
+    let mut values = navigation_values(&p.target.page, &p.nav);
+    if let Some(fetch) = &mut values.fetch {
+        if !fetch.server_timing.is_empty() && !p.target.page.exposes_server_timing() {
+            Rc::make_mut(fetch).server_timing.clear();
+        }
+    }
     let mut entry = PerformanceEntryData::new(&url, "navigation", 0.0, values.load_end);
     entry.navigation = Some(Box::new(values));
     Some(entry)
@@ -1802,7 +2571,7 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         natives.set_atom("active", f.value())?;
     }
     // resolve(url) -> the absolute URL, or SyntaxError.
-    native!("resolve", |s, nav, a| Ok(s.string(parse(&nav, a.get(0))?.as_str())));
+    native!("resolve", |s, nav, a| Ok(s.string(parse_str(&nav, &a.get(0).to_string()?)?.as_str())));
     // navigate(url, replace, stateJSON?) -> whether it stayed in the
     // document. Its `navigate` event was fired by the caller.
     native!("navigate", |s, nav, a| {
@@ -1855,6 +2624,25 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
                 "queued"
             }
         }))
+    });
+    // HTML "restore scroll position data" of the current entry (an intercepted traversal's
+    // scroll behavior), whatever its `history.scrollRestoration`.
+    native!("restoreScroll", |s, nav, _a| {
+        let entry = {
+            let st = nav.state.borrow();
+            st.entries.get(st.index).cloned()
+        };
+        if let Some(mut entry) = entry {
+            entry.scroll_manual = false;
+            nav.restore_scroll(&entry);
+        }
+        Ok(s.undefined())
+    });
+    // The viewport's scroll position as "x,y" (has the page scrolled since?).
+    native!("viewportScroll", |s, nav, _a| {
+        let page = nav.page_dom.borrow().upgrade();
+        let (x, y) = page.map(|p| pyro_webapi::layout_api::viewport_scroll(&p)).unwrap_or_default();
+        Ok(s.string(&format!("{x},{y}")))
     });
     native!("updateState", |s, nav, a| {
         let state = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;

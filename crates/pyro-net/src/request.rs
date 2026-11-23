@@ -22,14 +22,23 @@ pub enum Destination {
     Document,
     Iframe,
     Script,
+    /// A dedicated worker's main script.
+    Worker,
+    /// A shared worker's main script.
+    SharedWorker,
+    /// A service worker's script (registration and update).
+    ServiceWorker,
     Style,
     /// A JSON module script (`import ... with { type: "json" }`).
     Json,
+    /// A text module script (`import ... with { type: "text" }`).
+    Text,
     Image,
     /// An `<audio>` element's resource.
     Audio,
     /// A `<video>` element's resource.
     Video,
+    Track,
     Font,
     Xhr,
     Fetch,
@@ -37,26 +46,43 @@ pub enum Destination {
     WebSocket,
     /// `navigator.sendBeacon`.
     Beacon,
+    /// `<link rel=compression-dictionary>` (`Sec-Fetch-Dest: empty`).
+    CompressionDictionary,
     Other,
 }
 
 impl Destination {
+    /// Fetch "script-like" (the destinations Pyro has of it): a response to
+    /// one is blocked by nosniff or an audio/image/video/CSV MIME type.
+    pub fn is_script_like(self) -> bool {
+        matches!(
+            self,
+            Destination::Script | Destination::Worker | Destination::SharedWorker | Destination::ServiceWorker
+        )
+    }
+
     /// CDP `Network.ResourceType` name.
     pub fn cdp_type(self) -> &'static str {
         match self {
             Destination::Document | Destination::Iframe => "Document",
             // A JSON module script is still a script resource.
-            Destination::Script | Destination::Json => "Script",
+            Destination::Script
+            | Destination::Worker
+            | Destination::SharedWorker
+            | Destination::ServiceWorker
+            | Destination::Json
+            | Destination::Text => "Script",
             Destination::Style => "Stylesheet",
             Destination::Image => "Image",
             Destination::Audio | Destination::Video => "Media",
+            Destination::Track => "TextTrack",
             Destination::Font => "Font",
             Destination::Xhr => "XHR",
             Destination::Fetch => "Fetch",
             Destination::EventSource => "EventSource",
             Destination::WebSocket => "WebSocket",
             Destination::Beacon => "Ping",
-            Destination::Other => "Other",
+            Destination::CompressionDictionary | Destination::Other => "Other",
         }
     }
 }
@@ -118,6 +144,12 @@ pub struct Request {
     /// Serialized origin of the requesting document ("null" for opaque);
     /// None for browser-initiated navigations.
     pub origin: Option<String>,
+    /// Trusted outermost document's schemeful site, used for CHIPS on
+    /// subresource/iframe requests. Unknown contexts cannot select a partition.
+    pub top_level_site: Option<String>,
+    /// The initiator is nested below a cross-site ancestor, independently
+    /// of its own origin's equality with the outermost site's key.
+    pub cross_site_ancestor: bool,
     /// Resource Timing: the serialized origin of the document that gets this
     /// fetch's entry, for the TAO check, when it is not `origin` (an iframe's
     /// navigation: its parent's). None: `origin`.
@@ -142,6 +174,13 @@ pub struct Request {
     /// document's blob URL store (the client has no access to it). A `blob:`
     /// request without one fails as for a revoked URL.
     pub blob: Option<BlobBody>,
+    /// The body came from a `ReadableStream` (Fetch: its body's source is null), so it cannot
+    /// be sent again: a redirect other than 303 and a credentialed 401 are network errors.
+    pub body_from_stream: bool,
+    /// The initiating context's Content Security Policy for this request: the client checks
+    /// every redirect target against it before following it, and fails the request with
+    /// [`crate::csp::BLOCKED_BY_CSP`] when an enforced policy blocks the hop. `None`: no policy.
+    pub csp: Option<std::sync::Arc<crate::csp::RequestCsp>>,
 }
 
 /// A `Blob` served for a `blob:` URL: its bytes and its `type`.
@@ -188,6 +227,8 @@ impl Request {
             credentials: Credentials::SameOrigin,
             redirect: RedirectMode::Follow,
             origin: None,
+            top_level_site: None,
+            cross_site_ancestor: false,
             timing_origin: None,
             referrer: None,
             referrer_policy: Default::default(),
@@ -198,6 +239,8 @@ impl Request {
             cache: CacheMode::Default,
             skip_interception: false,
             blob: None,
+            body_from_stream: false,
+            csp: None,
         }
     }
 }
@@ -349,6 +392,124 @@ pub fn parse_content_type(v: &str) -> (String, Option<String>) {
     (essence, charset)
 }
 
+/// Fetch "extract a MIME type" from a response's header list, as (essence, charset): every
+/// `Content-Type` value split at commas outside quoted strings, the last one that parses
+/// winning, with a charset kept from an earlier value of the same essence; ("", None) when none
+/// parses.
+pub fn extract_mime_type(headers: &http::HeaderMap) -> (String, Option<String>) {
+    let mut essence: Option<String> = None;
+    let mut charset: Option<String> = None;
+    let mut found: Option<(String, Option<String>)> = None;
+    for line in headers.get_all(http::header::CONTENT_TYPE) {
+        let Ok(line) = std::str::from_utf8(line.as_bytes()) else { continue };
+        for value in split_header_value(line) {
+            let Some((value_essence, value_charset)) = parse_mime_type(value) else { continue };
+            if value_essence == "*/*" {
+                continue;
+            }
+            if essence.as_deref() != Some(value_essence.as_str()) {
+                charset = value_charset.clone();
+                essence = Some(value_essence.clone());
+                found = Some((value_essence, value_charset));
+            } else {
+                let kept = value_charset.or_else(|| charset.clone());
+                found = Some((value_essence, kept));
+            }
+        }
+    }
+    found.unwrap_or_default()
+}
+
+/// Fetch "get, decode, and split": `value` split at commas outside double-quoted strings
+/// (backslash escapes inside them), each piece stripped of HTTP tab and space.
+fn split_header_value(value: &str) -> Vec<&str> {
+    let (mut out, mut start, mut quoted, mut escaped) = (Vec::new(), 0, false, false);
+    for (i, c) in value.char_indices() {
+        if quoted {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => quoted = false,
+                _ => {}
+            }
+        } else if c == '"' {
+            quoted = true;
+        } else if c == ',' {
+            out.push(value[start..i].trim_matches([' ', '\t']));
+            start = i + 1;
+        }
+    }
+    out.push(value[start..].trim_matches([' ', '\t']));
+    out
+}
+
+/// MIME Sniffing "parse a MIME type", as (lowercased essence, lowercased charset parameter);
+/// None on failure (a type or subtype that is not an HTTP token).
+fn parse_mime_type(input: &str) -> Option<(String, Option<String>)> {
+    let token = |s: &str| {
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+    };
+    let ws = |c: char| matches!(c, ' ' | '\t' | '\n' | '\r');
+    let input = input.trim_matches(ws);
+    let (ty, rest) = input.split_once('/')?;
+    let (subtype, mut params) = rest.split_once(';').map_or((rest, ""), |(s, p)| (s, p));
+    let subtype = subtype.trim_end_matches(ws);
+    if !token(ty) || !token(subtype) {
+        return None;
+    }
+    let essence = format!("{}/{}", ty.to_ascii_lowercase(), subtype.to_ascii_lowercase());
+    let mut charset = None;
+    loop {
+        params = params.trim_start_matches(ws);
+        if params.is_empty() {
+            break;
+        }
+        let end = params.find([';', '=']).unwrap_or(params.len());
+        let name = params[..end].to_ascii_lowercase();
+        params = &params[end..];
+        if let Some(rest) = params.strip_prefix(';') {
+            params = rest;
+            continue;
+        }
+        let Some(rest) = params.strip_prefix('=') else { break };
+        params = rest;
+        let value = if let Some(rest) = params.strip_prefix('"') {
+            // A quoted string: backslash escapes, up to the closing quote, then to the next `;`.
+            let mut value = String::new();
+            let mut chars = rest.char_indices();
+            let mut close = rest.len();
+            while let Some((i, c)) = chars.next() {
+                match c {
+                    '\\' => match chars.next() {
+                        Some((_, e)) => value.push(e),
+                        None => value.push('\\'),
+                    },
+                    '"' => {
+                        close = i + 1;
+                        break;
+                    }
+                    _ => value.push(c),
+                }
+            }
+            let after = &rest[close.min(rest.len())..];
+            params = after.find(';').map_or("", |i| &after[i + 1..]);
+            value
+        } else {
+            let end = params.find(';').unwrap_or(params.len());
+            let value = params[..end].trim_end_matches(ws).to_owned();
+            params = params.get(end + 1..).unwrap_or("");
+            if value.is_empty() {
+                continue;
+            }
+            value
+        };
+        if name == "charset" && charset.is_none() && token(&name) {
+            charset = Some(value.to_ascii_lowercase());
+        }
+    }
+    Some((essence, charset))
+}
+
 /// MIME Sniffing "JavaScript MIME type essence match" for a lowercased
 /// essence (as [`parse_content_type`] returns it).
 pub fn is_javascript_mime(essence: &str) -> bool {
@@ -373,6 +534,40 @@ pub fn is_javascript_mime(essence: &str) -> bool {
     )
 }
 
+/// Fetch "determine nosniff": the first value of the combined
+/// `X-Content-Type-Options` header list is `nosniff`, ASCII
+/// case-insensitively, once HTTP tab and space are stripped.
+pub fn is_nosniff(headers: &HeaderMap) -> bool {
+    // The first header line's first comma-separated value is the combined
+    // list's first value.
+    headers
+        .get("x-content-type-options")
+        .and_then(|v| v.as_bytes().split(|&b| b == b',').next())
+        .is_some_and(|t| trim_tab_space(t).eq_ignore_ascii_case(b"nosniff"))
+}
+
+/// `v` without HTTP tab or space (not every ASCII whitespace) at either end.
+fn trim_tab_space(v: &[u8]) -> &[u8] {
+    let ws = |b: &u8| *b == b' ' || *b == b'\t';
+    let start = v.iter().position(|b| !ws(b)).unwrap_or(v.len());
+    let end = v.iter().rposition(|b| !ws(b)).map_or(start, |e| e + 1);
+    &v[start..end]
+}
+
+/// Fetch's checks of a response to a script-like request (a classic
+/// script, a worker's script, `importScripts`): "should response to request
+/// be blocked due to nosniff?" (a JavaScript MIME type is required) and
+/// "... due to its MIME type?" (`audio/*`, `image/*`, `video/*`,
+/// `text/csv`). `essence` is lowercased, as [`parse_content_type`] returns
+/// it; empty when there is no Content-Type.
+pub fn script_response_blocked(essence: &str, nosniff: bool) -> bool {
+    (nosniff && !is_javascript_mime(essence))
+        || essence.starts_with("audio/")
+        || essence.starts_with("image/")
+        || essence.starts_with("video/")
+        || essence == "text/csv"
+}
+
 /// MIME Sniffing "JSON MIME type" for a lowercased essence: a valid MIME type
 /// whose essence is `application/json` or `text/json`, or whose subtype ends
 /// in `+json`.
@@ -385,6 +580,19 @@ pub fn is_json_mime(essence: &str) -> bool {
         return false;
     }
     essence == "application/json" || essence == "text/json" || subtype.ends_with("+json")
+}
+
+/// [`decode_text`] with the first of `labels` that names an encoding, else
+/// UTF-8 (a classic script: its response's charset, then its element's
+/// `charset`, then its document's encoding). A byte order mark wins.
+pub fn decode_text_first<'a>(body: &'a [u8], labels: &[Option<&str>]) -> std::borrow::Cow<'a, str> {
+    let enc = labels
+        .iter()
+        .flatten()
+        .find_map(|c| encoding_rs::Encoding::for_label(c.as_bytes()))
+        .unwrap_or(encoding_rs::UTF_8);
+    let (text, _, _) = enc.decode(body);
+    text
 }
 
 /// Decodes a body to UTF-8 using the response charset (BOM wins), falling

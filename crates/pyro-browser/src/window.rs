@@ -82,12 +82,20 @@ pub struct WindowData {
     sched: Scheduler<Browser>,
     nav: Rc<PageNav>,
     target: pyro_webapi::EventTargetData,
+    /// A Window owns its associated Document while the realm is reachable,
+    /// including after a child frame navigates and the Document becomes inactive.
+    /// A reused initial about:blank Window receives new WindowData at commit.
+    _associated_document: pyro_webapi::collections::NodeHold,
     /// JS timer handle -> loop timer and, for `setTimeout`, when it is due.
     timers: RefCell<HashMap<u32, (TimerId, Option<Instant>)>>,
     /// Pending `requestAnimationFrame` callbacks, in registration order, and
     /// the loop timer of the frame that will run them.
     animation: RefCell<AnimationFrame>,
+    /// The next timer handle (`setTimeout`, `setInterval`).
     next_handle: Cell<u32>,
+    /// The next animation frame callback handle: its own sequence from 1 (HTML "animation
+    /// frame callback identifier"), unaffected by timers.
+    next_frame_handle: Cell<u32>,
     frames: std::rc::Weak<crate::frames::FrameHost>,
     frame: Option<crate::frames::FrameKey>,
     frame_definer: RefCell<Option<Persistent>>,
@@ -106,6 +114,13 @@ pub struct WindowData {
     /// the first deeply nested timer ([`call_nested_timer`]).
     nested_timer_call: RefCell<Option<Persistent>>,
 }
+
+/// The name the realm keeps ([`pyro_js::Scope::keep_value`]) the function that defines a new
+/// Location object's [LegacyUnforgeable] members under, whose prototype gave them up (install.js
+/// `locationUnforgeables`): a root of the realm's own, so a lingering window keeps it, and it
+/// does not keep the window (WindowData held it as a Persistent of its own, which rooted every
+/// navigated-away or removed frame's global).
+const LOCATION_INSTALL: &str = "pyro location install";
 
 impl WindowData {
     /// The page's session history shared with `window.history`.
@@ -128,14 +143,17 @@ impl WindowData {
         let key = page.window_target().expect("document window target");
         // `Event.timeStamp` reads the clock `performance.now()` reads.
         let clock = nav.clone();
-        page.set_event_clock(Rc::new(move || clock.now_ms()));
+        page.set_event_clock(Rc::new(move |at| clock.time_at(at)));
         WindowData {
             sched,
             nav,
             target: pyro_webapi::EventTargetData::window(page, key),
+            _associated_document: pyro_webapi::collections::NodeHold::new(page, page.document())
+                .expect("live Window document"),
             timers: RefCell::new(HashMap::new()),
             animation: RefCell::new(AnimationFrame::default()),
             next_handle: Cell::new(1),
+            next_frame_handle: Cell::new(1),
             frames: std::rc::Weak::new(),
             frame: None,
             frame_definer: RefCell::new(None),
@@ -159,6 +177,7 @@ impl WindowData {
         *to.idle_module.borrow_mut() = self.idle_module.take();
         *to.nested_timer_call.borrow_mut() = self.nested_timer_call.take();
         to.next_handle.set(self.next_handle.get());
+        to.next_frame_handle.set(self.next_frame_handle.get());
     }
     pub(crate) fn for_frame(
         sched: Scheduler<Browser>,
@@ -204,7 +223,7 @@ impl WindowData {
     /// frame it requests (the handles given out): two equal readings mean it
     /// asked for neither between them.
     pub fn handles_issued(&self) -> u32 {
-        self.next_handle.get()
+        self.next_handle.get().wrapping_add(self.next_frame_handle.get())
     }
 }
 
@@ -220,6 +239,36 @@ impl pyro_webapi::WindowHost for WindowData {
     fn event_target(&self) -> &pyro_webapi::EventTargetData {
         &self.target
     }
+}
+
+/// The realm's Location object, with its [LegacyUnforgeable] own members
+/// once made ([`init_location_unforgeables`]).
+fn location_object<'s>(s: &Scope<'s>, w: &WindowData) -> JsResult<Object<'s>> {
+    let key = IdentityKey(KEY_LOCATION, 0);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    let location = s.wrap::<Location>(w.nav.clone(), Some(key))?;
+    let install = s.kept_value(LOCATION_INSTALL);
+    if let Some(install) = install.and_then(|v| v.as_object()) {
+        install.call(None, &[location.value()])?;
+    }
+    Ok(location)
+}
+
+/// HTML: every member of Location is [LegacyUnforgeable], an own property
+/// of each Location object. Before page script runs: Location.prototype
+/// gives its members up once populated, and each new Location object gets
+/// them (`location_object`).
+pub(crate) fn init_location_unforgeables(s: &Scope<'_>, helpers: Object<'_>) -> JsResult<()> {
+    if s.global_data::<Window>().is_none() {
+        return Ok(());
+    }
+    let Some(make) = helpers.get_atom("locationUnforgeables")?.as_object() else { return Ok(()) };
+    let Some(pair) = make.call(None, &[])?.as_object() else { return Ok(()) };
+    let (Some(hook), install) = (pair.get_index(0)?.as_object(), pair.get_index(1)?) else { return Ok(()) };
+    s.keep_value(LOCATION_INSTALL, install);
+    s.after_populate::<Location>(hook)
 }
 
 /// The realm's `performance` ([SameObject] and an EventTarget: the wrapper
@@ -260,10 +309,40 @@ impl JsClass for Window {
             })?;
             request_animation_frame(s, w, Persistent::new(s, cb.value()))
         });
-        def.method("cancelAnimationFrame", 1, clear_timer);
+        def.method("cancelAnimationFrame", 1, cancel_animation_frame);
+        // Chrome's prefixed aliases. Each call first reports its deprecation (once per realm),
+        // to ReportingObservers and the document's `default` endpoint.
+        def.method("webkitRequestAnimationFrame", 1, |s, w, a| {
+            pyro_webapi::reporting::deprecation(
+                s,
+                &w.target.page,
+                "PrefixedRequestAnimationFrame",
+                "webkitRequestAnimationFrame is vendor-specific. Please use the standard requestAnimationFrame instead.",
+            );
+            let cb = a.get(0).as_object().filter(|f| f.is_function()).ok_or_else(|| {
+                JsError::Type(
+                    "Failed to execute 'webkitRequestAnimationFrame' on 'Window': parameter 1 is not of type 'Function'."
+                        .into(),
+                )
+            })?;
+            request_animation_frame(s, w, Persistent::new(s, cb.value()))
+        });
+        def.method("webkitCancelAnimationFrame", 1, |s, w, a| {
+            pyro_webapi::reporting::deprecation(
+                s,
+                &w.target.page,
+                "PrefixedCancelAnimationFrame",
+                "webkitCancelAnimationFrame is vendor-specific. Please use the standard cancelAnimationFrame instead.",
+            );
+            cancel_animation_frame(s, w, a)
+        });
         def.method("requestIdleCallback", 1, idle::request);
         def.method("cancelIdleCallback", 1, idle::cancel);
         def.accessor("IdleDeadline", idle::interface, idle::replace_interface);
+        // HTML obsolete APIs: they do nothing.
+        def.method("captureEvents", 0, |s, _w, _a| Ok(s.undefined()));
+        def.getter("external", |s, w| pyro_webapi::window::external(s, &w.target.page));
+        def.method("releaseEvents", 0, |s, _w, _a| Ok(s.undefined()));
         def.method_this("reportError", 1, |s, _w, this, a| {
             pyro_webapi::report_error::report_error(s, this, &a, "Window", true)
         });
@@ -281,7 +360,7 @@ impl JsClass for Window {
                 move |s, _| {
                     if let Some(f) = cb.get(s).as_object() {
                         if let Err(e) = f.call(None, &[]) {
-                            s.report_exception(&e);
+                            report_in_callback_realm(s, Some(f), &e);
                         }
                     }
                 },
@@ -291,11 +370,10 @@ impl JsClass for Window {
         });
         def.accessor(
             "location",
-            |s, w| Ok(s.wrap::<Location>(w.nav.clone(), Some(IdentityKey(KEY_LOCATION, 0)))?.value()),
+            |s, w| Ok(location_object(s, w)?.value()),
             |s, w, v| {
                 // `window.location = url` assigns href.
-                let loc = s.wrap::<Location>(w.nav.clone(), Some(IdentityKey(KEY_LOCATION, 0)))?;
-                loc.set("href", v)
+                location_object(s, w)?.set("href", v)
             },
         );
         def.getter("history", |s, w| Ok(s.wrap::<History>(w.nav.clone(), Some(IdentityKey(KEY_HISTORY, 0)))?.value()));
@@ -316,7 +394,8 @@ impl JsClass for Window {
             "NavigationHistoryEntry",
             "NavigationDestination",
             "NavigationTransition",
-            "NavigationCurrentEntryChangeEvent"
+            "NavigationCurrentEntryChangeEvent",
+            "NavigationActivation"
         );
         // [Replaceable], as in Chrome: assignment shadows it on the window.
         def.accessor(
@@ -324,19 +403,25 @@ impl JsClass for Window {
             |s, w| Ok(performance_object(s, w)?.value()),
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "performance", v),
         );
-        // Performance Timeline observers, made on the realm's first use.
-        def.accessor(
-            "PerformanceObserver",
-            |s, w| crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get("PerformanceObserver"),
-            |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "PerformanceObserver", v),
-        );
-        def.accessor(
-            "PerformanceObserverEntryList",
-            |s, w| {
-                crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get("PerformanceObserverEntryList")
-            },
-            |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "PerformanceObserverEntryList", v),
-        );
+        // Performance Timeline observers, made on the realm's first use. Interface objects: a
+        // custom value on the window itself, which reads as an own non-enumerable data property
+        // before the first read (JSC patch 0034) and settles into a plain one on it. Only the
+        // name read settles: an assignment to a custom value bypasses the setter, so settling
+        // the other name here could overwrite a value the page assigned.
+        macro_rules! observer_interfaces {
+            ($($name:literal),*) => {$(
+                def.global_value_accessor(
+                    $name,
+                    |s, w| {
+                        let value = crate::nav::observer_module(s, performance_object(s, w)?, &w.nav)?.get($name)?;
+                        pyro_webapi::window::replace_window_interface(s, &w.target.page, $name, value)?;
+                        Ok(value)
+                    },
+                    |s, w, v| pyro_webapi::window::replace_window_interface(s, &w.target.page, $name, v),
+                );
+            )*};
+        }
+        observer_interfaces!("PerformanceObserver", "PerformanceObserverEntryList");
         def.getter("top", |s, w| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => host.relation(s, key, true),
             _ => Ok(s.global().value()),
@@ -349,13 +434,22 @@ impl JsClass for Window {
             },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "parent", v),
         );
+        // HTML `closed`: true once the window's browsing context is gone (its container, or an
+        // ancestor's, was removed and the frame detached; or its document was detached).
+        def.getter("closed", |s, w| {
+            let gone = match (w.frames.upgrade(), w.frame) {
+                (Some(host), Some(key)) => host.with_frame(key, |_| ()).is_none(),
+                _ => false,
+            };
+            Ok(s.boolean(gone || w.target.page.is_detached() || w.target.page.is_disposed()))
+        });
         def.getter("frameElement", |s, w| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => host.frame_element(s, key),
             _ => Ok(s.null()),
         });
         // `window.name`: the name of the window's navigable. A child frame
-        // takes it from its iframe's `name` attribute when it is created (and
-        // when the attribute changes), a popup from `window.open`.
+        // takes it from its iframe's `name` attribute when it is created (not
+        // when the attribute changes later), a popup from `window.open`.
         def.accessor(
             "name",
             |s, w| {
@@ -407,7 +501,13 @@ impl JsClass for Window {
             },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "length", v),
         );
-        def.getter("origin", |s, _| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
+        // [Replaceable] (WindowOrWorkerGlobalScope): assignment shadows it
+        // with an own data property; the realm's origin is left as it is.
+        def.accessor(
+            "origin",
+            |s, _| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))),
+            |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "origin", v),
+        );
         def.indexed(|s, w, index| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => {
                 host.child_keys(key).get(index as usize).map(|target| host.window_value(s, key, *target)).transpose()
@@ -430,6 +530,18 @@ impl JsClass for Window {
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "frames", v),
         );
         def.getter("isSecureContext", |s, w| Ok(s.boolean(is_secure_context(w))));
+        // HTML: whether the surrounding agent's cluster is origin-keyed. An opaque origin is its own
+        // site, so always; otherwise what the first document of the origin in the browsing context
+        // group decided (`FrameHost::record_origin_keying`). No COOP/COEP isolation here, which would
+        // also make it true.
+        def.getter("originAgentCluster", |s, w| {
+            // This window's document's origin (`opaque:...` for an opaque one), whichever realm asks.
+            let origin = w.target.page.origin_key();
+            let keyed = origin.starts_with("opaque")
+                || w.target.page.has_opaque_origin()
+                || w.frames.upgrade().is_some_and(|host| host.origin_keyed(&origin));
+            Ok(s.boolean(keyed))
+        });
         def.method("__lpNow", 0, |s, w, _a| Ok(s.number(w.now_ms())));
         // Window post message steps: from the window whose script is running.
         def.method("postMessage", 1, |s, w, a| {
@@ -466,8 +578,8 @@ pub(crate) fn frame_chain_secure(host: &crate::frames::FrameHost, mut key: crate
     loop {
         // A popup's about:blank / about:srcdoc document: its creator's state (`FrameHost::creator_secure`),
         // which already covers the creator's ancestors; it ends the walk, for the popup itself and for
-        // the frames inside it.
-        if key.child.is_none() && matches!(url.as_str(), "about:blank" | "about:srcdoc") {
+        // the frames inside it. Any URL that matches about:blank counts (`about:blank#foo`).
+        if key.child.is_none() && (crate::matches_about_blank(&url) || url == "about:srcdoc") {
             if let Some(secure) = host.creator_secure.get() {
                 return secure;
             }
@@ -508,19 +620,44 @@ fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> Js
         return Ok(s.number(0.0));
     }
     let handler = a.get(0);
-    // WebIDL `long timeout = 0`: conversion errors propagate.
-    let delay = a.get(1).to_number()?;
-    let delay = if delay.is_finite() && delay > 0.0 { delay.min(i32::MAX as f64) as u64 } else { 0 };
+    // A string handler (`TimerHandler` is `(Function or TrustedScript or DOMString)`): converted
+    // and checked now (Trusted Types, then CSP's string compilation check, as Chrome: blocked, it
+    // returns 0 and sets nothing), compiled when the timer runs (HTML "timer initialization
+    // steps"), so a SyntaxError is reported then and does not throw from setTimeout.
     let cb = if handler.is_function() {
         Persistent::new(s, handler)
     } else {
-        // String handler: compiled as a function body in the global scope.
-        let src = handler.to_string()?;
-        let f = s.eval(&format!("(function () {{\n{src}\n}})"), Some(&w.url()), 1)?;
-        Persistent::new(s, f)
+        let sink = if repeat { "Window setInterval" } else { "Window setTimeout" };
+        match pyro_webapi::trusted_types::timer_handler_source(s, &w.target.page, handler, sink)? {
+            Some(source) => Persistent::new(s, s.string(&source)),
+            None => return Ok(s.number(0.0)),
+        }
     };
+    // WebIDL `long timeout = 0`: conversion errors propagate.
+    let delay = webidl_long(a.get(1).to_number()?);
+    let delay = u64::try_from(delay).unwrap_or(0);
     let args: Vec<Persistent> = a.iter().skip(2).map(|v| Persistent::new(s, v)).collect();
     schedule(s, w, cb, args, delay, repeat)
+}
+
+/// Web IDL "invoke a callback function": an exception the callback throws is reported in the
+/// callback's realm (its Window's `error` event), not in the realm that called it; a callback whose
+/// realm is gone reports in the caller's.
+fn report_in_callback_realm(scope: &Scope<'_>, callback: Option<pyro_js::Object<'_>>, error: &JsError) {
+    let realm = callback.and_then(|f| scope.object_realm(f)).filter(|r| !r.is_disposed());
+    match realm.as_ref().and_then(|r| r.scope().ok()) {
+        Some(callback_scope) => callback_scope.report_exception(error),
+        None => scope.report_exception(error),
+    }
+}
+
+/// WebIDL ToInt32 for `long`: NaN and infinities are 0, the rest truncates and wraps modulo 2^32
+/// (`setTimeout(f, 2 ** 32)` waits 0 ms, `2 ** 31` is negative and so 0 too).
+fn webidl_long(n: f64) -> i32 {
+    if !n.is_finite() {
+        return 0;
+    }
+    n.trunc().rem_euclid(4_294_967_296.0) as u32 as i32
 }
 
 /// HTML timer nesting: a timer set from a timer task more than this many
@@ -575,19 +712,28 @@ fn arm_timer(realm_weak: pyro_js::WeakRealm, w: &WindowData, timer: JsTimer, lev
         if !repeat {
             w.timers.borrow_mut().remove(&handle);
         }
-        let Some(f) = timer.cb.get(&scope).as_object() else { return };
+        // A string handler compiles now, each time it runs, as a function body in the global
+        // scope; a SyntaxError is reported like the callback's own exception.
+        let cb = timer.cb.get(&scope);
+        let compiled = if cb.is_string() {
+            cb.to_string().and_then(|src| scope.eval(&format!("(function () {{\n{src}\n}})"), Some(&w.url()), 1))
+        } else {
+            Ok(cb)
+        };
+        let callee = compiled.as_ref().ok().and_then(|f| f.as_object());
         let run_level = level.get();
         let outer = w.timer_nesting.replace(run_level);
         // Arguments are rooted by `args` (Persistent) while this call runs.
         let vals: Vec<Value<'_>> = timer.args.iter().map(|p| p.get(&scope)).collect();
-        let result = if run_level > TIMER_NESTING_LIMIT {
-            call_nested_timer(&scope, w, f, &vals)
-        } else {
-            f.call(None, &vals).map(|_| ())
+        let result = match compiled.map(|f| f.as_object()) {
+            Err(e) => Err(e),
+            Ok(None) => Ok(()),
+            Ok(Some(f)) if run_level > TIMER_NESTING_LIMIT => call_nested_timer(&scope, w, f, &vals),
+            Ok(Some(f)) => f.call(None, &vals).map(|_| ()),
         };
         w.timer_nesting.set(outer);
         if let Err(e) = result {
-            scope.report_exception(&e);
+            report_in_callback_realm(&scope, callee, &e);
         }
         if !repeat {
             return;
@@ -659,8 +805,8 @@ fn request_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, cb: Persistent) ->
     if w.target.page.scripting_disabled() {
         return Ok(s.number(0.0));
     }
-    let handle = w.next_handle.get();
-    w.next_handle.set(handle.wrapping_add(1).max(1));
+    let handle = w.next_frame_handle.get();
+    w.next_frame_handle.set(handle.wrapping_add(1).max(1));
     let mut frame = w.animation.borrow_mut();
     let depth = frame.running.map_or(0, |d| d.saturating_add(1));
     frame.callbacks.push((handle, cb, depth));
@@ -726,6 +872,20 @@ fn clear_frame_timers(w: &WindowData) {
     }
 }
 
+/// The NavigationActivation of a cross-document navigation of this realm's document to `url`
+/// (navigation.js `activation`), for its `pageswap` event; `ty` is its navigation type.
+pub(crate) fn navigation_activation(scope: &Scope<'_>, ty: &str, url: &str) -> Option<Persistent> {
+    let w = scope.global_data::<Window>()?;
+    let make = crate::nav::navigation_module(scope, &w.nav).ok()?.get("activation").ok()?.as_object()?;
+    match make.call(None, &[scope.string(ty), scope.string(url)]) {
+        Ok(activation) => Some(Persistent::new(scope, activation)),
+        Err(e) => {
+            scope.report_exception(&e);
+            None
+        }
+    }
+}
+
 fn run_animation_frame(scope: &Scope<'_>) {
     let Some(w) = scope.global_data::<Window>() else { return };
     // A render-blocked document (a pending render-blocking stylesheet or
@@ -739,7 +899,12 @@ fn run_animation_frame(scope: &Scope<'_>) {
             let Ok(scope) = realm.scope() else { return };
             let Some(w) = scope.global_data::<Window>() else { return };
             let mut frame = w.animation.borrow_mut();
-            if frame.timer.is_none() && !(frame.callbacks.is_empty() && frame.native_callbacks.is_empty()) {
+            // (A smooth scroll that was running when rendering blocked needs a frame too, though
+            // no callback asks for one: it would stall otherwise.)
+            if frame.timer.is_none()
+                && (!(frame.callbacks.is_empty() && frame.native_callbacks.is_empty())
+                    || pyro_webapi::smooth_scroll::running(&w.target.page))
+            {
                 let realm_weak = realm.downgrade();
                 frame.timer = Some(w.sched.set_timer(Duration::ZERO, false, true, move |_browser: &mut Browser| {
                     let Some(realm) = realm_weak.upgrade() else { return };
@@ -750,7 +915,16 @@ fn run_animation_frame(scope: &Scope<'_>) {
         }));
         return;
     }
-    pyro_webapi::layout_api::flush_pending_scrolls(&w.target.page);
+    // HTML "update the rendering": a document's first rendering update reveals it (`pagereveal`),
+    // then autofocus candidates flush before the scroll steps.
+    pyro_webapi::lifecycle::reveal(&w.target.page);
+    pyro_webapi::lifecycle::flush_autofocus_candidates(&w.target.page);
+    // The resize steps: child frames resized since the last update (an autofocus listener may
+    // have resized one) fire `resize` before the animation frame callbacks.
+    pyro_webapi::PageDom::run_pending_frame_resizes();
+    // The scroll steps: the initial snap, running smooth scrolls advance a frame (CSSOM View
+    // § 4.1), then the scroll and snap events.
+    pyro_webapi::layout_api::run_frame_scroll_steps(&w.target.page);
     // pyro: the frame determines `content-visibility: auto` relevance anew (CSS Contain 2 § 4.1).
     pyro_webapi::layout_api::content_visibility_frame(&w.target.page);
     // The style update of the frame before this one, when the document changed since and none
@@ -760,6 +934,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // the document before its first animation frame callback runs. One flag and stamp check
     // for a document that neither animates nor transitions, or did not change.
     w.target.page.update_animations();
+    // pyro: the `contentvisibilityautostatechange` events of the relevance the frame determined,
+    // before its callbacks (CSS Contain 2 § 4.1; none, and no layout, without a listener).
+    pyro_webapi::layout_api::content_visibility_events(&w.target.page);
     let (handles, native): (Vec<u32>, _) = {
         clear_frame_timers(w);
         let mut frame = w.animation.borrow_mut();
@@ -780,7 +957,7 @@ fn run_animation_frame(scope: &Scope<'_>) {
         };
         let Some(f) = cb.get(scope).as_object() else { continue };
         if let Err(e) = f.call(None, &[now]) {
-            scope.report_exception(&e);
+            report_in_callback_realm(scope, Some(f), &e);
         }
     }
     w.animation.borrow_mut().running = None;
@@ -790,7 +967,19 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // The frame's style update: what its callbacks changed starts transitions
     // and animations now (the next frame's callbacks see them running).
     w.target.page.update_animations();
+    // pyro: the frame's ResizeObserver step: last remembered sizes (CSS Sizing 4 § 5.1) are
+    // recorded after its callbacks, on the layout they leave (WPT css-sizing
+    // `contain-intrinsic-size/auto-006`: two frames, then skipping uses the size).
+    pyro_webapi::layout_api::record_remembered_sizes(&w.target.page);
+    // HTML "update the rendering": the focused element loses focus when it is no longer
+    // rendered (the focus fixup rule, after the frame's style update).
+    pyro_webapi::input::run_rendering_focus_fixup(&w.target.page);
+    // HTML-in-Canvas: the `paint` events of `<canvas content=drawable>` (none without one).
+    pyro_webapi::html_in_canvas::run_paint_step(&w.target.page);
     w.target.page.sync_frame_resources();
+    // pyro: a smooth scroll still running asks for the next frame (its frame timers were cleared
+    // above).
+    pyro_webapi::smooth_scroll::request_frames(&w.target.page);
 }
 
 fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value<'s>> {
@@ -799,16 +988,23 @@ fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value
         let handle = n as u32;
         if let Some((id, _)) = w.timers.borrow_mut().remove(&handle) {
             w.sched.clear_timer(id);
-        } else {
-            // Timer and animation frame handles share one sequence, so either
-            // clear function cancels either kind (as before).
-            let mut frame = w.animation.borrow_mut();
-            if let Some(i) = frame.callbacks.iter().position(|(h, _, _)| *h == handle) {
-                frame.callbacks.remove(i);
-                if frame.callbacks.is_empty() && frame.native_callbacks.is_empty() {
-                    for id in [frame.timer.take(), frame.backup.take()].into_iter().flatten() {
-                        w.sched.clear_timer(id);
-                    }
+        }
+    }
+    Ok(s.undefined())
+}
+
+/// `cancelAnimationFrame(handle)`: animation frame handles are their own sequence, so only an
+/// animation frame callback is cancelled (and `clearTimeout` never cancels one).
+fn cancel_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let n = a.get(0).to_number()?;
+    if n.is_finite() && n >= 1.0 && n <= u32::MAX as f64 {
+        let handle = n as u32;
+        let mut frame = w.animation.borrow_mut();
+        if let Some(i) = frame.callbacks.iter().position(|(h, _, _)| *h == handle) {
+            frame.callbacks.remove(i);
+            if frame.callbacks.is_empty() && frame.native_callbacks.is_empty() {
+                for id in [frame.timer.take(), frame.backup.take()].into_iter().flatten() {
+                    w.sched.clear_timer(id);
                 }
             }
         }

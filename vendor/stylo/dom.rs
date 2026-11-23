@@ -499,6 +499,11 @@ pub trait TElement:
     /// Get this element's style attribute.
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>>;
 
+    /// Original input of the parsed inline block, when the embedder reparses CSS.
+    fn style_attribute_source(&self) -> Option<&str> {
+        None
+    }
+
     /// Get this element's SMIL override declarations.
     fn smil_override(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
         None
@@ -955,6 +960,16 @@ pub trait TElement:
     /// Last layout's selected fallback, if any.
     fn query_anchored_fallback(&self) -> Option<crate::values::specified::position::PositionTryFallbacksItem> { None }
 
+    /// pyro: the writing mode of this element's containing block at the last layout, for
+    /// `anchored()` container queries; None before a layout placed it.
+    fn query_anchored_containing_block_writing_mode(&self) -> Option<crate::logical_geometry::WritingMode> { None }
+
+    /// pyro: the edges this element, as a scroll-state query container, can be scrolled towards
+    /// at the last layout's scroll position (the `scrollable` scroll-state feature).
+    fn query_scrollable_edges(&self) -> crate::stylesheets::container_rule::ScrollableEdges {
+        Default::default()
+    }
+
     /// Returns true if the element has all of specified selector flags.
     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool;
 
@@ -976,6 +991,9 @@ pub trait TElement:
 
     /// Return the value of the given custom attribute if it exists.
     fn get_attr(&self, attr: &LocalName, namespace: &Namespace) -> Option<String>;
+
+    /// DOM position supplied by an embedder that lays out a flattened tree.
+    fn original_sibling_position(&self) -> Option<TreeCountingResult> { None }
 
     /// Traverse the siblings of the element, returning the element's sibling-index()
     /// and sibling-count(). Also populates `caches` with the sibling-index() and
@@ -1006,7 +1024,16 @@ pub trait TElement:
 
 /// Provides element-level context needed during style computation.
 pub trait ElementContext {
-    /// Opaque handle to the element.
+    /// Looks up a function in the reference tree or an enclosing host tree.
+    fn lookup_function(&self, stylist: &crate::stylist::Stylist, _: crate::rule_tree::CascadeLevel, name: &crate::Atom, _: usize)
+        -> Option<(Arc<crate::stylesheets::FunctionRule>, usize)> {
+        stylist.iter_extra_data_origins().find_map(|(data, _)| data.functions.get(name).cloned()).map(|rule| (rule, usize::MAX))
+    }
+
+    /// DOM sibling position if a flattened-tree embedder supplies it directly.
+    fn original_sibling_position(&self) -> Option<TreeCountingResult> { None }
+
+    /// The element identity for traversal caches.
     fn opaque_element(&self) -> Option<OpaqueElement>;
 
     /// Opaque handle to the element's parent node.
@@ -1026,6 +1053,24 @@ pub trait ElementContext {
 }
 
 impl<T: TElement> ElementContext for T {
+    fn lookup_function(&self, stylist: &crate::stylist::Stylist, scope: crate::rule_tree::CascadeLevel, name: &crate::Atom, skip: usize)
+        -> Option<(Arc<crate::stylesheets::FunctionRule>, usize)> {
+        let mut shadow = scope.get_shadow_root_for_scoped(*self);
+        let mut depth = 0;
+        while let Some(root) = shadow {
+            if depth >= skip && let Some(rule) = root.style_data().and_then(|d| d.function_by_name(name)) {
+                return Some((rule.clone(), depth));
+            }
+            depth += 1;
+            shadow = root.host().containing_shadow();
+        }
+        stylist.iter_extra_data_origins().find_map(|(data, _)| data.functions.get(name).cloned()).map(|rule| (rule, usize::MAX))
+    }
+
+    fn original_sibling_position(&self) -> Option<TreeCountingResult> {
+        TElement::original_sibling_position(self)
+    }
+
     fn opaque_element(&self) -> Option<OpaqueElement> {
         Some(self.opaque())
     }

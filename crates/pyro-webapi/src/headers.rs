@@ -16,6 +16,9 @@ pub struct HeaderList {
     /// Fetch's "request" (`Some(false)`) or "request-no-cors" (`Some(true)`)
     /// guard: forbidden request headers are silently not set.
     request_guard: Option<bool>,
+    /// Fetch's "response" guard: forbidden response-header names are
+    /// silently not set or removed.
+    response_guard: bool,
 }
 impl HeaderList {
     fn append(&mut self, name: String, value: String) {
@@ -59,10 +62,18 @@ impl HeadersData {
         self.0.borrow_mut().request_guard = Some(no_cors);
         self
     }
+    /// The headers of a Response script made: its guard is "response".
+    pub(crate) fn guard_response(self) -> Self {
+        self.0.borrow_mut().response_guard = true;
+        self
+    }
     /// Whether the guard lets script write `name: value` (`value` is the
     /// value the header would have, `None` for a removal).
     fn guard_allows(&self, name: &str, value: Option<&str>) -> bool {
         let list = self.0.borrow();
+        if list.response_guard {
+            return !matches!(name, "set-cookie" | "set-cookie2");
+        }
         let Some(no_cors) = list.request_guard else { return true };
         if crate::fetch::forbidden_request_header(name, value.unwrap_or("")) {
             return false;
@@ -77,6 +88,23 @@ impl HeadersData {
     }
     pub(crate) fn pairs(&self) -> Vec<(String, String)> {
         self.0.borrow().values.iter().map(|(n, values)| (n.clone(), values.join(", "))).collect()
+    }
+    pub(crate) fn mime_type(&self) -> Option<data_url::mime::Mime> {
+        let list = self.0.borrow();
+        let values = list.values.get("content-type")?;
+        match values.as_slice() {
+            [value] => crate::fetch::extract_mime(value),
+            _ => crate::fetch::extract_mime(&values.join(", ")),
+        }
+    }
+    /// The `Content-Type` value as Chrome (157-159) gives a Body's Blob its type, for a
+    /// response from the network and a script's Request or Response alike: the combined value,
+    /// ASCII-lowercased and unparsed; "" with a byte outside 0x20..0x7E (as a Blob's type).
+    pub(crate) fn content_type_lowercase(&self) -> Option<String> {
+        let list = self.0.borrow();
+        let values = list.values.get("content-type")?;
+        let value = values.join(", ").to_ascii_lowercase();
+        Some(if value.bytes().all(|b| (0x20..=0x7e).contains(&b)) { value } else { String::new() })
     }
     /// Whether a (lowercase) header name is present.
     pub(crate) fn contains(&self, name: &str) -> bool {

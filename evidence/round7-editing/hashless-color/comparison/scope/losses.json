@@ -1,0 +1,314 @@
+[
+  {
+    "fixture": {
+      "css": false,
+      "shape": "spanning",
+      "value": "000000fff"
+    },
+    "stage": "afterTyping",
+    "field": "anchor",
+    "parent": [
+      [
+        0,
+        0
+      ],
+      1
+    ],
+    "first": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "final": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "signed": [
+      [
+        0,
+        0
+      ],
+      1
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "spanning",
+      "value": "000000fff"
+    },
+    "stage": "afterTyping",
+    "field": "focus",
+    "parent": [
+      [
+        0,
+        0
+      ],
+      1
+    ],
+    "first": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "final": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "signed": [
+      [
+        0,
+        0
+      ],
+      1
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "spanning",
+      "value": "  123  "
+    },
+    "stage": "afterTyping",
+    "field": "anchor",
+    "parent": [
+      [
+        0,
+        0
+      ],
+      1
+    ],
+    "first": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "final": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "signed": [
+      [
+        0,
+        0
+      ],
+      1
+    ]
+  },
+  {
+    "fixture": {
+      "css": false,
+      "shape": "spanning",
+      "value": "  123  "
+    },
+    "stage": "afterTyping",
+    "field": "focus",
+    "parent": [
+      [
+        0,
+        0
+      ],
+      1
+    ],
+    "first": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "final": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "signed": [
+      [
+        0,
+        0
+      ],
+      1
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "spanning",
+      "value": "000000fff"
+    },
+    "stage": "afterTyping",
+    "field": "anchor",
+    "parent": [
+      [
+        0,
+        0
+      ],
+      1
+    ],
+    "first": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "final": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "signed": [
+      [
+        0,
+        0
+      ],
+      1
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "spanning",
+      "value": "000000fff"
+    },
+    "stage": "afterTyping",
+    "field": "focus",
+    "parent": [
+      [
+        0,
+        0
+      ],
+      1
+    ],
+    "first": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "final": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "signed": [
+      [
+        0,
+        0
+      ],
+      1
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "spanning",
+      "value": "  123  "
+    },
+    "stage": "afterTyping",
+    "field": "anchor",
+    "parent": [
+      [
+        0,
+        0
+      ],
+      1
+    ],
+    "first": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "final": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "signed": [
+      [
+        0,
+        0
+      ],
+      1
+    ]
+  },
+  {
+    "fixture": {
+      "css": true,
+      "shape": "spanning",
+      "value": "  123  "
+    },
+    "stage": "afterTyping",
+    "field": "focus",
+    "parent": [
+      [
+        0,
+        0
+      ],
+      1
+    ],
+    "first": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "final": [
+      [
+        0,
+        0,
+        0
+      ],
+      1
+    ],
+    "signed": [
+      [
+        0,
+        0
+      ],
+      1
+    ]
+  }
+]

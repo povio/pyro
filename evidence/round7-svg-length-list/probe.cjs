@@ -1,0 +1,35 @@
+const http=require('node:http'),fs=require('node:fs'),net=require('node:net'),path=require('node:path'),cp=require('node:child_process'),os=require('node:os');
+const w=__dirname,ref=path.join(path.dirname(w),'round6-reference-158/census'),pw=require(path.join(ref,'runner/node_modules/playwright-core'));
+const [label,explicit]=process.argv.slice(2);
+const server=http.createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<!doctype html><body style="margin:0">');});
+const listen=s=>new Promise(r=>s.listen(0,'127.0.0.1',()=>r(s.address().port)));
+(async()=>{const port=await listen(server),sock=net.createServer(),cdp=await listen(sock);await new Promise(r=>sock.close(r));let proc,b;
+ try{const bin=explicit||path.join(ref,'launch-158');
+ const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'r7-svg-fixture-'));
+ proc=cp.spawn(bin,['serve','--host','127.0.0.1','--port',String(cdp),'--log-level','error','--load-resources','stylesheet','--load-resources','iframe'],{stdio:'ignore',env:{...process.env,WPT_CHROME_STATE_DIR:tmp,WPT_CHROME_REFERENCE_MODE:'wpt-stable'}});
+ for(let i=0;i<120;i++){try{if((await fetch('http://127.0.0.1:'+cdp+'/json/version')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
+ b=await pw.chromium.connectOverCDP('http://127.0.0.1:'+cdp);const page=await b.newPage();await page.goto('http://127.0.0.1:'+port+'/page');
+ const values=await page.evaluate(async()=>{
+   const out={surface:[typeof SVGLengthList,typeof SVGAnimatedLengthList]};
+   if(typeof SVGLengthList!=="function")return out;
+   const NS="http://www.w3.org/2000/svg";
+   const el=(name,parent)=>parent.appendChild(document.createElementNS(NS,name));
+   const svg=el("svg",document.body);svg.setAttribute("width","200");svg.setAttribute("height","100");
+   const text=el("text",svg),span=el("tspan",text);text.setAttribute("font-size","10");
+   text.setAttribute("x","10%, 2cm 1em");text.setAttribute("y","10%");text.setAttribute("dx","4");span.setAttribute("dy","25%");
+   const x=text.x.baseVal,anim=text.x.animVal,item=x.getItem(0);
+   const round=v=>Math.round(v*10000)/10000;
+   out.coordinates=[x.numberOfItems,...Array.from(x,v=>round(v.value)),round(text.y.baseVal[0].value),round(span.dy.baseVal[0].value)];
+   out.identity=[text.x===text.x,text.x!==text.y,text.x.baseVal===x,anim!==x,x[0]===item,anim[0]!==item];
+   item.valueInSpecifiedUnits=20;out.mutation=[item.valueAsString,round(item.value),anim[0].valueAsString,text.getAttribute("x")];
+   const fail=fn=>{try{fn();return 'ok'}catch(e){return e.name}};
+   out.readonly=[fail(()=>anim.clear()),fail(()=>anim[0].value=5),fail(()=>x.getItem(100)),fail(()=>x.appendItem({}))];
+   const created=svg.createSVGLength();created.valueAsString="3cm";const inserted=text.dx.baseVal.appendItem(created);
+   const copy=x.appendItem(inserted);out.insert=[inserted===created,copy!==inserted,copy.valueAsString,text.dx.baseVal.length];
+   const removed=x.removeItem(x.length-1);removed.valueAsString="4px";out.remove=[removed===copy,inserted.valueAsString,text.getAttribute("dx")];
+   text.setAttribute("x","1px 4px");out.reparse=[x[0]===item,x[0].valueAsString,item.valueAsString,x.length];
+   text.setAttribute("x","1 trailing-garbage");out.invalid=x.length;
+   return out;
+ });
+ fs.writeFileSync(path.join(w,label+'-probe.json'),JSON.stringify(values,null,2));
+ }finally{if(b)await b.close();if(proc)proc.kill();server.close()}})().catch(e=>{console.error(e);process.exitCode=1});

@@ -720,7 +720,7 @@ fn run_in_into(doc: &BaseDocument, target: NodeId) -> Option<NodeId> {
 /// box that is a `legend` (looking through `display: contents`), unless that is floated or
 /// absolutely positioned (HTML § 15.3.13). WPT css-display
 /// `display-contents-dynamic-fieldset-legend-001`.
-fn place_rendered_legend(doc: &BaseDocument, container: NodeId, out: &mut LayoutChildren) {
+fn place_rendered_legend(doc: &mut BaseDocument, container: NodeId, out: &mut LayoutChildren) {
     let node = &doc.nodes[container];
     if !node.is_fieldset() || node.flags.is_inline_root() {
         return;
@@ -741,6 +741,22 @@ fn place_rendered_legend(doc: &BaseDocument, container: NodeId, out: &mut Layout
     if index > 0 {
         let id = out.children.remove(index);
         out.children.insert(0, id);
+        // pyro: the legend is outside the fieldset's anonymous content box, so the inline content
+        // on either side of it is one run (a `::before` and the text after the legend share a
+        // line): the anonymous blocks it separated become one (WPT `fieldset-generated-content`).
+        let before = out.children[index];
+        if let Some(&after) = out.children.get(index + 1) {
+            if out.anonymous_blocks.contains(&before) && out.anonymous_blocks.contains(&after) {
+                let moved = std::mem::take(&mut doc.nodes[after].children);
+                doc.nodes[before].children.extend(moved);
+                out.children.remove(index + 1);
+                out.anonymous_blocks.retain(|&block| block != after);
+                if out.anonymous_block_id == Some(after) {
+                    out.anonymous_block_id = Some(before);
+                }
+                doc.remove_node_from_tree(after);
+            }
+        }
     }
 }
 
@@ -778,6 +794,20 @@ fn place_inside_marker(doc: &mut BaseDocument, item: NodeId, out: &mut LayoutChi
     if let Some(element) = doc.nodes[block].element_data_mut() {
         element.list_item_data = Some(Box::new(marker));
     }
+}
+
+/// pyro: whether `node` is a drop-down select of base appearance (`appearance: base-select`,
+/// a customizable select) whose picker is open (`:open`, from pyro-dom's state tokens): its
+/// options, groups and separators have boxes, laid out below the select.
+pub(crate) fn is_open_base_select(node: &crate::node::Node) -> bool {
+    node.element_data().is_some_and(|el| {
+        el.name.local == local_name!("select")
+            && el.element_state.contains(style_dom::ElementState::OPEN)
+            && el.attr(local_name!("multiple")).is_none()
+            && el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_none_or(|s| s <= 1)
+    }) && node
+        .primary_styles()
+        .is_some_and(|s| *s.get_box().get_appearance() == style::computed_values::appearance::T::BaseSelect)
 }
 
 fn collect_layout_children_with_wrap(
@@ -818,7 +848,8 @@ fn collect_layout_children_with_wrap(
     // pyro: `content-visibility: hidden` skips the element's contents: no boxes are built for them,
     // so they are neither laid out nor painted (CSS Contain 2 § 4.1; Stylo adds the size
     // containment). Form controls build their own contents and keep them; an element containment
-    // does not apply to (an inline box, `display: contents`) is not affected.
+    // does not apply to (an inline box, `display: contents`) is not affected. A geometry query
+    // forces them to be built until the next frame (`NodeFlags::CV_HIDDEN_FORCED`).
     let skips_contents = doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| {
         !matches!(el.name.local.as_ref(), "input" | "textarea" | "select")
     }) && doc.nodes[container_node_id].display_style().is_some_and(|display| {
@@ -831,10 +862,17 @@ fn collect_layout_children_with_wrap(
             && display.inside() != DisplayInside::Table
             && display.outside() != style::values::specified::box_::DisplayOutside::InternalTable
     }) && (doc.nodes[container_node_id].flags.contains(crate::node::NodeFlags::CV_SKIPPED)
-        || doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
-            style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
-        }));
+        || (!doc.nodes[container_node_id].flags.contains(crate::node::NodeFlags::CV_HIDDEN_FORCED)
+            && doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
+                style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
+            })));
     if skips_contents {
+        return;
+    }
+
+    // pyro: an ordinary MathML fraction: its numerator and denominator are its layout children
+    // (`layout::math`).
+    if super::math::construct_fraction(doc, container_node_id, &mut out.children) {
         return;
     }
 
@@ -873,7 +911,7 @@ fn collect_layout_children_with_wrap(
         el.name.local == local_name!("select")
             && (el.attr(local_name!("multiple")).is_some()
                 || el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|s| s > 1))
-    });
+    }) || is_open_base_select(&doc.nodes[container_node_id]);
     if listbox_select {
         doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
             if id != container_node_id {
@@ -917,7 +955,9 @@ fn collect_layout_children_with_wrap(
                     .attr(local_name!("size"))
                     .and_then(|s| s.trim().parse::<u32>().ok())
                     .is_some_and(|s| s > 1);
-            if !listbox {
+            // pyro: an open customizable select's picker shows its options as a list box does
+            // (laid out below the select: `BaseDocument::lay_out_select_picker`).
+            if !listbox && !is_open_base_select(&doc.nodes[container_node_id]) {
                 doc.iter_subtree_mut(container_node_id, |id: NodeId, doc: &mut BaseDocument| {
                     doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
                 });
@@ -2271,6 +2311,14 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                             layout_children.push(node_id);
                         } else {
                             node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                            // pyro: an inline box is no inline root. One that was built as one (an
+                            // inline-block made inline again) kept the flag, as only a box built as
+                            // a container resets it, and a geometry query would read the box's own
+                            // stale layout in place of its fragments (`Node::is_non_atomic_inline`).
+                            // An initial letter box stays one.
+                            if !node.flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX) {
+                                node.flags.remove(NodeFlags::IS_INLINE_ROOT);
+                            }
                             iter_children_and_pseudos!(nodes[node_id], |child_id| {
                                 crate::util::ensure_stack(|| find_inline_layout_embedded_boxes_recursive(
                                     nodes,

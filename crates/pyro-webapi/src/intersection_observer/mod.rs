@@ -224,9 +224,9 @@ impl JsClass for IntersectionObserverEntry {
         def.getter("time", |s, d| Ok(s.number(d.time)));
         def.getter("isIntersecting", |s, d| Ok(s.boolean(d.geometry.intersecting)));
         def.getter("intersectionRatio", |s, d| Ok(s.number(d.geometry.ratio)));
-        def.getter("boundingClientRect", |s, d| crate::layout_api::rect_value(s, d.geometry.target));
-        def.getter("intersectionRect", |s, d| crate::layout_api::rect_value(s, d.geometry.intersection));
-        def.getter("rootBounds", |s, d| crate::layout_api::rect_value(s, d.geometry.bounds));
+        def.getter("boundingClientRect", |s, d| crate::canvas::rect_value(s, &d.target.page, true, d.geometry.target));
+        def.getter("intersectionRect", |s, d| crate::canvas::rect_value(s, &d.target.page, true, d.geometry.intersection));
+        def.getter("rootBounds", |s, d| crate::canvas::rect_value(s, &d.target.page, true, d.geometry.bounds));
     }
 }
 fn entries<'s>(s: &Scope<'s>, records: Vec<PendingEntry>) -> JsResult<Value<'s>> {
@@ -243,6 +243,14 @@ fn entries<'s>(s: &Scope<'s>, records: Vec<PendingEntry>) -> JsResult<Value<'s>>
     }
     Ok(s.array(&values.iter(s).collect::<Vec<_>>())?.value())
 }
+/// HTML's lazy loading intersection: whether `target` of `page`'s document intersects the
+/// top-level viewport expanded by the lazy load root margin, through each clipping
+/// ancestor and frame (scroll containers expanded by the same margin). Not being rendered
+/// or not being in a shown document intersects nothing. Syncs layout.
+pub fn lazy_load_intersects(page: &PageDom, target: NodeId) -> bool {
+    geometry::measure(page, &options::lazy_load(), page, target).intersecting
+}
+
 pub(crate) fn after_task(page: &PageDom) {
     if page.is_disposed() {
         return;

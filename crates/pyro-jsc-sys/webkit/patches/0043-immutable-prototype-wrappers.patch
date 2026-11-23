@@ -1,0 +1,210 @@
+Pyro patch 0043: WindowProxy and Location refuse prototype changes and non-extensibility.
+
+HTML's Location object and the cross-origin Window and Location objects keep their prototype
+([[SetPrototypeOf]] is SetImmutablePrototype) and refuse [[PreventExtensions]]; a WindowProxy
+refuses [[PreventExtensions]] too. JavaScript cannot give a callback object or the global proxy
+those internal methods.
+
+kJSClassAttributeImmutablePrototype (JSForkPrivate.h) gives a JSClass's wrappers both:
+Object.setPrototypeOf to anything but the current prototype throws (Reflect.setPrototypeOf is
+false) and Object.preventExtensions throws (Reflect.preventExtensions is false).
+JSObjectSetPrototype still sets their prototype for the embedder (a cross-origin object's null).
+JSGlobalContextSetGlobalProxyRefusesPreventExtensions marks a context's global proxy as a
+WindowProxy, which then refuses [[PreventExtensions]] whichever global it reaches.
+
+diff --git a/Source/JavaScriptCore/API/JSCallbackObject.h b/Source/JavaScriptCore/API/JSCallbackObject.h
+index f14e124fe5..1e4b6de4de 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObject.h
++++ b/Source/JavaScriptCore/API/JSCallbackObject.h
+@@ -219,6 +219,8 @@ public:
+     }
+ 
+     using Parent::methodTable;
++    // Pyro patch 0043: keeps JSObject::setPrototype(VM&, ...) visible beside this class's static one.
++    using Parent::setPrototype;
+ 
+     static EncodedJSValue callImpl(JSGlobalObject*, CallFrame*);
+     static EncodedJSValue constructImpl(JSGlobalObject*, CallFrame*);
+@@ -256,6 +258,10 @@ private:
+     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
+ 
++    // Pyro patch 0043: kJSClassAttributeImmutablePrototype.
++    static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
++    static bool preventExtensions(JSObject*, JSGlobalObject*);
++
+     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
+ 
+     static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+diff --git a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+index 472f0aa1c2..ca88267910 100644
+--- a/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
++++ b/Source/JavaScriptCore/API/JSCallbackObjectFunctions.h
+@@ -38,6 +38,7 @@
+ #include "JSString.h"
+ #include "OpaqueJSString.h"
+ #include "PropertyNameArray.h"
++#include "TypeError.h"
+ #include <wtf/Vector.h>
+ 
+ namespace JSC {
+@@ -680,6 +681,30 @@ EncodedJSValue JSCallbackObject<Parent>::constructImpl(JSGlobalObject* globalObj
+     return JSValue::encode(JSValue());
+ }
+ 
++// Pyro patch 0043: a wrapper of a kJSClassAttributeImmutablePrototype class keeps its prototype
++// (SetImmutablePrototype) and stays extensible; any other keeps the ordinary internal methods.
++template <class Parent>
++bool JSCallbackObject<Parent>::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
++{
++    auto* thisObject = uncheckedDowncast<JSCallbackObject>(object);
++    if (!thisObject->classRef()->immutablePrototype)
++        return Parent::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    if (thisObject->getPrototypeDirect() == prototype)
++        return true;
++    return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of immutable prototype object"_s);
++}
++
++template <class Parent>
++bool JSCallbackObject<Parent>::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
++{
++    auto* thisObject = uncheckedDowncast<JSCallbackObject>(object);
++    if (!thisObject->classRef()->immutablePrototype)
++        return Parent::preventExtensions(object, globalObject);
++    return false;
++}
++
+ template <class Parent>
+ bool JSCallbackObject<Parent>::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
+ {
+diff --git a/Source/JavaScriptCore/API/JSClassRef.cpp b/Source/JavaScriptCore/API/JSClassRef.cpp
+index a0cb822539..9e4a8e5b64 100644
+--- a/Source/JavaScriptCore/API/JSClassRef.cpp
++++ b/Source/JavaScriptCore/API/JSClassRef.cpp
+@@ -85,6 +85,7 @@ OpaqueJSClass::OpaqueJSClass(const JSClassDefinition* definition, OpaqueJSClass*
+         && (!parentClass || parentClass->wrappersAreCacheable);
+     impureNamedProperties = !wrappersAreCacheable && (definition->attributes & kJSClassAttributeImpureNamedProperties);
+     immortal = definition->attributes & kJSClassAttributeImmortal;
++    immutablePrototype = (definition->attributes & kJSClassAttributeImmutablePrototype) || (parentClass && parentClass->immutablePrototype);
+     objectsNeedInit = initialize || convertToType || (parentClass && parentClass->objectsNeedInit);
+ }
+ 
+diff --git a/Source/JavaScriptCore/API/JSClassRef.h b/Source/JavaScriptCore/API/JSClassRef.h
+index 0b7d78d678..67d2a34ba8 100644
+--- a/Source/JavaScriptCore/API/JSClassRef.h
++++ b/Source/JavaScriptCore/API/JSClassRef.h
+@@ -148,6 +148,8 @@ struct OpaqueJSClass : public ThreadSafeRefCounted<OpaqueJSClass> {
+     bool impureNamedProperties { false };
+     // kJSClassAttributeImmortal (JSForkPrivate.h).
+     bool immortal { false };
++    // kJSClassAttributeImmutablePrototype (JSForkPrivate.h), this class or a parent's.
++    bool immutablePrototype { false };
+     // Whether a new object of this class has anything to run or to get (an initialize
+     // callback or convertToType, here or in a parent class): JSCallbackObject::init walks the
+     // class chain to find out, per object; a tracked wrapper reads this instead.
+diff --git a/Source/JavaScriptCore/API/JSFork.cpp b/Source/JavaScriptCore/API/JSFork.cpp
+index 5f0b724b1b..32467d246f 100644
+--- a/Source/JavaScriptCore/API/JSFork.cpp
++++ b/Source/JavaScriptCore/API/JSFork.cpp
+@@ -965,3 +965,12 @@ bool JSGlobalContextSetNamedPropertiesChain(JSGlobalContextRef ctx, JSObjectRef
+         proxy->setTarget(vm, globalObject);
+     return true;
+ }
++
++void JSGlobalContextSetGlobalProxyRefusesPreventExtensions(JSGlobalContextRef ctx)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    VM& vm = globalObject->vm();
++    JSLockHolder locker(vm);
++    if (auto* proxy = dynamicDowncast<JSGlobalProxy>(globalObject->globalThis()))
++        proxy->setRefusesPreventExtensions();
++}
+diff --git a/Source/JavaScriptCore/API/JSForkPrivate.h b/Source/JavaScriptCore/API/JSForkPrivate.h
+index e50b4cd92f..43034ae6da 100644
+--- a/Source/JavaScriptCore/API/JSForkPrivate.h
++++ b/Source/JavaScriptCore/API/JSForkPrivate.h
+@@ -97,6 +97,12 @@ JS_EXPORT bool JSGlobalContextSetNamedPropertiesChain(JSGlobalContextRef ctx, JS
+    when `proxy` is not a global proxy of this VM. */
+ JS_EXPORT bool JSGlobalContextAdoptGlobalProxy(JSGlobalContextRef ctx, JSObjectRef proxy);
+ 
++/* Pyro patch 0043: the global proxy of `ctx` (what JSContextGetGlobalObject returns, whichever
++   global it reaches later) refuses [[PreventExtensions]], as HTML's WindowProxy does:
++   Object.preventExtensions(window) throws and Reflect.preventExtensions(window) is false. For
++   window contexts; other globals keep the ordinary behaviour. */
++JS_EXPORT void JSGlobalContextSetGlobalProxyRefusesPreventExtensions(JSGlobalContextRef ctx);
++
+ /* Makes `timeZoneID` the time zone of Date, Intl and Temporal in the VM of `group`
+    alone, from its next outermost entry on; other VMs in the process keep theirs.
+    NULL or "" returns to the host's zone. Returns false, changing nothing, for an ID
+@@ -291,6 +297,13 @@ JS_EXPORT const void* JSValueGetStringCharacters(JSContextRef ctx, JSValueRef va
+    runs its context group. Releasing such a class while an object of it lives is an error. */
+ #define kJSClassAttributeImmortal (1u << 29)
+ 
++/* Pyro patch 0043: a JSClassDefinition attribute for wrappers whose prototype script cannot
++   change and which refuse to become non-extensible (WebIDL's Location, HTML's cross-origin
++   Window and Location objects): [[SetPrototypeOf]] is SetImmutablePrototype (true only for the
++   current prototype; Object.setPrototypeOf throws otherwise) and [[PreventExtensions]] returns
++   false (Object.preventExtensions throws). JSObjectSetPrototype still sets their prototype. */
++#define kJSClassAttributeImmutablePrototype (1u << 28)
++
+ /* Announces that a wrapper of a kJSClassAttributeImpureNamedProperties class may now answer
+    `propertyName`: inline caches and compiled code that assumed otherwise are dropped. Cheap
+    when nothing watches the name. May not run JavaScript; callable with the DOM borrowed. */
+diff --git a/Source/JavaScriptCore/API/JSObjectRef.cpp b/Source/JavaScriptCore/API/JSObjectRef.cpp
+index 2248b27a42..3229752037 100644
+--- a/Source/JavaScriptCore/API/JSObjectRef.cpp
++++ b/Source/JavaScriptCore/API/JSObjectRef.cpp
+@@ -333,6 +333,15 @@ void JSObjectSetPrototype(JSContextRef ctx, JSObjectRef object, JSValueRef value
+ 
+     JSObject* jsObject = toJS(object);
+     JSValue jsValue = toJS(globalObject, value);
++    // Pyro patch 0043: the embedder sets the prototype of a kJSClassAttributeImmutablePrototype
++    // wrapper, which script cannot.
++    JSClassRef jsClass = nullptr;
++    if (auto* callbackObject = dynamicDowncast<JSCallbackObject<JSNonFinalObject>>(jsObject))
++        jsClass = callbackObject->classRef();
++    if (jsClass && jsClass->immutablePrototype) {
++        jsObject->setPrototypeDirect(vm, jsValue.isObject() ? jsValue : jsNull());
++        return;
++    }
+     jsObject->setPrototype(vm, globalObject, jsValue.isObject() ? jsValue : jsNull());
+     handleExceptionIfNeeded(scope, ctx, nullptr);
+ }
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalProxy.cpp b/Source/JavaScriptCore/runtime/JSGlobalProxy.cpp
+index dd6b532afe..e7e8388e8f 100644
+--- a/Source/JavaScriptCore/runtime/JSGlobalProxy.cpp
++++ b/Source/JavaScriptCore/runtime/JSGlobalProxy.cpp
+@@ -103,6 +103,9 @@ bool JSGlobalProxy::isExtensible(JSObject* object, JSGlobalObject* globalObject)
+ bool JSGlobalProxy::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
+ {
+     JSGlobalProxy* thisObject = uncheckedDowncast<JSGlobalProxy>(object);
++    // Pyro patch 0043: HTML's WindowProxy [[PreventExtensions]] returns false.
++    if (thisObject->m_refusesPreventExtensions)
++        return false;
+     return thisObject->target()->methodTable()->preventExtensions(thisObject->target(), globalObject);
+ }
+ 
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalProxy.h b/Source/JavaScriptCore/runtime/JSGlobalProxy.h
+index 4271140cb4..771f12ec31 100644
+--- a/Source/JavaScriptCore/runtime/JSGlobalProxy.h
++++ b/Source/JavaScriptCore/runtime/JSGlobalProxy.h
+@@ -67,6 +67,9 @@ public:
+ 
+     JS_EXPORT_PRIVATE void setTarget(VM&, JSGlobalObject*);
+ 
++    // Pyro patch 0043 (JSGlobalContextSetGlobalProxyRefusesPreventExtensions): a WindowProxy.
++    void setRefusesPreventExtensions() { m_refusesPreventExtensions = true; }
++
+ protected:
+     JSGlobalProxy(VM& vm, Structure* structure, JSGlobalObject* target)
+         : Base(vm, structure)
+@@ -91,6 +94,7 @@ protected:
+ 
+ private:
+     WriteBarrier<JSGlobalObject> m_target;
++    bool m_refusesPreventExtensions { false };
+ };
+ 
+ // Defined here rather than in JSCJSValue.h because it needs JSGlobalProxy to be complete.

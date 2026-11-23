@@ -1,0 +1,88 @@
+name: Native tests
+
+# `cargo test` over the whole workspace (every crate's unit and integration tests), on every pull request and push to
+# main. Until round 7 (#417) nothing ran them in CI, and about 60 broke unnoticed. Runs on GitHub-hosted Ubuntu, beside
+# wpt.yml, so it doesn't queue behind lp-m1's WPT shards. The patched JavaScriptCore comes from jsc-linux.yml, which
+# restores the archive wpt.yml's Linux jobs cache (a cold build happens only when the JSC patches change). Profile
+# wptiter (release-fast without LTO, as the Linux WPT build): the layout/hit-test suites take minutes in debug.
+# Tests marked #[ignore] fail on main for known reasons named in their attribute; run them with `-- --ignored`.
+
+# Manual only for now. Its first Linux runs (#417, c8d3ee02b) failed 46 tests that pass on macOS: Chromium-parity
+# layout and text tests whose numbers were measured with macOS fonts, and engine_reuse's fork-based recycling. Until
+# those are portable (font fixtures or macOS gating, and engine_reuse checked on Linux), a pull request trigger would
+# only be red. List: the follow-up issue "make the native tests portable to Linux".
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jsc-linux-x64:
+    # Never cancel a cold JavaScriptCore build before it saves its cache (as wpt.yml).
+    concurrency:
+      group: native-tests-jsc-linux-x64-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/jsc-linux.yml
+    with:
+      arch: x64
+
+  test:
+    needs: jsc-linux-x64
+    concurrency:
+      group: native-tests-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    # Ubuntu 24.04, as jsc-linux.yml: the JavaScriptCore archive is built against its ICU 74.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CC: clang
+      CXX: clang++
+      JSC_DIR: ${{ needs.jsc-linux-x64.outputs.dir }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Scratch disk
+        run: |
+          if mountpoint -q /mnt; then
+            sudo mkdir -p /mnt/pyro-target && sudo chown "$(id -u):$(id -g)" /mnt/pyro-target && ln -s /mnt/pyro-target target
+          fi
+          df -h . /mnt 2>/dev/null || df -h .
+      - name: Install build dependencies
+        run: scripts/linux/setup.sh
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-jsc-linux-x64
+          path: patched-jsc
+      - name: Install patched JavaScriptCore
+        run: |
+          mkdir -p "$HOME/.cache/pyro/jsc"
+          mv patched-jsc "$HOME/.cache/pyro/jsc/$JSC_DIR"
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wpt-registry-linux-x64
+          cache-targets: false
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.head_ref, 'integration/') }}
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: cargo test
+        env:
+          SCCACHE_GHA_ENABLED: 'true'
+          RUSTC_WRAPPER: sccache
+          CARGO_PROFILE_WPTITER_INHERITS: release-fast
+          CARGO_PROFILE_WPTITER_LTO: 'false'
+          CARGO_PROFILE_WPTITER_CODEGEN_UNITS: '16'
+          CARGO_PROFILE_WPTITER_INCREMENTAL: 'false'
+          CARGO_PROFILE_WPTITER_DEBUG: 'false'
+        run: |
+          export PYRO_JSC_DIR="$HOME/.cache/pyro/jsc/$JSC_DIR"
+          start=$(date +%s)
+          # Libraries, binaries and tests only: some examples are macOS measuring tools (proc_pid_rusage, malloc zones).
+          targets=(--lib --bins --tests)
+          cargo +stable test --locked --profile wptiter --workspace "${targets[@]}" --no-run
+          built=$(date +%s)
+          cargo +stable test --locked --profile wptiter --workspace "${targets[@]}" --no-fail-fast
+          cargo +stable test --locked --profile wptiter --workspace --doc --no-fail-fast
+          echo "build $((built - start)) s, run $(( $(date +%s) - built )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          sccache --show-stats || true

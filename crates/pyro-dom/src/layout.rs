@@ -64,6 +64,23 @@ struct HitTestGeometry {
     fragments: FxHashMap<NodeId, Option<Rc<[Rect]>>>,
 }
 
+/// pyro: one box of a list hit test (`Layout::hits_from_point`): its paint order key, its
+/// element, and what it lists (the element; an SVG graphic hit in an `svg` viewport's box, its
+/// SVG ancestors, then the viewport).
+struct ListHit {
+    key: Rc<[PaintEntry]>,
+    el: NodeId,
+    chain: Vec<NodeId>,
+}
+
+/// Whether paint order keys `a` and `b` are in one layer (one stacking context and paint
+/// phase), where a box paints over its tree-order ancestors.
+fn same_paint_layer(a: &[PaintEntry], b: &[PaintEntry]) -> bool {
+    a.len() == b.len()
+        && a[..a.len() - 1] == b[..b.len() - 1]
+        && a.last().map(|value| (value.0, value.1)) == b.last().map(|value| (value.0, value.1))
+}
+
 use crate::media::Viewport;
 use crate::node::{DocumentKind, NodeId, NodeKind, NIL};
 use crate::style::{CheckVisibilityOptions, ComputedStyle, Display, Position, ScrollAxes, StyleEngine, UserSelect};
@@ -148,6 +165,51 @@ fn round_layout_unit(v: f64) -> f64 {
 /// container at an index (`::column` snap areas).
 type SnapBox = (NodeId, Option<usize>);
 
+/// pyro: a snap event's snap target for the box `target` of `scroller`: retargeted against it
+/// (CSS Scroll Snap 2 § 5.1), so an area in a shadow tree reports its host.
+fn snap_event_target(dom: &Dom, scroller: NodeId, mut target: NodeId) -> NodeId {
+    let Ok(home) = dom.root_node(scroller, false) else { return target };
+    while let Ok(root) = dom.root_node(target, false) {
+        if root == home || !dom.is_shadow_root(root).unwrap_or(false) {
+            break;
+        }
+        match dom.fragment_host(root) {
+            Ok(Some(host)) => target = host,
+            _ => break,
+        }
+    }
+    target
+}
+
+fn snap_axes(axis: &str, mode: style::logical_geometry::WritingMode) -> (bool, bool) {
+    match axis {
+        "x" => (true, false),
+        "y" => (false, true),
+        "inline" => (mode.is_horizontal(), mode.is_vertical()),
+        "block" => (mode.is_vertical(), mode.is_horizontal()),
+        "both" => (true, true),
+        _ => (false, false),
+    }
+}
+
+fn snap_alignment(align: &str, mode: style::logical_geometry::WritingMode) -> [&'static str; 2] {
+    use style::logical_geometry::PhysicalSide;
+    let mut words = align.split_whitespace();
+    let block = words.next().unwrap_or("none");
+    let inline = words.next().unwrap_or(block);
+    let physical = |keyword, side| match (keyword, side) {
+        ("start", PhysicalSide::Right | PhysicalSide::Bottom) => "end",
+        ("end", PhysicalSide::Right | PhysicalSide::Bottom) => "start",
+        ("start", _) => "start",
+        ("end", _) => "end",
+        ("center", _) => "center",
+        _ => "none",
+    };
+    let inline = physical(inline, mode.inline_start_physical_side());
+    let block = physical(block, mode.block_start_physical_side());
+    if mode.is_vertical() { [block, inline] } else { [inline, block] }
+}
+
 /// Chromium's `SnapSizeToPixel`: the pixel-snapped size of a box `size`
 /// long starting at `location`, so adjacent snapped boxes tile.
 fn snap_size_to_pixel(size: f64, location: f64) -> f64 {
@@ -188,6 +250,15 @@ impl ScrollWrite {
             ScrollWrite::To { .. } => value,
             ScrollWrite::By { .. } => current as i64 + value,
         })
+    }
+
+    /// pyro: a relative write's per-axis delta (an axis it leaves alone moves by 0), the scroll's
+    /// direction for snapping (CSS Scroll Snap 1 § 6.2: intended direction and end position).
+    fn direction(self) -> Option<[i64; 2]> {
+        match self {
+            ScrollWrite::To { .. } => None,
+            ScrollWrite::By { left, top } => Some([left.unwrap_or(0) as i64, top.unwrap_or(0) as i64]),
+        }
     }
 }
 
@@ -256,6 +327,17 @@ pub struct Layout {
     /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
     /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
     snapped: FxHashMap<Option<NodeId>, [Option<SnapBox>; 2]>,
+    /// pyro: the scrollers (`None`: the viewport) a smooth scroll is moving
+    /// ([`Self::set_smooth_scrolling`]): they neither re-snap nor snap while it runs, which would
+    /// pull each step back to the snap position it leaves.
+    smooth_targets: rustc_hash::FxHashSet<Option<NodeId>>,
+    /// pyro: the elements each scroller's snap events last reported it snapped to on each axis
+    /// (x, y), to fire `scrollsnapchanging` / `scrollsnapchange` when they change
+    /// ([`Self::take_snap_changes`]).
+    reported_snaps: FxHashMap<Option<NodeId>, [Option<NodeId>; 2]>,
+    /// pyro: the DOM version the unsnapped mandatory snap containers were last snapped at
+    /// ([`Self::snap_unsnapped`]).
+    unsnapped_checked: Option<u64>,
     /// pyro: the mandatory snap containers whose initial scroll position snapped
     /// ([`Self::snap_initial_positions`]), and the DOM version they were last looked for at.
     initially_snapped: rustc_hash::FxHashSet<NodeId>,
@@ -265,6 +347,9 @@ pub struct Layout {
     pseudo_scroll: FxHashMap<(NodeId, u8), (i32, i32)>,
     /// pyro: whether the viewport took its initial snap position.
     viewport_initially_snapped: bool,
+    /// pyro: the scroll containers (`None`: the viewport) that took their initial scroll position
+    /// from a `scroll-initial-target` ([`Self::scroll_to_initial_targets`]): once each.
+    initially_targeted: rustc_hash::FxHashSet<Option<NodeId>>,
     /// pyro: the scroll offset script last gave an element on each axis in its CSS px (x, y), with
     /// the whole layout px it was kept as: read back while the offset is still that one, as a
     /// zoomed element's fractional offset ([`Self::css_scroll`]).
@@ -553,9 +638,13 @@ impl Layout {
             scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
             snapped: FxHashMap::default(),
+            smooth_targets: Default::default(),
+            reported_snaps: FxHashMap::default(),
+            unsnapped_checked: None,
             initially_snapped: Default::default(),
             pseudo_scroll: FxHashMap::default(),
             viewport_initially_snapped: false,
+            initially_targeted: Default::default(),
             css_scroll: FxHashMap::default(),
             initial_snap_checked: Default::default(),
             external,
@@ -651,6 +740,12 @@ impl Layout {
     /// ([`GeometrySource::font_load`]).
     pub fn font_load(&self, url: &str) -> Option<crate::geometry::FontLoad> {
         self.external.as_ref().and_then(|s| s.font_load(url))
+    }
+
+    /// pyro: the bytes of this document's font at `url` once the geometry engine loaded them
+    /// ([`GeometrySource::font_bytes`]).
+    pub fn font_bytes(&self, url: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.external.as_ref().and_then(|s| s.font_bytes(url))
     }
 
     /// pyro: whether web fonts the geometry engine uses are still loading (it starts them
@@ -802,11 +897,15 @@ impl Layout {
         let key = crate::snapshot::render_key(el);
         let b = source.element_box(key);
         // pyro: no box, or an empty one: perhaps in contents `content-visibility: auto` skips, which
-        // a query renders (CSS Contain 2 § 4.1, as Chromium): read again once rendered.
+        // a query renders (CSS Contain 2 § 4.1, as Chromium): read again once rendered. Then
+        // perhaps in contents `hidden` skips, which a query lays out (still unpainted).
+        let nonempty = |b: &Option<crate::geometry::ExternalBox>| b.as_ref().is_some_and(|b| b.width > 0.0 || b.height > 0.0);
         let b = match b {
-            Some(b) if b.width > 0.0 || b.height > 0.0 => Some(b),
-            b if source.force_content_visibility(key) => source.element_box(key).or(b),
-            b => b,
+            b if nonempty(&b) => b,
+            b => {
+                let b = if source.force_content_visibility(key) { source.element_box(key).or(b) } else { b };
+                if !nonempty(&b) && source.force_hidden_contents(key) { source.element_box(key).or(b) } else { b }
+            }
         };
         b.map(|b| LayoutBox::from_external(&b, 0))
     }
@@ -862,6 +961,8 @@ impl Layout {
         }
         let mobile = MobileViewport::new(self.meta.as_ref(), self.device.width, self.device.height);
         let mut layout = self.device.clone();
+        layout.screen_width.get_or_insert(self.device.width);
+        layout.screen_height.get_or_insert(self.device.height);
         (layout.width, layout.height) = mobile.layout_size();
         if self.mobile.is_none() || (layout.width, layout.height) != (self.viewport().width, self.viewport().height) {
             // Laid out again at another width: until then, as wide as the layout viewport.
@@ -1047,14 +1148,17 @@ impl Layout {
         if (self.html_local(dom, idx) == Some("body")) != self.is_quirks(dom) {
             return None;
         }
-        let v = self.viewport();
-        // pyro: less the viewport's shown classic scrollbars.
-        let (bar_width, bar_height) =
-            self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
+        let viewport = self.viewport();
+        let (width, height) = self.without_scrollbars(dom, (viewport.width, viewport.height));
         Some(match axis {
-            Axis::Width => (v.width as f64 - bar_width).max(0.0),
-            Axis::Height => (v.height as f64 - bar_height).max(0.0),
+            Axis::Width => width,
+            Axis::Height => height,
         })
+    }
+
+    fn without_scrollbars(&self, dom: &Dom, (width, height): (u32, u32)) -> (f64, f64) {
+        let (bar_width, bar_height) = self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
+        ((width as f64 - bar_width).max(0.0), (height as f64 - bar_height).max(0.0))
     }
 
     /// Element.zig:1671-1675.
@@ -1179,7 +1283,7 @@ impl Layout {
     }
 
     /// `offsetTop`/`offsetLeft`: border-box offset from the offset parent's
-    /// border box (document coordinates for the body/none).
+    /// padding edge (document coordinates for the body/none).
     fn box_offset(&self, dom: &Dom, el: NodeId) -> (f64, f64) {
         let Some(b) = self.layout_box(dom, el) else { return (0.0, 0.0) };
         let parent = self.offset_parent(dom, el).filter(|&p| !self.is_root_container(dom, p));
@@ -1193,7 +1297,7 @@ impl Layout {
             Some((parent, p)) => {
                 let (px, py) = self.sticky_shift_in(dom, &sticky, parent);
                 let (ox, oy) = origin(&p);
-                (bx + kx - ox - px, by + ky - oy - py)
+                (bx + kx - ox - px - p.border[LEFT], by + ky - oy - py - p.border[TOP])
             }
             None => (bx + kx, by + ky),
         }
@@ -1217,9 +1321,8 @@ impl Layout {
 
     /// An element metric as script reads it, pixel-snapped to whole pixels
     /// like Chromium (Gap 36: `scrollWidth > clientWidth` must not come from
-    /// a fractional width). Offsets round; sizes snap at the box's offset
-    /// (client and scroll sizes at its padding edge) so that equal
-    /// fractional sizes snap alike.
+    /// a fractional width). Offsets and offset dimensions round independently;
+    /// client and scroll sizes snap at the padding edge.
     pub fn metric(&self, dom: &Dom, el: NodeId, metric: Metric) -> f64 {
         let raw = match metric {
             Metric::ScrollWidth => self.scroll_width(dom, el),
@@ -1236,9 +1339,7 @@ impl Layout {
         }
         let border = |side: usize| self.layout_box(dom, el).map_or(0.0, |b| b.border[side]);
         match metric {
-            Metric::OffsetTop | Metric::OffsetLeft => round_layout_unit(raw),
-            Metric::OffsetWidth => snap_size_to_pixel(raw, self.offset_left(dom, el)),
-            Metric::OffsetHeight => snap_size_to_pixel(raw, self.offset_top(dom, el)),
+            Metric::OffsetTop | Metric::OffsetLeft | Metric::OffsetWidth | Metric::OffsetHeight => round_layout_unit(raw),
             Metric::ScrollWidth | Metric::ClientWidth => {
                 snap_size_to_pixel(raw, self.offset_left(dom, el) + border(LEFT))
             }
@@ -1283,8 +1384,24 @@ impl Layout {
             return None;
         }
         let self_position = self.position_of(dom, el);
-        if self_position == Position::Fixed {
-            return None;
+        // A fixed box has no offset parent unless an ancestor establishes its containing block (a transform,
+        // filter, containment ...; CSSOM View §offsetParent, as Chromium does); then it is the nearest ancestor
+        // that can hold an absolutely positioned box (WPT css-grid abspos/positioned-grid-items-should-not-take-up-space-001).
+        let fixed = self_position == Position::Fixed;
+        if fixed {
+            // The flat tree, so a fixed box in a shadow tree under a transformed host finds the host.
+            let mut ancestor = crate::style::flat_tree_parent_element(dom, idx);
+            loop {
+                let Some(i) = ancestor else { return None };
+                let a = dom.id_of(i);
+                if self.is_root_container(dom, a) {
+                    return None;
+                }
+                if self.computed(dom, a).contains_fixed {
+                    break;
+                }
+                ancestor = crate::style::flat_tree_parent_element(dom, i);
+            }
         }
         let self_static = !self_position.is_positioned();
         let mut node = dom.n(idx).parent;
@@ -1303,6 +1420,9 @@ impl Layout {
                 return Some(dom.id_of(node));
             }
             if self.position_of(dom, dom.id_of(node)).is_positioned() {
+                return Some(dom.id_of(node));
+            }
+            if fixed && self.computed(dom, dom.id_of(node)).contains_absolute {
                 return Some(dom.id_of(node));
             }
             if self_static && matches!(tag, Some("td" | "th" | "table")) {
@@ -1325,6 +1445,19 @@ impl Layout {
     }
 
     // ----- rects -------------------------------------------------------------
+
+    pub fn image_position(&self, dom: &Dom, el: NodeId) -> (i32, i32) {
+        self.sync_before_rect_query(dom);
+        let Some(bounds) = self.layout_box(dom, el) else { return (0, 0) };
+        if !self.is_visible(dom, el) {
+            return (0, 0);
+        }
+        let [left, top] = bounds.layout_origin.unwrap_or([bounds.rect.x, bounds.rect.y]);
+        let (scroll_x, scroll_y) = self.ancestor_scroll_offset(dom, el);
+        let (sticky_x, sticky_y) = self.sticky_shift_lazy(dom, el);
+        let (fixed_x, fixed_y) = if bounds.fixed { self.window_scroll } else { (0, 0) };
+        ((left - scroll_x + sticky_x + f64::from(fixed_x)) as i32, (top - scroll_y + sticky_y + f64::from(fixed_y)) as i32)
+    }
 
     /// `getBoundingClientRect` values (Element.zig:1724-1742): all zero when
     /// the element isn't rendered.
@@ -1363,7 +1496,11 @@ impl Layout {
                 } else {
                     continue;
                 };
-                let rect = Rect { x: left, width: right - left, ..run.rect };
+                let rect = if run.vertical_edges {
+                    Rect { y: left, height: right - left, ..run.rect }
+                } else {
+                    Rect { x: left, width: right - left, ..run.rect }
+                };
                 if start == end {
                     return Some(self.text_client_rect(dom, text, rect, run.fixed));
                 }
@@ -1432,13 +1569,15 @@ impl Layout {
                     0.0
                 }
             };
-            let key = (gap(y, top, run.rect.height), gap(x, left, run.rect.width));
+            let inline_gap = gap(x, left, run.rect.width);
+            let block_gap = gap(y, top, run.rect.height);
+            let key = if run.vertical_edges { (inline_gap, block_gap) } else { (block_gap, inline_gap) };
             if best.is_none_or(|b| key < b.0) {
-                best = Some((key, i as u32, run.node, left));
+                best = Some((key, i as u32, run.node, if run.vertical_edges { y - top } else { x - left }));
             }
         }
         // The flag: the point is on the word itself.
-        best.map(|(key, i, node, left)| (node, result.text_runs[i as usize].offset_at(x - left), key == (0.0, 0.0)))
+        best.map(|(key, i, node, distance)| (node, result.text_runs[i as usize].offset_at(distance), key == (0.0, 0.0)))
     }
 
     /// Whether a text box (viewport coordinates) lies entirely outside the
@@ -2057,14 +2196,45 @@ impl Layout {
         self.synced_geometry_source(dom).and_then(|s| s.document_size()).unwrap_or((0.0, 0.0))
     }
 
+    /// pyro: the size of `doc`'s content (its root element's border box and the overflow it scrolls
+    /// to; [`GeometrySource::document_content_size`]), not widened to the viewport: the natural size
+    /// a responsively embedded document gives its iframe (css-sizing-4 `frame-sizing`). Without the
+    /// engine's, the root element's border box.
+    pub fn document_content_size(&self, dom: &Dom, doc: NodeId) -> Option<(f64, f64)> {
+        let root = dom.document_element(doc).ok().flatten()?;
+        let border_box = (self.offset_width(dom, root), self.offset_height(dom, root));
+        match self.synced_geometry_source(dom).and_then(|s| s.document_content_size()) {
+            Some((width, height)) => Some((width.max(border_box.0), height.max(border_box.1))),
+            None => Some(border_box),
+        }
+    }
+
+    /// pyro: the physical axes (width, height) on which the iframe `el` takes its natural size from
+    /// a responsively embedded document (css-sizing-4 `frame-sizing`: `content-width`,
+    /// `content-height`, or the logical values in its writing mode), each `true` only while its
+    /// preferred size on that axis is `auto` (otherwise the content cannot change it).
+    pub fn frame_sizing_axes(&self, dom: &Dom, el: NodeId) -> (bool, bool) {
+        use style::values::computed::FrameSizing;
+        let Some(style) = self.style.stylo_style(dom, el) else { return (false, false) };
+        let vertical = style.writing_mode.is_vertical();
+        let (width, height) = match style.get_position().frame_sizing {
+            FrameSizing::Auto => (false, false),
+            FrameSizing::ContentWidth => (true, false),
+            FrameSizing::ContentHeight => (false, true),
+            FrameSizing::ContentBlockSize => (vertical, !vertical),
+            FrameSizing::ContentInlineSize => (!vertical, vertical),
+        };
+        let position = style.get_position();
+        let auto = |size: &style::values::computed::Size| matches!(size, style::values::generics::length::GenericSize::Auto);
+        (width && auto(&position.width), height && auto(&position.height))
+    }
+
     /// `Document.scrollSize` (Document.zig:548-556): the document, at least
     /// viewport-sized.
     pub fn document_scroll_size(&self, dom: &Dom) -> (f64, f64) {
         let (w, h) = self.document_extent(dom);
-        let (vw, vh) = self.window_size();
-        // pyro: less the viewport's shown classic scrollbars (Chrome).
-        let (bw, bh) = self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
-        (w.max(vw as f64 - bw), h.max(vh as f64 - bh))
+        let (vw, vh) = self.without_scrollbars(dom, self.window_size());
+        (w.max(vw), h.max(vh))
     }
 
     // ----- hit testing -------------------------------------------------------
@@ -2243,7 +2413,7 @@ impl Layout {
     fn element_from_point_impl(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
         if ignore_x {
             // A whole row of the page: nothing a point index narrows.
-            return self.hit_test_descent(dom, x, y, true);
+            return self.hit_test_descent(dom, x, y, true, None);
         }
         // pyro: classic scrollbars: a point in the viewport's scrollbar gutters (outside its
         // scrollport) hits the root element (Chrome).
@@ -2254,11 +2424,15 @@ impl Layout {
                 return dom.document_element(self.document()).ok().flatten();
             }
         }
+        // pyro: a `::scroll-button()` painted on top answers its originating element.
+        if let Some(owner) = self.scroll_button_owner_at(dom, x, y) {
+            return Some(owner);
+        }
         if let Some(index) = self.hit_index_for(dom, false) {
-            return self.hit_test_indexed(dom, &index, x, y);
+            return self.hit_test_indexed(dom, &index, x, y, None);
         }
         let started = std::time::Instant::now();
-        let hit = self.hit_test_descent(dom, x, y, false);
+        let hit = self.hit_test_descent(dom, x, y, false, None);
         let took = started.elapsed();
         let mut state = self.hit_index.borrow_mut();
         state.rented += took;
@@ -2266,6 +2440,65 @@ impl Layout {
         state.descent_cost.record(took);
         state.bought_unseen = 0;
         hit
+    }
+
+    /// pyro: every hit-testable element whose box holds viewport point (`x`, `y`), topmost in
+    /// paint order first (Chrome's list-based hit test behind `elementsFromPoint`): the
+    /// candidates [`Layout::element_from_point_impl`] selects from, by the same path (the
+    /// viewport's scrollbar gutters hit the root; an index when there is one, else a descent).
+    /// An SVG graphic is listed with its SVG ancestors up to its outer `svg`. The first is
+    /// `element_from_point_impl`'s hit.
+    fn hits_from_point(&self, dom: &Dom, x: f64, y: f64) -> Vec<NodeId> {
+        if let Some([left, top, right, bottom]) = self.synced_geometry_source(dom).and_then(|s| s.viewport_gutters()) {
+            let (vw, vh) = (self.viewport().width as f64, self.viewport().height as f64);
+            let in_viewport = x >= 0.0 && y >= 0.0 && x < vw && y < vh;
+            if in_viewport && (x < left || y < top || x >= vw - right || y >= vh - bottom) {
+                return dom.document_element(self.document()).ok().flatten().into_iter().collect();
+            }
+        }
+        let mut hits = Vec::new();
+        // (The descent is not timed here: its price feeds the index's, for single hits.)
+        match self.hit_index_for(dom, false) {
+            Some(index) => self.hit_test_indexed(dom, &index, x, y, Some(&mut hits)),
+            None => self.hit_test_descent(dom, x, y, false, Some(&mut hits)),
+        };
+        let mut out: Vec<NodeId> = hits.into_iter().flat_map(|hit| hit.chain).collect();
+        // pyro: a `::scroll-button()` painted on top: its originating element comes first.
+        if let Some(owner) = self.scroll_button_owner_at(dom, x, y) {
+            out.retain(|&el| el != owner);
+            out.insert(0, owner);
+        }
+        out
+    }
+
+    /// pyro: the originating element of the `::scroll-button()` the engine paints on top at
+    /// viewport point (`x`, `y`) ([`GeometrySource::scroll_button_owner_at`]): the button's box
+    /// is no element's, so the element boxes this hit test reads cannot put it over the
+    /// element's content or another element (WPT css-overflow `scroll-button-elementFromPoint`).
+    fn scroll_button_owner_at(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
+        let source = self.synced_geometry_source(dom)?;
+        let (sx, sy) = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
+        let key = source.scroll_button_owner_at(x + sx, y + sy)?;
+        // (The engine's hit test does not know inertness: an inert scroller's button is not hit.)
+        crate::geometry::node_of(dom, key).filter(|&owner| !self.style.is_inert(dom, owner))
+    }
+
+    /// [`Layout::hits_from_point`] from the index, built now if this layout has none yet (tests).
+    #[doc(hidden)]
+    pub fn elements_from_point_indexed(&self, dom: &Dom, x: f64, y: f64) -> Vec<NodeId> {
+        let mut hits = Vec::new();
+        if let Some(index) = self.hit_index_for(dom, true) {
+            self.hit_test_indexed(dom, &index, x, y, Some(&mut hits));
+        }
+        hits.into_iter().flat_map(|hit| hit.chain).collect()
+    }
+
+    /// [`Layout::hits_from_point`] by a descent of the engine's tree (tests).
+    #[doc(hidden)]
+    pub fn elements_from_point_descent(&self, dom: &Dom, x: f64, y: f64) -> Vec<NodeId> {
+        let mut hits = Vec::new();
+        self.hit_test_descent(dom, x, y, false, Some(&mut hits));
+        hits.into_iter().flat_map(|hit| hit.chain).collect()
     }
 
     /// The index of the current layout and scroll position, when there is
@@ -2383,14 +2616,21 @@ impl Layout {
     /// [`Layout::element_from_point_impl`] from `index`: the boxes of the
     /// point's cell holding the point, in tree order, are the candidates
     /// of the same selection as the scan's and the descent's.
-    fn hit_test_indexed(&self, dom: &Dom, index: &HitIndex, x: f64, y: f64) -> Option<NodeId> {
+    fn hit_test_indexed(
+        &self,
+        dom: &Dom,
+        index: &HitIndex,
+        x: f64,
+        y: f64,
+        all: Option<&mut Vec<ListHit>>,
+    ) -> Option<NodeId> {
         let candidates = index
             .grid
             .cell(x, y)
             .iter()
             .filter(|&&i| HitIndex::holds(&index.rects[i as usize], x, y))
             .map(|&i| index.els[i as usize]);
-        self.hit_select(dom, &index.result, candidates, x, y, false, &mut index.geometry.borrow_mut())
+        self.hit_select(dom, &index.result, candidates, x, y, false, &mut index.geometry.borrow_mut(), all)
     }
 
     /// `document.elementFromPoint(x, y)` answered from the index, built
@@ -2398,14 +2638,14 @@ impl Layout {
     #[doc(hidden)]
     pub fn element_from_point_indexed(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
         let index = self.hit_index_for(dom, true)?;
-        self.hit_test_indexed(dom, &index, x, y)
+        self.hit_test_indexed(dom, &index, x, y, None)
     }
 
     /// `document.elementFromPoint(x, y)` answered by a descent of the
     /// engine's tree, whether or not there is an index (tests).
     #[doc(hidden)]
     pub fn element_from_point_descent(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
-        self.hit_test_descent(dom, x, y, false)
+        self.hit_test_descent(dom, x, y, false, None)
     }
 
     /// How many hit-test indexes were built so far, and whether the current
@@ -2420,7 +2660,14 @@ impl Layout {
 
     /// The hit test by the engine's candidates (see
     /// [`Layout::element_from_point_impl`]).
-    fn hit_test_descent(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
+    fn hit_test_descent(
+        &self,
+        dom: &Dom,
+        x: f64,
+        y: f64,
+        ignore_x: bool,
+        all: Option<&mut Vec<ListHit>>,
+    ) -> Option<NodeId> {
         let source = self.synced_geometry_source(dom)?.clone();
         let has_element_scroll = self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0);
         let sticky = self.sticky_map(dom);
@@ -2448,7 +2695,7 @@ impl Layout {
         }
         shifted.extend(sticky.keys().map(|&el| crate::snapshot::render_key(el)));
         let Some(visits) = source.hit_candidates(&probe, &offset, &shifted) else {
-            return self.hit_test_scan(dom, x, y, ignore_x);
+            return self.hit_test_scan(dom, x, y, ignore_x, all);
         };
         let (document_width, document_height) = source.document_size().unwrap_or((0.0, 0.0));
         let mut result =
@@ -2469,12 +2716,19 @@ impl Layout {
         }
         let candidates: Vec<NodeId> = visits.iter().filter(|v| v.hit).filter_map(|v| node_of(dom, v.key)).collect();
         let mut geometry = geometry.into_inner();
-        self.hit_select(dom, &result, candidates.into_iter(), x, y, ignore_x, &mut geometry)
+        self.hit_select(dom, &result, candidates.into_iter(), x, y, ignore_x, &mut geometry, all)
     }
 
     /// [`Layout::element_from_point_impl`] over every box of the document
     /// (the whole document's geometry is read).
-    fn hit_test_scan(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
+    fn hit_test_scan(
+        &self,
+        dom: &Dom,
+        x: f64,
+        y: f64,
+        ignore_x: bool,
+        all: Option<&mut Vec<ListHit>>,
+    ) -> Option<NodeId> {
         let result = self.layout_result(dom);
         let mut geometry = HitTestGeometry {
             has_element_scroll: self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0),
@@ -2482,9 +2736,9 @@ impl Layout {
             has_fragments: self.external.as_ref().is_some_and(|source| source.has_fragmented_boxes()),
             ..Default::default()
         };
-        let mut all: Vec<NodeId> = result.boxes.keys().copied().collect();
-        all.sort_by_key(|el| result.boxes[el].order);
-        self.hit_select(dom, &result, all.into_iter(), x, y, ignore_x, &mut geometry)
+        let mut boxes: Vec<NodeId> = result.boxes.keys().copied().collect();
+        boxes.sort_by_key(|el| result.boxes[el].order);
+        self.hit_select(dom, &result, boxes.into_iter(), x, y, ignore_x, &mut geometry, all)
     }
 
     fn overflowing_text_hits(&self, el: NodeId, border: Rect, client: Rect, geometry: &mut HitTestGeometry) -> Rc<[Rect]> {
@@ -2503,19 +2757,23 @@ impl Layout {
     /// descent is checked against (tests).
     #[doc(hidden)]
     pub fn element_from_point_scan(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
-        self.hit_test_scan(dom, x, y, false)
+        self.hit_test_scan(dom, x, y, false, None)
     }
 
     /// [`Layout::element_from_vertical_point`] answered from every box of
     /// the document (tests).
     #[doc(hidden)]
     pub fn element_from_vertical_point_scan(&self, dom: &Dom, y: f64) -> Option<NodeId> {
-        self.hit_test_scan(dom, 0.0, y, true)
+        self.hit_test_scan(dom, 0.0, y, true, None)
     }
 
     /// The topmost hit-testable box among `candidates` (in tree order)
     /// holding the point, in paint order; else the topmost modal dialog
     /// (everything outside it is inert: the point hits its `::backdrop`).
+    ///
+    /// pyro: with `all`, every hit-testable box holding the point is put there too, topmost
+    /// first by the same rule (`elementsFromPoint`); the single hit skips the candidates that
+    /// cannot beat its best so far, so does not.
     #[allow(clippy::too_many_arguments)]
     fn hit_select(
         &self,
@@ -2526,6 +2784,7 @@ impl Layout {
         y: f64,
         ignore_x: bool,
         geometry: &mut HitTestGeometry,
+        mut all: Option<&mut Vec<ListHit>>,
     ) -> Option<NodeId> {
         let inside = |r: &Rect| (ignore_x || (x >= r.x && x < r.x + r.width)) && y >= r.y && y < r.y + r.height;
         let mut best: Option<(Rc<[PaintEntry]>, NodeId)> = None;
@@ -2538,7 +2797,19 @@ impl Layout {
             // (Nor is a box a line clamp discarded: `ExternalBox::hidden`.)
             let hit = inside(&r) || ((r.width == 0.0 || r.height == 0.0)
                 && self.overflowing_text_hits(el, b.rect, r, geometry).iter().any(inside));
-            if b.hidden || !hit || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
+            if b.hidden || !hit || !self.is_visible(dom, el) {
+                continue;
+            }
+            let svg_viewport = !ignore_x && dom.element(el).is_ok_and(|e| {
+                e.name.ns == markup5ever::ns!(svg) && e.name.local == local_name!("svg")
+            });
+            let self_hit = self.style.is_hit_testable(dom, el);
+            if !self_hit && (!svg_viewport || self.computed(dom, el).inert) {
+                continue;
+            }
+            // A table column or column group has a box (its tracks, for getBoundingClientRect) but
+            // is never hit: Chrome's elementFromPoint answers the cell or table under it.
+            if self.style.computed(dom, el).is_some_and(|c| c.box_kind == crate::style::BoxKind::TableColumn) {
                 continue;
             }
             // A box split into fragments (columns) is hit in one of them: its rect is their union.
@@ -2572,10 +2843,8 @@ impl Layout {
                 continue;
             }
             let key = self.paint_key(dom, result, el);
-            if let Some((top_key, top_node)) = &best {
-                let same_layer = key.len() == top_key.len()
-                    && key[..key.len() - 1] == top_key[..top_key.len() - 1]
-                    && key.last().map(|value| (value.0, value.1)) == top_key.last().map(|value| (value.0, value.1));
+            if let (None, Some((top_key, top_node))) = (&all, &best) {
+                let same_layer = same_paint_layer(&key, top_key);
                 // Shadow-including: a host's shadow content paints over it.
                 if same_layer && dom.shadow_including_contains(el, *top_node) {
                     continue;
@@ -2594,16 +2863,76 @@ impl Layout {
                 out_x || out_y
             });
             if !clipped {
-                best = Some((key, el));
+                let target = if svg_viewport {
+                    // SVG graphics are painted inside the viewport's CSS box and
+                    // have no CSS boxes of their own. Hit them in local user space.
+                    let left = b.border[LEFT] + b.padding[LEFT];
+                    let top = b.border[TOP] + b.padding[TOP];
+                    let viewport = (
+                        b.client_width - b.padding[LEFT] - b.padding[RIGHT],
+                        b.client_height - b.padding[TOP] - b.padding[BOTTOM],
+                    );
+                    crate::svg_geometry::hit_test(dom, &self.style, el, viewport, x - r.x - left, y - r.y - top)
+                } else {
+                    None
+                };
+                if let Some(list) = all.as_deref_mut() {
+                    // The graphic, its SVG ancestors inside the viewport, then the viewport.
+                    let mut chain = Vec::new();
+                    if let Some(graphic) = target {
+                        let mut cur = Some(graphic);
+                        while let Some(n) = cur.filter(|&n| n != el) {
+                            if n == graphic || self.style.is_hit_testable(dom, n) {
+                                chain.push(n);
+                            }
+                            cur = dom.parent_element(n).ok().flatten();
+                        }
+                    }
+                    if self_hit || target == Some(el) {
+                        chain.push(el);
+                    }
+                    if !chain.is_empty() {
+                        // Before the first entry it paints over (as the single hit's best is
+                        // replaced: a later candidate in tree order wins a tie).
+                        let at = list
+                            .iter()
+                            .position(|e| {
+                                let same_layer = same_paint_layer(&key, &e.key);
+                                !(same_layer && dom.shadow_including_contains(el, e.el))
+                                    && (key >= e.key || (same_layer && dom.shadow_including_contains(e.el, el)))
+                            })
+                            .unwrap_or(list.len());
+                        list.insert(at, ListHit { key: key.clone(), el, chain });
+                    }
+                }
+                if let Some(target) = target.or_else(|| self_hit.then_some(el)) {
+                    best = Some((key, target));
+                }
             }
         }
         // Outside the topmost modal dialog everything is inert: the point
-        // hits the dialog's ::backdrop, whose events go to the dialog.
-        best.map(|(_, node)| node).or_else(|| {
+        // hits the dialog's ::backdrop, whose events go to the dialog. A
+        // `::backdrop { display: none }` has no box to hit: the point hits
+        // nothing (pointer input then targets the root, as Chrome does),
+        // nor does an inert modal dialog's.
+        let hit = best.map(|(_, node)| node).or_else(|| {
             dom.topmost_modal().filter(|&m| {
-                dom.node_document(m).ok() == Some(self.document()) && result.get(m).is_some() && self.is_visible(dom, m)
+                dom.node_document(m).ok() == Some(self.document())
+                    && result.get(m).is_some()
+                    && self.is_visible(dom, m)
+                    && !dom.is_inert(m)
+                    && self
+                        .style
+                        .stylo_pseudo_style(dom, m, &style::selector_parser::PseudoElement::Backdrop, false)
+                        .is_none_or(|backdrop| !backdrop.get_box().display.is_none())
             })
-        })
+        });
+        if let (Some(list), Some(modal)) = (all, hit) {
+            if list.is_empty() {
+                list.push(ListHit { key: Rc::from(Vec::<PaintEntry>::new()), el: modal, chain: vec![modal] });
+            }
+        }
+        hit
     }
 
     /// A table row or row group, which Chromium hits only through its
@@ -2645,7 +2974,26 @@ impl Layout {
     /// `document.elementFromPoint(x, y)` (Document.zig:953-1032), viewport
     /// coordinates.
     pub fn element_from_point(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
+        let hit = self.element_from_point_impl(dom, x, y, false)?;
+        Some(self.image_map_area(dom, hit, x, y).unwrap_or(hit))
+    }
+
+    /// pyro: [`Layout::element_from_point`] without image maps: the element whose box holds the
+    /// point (an image, never its map's boxless `area`), for caret positions.
+    pub fn box_from_point(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
         self.element_from_point_impl(dom, x, y, false)
+    }
+
+    /// pyro: the `area` of the image map of `img` (the hit) under viewport point (`x`, `y`) (HTML
+    /// § 4.8.14, Blink `LayoutImage` hit testing). Not yet through a transform of the image.
+    fn image_map_area(&self, dom: &Dom, img: NodeId, x: f64, y: f64) -> Option<NodeId> {
+        let map = crate::image_map::image_map(dom, img)?;
+        let rect = self.client_rect(dom, img)?;
+        let (ox, oy) = self.content_offset(dom, img)?;
+        let (w, h) = self.content_size(dom, img)?;
+        // Relative to the content box but not clipped to it (Blink `LayoutImage::NodeAtPoint`): an
+        // area reaching outside it holds points in the padding and border.
+        crate::image_map::area_at(dom, map, x - rect.x - ox, y - rect.y - oy, (w, h))
     }
 
     /// Hit test on the vertical axis only (Document.zig:960-962), for
@@ -2654,26 +3002,29 @@ impl Layout {
         self.element_from_point_impl(dom, 0.0, y, true)
     }
 
-    /// `document.elementsFromPoint(x, y)` (Document.zig:1034-1047): the hit
-    /// and its hit-testable ancestors, always ending with the root.
+    /// `document.elementsFromPoint(x, y)`: as Chrome lists them, every hit-testable element whose
+    /// box holds the point, topmost first ([`Layout::hits_from_point`]; an image map's area
+    /// before its image), a repeat of the previous one dropped, ending with the root; nothing
+    /// for a point outside the viewport.
     pub fn elements_from_point(&self, dom: &Dom, x: f64, y: f64) -> Vec<NodeId> {
-        let mut out = Vec::new();
-        let mut cur = self.element_from_point(dom, x, y);
-        while let Some(el) = cur {
-            // Flat-tree ancestors: a slottable's slot (boxless, so not
-            // listed), a shadow root's host.
-            let parent = match dom.assigned_slot_any(el) {
-                Some(slot) => Some(slot),
-                None => match dom.parent(el).ok().flatten() {
-                    Some(p) if dom.is_shadow_root(p).unwrap_or(false) => dom.fragment_host(p).ok().flatten(),
-                    _ => dom.parent_element(el).ok().flatten(),
-                },
-            };
-            let slot = dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "slot");
-            if parent.is_none() || (self.style.is_hit_testable(dom, el) && !slot) {
-                out.push(el);
+        let (vw, vh) = (self.viewport().width as f64, self.viewport().height as f64);
+        if !(x >= 0.0 && y >= 0.0 && x < vw && y < vh) {
+            return Vec::new();
+        }
+        let hits = self.hits_from_point(dom, x, y);
+        let mut out = Vec::with_capacity(hits.len() + 2);
+        if let Some(area) = hits.first().and_then(|&img| self.image_map_area(dom, img, x, y)) {
+            out.push(area);
+        }
+        for n in hits {
+            if out.last() != Some(&n) {
+                out.push(n);
             }
-            cur = parent;
+        }
+        if let Some(root) = dom.document_element(self.document()).ok().flatten() {
+            if out.last() != Some(&root) {
+                out.push(root);
+            }
         }
         out
     }
@@ -2691,8 +3042,40 @@ impl Layout {
 
     /// pyro: the `content-visibility: auto` state the layout engine determined (see
     /// `GeometrySource::content_visibility_state`).
-    pub fn content_visibility_state(&self, dom: &Dom) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+    pub fn content_visibility_state(&self, dom: &Dom) -> Vec<(u64, bool, [Option<f32>; 2])> {
         self.synced_geometry_source(dom).map(|s| s.content_visibility_state()).unwrap_or_default()
+    }
+
+    /// pyro: the `content-visibility: auto` elements of `dom` whose relevance the layout engine
+    /// determined, on the current layout (synced first), and whether they skip their contents
+    /// (CSS Contain 2 § 4.1, `contentvisibilityautostatechange`). Connected elements only.
+    pub fn content_visibility_auto_states(&self, dom: &Dom) -> Vec<(NodeId, bool)> {
+        let Some(source) = self.synced_geometry_source(dom) else { return Vec::new() };
+        source
+            .content_visibility_auto_states()
+            .into_iter()
+            .filter_map(|(key, skipped)| {
+                // (A render key: generation in the high half, slot index in the low one.)
+                let id = NodeId { idx: key as u32, gen: (key >> 32) as u32 };
+                (crate::snapshot::render_key(id) == key && dom.is_connected(id).unwrap_or(false)).then_some((id, skipped))
+            })
+            .collect()
+    }
+
+    /// pyro: the rendering update's ResizeObserver step (CSS Sizing 4 § 5.1): when the layout
+    /// engine has elements that may remember a size, they remember it on its layout if that is
+    /// the page's now, else at the end of its next one (`GeometrySource::record_remembered_sizes`).
+    /// Never syncs: a frame lays nothing out for them (an idle page's frames cost no layout).
+    pub fn record_remembered_sizes(&self, dom: &Dom) {
+        let Some(source) = self.external.as_ref().filter(|s| s.active()) else { return };
+        if !source.has_remembered_size_candidates() {
+            return;
+        }
+        // (As `synced_geometry_source` decides it would sync.)
+        let synced = self.external_synced.get() == Some(self.sync_key(dom))
+            && !source.stale()
+            && !self.style.animations_changed_for_layout();
+        source.record_remembered_sizes(synced);
     }
 
     /// pyro: the contents `content-visibility: auto` skips around `el` are rendered for a query
@@ -2718,7 +3101,15 @@ impl Layout {
         if let Some(leftward) = in_sync.and_then(|s| s.viewport_scrolls_leftward()) {
             return leftward;
         }
-        let Some(root) = dom.document_element(self.document()).ok().flatten() else { return false };
+        self.viewport_style_element(dom).and_then(|principal| self.style.stylo_style(dom, principal)).is_some_and(|s| match s.slow_clone_writing_mode() {
+            WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
+            WritingMode::HorizontalTb => s.slow_clone_direction() == style::computed_values::direction::T::Rtl,
+            _ => false,
+        })
+    }
+
+    fn viewport_style_element(&self, dom: &Dom) -> Option<NodeId> {
+        let root = dom.document_element(self.document()).ok().flatten()?;
         // The principal writing mode: an HTML root's `<body>` child's, else its own (CSS Writing
         // Modes 3 § 8; WPT css-writing-modes `wm-propagation-body-scroll-offset-*`).
         let body = dom
@@ -2727,20 +3118,16 @@ impl Layout {
             .and_then(|children| {
                 children.into_iter().find(|&child| dom.element(child).is_ok_and(|e| &*e.name.local == "body"))
             });
-        let principal = body.filter(|_| dom.element(root).is_ok_and(|e| &*e.name.local == "html")).unwrap_or(root);
-        self.style.stylo_style(dom, principal).is_some_and(|s| match s.slow_clone_writing_mode() {
-            WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
-            WritingMode::HorizontalTb => s.slow_clone_direction() == style::computed_values::direction::T::Rtl,
-            _ => false,
-        })
+        Some(body.filter(|_| dom.element(root).is_ok_and(|e| &*e.name.local == "html")).unwrap_or(root))
     }
 
     /// pyro: the viewport's scroll range on each axis ([`Self::viewport_x_reversed`]).
     fn viewport_scroll_range(&self, dom: &Dom) -> ((i32, i32), (i32, i32)) {
-        let (w, h) = self.document_scroll_size(dom);
+        let (w, h) = self.document_extent(dom);
+        let (vw, vh) = self.without_scrollbars(dom, self.window_size());
         // (Saturated: an extent past i32::MAX px stays a valid range, min <= max.)
-        let limit = |size: f64, visible: u32| scroll_limit(size, visible).min(i32::MAX as u32) as i32;
-        let (mx, my) = (limit(w, self.inner_width()), limit(h, self.inner_height()));
+        let limit = |size: f64, visible: f64| (round_layout_unit(size) - round_layout_unit(visible)).clamp(0.0, i32::MAX as f64) as i32;
+        let (mx, my) = (limit(w, vw), limit(h, vh));
         let x = if self.viewport_x_reversed(dom) { (-mx, 0) } else { (0, mx) };
         (x, (0, my))
     }
@@ -2753,12 +3140,18 @@ impl Layout {
     /// origin whatever the document's size, so `scrollTo(0, 0)` (a router's
     /// scroll restoration on every navigation) lays nothing out.
     pub fn window_scroll_to(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>) -> bool {
+        self.window_scroll_write(dom, left, top, None)
+    }
+
+    /// [`Self::window_scroll_to`] to the targets `left`, `top`; `dir`, a relative scroll's
+    /// per-axis delta, makes the snap directional ([`Self::snap_positions`]).
+    fn window_scroll_write(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>, dir: Option<[i64; 2]>) -> bool {
         // A scroll without a target (CSS Overflow 5 § 2.1).
         self.scroll_targets.remove(&None);
         // pyro: the viewport's snap positions (CSS Scroll Snap 1 § 6.2).
         let current = self.window_scroll;
         let (left, top) = {
-            let (l, t) = self.snap_scroll(dom, None, current, left.map(i64::from), top.map(i64::from));
+            let (l, t) = self.snap_scroll(dom, None, current, left.map(i64::from), top.map(i64::from), dir);
             (l.map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32), t.map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32))
         };
         // (Only an offset past the origin, in the direction the viewport scrolls, needs the range,
@@ -2781,12 +3174,14 @@ impl Layout {
         true
     }
 
-    /// `window.scrollBy` (Window.zig:853-860): relative, both axes written.
+    /// `window.scrollBy` (Window.zig:853-860): relative, both axes written. The delta goes on to
+    /// snapping, which then only lands ahead of the scroll (CSS Scroll Snap 1 § 6.2).
     pub fn window_scroll_by(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>) -> bool {
         let abs = |cur: i32, d: Option<i32>| (cur as i64 + d.unwrap_or(0) as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
         let x = abs(self.window_scroll.0, left);
         let y = abs(self.window_scroll.1, top);
-        self.window_scroll_to(dom, Some(x), Some(y))
+        let dir = [left.unwrap_or(0) as i64, top.unwrap_or(0) as i64];
+        self.window_scroll_write(dom, Some(x), Some(y), Some(dir))
     }
 
     // ----- element scroll ----------------------------------------------------
@@ -2890,6 +3285,71 @@ impl Layout {
         self.write_scroll(dom, el, ScrollWrite::By { left, top })
     }
 
+    /// pyro: the scroll offsets of `target` (`None`: the viewport).
+    pub fn scroll_position(&self, target: Option<NodeId>) -> (i32, i32) {
+        match target {
+            Some(el) => self.element_scroll.get(&el).copied().unwrap_or((0, 0)),
+            None => self.window_scroll,
+        }
+    }
+
+    /// pyro: the scroll offsets of every scrolled element and of the viewport (`None`), for a
+    /// smooth scroll to find where the boxes a scroll write moved started from.
+    pub fn scroll_positions(&self) -> Vec<(Option<NodeId>, (i32, i32))> {
+        let mut out: Vec<_> = self.element_scroll.iter().map(|(&el, &pos)| (Some(el), pos)).collect();
+        out.push((None, self.window_scroll));
+        out
+    }
+
+    /// pyro: whether a smooth scroll is moving `target` (`None`: the viewport): while one is, the
+    /// box keeps the snap target it had but neither re-snaps ([`Self::resnap`]) nor snaps
+    /// ([`Self::snap_unsnapped`]) after layout changes.
+    pub fn set_smooth_scrolling(&mut self, target: Option<NodeId>, running: bool) {
+        if running {
+            self.smooth_targets.insert(target);
+        } else {
+            self.smooth_targets.remove(&target);
+        }
+    }
+
+    /// pyro: `pos` clamped to the scroll range `target` (`None`: the viewport) has now, on each
+    /// axis (a smooth scroll's step, after the box's content shrank).
+    pub fn clamp_scroll_position(&self, dom: &Dom, target: Option<NodeId>, pos: (i32, i32)) -> (i32, i32) {
+        match target {
+            Some(el) => (
+                self.clamp_scroll(dom, el, Axis::Width, pos.0 as i64),
+                self.clamp_scroll(dom, el, Axis::Height, pos.1 as i64),
+            ),
+            None => {
+                let (rx, ry) = self.viewport_scroll_range(dom);
+                (pos.0.clamp(rx.0, rx.1), pos.1.clamp(ry.0, ry.1))
+            }
+        }
+    }
+
+    /// pyro: puts `target` (`None`: the viewport) at `pos`, a step of a smooth scroll (CSSOM View
+    /// § 4.1 "perform a smooth scroll"): neither snapped nor clamped, as its ends are offsets a
+    /// scroll write chose (snapped and clamped there). Whether it moved.
+    pub fn set_scroll_position(&mut self, dom: &Dom, target: Option<NodeId>, pos: (i32, i32)) -> bool {
+        if self.scroll_position(target) == pos {
+            return false;
+        }
+        match target {
+            Some(el) => {
+                if self.owned(dom, el).is_none() {
+                    return false;
+                }
+                self.element_scroll.insert(el, pos);
+            }
+            None => self.window_scroll = pos,
+        }
+        self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        if let Some(el) = target {
+            self.capture_scroll_anchor(dom, el);
+        }
+        true
+    }
+
     /// `scrollByAxis` (Element.zig:2206-2211): whether the container moved.
     pub fn scroll_by_axis(&mut self, dom: &Dom, el: NodeId, axis: Axis, delta: i32) -> bool {
         let w = match axis {
@@ -2915,7 +3375,7 @@ impl Layout {
         // programmatic scrolls.
         let tx = write.target(Axis::Width, current.0);
         let ty = write.target(Axis::Height, current.1);
-        let (tx, ty) = self.snap_scroll(dom, Some(el), current, tx, ty);
+        let (tx, ty) = self.snap_scroll(dom, Some(el), current, tx, ty, write.direction());
         if let Some(t) = tx {
             x = self.clamp_scroll(dom, el, Axis::Width, t);
         }
@@ -2937,6 +3397,8 @@ impl Layout {
     /// container it is (`scroll-snap-align` in the snapport, the scroll container's padding box
     /// less `scroll-padding`, their boxes grown by `scroll-margin`). `mandatory` always snaps;
     /// `proximity` within a third of the snapport, as Chromium. The targets as given otherwise.
+    /// `dir` (a relative scroll's per-axis delta) makes it directional: an axis that does not
+    /// move keeps the box it snapped to.
     fn snap_scroll(
         &mut self,
         dom: &Dom,
@@ -2944,8 +3406,17 @@ impl Layout {
         current: (i32, i32),
         tx: Option<i64>,
         ty: Option<i64>,
+        dir: Option<[i64; 2]>,
     ) -> (Option<i64>, Option<i64>) {
-        let (x, y, chosen) = self.snap_positions(dom, scroller, current, tx, ty, None);
+        let (x, y, mut chosen) = self.snap_positions(dom, scroller, current, tx, ty, None, dir);
+        if let Some(d) = dir {
+            let prior = self.snapped.get(&scroller).copied().unwrap_or([None, None]);
+            for axis in 0..2 {
+                if d[axis] == 0 {
+                    chosen[axis] = prior[axis];
+                }
+            }
+        }
         if chosen.iter().any(Option::is_some) {
             self.snapped.insert(scroller, chosen);
         } else {
@@ -2956,6 +3427,14 @@ impl Layout {
 
     /// [`Self::snap_scroll`]'s positions and the boxes they snap to on each axis; `only` limits
     /// an axis's candidates to one box (re-snapping to it).
+    ///
+    /// `dir`, a relative scroll's per-axis delta, snaps by its intended direction and end
+    /// position, as Chromium (CSS Scroll Snap 1 § 6.2; WPT css-scroll-snap
+    /// `snap-intended-direction`, `scroll-snap-stop-001`): an axis with no delta is not snapped;
+    /// only positions strictly ahead of `current` count (an area larger than the snapport, the
+    /// target clamped into its span), else (`mandatory`) the one nearest `current`; and the nearest
+    /// `scroll-snap-stop: always` position passed on the way is taken instead (§ 5.2).
+    #[allow(clippy::too_many_arguments)]
     fn snap_positions(
         &self,
         dom: &Dom,
@@ -2964,6 +3443,7 @@ impl Layout {
         tx: Option<i64>,
         ty: Option<i64>,
         only: Option<[Option<SnapBox>; 2]>,
+        dir: Option<[i64; 2]>,
     ) -> (Option<i64>, Option<i64>, [Option<SnapBox>; 2]) {
         let none = [None, None];
         let unchanged = (tx, ty, none);
@@ -2978,12 +3458,8 @@ impl Layout {
             return unchanged;
         }
         let words: Vec<&str> = snap_type.split_whitespace().collect();
-        let (snap_x, snap_y) = match words.first().copied() {
-            Some("x") | Some("inline") => (true, false),
-            Some("y") | Some("block") => (false, true),
-            Some("both") => (true, true),
-            _ => return unchanged,
-        };
+        let mode = self.style.stylo_style(dom, styled).map_or_else(style::logical_geometry::WritingMode::horizontal_tb, |style| style.writing_mode);
+        let (snap_x, snap_y) = snap_axes(words.first().copied().unwrap_or("none"), mode);
         let mandatory = words.get(1).copied() == Some("mandatory");
         // The scroller's padding box in client coordinates and its size.
         let px = |v: &str, basis: f64| -> f64 {
@@ -3024,7 +3500,30 @@ impl Layout {
         let mut best: [Option<(f64, SnapBox)>; 2] = [None, None];
         // Every box's snap position on each axis, to break ties (below).
         let mut all: Vec<(NodeId, [Option<f64>; 2])> = Vec::new();
-        let target = [tx.map(|v| v as f64), ty.map(|v| v as f64)];
+        let ranges = if let Some(container) = scroller {
+            [Axis::Width, Axis::Height].map(|axis| {
+                let extent = self.scroll_extent(dom, container, axis).unwrap_or(i32::MAX as f64).floor();
+                if self.scroll_reversed(dom, container, axis) { (-extent, 0.0) } else { (0.0, extent) }
+            })
+        } else {
+            let (x, y) = self.viewport_scroll_range(dom);
+            [(x.0 as f64, x.1 as f64), (y.0 as f64, y.1 as f64)]
+        };
+        let reachable = |axis: usize, position: f64| position.clamp(ranges[axis].0, ranges[axis].1);
+        let target = [tx.map(|v| reachable(0, v as f64)), ty.map(|v| reachable(1, v as f64))];
+        // A directional scroll (`dir`): the axes it does not move, and whether a position is
+        // ahead of the scroll offset now (rounded, as it lands).
+        let still = |axis: usize| dir.is_some_and(|d| d[axis] == 0);
+        let from = [current.0 as f64, current.1 as f64];
+        let ahead = |axis: usize, position: f64| match dir {
+            None => true,
+            Some(d) => (d[axis] > 0 && position.round() > from[axis]) || (d[axis] < 0 && position.round() < from[axis]),
+        };
+        // Nothing ahead: the position nearest the scroll offset now.
+        let mut fallback: [Option<(f64, SnapBox)>; 2] = [None, None];
+        // `scroll-snap-stop: always` positions on each axis.
+        let mut stops: [Vec<(f64, SnapBox)>; 2] = [Vec::new(), Vec::new()];
+        let mut areas = Vec::new();
         let Ok(nodes) = dom.descendants(scroller.unwrap_or(doc)) else { return unchanged };
         for id in nodes {
             if dom.element(id).is_err() || Some(id) == scroller {
@@ -3069,9 +3568,7 @@ impl Layout {
             let margin = |side: &str| px(&value(id, &format!("scroll-margin-{side}")), 0.0);
             let (top, bottom) = (r.y - origin_y - margin("top"), r.y + r.height - origin_y + margin("bottom"));
             let (left, right) = (r.x - origin_x - margin("left"), r.x + r.width - origin_x + margin("right"));
-            let mut parts = align.split_whitespace();
-            let block = parts.next().unwrap_or("none");
-            let inline = parts.next().unwrap_or(block);
+            let [align_x, align_y] = snap_alignment(&align, mode);
             let position = |a: &str, start: f64, end: f64, pad_start: f64, pad_end: f64, size: f64| match a {
                 "start" => Some(start - pad_start),
                 "end" => Some(end - (size - pad_end)),
@@ -3079,8 +3576,8 @@ impl Layout {
                 _ => None,
             };
             let candidates = [
-                snap_x.then(|| position(inline, left, right, pl, pr, width)).flatten(),
-                snap_y.then(|| position(block, top, bottom, pt, pb, height)).flatten(),
+                snap_x.then(|| position(align_x, left, right, pl, pr, width)).flatten(),
+                snap_y.then(|| position(align_y, top, bottom, pt, pb, height)).flatten(),
             ];
             // A snap area larger than the snapport on an axis can be scrolled within: any target
             // that keeps the snapport inside it is a snap position (CSS Scroll Snap 1 § 6.2.1).
@@ -3089,15 +3586,58 @@ impl Layout {
                 snap_y && bottom - top > height - pt - pb,
             ];
             let spans = [(left - pl, right - (width - pr)), (top - pt, bottom - (height - pb))];
+            let always = dir.is_some() && value(id, "scroll-snap-stop") == "always";
+            areas.push((id, candidates, covering, spans, [(left, right), (top, bottom)], [align_x, align_y], always));
+        }
+        for &(id, candidates, covering, spans, bounds, align, always) in &areas {
             let mut mine = [None, None];
             for axis in 0..2 {
-                if only.is_some_and(|o| o[axis].is_some_and(|b| b != (id, None))) {
+                if only.is_some_and(|o| o[axis].is_some_and(|b| b != (id, None))) || still(axis) {
                     continue;
                 }
-                let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
-                let c = if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 { t } else { c };
-                let c = c.max(0.0);
+                let (Some(mut c), Some(t)) = (candidates[axis], target[axis]) else { continue };
+                if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 {
+                    let other = 1 - axis;
+                    let (start, end) = bounds[axis];
+                    let mut occupied: Vec<_> = areas.iter().filter_map(|(_, points, _, _, rect, _, _)| {
+                        let (lo, hi) = rect[axis];
+                        (points[axis].is_some() && lo >= start && hi <= end && (lo > start || hi < end)
+                            && rect[other].1 >= bounds[other].0 && rect[other].0 <= bounds[other].1).then_some((lo, hi))
+                    }).collect();
+                    occupied.sort_unstable_by(|first, second| first.0.total_cmp(&second.0));
+                    let pad = [pl, pt][axis];
+                    let far = [width - pr, height - pb][axis];
+                    let mut cursor = start;
+                    let mut nearest: Option<f64> = None;
+                    for (lo, hi) in occupied.into_iter().chain(std::iter::once((end, end))) {
+                        if cursor < lo {
+                            let near_edge = cursor - pad;
+                            let far_edge = lo - far;
+                            let gap = if near_edge <= far_edge { t.clamp(near_edge, far_edge) } else {
+                                match align[axis] { "end" => far_edge, "center" => (near_edge + far_edge) / 2.0, _ => near_edge }
+                            }.clamp(spans[axis].0, spans[axis].1);
+                            if nearest.is_none_or(|prior| (gap - t).abs() < (prior - t).abs()) {
+                                nearest = Some(gap);
+                            }
+                        }
+                        cursor = cursor.max(hi);
+                    }
+                    c = nearest.unwrap_or(c);
+                } else if dir.is_some() && covering[axis] {
+                    // A directional scroll past its span: the span's nearer end.
+                    c = t.clamp(spans[axis].0, spans[axis].1);
+                }
+                let c = reachable(axis, c);
                 mine[axis] = Some(c);
+                if let (true, Some(p)) = (always, candidates[axis]) {
+                    stops[axis].push((reachable(axis, p), (id, None)));
+                }
+                if !ahead(axis, c) {
+                    if fallback[axis].is_none_or(|(f, _)| (c - from[axis]).abs() < (f - from[axis]).abs()) {
+                        fallback[axis] = Some((c, (id, None)));
+                    }
+                    continue;
+                }
                 if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
                     best[axis] = Some((c, (id, None)));
                 }
@@ -3115,9 +3655,7 @@ impl Layout {
                 self.computed_pseudo_style_value(dom, container, &style::selector_parser::PseudoElement::Column, "scroll-snap-align")
             };
             if !align.is_empty() && align != "none" {
-                let mut parts = align.split_whitespace();
-                let block = parts.next().unwrap_or("none").to_owned();
-                let inline = parts.next().map(str::to_owned).unwrap_or_else(|| block.clone());
+                let [align_x, align_y] = snap_alignment(&align, mode);
                 let (bl, bt) = (px(&value(container, "border-left-width"), 0.0), px(&value(container, "border-top-width"), 0.0));
                 let position = |a: &str, start: f64, end: f64, pad_start: f64, pad_end: f64, size: f64| match a {
                     "start" => Some(start - pad_start),
@@ -3129,19 +3667,42 @@ impl Layout {
                 for (index, [cx, cy, cw, ch]) in columns.into_iter().enumerate() {
                     let (left, right, top, bottom) = (cx - bl, cx - bl + cw, cy - bt, cy - bt + ch);
                     let candidates = [
-                        snap_x.then(|| position(&inline, left, right, pl, pr, width)).flatten(),
-                        snap_y.then(|| position(&block, top, bottom, pt, pb, height)).flatten(),
+                        snap_x.then(|| position(align_x, left, right, pl, pr, width)).flatten(),
+                        snap_y.then(|| position(align_y, top, bottom, pt, pb, height)).flatten(),
                     ];
                     for axis in 0..2 {
-                        if only.is_some_and(|o| o[axis].is_some_and(|b| b != (container, Some(index)))) {
+                        if only.is_some_and(|o| o[axis].is_some_and(|b| b != (container, Some(index)))) || still(axis) {
                             continue;
                         }
                         let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
-                        let c = c.max(0.0);
+                        let c = reachable(axis, c);
+                        if !ahead(axis, c) {
+                            if fallback[axis].is_none_or(|(f, _)| (c - from[axis]).abs() < (f - from[axis]).abs()) {
+                                fallback[axis] = Some((c, (container, Some(index))));
+                            }
+                            continue;
+                        }
                         if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
                             best[axis] = Some((c, (container, Some(index))));
                         }
                     }
+                }
+            }
+        }
+        if dir.is_some() {
+            for axis in 0..2 {
+                // (Only `mandatory` must rest on a snap position: `proximity` with nothing ahead
+                // lands where it was sent, not back where it was.)
+                if best[axis].is_none() && mandatory {
+                    best[axis] = fallback[axis];
+                }
+                // A `scroll-snap-stop: always` position strictly between the scroll offset now
+                // and the chosen one stops the scroll: the nearest such (CSS Scroll Snap 1 § 5.2).
+                let Some((b, _)) = best[axis] else { continue };
+                let (lo, hi) = if b.round() > from[axis] { (from[axis], b.round()) } else { (b.round(), from[axis]) };
+                let passed = stops[axis].iter().filter(|(p, _)| p.round() > lo && p.round() < hi);
+                if let Some(&stop) = passed.min_by(|first, second| (first.0 - from[axis]).abs().total_cmp(&(second.0 - from[axis]).abs())) {
+                    best[axis] = Some(stop);
                 }
             }
         }
@@ -3158,7 +3719,7 @@ impl Layout {
         }
         let mut chosen = none;
         let mut snap = |axis: usize, t: Option<i64>, size: f64| match (t, best[axis]) {
-            (Some(t), Some((b, id))) if mandatory || only.is_some() || (b - t as f64).abs() <= size / 3.0 => {
+            (Some(_), Some((b, id))) if mandatory || only.is_some() || target[axis].is_some_and(|t| (b - t).abs() <= size / 3.0) => {
                 chosen[axis] = Some(id);
                 Some(b.round() as i64)
             }
@@ -3176,6 +3737,10 @@ impl Layout {
         let mut snapped: Vec<(Option<NodeId>, [Option<SnapBox>; 2])> = self.snapped.iter().map(|(k, v)| (*k, *v)).collect();
         snapped.sort_by_key(|(k, _)| k.map(|k| (k.idx, k.gen)));
         for (scroller, targets) in snapped {
+            // (A smooth scroll is moving it: it keeps its snap target, and lands snapped.)
+            if self.smooth_targets.contains(&scroller) {
+                continue;
+            }
             if let Some(el) = scroller {
                 if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) {
                     self.snapped.remove(&scroller);
@@ -3188,10 +3753,10 @@ impl Layout {
             };
             let (tx, ty) = (Some(current.0 as i64), Some(current.1 as i64));
             let alive = targets.map(|t| t.filter(|(el, _)| dom.is_connected(*el).unwrap_or(false)));
-            let (mut x, mut y, mut chosen) = self.snap_positions(dom, scroller, current, tx, ty, Some(alive));
+            let (mut x, mut y, mut chosen) = self.snap_positions(dom, scroller, current, tx, ty, Some(alive), None);
             // The box it snapped to has no snap position any more: the nearest one.
             if chosen[0].is_none() && chosen[1].is_none() {
-                (x, y, chosen) = self.snap_positions(dom, scroller, current, tx, ty, None);
+                (x, y, chosen) = self.snap_positions(dom, scroller, current, tx, ty, None, None);
             }
             if chosen.iter().all(Option::is_none) {
                 self.snapped.remove(&scroller);
@@ -3226,6 +3791,120 @@ impl Layout {
                 }
             }
         }
+    }
+
+    /// pyro: whether the document has an element styled with a `scroll-snap-type` (as of the last
+    /// sync): its scroll offsets are re-clamped after DOM changes though none is scrolled, for
+    /// [`Self::snap_unsnapped`].
+    pub fn snap_owed(&self) -> bool {
+        self.external.as_ref().filter(|s| s.active()).is_some_and(|s| s.uses_scroll_snap())
+    }
+
+    /// pyro: CSS Scroll Snap 1 § 6.2.3: a mandatory snap container that is not snapped (it had no
+    /// snap position when it last snapped, or its `scroll-snap-type` just became mandatory) snaps
+    /// at its scroll position after the DOM or a style changes, as Chromium snaps after layout: an
+    /// area added or given a `scroll-snap-align`, or the snap type set or changed, snaps it (WPT
+    /// css-scroll-snap `snap-after-relayout/*`). Snapped ones re-snap in [`Self::resnap`]. Looked
+    /// for once per DOM version. Adds the scrollers that moved to `moved`.
+    fn snap_unsnapped(&mut self, dom: &Dom, moved: &mut Vec<ScrollTarget>) {
+        if !self.snap_owed() {
+            return;
+        }
+        let version = dom.version();
+        if self.unsnapped_checked.replace(version) == Some(version) {
+            return;
+        }
+        let Some(source) = self.synced_geometry_source(dom).cloned() else { return };
+        let mut containers: Vec<NodeId> =
+            source.mandatory_snap_containers().into_iter().filter_map(|key| node_of(dom, key)).collect();
+        containers.sort_by_key(|k| (k.idx, k.gen));
+        containers.dedup();
+        let doc = self.style.document();
+        let root = dom.document_element(doc).ok().flatten();
+        for el in containers {
+            // (The root's snap type is the viewport's, below.)
+            if Some(el) == root
+                || self.snapped.contains_key(&Some(el))
+                || self.smooth_targets.contains(&Some(el))
+                || !dom.is_connected(el).unwrap_or(false)
+                || !self.is_visible(dom, el)
+            {
+                continue;
+            }
+            let current = self.element_scroll.get(&el).copied().unwrap_or((0, 0));
+            let (cx, cy) = (Some(current.0 as i64), Some(current.1 as i64));
+            let (tx, ty) = self.snap_scroll(dom, Some(el), current, cx, cy, None);
+            let x = tx.map_or(current.0, |t| self.clamp_scroll(dom, el, Axis::Width, t));
+            let y = ty.map_or(current.1, |t| self.clamp_scroll(dom, el, Axis::Height, t));
+            if (x, y) != current {
+                self.element_scroll.insert(el, (x, y));
+                self.scroll_generation = self.scroll_generation.wrapping_add(1);
+                if !moved.contains(&ScrollTarget::Container(el)) {
+                    moved.push(ScrollTarget::Container(el));
+                }
+            }
+        }
+        // The viewport, when the root's `scroll-snap-type` snaps mandatorily.
+        if !self.snapped.contains_key(&None) && !self.smooth_targets.contains(&None) {
+            let mandatory = root.is_some_and(|root| {
+                self.style.computed_value(dom, root, "scroll-snap-type").unwrap_or_default().ends_with("mandatory")
+            });
+            if mandatory {
+                let (x, y) = self.window_scroll;
+                // (A snap that does not move it keeps its scroll target.)
+                let target = self.scroll_targets.get(&None).copied();
+                if self.window_scroll_to(dom, Some(x), Some(y)) {
+                    if !moved.contains(&ScrollTarget::Viewport) {
+                        moved.push(ScrollTarget::Viewport);
+                    }
+                } else if let Some(target) = target {
+                    self.scroll_targets.insert(None, target);
+                }
+            }
+        }
+    }
+
+    /// pyro: CSS Scroll Snap 2 § 5.1: the scrollers (`None`: the viewport) whose snap targets
+    /// changed since their snap events last reported them, with their new targets (block,
+    /// inline; `None`: not snapped on that axis), in element order, the viewport first. Each is
+    /// taken as reported. A disconnected scroller is dropped unreported.
+    pub fn take_snap_changes(&mut self, dom: &Dom) -> Vec<(Option<NodeId>, [Option<NodeId>; 2])> {
+        if self.snapped.is_empty() && self.reported_snaps.is_empty() {
+            return Vec::new();
+        }
+        let mut scrollers: Vec<Option<NodeId>> =
+            self.snapped.keys().chain(self.reported_snaps.keys()).copied().collect();
+        scrollers.sort_by_key(|k| k.map(|k| (k.idx, k.gen)));
+        scrollers.dedup();
+        let doc = self.style.document();
+        let mut changes = Vec::new();
+        for scroller in scrollers {
+            // (A smooth scroll is moving it: its targets are reported when it lands, before its
+            // `scrollend`; the instant write that started it already chose where it snaps.)
+            if self.smooth_targets.contains(&scroller) {
+                continue;
+            }
+            let now = self.snapped.get(&scroller).map_or([None, None], |t| t.map(|b| b.map(|(id, _)| id)));
+            let before = self.reported_snaps.get(&scroller).copied().unwrap_or([None, None]);
+            if now == before {
+                continue;
+            }
+            if now == [None, None] {
+                self.reported_snaps.remove(&scroller);
+            } else {
+                self.reported_snaps.insert(scroller, now);
+            }
+            if scroller.is_some_and(|el| !dom.is_connected(el).unwrap_or(false)) {
+                continue;
+            }
+            let styled = scroller.or_else(|| dom.document_element(doc).ok().flatten());
+            let mode = styled
+                .and_then(|el| self.style.stylo_style(dom, el).map(|style| style.writing_mode))
+                .unwrap_or_else(style::logical_geometry::WritingMode::horizontal_tb);
+            let [x, y] = now.map(|t| t.map(|id| snap_event_target(dom, scroller.unwrap_or(doc), id)));
+            changes.push((scroller, if mode.is_vertical() { [x, y] } else { [y, x] }));
+        }
+        changes
     }
 
     /// Whether any element or the window is scrolled away from the origin.
@@ -3426,10 +4105,22 @@ impl Layout {
     /// pyro: CSS Scroll Snap 1 § 6.3: a scroll container that snaps mandatorily and was not
     /// scrolled starts at a snap position (Chromium snaps it at its first layout). Looked for once
     /// per DOM version. Whether a scroll offset changed.
+    ///
+    /// pyro: CSS Scroll Snap 2 § 3 first: a scroll container not yet scrolled starts scrolled to
+    /// its `scroll-initial-target` ([`Self::scroll_to_initial_targets`]), from where it then snaps.
     pub fn snap_initial_positions(&mut self, dom: &Dom) -> bool {
-        // pyro: free for a document no element of which was styled with a `scroll-snap-type` as
-        // of the last sync (looked for again after the next: the version is not marked checked).
-        if !self.external.as_ref().filter(|s| s.active()).is_some_and(|s| s.uses_scroll_snap()) {
+        // pyro: free for a document no element of which was styled with a `scroll-snap-type` or
+        // a `scroll-initial-target` as of the last sync (looked for again after the next: the
+        // version is not marked checked).
+        let Some((snap, targets)) = self
+            .external
+            .as_ref()
+            .filter(|s| s.active())
+            .map(|s| (s.uses_scroll_snap(), s.uses_scroll_initial_target()))
+        else {
+            return false;
+        };
+        if !snap && !targets {
             return false;
         }
         let version = dom.version();
@@ -3438,16 +4129,26 @@ impl Layout {
         }
         let Some(source) = self.synced_geometry_source(dom).cloned() else { return false };
         let mut moved = false;
+        if targets {
+            moved |= self.scroll_to_initial_targets(dom, &source);
+        }
+        if !snap {
+            return moved;
+        }
         for key in source.mandatory_snap_containers() {
             let Some(el) = crate::geometry::node_of(dom, key) else { continue };
             if Some(el) == dom.document_element(self.document()).ok().flatten() {
                 continue;
             }
             // (An offset of zero is no scroll: a script read or a reveal that found nothing to do.)
-            if self.element_scroll.get(&el).is_some_and(|&o| o != (0, 0)) || !self.initially_snapped.insert(el) {
+            // (Nor one a smooth scroll moves, put back where it was: script scrolled it.)
+            if self.element_scroll.get(&el).is_some_and(|&o| o != (0, 0))
+                || !self.initially_snapped.insert(el)
+                || self.smooth_targets.contains(&Some(el))
+            {
                 continue;
             }
-            let (tx, ty) = self.snap_scroll(dom, Some(el), (0, 0), Some(0), Some(0));
+            let (tx, ty) = self.snap_scroll(dom, Some(el), (0, 0), Some(0), Some(0), None);
             let x = tx.map_or(0, |t| self.clamp_scroll(dom, el, Axis::Width, t));
             let y = ty.map_or(0, |t| self.clamp_scroll(dom, el, Axis::Height, t));
             if (x, y) != (0, 0) {
@@ -3457,6 +4158,10 @@ impl Layout {
             }
         }
         // pyro: the viewport too, when the root's `scroll-snap-type` snaps mandatorily.
+        // (A smooth scroll moving it, put back where it was: script scrolled it.)
+        if self.smooth_targets.contains(&None) {
+            self.viewport_initially_snapped = true;
+        }
         if self.window_scroll == (0, 0) && !self.viewport_initially_snapped {
             let doc = self.style.document();
             let mandatory = dom.document_element(doc).ok().flatten().is_some_and(|root| {
@@ -3465,6 +4170,87 @@ impl Layout {
             if mandatory {
                 self.viewport_initially_snapped = true;
                 moved |= self.window_scroll_to(dom, Some(0), Some(0));
+            }
+        }
+        moved
+    }
+
+    /// pyro: CSS Scroll Snap 2 § 3: each element styled `scroll-initial-target: nearest` scrolls
+    /// its nearest scroll container (or the viewport) to it, aligned to its start edges in the
+    /// container's writing mode (its `scroll-snap-align` where the container snaps that axis), as
+    /// Chromium does. Only a container nobody scrolled yet, once, by its first target in tree order
+    /// (a script or user scroll before it keeps its own offset). Whether a scroll offset changed.
+    fn scroll_to_initial_targets(&mut self, dom: &Dom, source: &Rc<dyn GeometrySource>) -> bool {
+        let mut moved = false;
+        for key in source.initial_scroll_targets() {
+            let Some(el) = crate::geometry::node_of(dom, key) else { continue };
+            if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) || self.layout_box(dom, el).is_none() {
+                continue;
+            }
+            let mut container = None;
+            let mut cur = flat_parent_element(dom, el);
+            while let Some(node) = cur {
+                if self.is_root_container(dom, node) {
+                    break;
+                }
+                if self.is_scroll_container(dom, node) {
+                    container = Some(node);
+                    break;
+                }
+                cur = flat_parent_element(dom, node);
+            }
+            if self.initially_targeted.contains(&container) {
+                continue;
+            }
+            let alignment = RevealAlignment::Logical { block: ScrollAlign::Start, inline: ScrollAlign::Start };
+            let target = self.scroll_margin_rect(dom, el);
+            match container {
+                Some(node) => {
+                    // (An offset of zero is no scroll: a script read or a reveal that found nothing to do.)
+                    if self.element_scroll.get(&node).is_some_and(|&o| o != (0, 0)) {
+                        self.initially_targeted.insert(container);
+                        continue;
+                    }
+                    let (offset_x, offset_y) =
+                        alignment.offsets(|| self.style.stylo_style(dom, node).map(|style| style.writing_mode));
+                    let (offset_x, offset_y) = self.snap_aligned_offsets(dom, node, el, offset_x, offset_y);
+                    let (x, width, y, height) = self.rect_in_scrollport(dom, node, target);
+                    let (port_width, port_height) = (self.client_width(dom, node), self.client_height(dom, node));
+                    let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, Some(node), port_width, port_height);
+                    let left = offset_x(x - pl, width, (port_width - pl - pr).max(0.0), self.scroll_left(node) as i64);
+                    let top = offset_y(y - pt, height, (port_height - pt - pb).max(0.0), self.scroll_top(node) as i64);
+                    self.initially_targeted.insert(container);
+                    // (It snaps from there: `element_scroll_to` lands on a snap position.)
+                    if self.element_scroll_to(dom, node, left, top) {
+                        self.initially_snapped.insert(node);
+                        moved = true;
+                    }
+                }
+                None => {
+                    if self.window_scroll != (0, 0) {
+                        self.initially_targeted.insert(None);
+                        continue;
+                    }
+                    if self.layout_box(dom, el).is_some_and(|b| b.fixed) {
+                        continue;
+                    }
+                    let [gl, gt, gr, gb] =
+                        self.synced_geometry_source(dom).and_then(|s| s.viewport_gutters()).unwrap_or([0.0; 4]);
+                    let (offset_x, offset_y) = alignment.offsets(|| {
+                        self.viewport_style_element(dom).and_then(|node| self.style.stylo_style(dom, node)).map(|style| style.writing_mode)
+                    });
+                    let (width, height) = (self.inner_width() as f64 - gl - gr, self.inner_height() as f64 - gt - gb);
+                    let root = dom.document_element(self.document()).ok().flatten();
+                    let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, root, width, height);
+                    let left = offset_x(target.left() - gl - pl, target.width, (width - pl - pr).max(0.0), self.window_scroll.0 as i64);
+                    let top = offset_y(target.top() - gt - pt, target.height, (height - pt - pb).max(0.0), self.window_scroll.1 as i64);
+                    self.initially_targeted.insert(None);
+                    // (It snaps from there: `window_scroll_to` lands on a snap position.)
+                    if self.window_scroll_to(dom, left, top) {
+                        self.viewport_initially_snapped = true;
+                        moved = true;
+                    }
+                }
             }
         }
         moved
@@ -3485,6 +4271,7 @@ impl Layout {
     /// Flow geometry only; hidden or detached elements keep their offsets.
     pub fn clamp_scroll_offsets(&mut self, dom: &Dom) -> Vec<ScrollTarget> {
         let mut moved = Vec::new();
+        self.snap_unsnapped(dom, &mut moved);
         if !self.has_scroll_offsets() {
             return moved;
         }
@@ -3860,6 +4647,29 @@ impl Layout {
         }
     }
 
+    /// pyro: the default action of a click on a `::scroll-button()` of `origin` scrolling in the
+    /// physical direction `delta`: `origin` (the viewport for the root element) scrolls by a page,
+    /// 87.5% of its scrollport on that axis (Chromium's minimum page step fraction), landing on a
+    /// snap position past the current offset in that direction when it snaps (a directional
+    /// scroll: an enabled button never snaps back to where it is). CSS Overflow 5 § 2.2; WPT
+    /// css-overflow `scroll-buttons-activation`, `scroll-buttons-scroll-distance`,
+    /// `root-scroll-button-activation`. Returns the scrollers that moved.
+    pub fn activate_scroll_button(&mut self, dom: &Dom, origin: NodeId, delta: (i8, i8)) -> Vec<ScrollTarget> {
+        const PAGE_FRACTION: f64 = 0.875;
+        let root = dom.document_element(self.document()).ok().flatten();
+        let step = |size: f64, sign: i8| (size * PAGE_FRACTION).round().max(1.0) as i32 * sign as i32;
+        let moved = if Some(origin) == root {
+            let left = (delta.0 != 0).then(|| step(self.inner_width() as f64, delta.0));
+            let top = (delta.1 != 0).then(|| step(self.inner_height() as f64, delta.1));
+            self.window_scroll_by(dom, left, top).then_some(ScrollTarget::Viewport)
+        } else {
+            let left = (delta.0 != 0).then(|| step(self.client_width(dom, origin), delta.0));
+            let top = (delta.1 != 0).then(|| step(self.client_height(dom, origin), delta.1));
+            self.element_scroll_by(dom, origin, left, top).then_some(ScrollTarget::Container(origin))
+        };
+        moved.into_iter().collect()
+    }
+
     pub fn scroll_into_view(&mut self, dom: &Dom, el: NodeId) -> bool {
         !self.scroll_into_view_targets(dom, el).is_empty()
     }
@@ -3868,6 +4678,9 @@ impl Layout {
     /// container's scroll event followed by the document's viewport event.
     /// Vertical start reveal and horizontal nearest-edge reveal; not full CSS alignment.
     pub fn scroll_into_view_targets(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        if self.in_hidden_contents(dom, el) {
+            return Vec::new();
+        }
         self.force_content_visibility(dom, el);
         if !self.is_visible(dom, el) {
             return Vec::new();
@@ -3928,11 +4741,11 @@ impl Layout {
     fn scroll_into_view_aligned_targets(&mut self, dom: &Dom, el: NodeId, center: bool) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, i64) -> Option<i32> =
             if center { centered_scroll_offset } else { center_if_needed_offset };
-        self.scroll_into_view_offset_targets(dom, el, offset, offset, false)
+        self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Physical(offset), false)
     }
 
     /// Script-facing `Element.scrollIntoView(options)` with an explicit
-    /// alignment per axis (`block` vertical, `inline` horizontal; CSSOM View
+    /// alignment per logical axis (CSSOM View
     /// "scroll an element into view"), changed targets in delivery order.
     /// The default `{block: start, inline: nearest}` aligns in every scroll
     /// container on the way too, as Chromium does.
@@ -3943,7 +4756,7 @@ impl Layout {
         block: ScrollAlign,
         inline: ScrollAlign,
     ) -> Vec<ScrollTarget> {
-        let moved = self.scroll_into_view_offset_targets(dom, el, inline.offset_fn(), block.offset_fn(), true);
+        let moved = self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Logical { block, inline }, true);
         self.set_scroll_target(dom, el);
         moved
     }
@@ -3951,7 +4764,7 @@ impl Layout {
     /// CSS Overflow 5 § 2.1: `el` is the current scroll target of each scroll container it was
     /// scrolled into view in (and of the viewport).
     fn set_scroll_target(&mut self, dom: &Dom, el: NodeId) {
-        if !self.is_visible(dom, el) {
+        if !self.is_visible(dom, el) || self.in_hidden_contents(dom, el) {
             return;
         }
         use style::values::specified::box_::Overflow as O;
@@ -4001,7 +4814,7 @@ impl Layout {
     ) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, i64) -> Option<i32> =
             if center_if_needed { center_if_needed_offset } else { nearest_scroll_offset };
-        let moved = self.scroll_into_view_offset_targets(dom, el, offset, offset, true);
+        let moved = self.scroll_into_view_offset_targets(dom, el, RevealAlignment::Physical(offset), true);
         self.set_scroll_target(dom, el);
         moved
     }
@@ -4035,16 +4848,11 @@ impl Layout {
         offset_y: fn(f64, f64, f64, i64) -> Option<i32>,
     ) -> (fn(f64, f64, f64, i64) -> Option<i32>, fn(f64, f64, f64, i64) -> Option<i32>) {
         let snap_type = self.style.computed_value(dom, container, "scroll-snap-type").unwrap_or_default();
-        let (snap_x, snap_y) = match snap_type.split_whitespace().next() {
-            Some("x") | Some("inline") => (true, false),
-            Some("y") | Some("block") => (false, true),
-            Some("both") => (true, true),
-            _ => return (offset_x, offset_y),
-        };
+        let Some(axis) = snap_type.split_whitespace().next().filter(|axis| *axis != "none") else { return (offset_x, offset_y) };
+        let mode = self.style.stylo_style(dom, container).map_or_else(style::logical_geometry::WritingMode::horizontal_tb, |style| style.writing_mode);
+        let (snap_x, snap_y) = snap_axes(axis, mode);
         let align = self.style.computed_value(dom, el, "scroll-snap-align").unwrap_or_default();
-        let mut words = align.split_whitespace();
-        let block = words.next().unwrap_or("none").to_owned();
-        let inline = words.next().map(str::to_owned).unwrap_or_else(|| block.clone());
+        let [align_x, align_y] = snap_alignment(&align, mode);
         let pick = |keyword: &str, asked: fn(f64, f64, f64, i64) -> Option<i32>| -> fn(f64, f64, f64, i64) -> Option<i32> {
             match keyword {
                 "start" => ScrollAlign::Start.offset_fn(),
@@ -4054,19 +4862,55 @@ impl Layout {
             }
         };
         (
-            if snap_x { pick(&inline, offset_x) } else { offset_x },
-            if snap_y { pick(&block, offset_y) } else { offset_y },
+            if snap_x { pick(align_x, offset_x) } else { offset_x },
+            if snap_y { pick(align_y, offset_y) } else { offset_y },
         )
+    }
+
+    fn reveal_scroll_padding(&self, dom: &Dom, alignment: RevealAlignment, element: Option<NodeId>, width: f64, height: f64) -> [f64; 4] {
+        use app_units::Au;
+        if !matches!(alignment, RevealAlignment::Logical { .. }) { return [0.0; 4]; }
+        let Some(style) = element.and_then(|node| self.style.stylo_style(dom, node)) else { return [0.0; 4] };
+        let padding = style.get_padding();
+        let horizontal = Au::from_f64_px(width);
+        let vertical = Au::from_f64_px(height);
+        [(&padding.scroll_padding_left, horizontal), (&padding.scroll_padding_top, vertical),
+         (&padding.scroll_padding_right, horizontal), (&padding.scroll_padding_bottom, vertical)]
+            .map(|(value, basis)| value.to_used_value(basis).map_or(0.0, Au::to_f64_px))
+    }
+
+    /// pyro: whether `el` is in contents a `content-visibility: hidden` ancestor skips. The engine
+    /// displays them, and a geometry query lays them out (unpainted, `layout_box`), but nothing
+    /// scrolls to them: Chromium does not activate a hidden lock for scrollIntoView or a fragment
+    /// (CSS Contain 2 § 4.1; WPT css-contain `content-visibility-056`, `-083`, `-084`).
+    /// (Read from the engine's styles up the flat tree, deriving nothing: an action's reveal
+    /// asks it at every click.)
+    fn in_hidden_contents(&self, dom: &Dom, el: NodeId) -> bool {
+        use style::values::specified::box_::ContentVisibility;
+        let mut cur = flat_parent_element(dom, el);
+        while let Some(node) = cur {
+            if self
+                .style
+                .stylo_style(dom, node)
+                .is_some_and(|s| s.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden)
+            {
+                return true;
+            }
+            cur = flat_parent_element(dom, node);
+        }
+        false
     }
 
     fn scroll_into_view_offset_targets(
         &mut self,
         dom: &Dom,
         el: NodeId,
-        offset_x: fn(f64, f64, f64, i64) -> Option<i32>,
-        offset_y: fn(f64, f64, f64, i64) -> Option<i32>,
+        alignment: RevealAlignment,
         script: bool,
     ) -> Vec<ScrollTarget> {
+        if self.in_hidden_contents(dom, el) {
+            return Vec::new();
+        }
         self.force_content_visibility(dom, el);
         if !self.is_visible(dom, el) {
             return Vec::new();
@@ -4075,21 +4919,7 @@ impl Layout {
         // pyro: up the flat tree: a slotted element's slot (and a shadow root's host) are
         // ancestors whose scroll containers scroll it (WPT cssom-view
         // `scrollIntoView-should-treat-slot-as-scroll-container`).
-        let flat_parent = |node: NodeId| -> Option<NodeId> {
-            // (A closed shadow root's slot too: script's `assignedSlot` hides it.)
-            if let Some(slot) = dom.flat_tree_slot(node) {
-                return Some(slot);
-            }
-            match dom.parent_element(node).ok().flatten() {
-                Some(parent) => Some(parent),
-                None => dom
-                    .parent(node)
-                    .ok()
-                    .flatten()
-                    .filter(|&frag| dom.is_shadow_root(frag).unwrap_or(false))
-                    .and_then(|root| dom.fragment_host(root).ok().flatten()),
-            }
-        };
+        let flat_parent = |node: NodeId| flat_parent_element(dom, node);
         let mut cur = flat_parent(el);
         let mut target_owns_snap_area = script;
         while let Some(node) = cur {
@@ -4119,16 +4949,19 @@ impl Layout {
                 axes.y = user.y || height <= self.client_height(dom, node);
             }
             if axes.x || axes.y || explicit {
+                let (offset_x, offset_y) = alignment.offsets(|| self.style.stylo_style(dom, node).map(|style| style.writing_mode));
                 // pyro: a snap area of a snapping container is scrolled to its snap position (its
                 // `scroll-snap-align` in place of the alignment asked for), as Chromium does (CSS
                 // Scroll Snap 1 § 4; WPT css-overflow `targeted-column-scroll-marker-selection-001`).
                 let (offset_x, offset_y) = if target_owns_snap_area { self.snap_aligned_offsets(dom, node, el, offset_x, offset_y) } else { (offset_x, offset_y) };
                 target_owns_snap_area = false;
+                let (port_width, port_height) = (self.client_width(dom, node), self.client_height(dom, node));
+                let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, Some(node), port_width, port_height);
                 let left = (axes.x || explicit)
-                    .then(|| offset_x(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
+                    .then(|| offset_x(x - pl, width, (port_width - pl - pr).max(0.0), self.scroll_left(node) as i64))
                     .flatten();
                 let top = (axes.y || explicit)
-                    .then(|| offset_y(y, height, self.client_height(dom, node), self.scroll_top(node) as i64))
+                    .then(|| offset_y(y - pt, height, (port_height - pt - pb).max(0.0), self.scroll_top(node) as i64))
                     .flatten();
                 if self.element_scroll_to(dom, node, left, top) {
                     moved.push(ScrollTarget::Container(node));
@@ -4145,8 +4978,13 @@ impl Layout {
         // css-overflow `scrollbar-gutter-scroll-into-view`).
         let [gl, gt, gr, gb] =
             self.synced_geometry_source(dom).and_then(|s| s.viewport_gutters()).unwrap_or([0.0; 4]);
-        let left = offset_x(target.left() - gl, target.width, self.inner_width() as f64 - gl - gr, self.window_scroll.0 as i64);
-        let top = offset_y(target.top() - gt, target.height, self.inner_height() as f64 - gt - gb, self.window_scroll.1 as i64);
+        let (offset_x, offset_y) = alignment.offsets(|| self.viewport_style_element(dom)
+            .and_then(|node| self.style.stylo_style(dom, node)).map(|style| style.writing_mode));
+        let (width, height) = (self.inner_width() as f64 - gl - gr, self.inner_height() as f64 - gt - gb);
+        let root = dom.document_element(self.document()).ok().flatten();
+        let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, root, width, height);
+        let left = offset_x(target.left() - gl - pl, target.width, (width - pl - pr).max(0.0), self.window_scroll.0 as i64);
+        let top = offset_y(target.top() - gt - pt, target.height, (height - pt - pb).max(0.0), self.window_scroll.1 as i64);
         if self.window_scroll_to(dom, left, top) {
             moved.push(ScrollTarget::Viewport);
         }
@@ -4184,7 +5022,7 @@ impl Layout {
             return String::new();
         }
         let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, false) else { return String::new() };
-        let name = if name.starts_with("--") { Cow::Borrowed(name) } else { lowercase(name) };
+        let name = resolved_property_name(name);
         // The animation and transition properties of a `::before`/`::after`, from the page's own
         // timing cascade (the engine's has them all `none`), as the element's are.
         let timing_pseudo = match pseudo {
@@ -4197,7 +5035,7 @@ impl Layout {
         }
         // A running CSS transition of the pseudo-element: its value now (the layout engine samples
         // none), in the after-change style.
-        if let Some(p) = timing_pseudo.filter(|_| !name.starts_with("--")) {
+        if let Some(p) = timing_pseudo {
             match self.style.pseudo_transition_value(el, p, &name) {
                 Some(crate::animation::TransitionValue::Text(v)) => return v,
                 Some(crate::animation::TransitionValue::Style(style)) => {
@@ -4211,6 +5049,33 @@ impl Layout {
             return "none".into();
         }
         value
+    }
+
+    pub fn typed_computed_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        let computed = || {
+            if name == "line-height" {
+                // A unitless line-height stays a number in Typed OM.
+                return self.style.used_value(dom, el, name);
+            }
+            let css = self.style.computed_value(dom, el, name)?;
+            if css.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.') {
+                if let Some(value) = self.style.stylo_style(dom, el)
+                    .and_then(|style| crate::stylo::precise_typed_numeric(&style, name, &css)) {
+                    return Some(value);
+                }
+            }
+            Some(css)
+        };
+        if !self.style.style_overridden() {
+            match self.style.transition_value(el, name) {
+                Some(crate::animation::TransitionValue::Text(value)) => return Some(value),
+                Some(crate::animation::TransitionValue::Style(sample)) => {
+                    return self.style.with_style_override(el, sample, computed).flatten();
+                }
+                None => {}
+            }
+        }
+        computed()
     }
 
     /// `getComputedStyle(el).getPropertyValue(name)`
@@ -4228,11 +5093,12 @@ impl Layout {
             return String::new();
         }
         let custom = name.starts_with("--");
-        let name = if custom { Cow::Borrowed(name) } else { lowercase(name) };
+        let name = resolved_property_name(name);
         let name: &str = &name;
+        if matches!(name, "page-orientation" | "size") { return String::new(); }
         // pyro: a running CSS transition's value now (the layout engine samples none), serialized
         // as this function serializes the after-change style with that value in it
-        if !custom && !self.style.style_overridden() {
+        if !self.style.style_overridden() {
             match self.style.transition_value(el, name) {
                 Some(crate::animation::TransitionValue::Text(v)) => return v,
                 Some(crate::animation::TransitionValue::Style(style)) => {
@@ -4243,10 +5109,14 @@ impl Layout {
                 None => {}
             }
         }
+        let name = if matches!(name, "inline-size" | "block-size" | "min-inline-size" | "min-block-size" | "max-inline-size" | "max-block-size") {
+            self.style.stylo_style(dom, el).and_then(|style| crate::animation::physical_property(name, &style)).unwrap_or(name)
+        } else {
+            name
+        };
         match name {
             "display" if self.style.has_display_none(dom, el) => return "none".into(),
             "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
-            "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
             "pointer-events" if self.style.has_pointer_events_none(dom, el) => return "none".into(),
             "text-transform" => return self.style.text_transform(dom, el).keyword().into(),
             "overflow-x" | "overflow-y" | "overflow" => {
@@ -4280,16 +5150,29 @@ impl Layout {
         if let Some(v) = self.style.timing_value(dom, el, name) {
             return v;
         }
-        let declared = self.style.computed_value(dom, el, name);
+        let (declared, zoom) = self.style.computed_value_with_zoom(dom, el, name).unzip();
+        if !self.style.style_overridden()
+            && matches!(name, "margin" | "margin-inline" | "margin-block" | "margin-inline-start" | "margin-inline-end"
+                | "margin-block-start" | "margin-block-end" | "margin-left" | "margin-right" | "margin-top" | "margin-bottom"
+                | "padding" | "padding-inline" | "padding-block" | "padding-inline-start" | "padding-inline-end"
+                | "padding-block-start" | "padding-block-end" | "padding-left" | "padding-right" | "padding-top" | "padding-bottom")
+            && declared.as_deref().is_some_and(|value| value.contains('%') || value.contains("auto"))
+            && !self.style.has_display_none(dom, el) && !self.computed(dom, el).display_contents
+        {
+            if let Some(value) = self.synced_geometry_source(dom)
+                .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                .filter(|value| !value.is_empty())
+            {
+                return value;
+            }
+        }
         // Resolve percentages against the renderer's actual reference box, also
         // for a sampled transition. Keep the sampled style read-only: the live
         // document must not be restyled to an intermediate animation value.
-        // Only percentages need the reference box; everything else keeps the declared-value serialization, whose
-        // rounding the WPT transform-composition expectations depend on.
-        if name == "transform" && declared.as_deref().is_some_and(|value| value.contains('%')) {
+        if matches!(name, "transform-origin" | "perspective-origin") || (name == "transform" && declared.as_deref().is_some_and(|value| value != "none")) {
             if let Some(value) = self.synced_geometry_source(dom).and_then(|source| {
                 let style = self.style.stylo_style(dom, el)?;
-                source.resolved_transform_value(crate::snapshot::render_key(el), &style)
+                source.resolved_transform_value(crate::snapshot::render_key(el), name, &style)
             }) {
                 return value;
             }
@@ -4316,14 +5199,51 @@ impl Layout {
                 return value;
             }
         }
+        // pyro: a grid container with no explicit template (`grid-template: none`) reports the shorthand from
+        // its longhands' used tracks, `rows / columns`, as Chromium does; a template that is set keeps its
+        // computed value (WPT css-grid grid-layout-properties `grid-template.initial`)
+        if name == "grid-template"
+            && declared.as_deref() == Some("none")
+            && !self.style.style_overridden()
+            && self.style.computed_display(dom, el).is_some_and(|display| display.ends_with("grid"))
+        {
+            let rows = self.computed_style_value(dom, el, "grid-template-rows");
+            let columns = self.computed_style_value(dom, el, "grid-template-columns");
+            if rows != "none" || columns != "none" {
+                return format!("{rows} / {columns}");
+            }
+        }
         if name == "width" || name == "height" {
             if !self.is_visible(dom, el) {
                 // No box (display: none, or inside one): the computed value,
                 // as Chromium reports it (`7px`, `50%`, `auto`).
                 return declared.unwrap_or_else(|| "auto".into());
             }
-            // A declared absolute length is the used size the renderless layout cannot derive.
+            if self.style.style_overridden() && declared.as_deref().is_some_and(|v| v.starts_with("calc-size(") || matches!(v, "auto" | "min-content" | "max-content" | "fit-content" | "stretch")) {
+                if let Some(size) = self.synced_geometry_source(dom).and_then(|source| {
+                    let sampled = self.style.stylo_style(dom, el)?;
+                    source.sampled_calc_size(crate::snapshot::render_key(el), name == "width", &sampled)
+                }) {
+                    return format!("{}px", crate::computed::fmt_num(f64::from(size)));
+                }
+            }
+            // A declared absolute length is the used size the renderless layout cannot derive,
+            // unless the box is flexed or a `min-*`/`max-*` of the axis may override it (a
+            // fieldset's `min-inline-size: min-content`): the renderer's used size then.
             if let Some(px) = declared.filter(|v| v.ends_with("px")) {
+                let (min, max) = if name == "width" { ("min-width", "max-width") } else { ("min-height", "max-height") };
+                let constrained = || {
+                    self.style.computed_value(dom, el, min).is_some_and(|v| !matches!(v.as_str(), "0px" | "auto"))
+                        || self.style.computed_value(dom, el, max).is_some_and(|v| v != "none")
+                };
+                if !self.style.style_overridden() && (self.is_flex_item(dom, el) || constrained()) {
+                    if let Some(used) = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|value| value.ends_with("px"))
+                    {
+                        return used;
+                    }
+                }
                 return px;
             }
             // The used size: content box, or border box under `box-sizing: border-box`.
@@ -4344,7 +5264,7 @@ impl Layout {
                 }
             }
         }
-        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, name, v)) {
+        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, name, v, zoom.unwrap_or(1.0))) {
             return v;
         }
         if let Some(v) = declared {
@@ -4398,9 +5318,19 @@ fn without_identity_transforms(value: &str) -> Option<String> {
     (!kept.is_empty() && kept.len() < items.len()).then(|| kept.join(" "))
 }
 
-/// A property name ASCII-lowercased, borrowed when it is lowercase already
-/// (the names the bindings pass are).
-fn lowercase(name: &str) -> Cow<'_, str> {
+fn resolved_property_name(name: &str) -> Cow<'_, str> {
+    if name.starts_with("--") {
+        return Cow::Borrowed(name);
+    }
+    if name.starts_with('-') {
+        if let Some(style::properties::PropertyId::NonCustom(property)) = crate::stylo::property_id(name) {
+            return Cow::Borrowed(match property.unaliased().name() {
+                "-webkit-transform" => "transform",
+                "-webkit-perspective" => "perspective",
+                canonical => canonical,
+            });
+        }
+    }
     if name.bytes().any(|b| b.is_ascii_uppercase()) {
         Cow::Owned(name.to_ascii_lowercase())
     } else {
@@ -4409,12 +5339,25 @@ fn lowercase(name: &str) -> Cow<'_, str> {
 }
 
 impl Layout {
+    fn is_flex_item(&self, dom: &Dom, el: NodeId) -> bool {
+        if matches!(self.position_of(dom, el), Position::Absolute | Position::Fixed) || self.computed(dom, el).display_contents {
+            return false;
+        }
+        let mut index = dom.check(el).ok();
+        while let Some(parent) = index.and_then(|child| crate::style::flat_tree_parent_element(dom, child)) {
+            let style = self.computed(dom, dom.id_of(parent));
+            if !style.display_contents { return style.display == Display::Flex; }
+            index = Some(parent);
+        }
+        false
+    }
+
     /// getComputedStyle's resolved value where it differs from Stylo's
     /// computed one (CSSOM §resolved values, as Chromium reports them):
     /// `auto` minimum sizes outside flex and grid items, `auto` insets of
     /// relatively positioned boxes, lengths clamped to Blink's LayoutUnit
     /// range. `None`: the computed value stands.
-    fn resolved_value(&self, dom: &Dom, el: NodeId, name: &str, value: &str) -> Option<String> {
+    fn resolved_value(&self, dom: &Dom, el: NodeId, name: &str, value: &str, zoom: f32) -> Option<String> {
         let position = || self.position_of(dom, el);
         match name {
             "min-width" | "min-height" | "max-width" | "max-height" if value.contains("anchor-size(") => {
@@ -4429,10 +5372,23 @@ impl Layout {
                 let item =
                     parent.is_some_and(|p| matches!(self.computed(dom, p).display, Display::Flex | Display::Grid));
                 let out_of_flow = matches!(position(), Position::Absolute | Position::Fixed);
-                (!item || out_of_flow).then(|| "0px".into())
+                // A box that is not rendered (display:none, or inside a display:none subtree) is no flex or
+                // grid item either: Chromium reports `auto` only for a box that lays out as one (WPT css-grid
+                // grid-item-min-auto-size-001).
+                let mut unrendered = self.style.has_display_none(dom, el);
+                let mut ancestor = dom.check(el).ok().and_then(|child| crate::style::flat_tree_parent_element(dom, child));
+                while let Some(a) = ancestor.filter(|_| !unrendered) {
+                    unrendered = self.style.has_display_none(dom, dom.id_of(a));
+                    ancestor = crate::style::flat_tree_parent_element(dom, a);
+                }
+                (!item || out_of_flow || unrendered).then(|| "0px".into())
             }
             "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') || value.contains("anchor(") || value.contains("anchor-size(") => {
                 self.resolved_inset(dom, el, name, value, position()).or_else(|| clamp_layout_units(value))
+            }
+            "top" | "bottom" | "left" | "right"
+            | "inset-inline-start" | "inset-inline-end" | "inset-block-start" | "inset-block-end" => {
+                serialize_large_inset(value, zoom).or_else(|| clamp_layout_units(value))
             }
             _ => clamp_layout_units(value),
         }
@@ -4558,6 +5514,27 @@ impl Layout {
     }
 }
 
+/// Blink's layout coordinates use a signed 32-bit fixed point with six fractional bits.
+/// CSSPrimitiveValue reserves two pixels at either end for float round trips.
+pub(crate) fn bounded_layout_px(px: f32) -> f32 {
+    const MIN: f32 = (i32::MIN / 64 + 2) as f32;
+    const MAX: f32 = (i32::MAX / 64 - 2) as f32;
+    px.clamp(MIN, MAX)
+}
+
+/// Resolved physical and logical inset lengths are exposed in unzoomed CSS pixels.
+fn serialize_large_inset(value: &str, zoom: f32) -> Option<String> {
+    let px = value.strip_suffix("px")?.parse::<f32>().ok()?;
+    let zoom = if zoom > 0.0 { zoom } else { 1.0 };
+    let zoomed = px * zoom;
+    let bounded = bounded_layout_px(zoomed);
+    if bounded == zoomed && px.abs() < 1e6 {
+        return None;
+    }
+    let px = if bounded == zoomed { px } else { bounded / zoom };
+    Some(format!("{}px", crate::computed::serialize_css_number(f64::from(px))))
+}
+
 /// `value` with every px length beyond Blink's LayoutUnit range (±2^25)
 /// clamped as Chromium serializes it; `None` when none is.
 fn clamp_layout_units(value: &str) -> Option<String> {
@@ -4600,6 +5577,33 @@ pub enum ScrollAlign {
     Nearest,
 }
 
+type ScrollOffsetFn = fn(f64, f64, f64, i64) -> Option<i32>;
+
+#[derive(Clone, Copy)]
+enum RevealAlignment {
+    Physical(ScrollOffsetFn),
+    Logical { block: ScrollAlign, inline: ScrollAlign },
+}
+
+impl RevealAlignment {
+    fn offsets(self, writing_mode: impl FnOnce() -> Option<style::logical_geometry::WritingMode>) -> (ScrollOffsetFn, ScrollOffsetFn) {
+        use style::logical_geometry::PhysicalSide::{Bottom, Right};
+        let (block, inline) = match self {
+            Self::Physical(offset) => return (offset, offset),
+            Self::Logical { block, inline } => (block, inline),
+        };
+        let Some(mode) = writing_mode() else { return (inline.offset_fn(), block.offset_fn()) };
+        let physical = |align, side| match (align, side) {
+            (ScrollAlign::Start, Right | Bottom) => ScrollAlign::End.offset_fn(),
+            (ScrollAlign::End, Right | Bottom) => ScrollAlign::Start.offset_fn(),
+            _ => align.offset_fn(),
+        };
+        let block = physical(block, mode.block_start_physical_side());
+        let inline = physical(inline, mode.inline_start_physical_side());
+        if mode.is_vertical() { (block, inline) } else { (inline, block) }
+    }
+}
+
 impl ScrollAlign {
     /// The `ScrollLogicalPosition` enum value `s`.
     pub fn parse(s: &str) -> Option<Self> {
@@ -4619,6 +5623,23 @@ impl ScrollAlign {
             ScrollAlign::End => end_scroll_offset,
             ScrollAlign::Nearest => nearest_scroll_offset,
         }
+    }
+}
+
+/// pyro: the parent of `node` in the flat tree: its slot when slotted (a closed shadow root's
+/// too: script's `assignedSlot` hides it), else its parent element, or a shadow root's host.
+fn flat_parent_element(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    if let Some(slot) = dom.flat_tree_slot(node) {
+        return Some(slot);
+    }
+    match dom.parent_element(node).ok().flatten() {
+        Some(parent) => Some(parent),
+        None => dom
+            .parent(node)
+            .ok()
+            .flatten()
+            .filter(|&frag| dom.is_shadow_root(frag).unwrap_or(false))
+            .and_then(|root| dom.fragment_host(root).ok().flatten()),
     }
 }
 
@@ -4657,13 +5678,6 @@ fn focus_scroll_offset(start: f64, size: f64, viewport: f64, current: i64) -> Op
         return None;
     }
     Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
-}
-
-/// Window.zig:848-851. The document's pixel-snapped size (what `scrollHeight`
-/// reads) less the viewport, as Chromium clamps: a document whose overflow
-/// ends a layout unit short of a pixel still scrolls to that pixel.
-fn scroll_limit(size: f64, visible: u32) -> u32 {
-    (round_layout_unit(size) - visible as f64).clamp(0.0, u32::MAX as f64) as u32
 }
 
 /// frame/user_input.zig:612-615.

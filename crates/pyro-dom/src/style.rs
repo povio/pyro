@@ -78,6 +78,7 @@ pub enum Display {
 pub enum PseudoElement {
     Before,
     After,
+    Marker,
 }
 
 impl PseudoElement {
@@ -89,6 +90,8 @@ impl PseudoElement {
             Some(PseudoElement::Before)
         } else if name.eq_ignore_ascii_case("after") {
             Some(PseudoElement::After)
+        } else if text.starts_with("::") && name.eq_ignore_ascii_case("marker") {
+            Some(PseudoElement::Marker)
         } else {
             None
         }
@@ -105,6 +108,7 @@ pub enum TextTransform {
     Capitalize,
     Uppercase,
     Lowercase,
+    MathAuto,
 }
 
 impl TextTransform {
@@ -128,10 +132,9 @@ impl TextTransform {
                 TextTransform::Lowercase
             } else if token.eq_ignore_ascii_case("capitalize") {
                 TextTransform::Capitalize
-            } else if token.eq_ignore_ascii_case("full-width")
-                || token.eq_ignore_ascii_case("full-size-kana")
-                || token.eq_ignore_ascii_case("math-auto")
-            {
+            } else if token.eq_ignore_ascii_case("math-auto") {
+                TextTransform::MathAuto
+            } else if token.eq_ignore_ascii_case("full-width") || token.eq_ignore_ascii_case("full-size-kana") {
                 continue;
             } else {
                 return None;
@@ -154,6 +157,7 @@ impl TextTransform {
             TextTransform::Capitalize => "capitalize",
             TextTransform::Uppercase => "uppercase",
             TextTransform::Lowercase => "lowercase",
+            TextTransform::MathAuto => "math-auto",
         }
     }
 }
@@ -643,10 +647,16 @@ pub struct ComputedStyle {
     pub visibility_hidden: bool,
     /// Inherited `pointer-events: none`.
     pub pointer_events_none: bool,
-    /// This element or a flat-tree ancestor has the `inert` attribute.
+    /// Inert for hit testing, focus and find, including computed CSS interactivity.
     pub inert: bool,
-    /// This element or a flat-tree ancestor has display:none.
+    /// Host-language inertness propagated independently of CSS inheritance.
+    host_inert: bool,
+    /// This element or a flat-tree ancestor has display:none, or an ancestor has
+    /// `content-visibility: hidden` (its contents are skipped: not rendered, not focusable,
+    /// not visible to checkVisibility; `[hidden=until-found]` is one).
     pub in_display_none: bool,
+    /// Own `content-visibility: hidden`: the descendants are skipped content.
+    content_hidden: bool,
     /// This element or a flat-tree ancestor has opacity:0.
     pub in_opacity_zero: bool,
     pub overflow_x_scrolls: bool,
@@ -799,6 +809,7 @@ pub enum SheetSource {
     StyleElement,
     /// Text supplied by the loader (`<link rel=stylesheet>`, CSSOM edits).
     Text(String),
+    EditedStyleElement { text: String, generation: u32 },
 }
 
 struct Sheet {
@@ -817,6 +828,16 @@ struct Sheet {
     disabled_at: u32,
 }
 
+impl Sheet {
+    fn supplied_text(&self, dom: &Dom) -> Option<&str> {
+        match &self.source {
+            SheetSource::Text(text) => Some(text),
+            SheetSource::EditedStyleElement { text, generation } if *generation == dom.style_sheet_generation(self.owner) => Some(text),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct Stamp {
     version: u64,
@@ -829,6 +850,7 @@ struct Stamp {
 pub struct StyleEngine {
     doc: NodeId,
     viewport: Viewport,
+    media_device: std::cell::OnceCell<style::device::Device>,
     sheets: Vec<Sheet>,
     /// pyro: the URL of the response each `<link>`'s sheet text came from (after redirects):
     /// its URLs resolve against it, in the renderer too ([`StyleEngine::sheet_url`]).
@@ -938,6 +960,7 @@ impl StyleEngine {
         StyleEngine {
             doc,
             viewport,
+            media_device: Default::default(),
             sheets: Vec::new(),
             popover_open: FxHashSet::default(),
             sheet_urls: rustc_hash::FxHashMap::default(),
@@ -1005,6 +1028,47 @@ impl StyleEngine {
         })
     }
 
+    pub fn registered_value_components(&self, dom: &Dom, el: NodeId, name: &str) -> Option<Vec<(&'static str, String)>> {
+        use style::properties::PropertyId;
+        use style::properties_and_values::value::ComputedValueComponent as C;
+        use style::values::resolved::{Context, ToResolvedValue};
+        use style_traits::ToCss;
+
+        let name = style::Atom::from(style::custom_properties::parse_name(name).ok()?);
+        let style = self.stylo_style(dom, el)?;
+        let properties = style.custom_properties();
+        let value = properties.inherited.get(&name).or_else(|| properties.non_inherited.get(&name))?;
+        let context = Context { style: &style, for_property: PropertyId::Custom(name), current_longhand: None };
+        Some(value.components()?.iter().map(|component| {
+            let kind = match component {
+                C::CustomIdent(_) => "keyword",
+                C::Image(_) => "image",
+                C::TransformFunction(_) => "transform-function",
+                C::TransformList(_) => "transform",
+                C::Url(_) | C::Color(_) | C::String(_) => "plain",
+                C::Length(_) | C::LengthPercentage(_) | C::Number(_) | C::Integer(_) | C::Percentage(_) |
+                C::Angle(_) | C::Time(_) | C::Resolution(_) => "numeric",
+            };
+            (kind, component.clone().to_resolved_value(&context).to_css_string())
+        }).collect())
+    }
+
+    pub fn computed_custom_names(&self, dom: &Dom, el: NodeId, pseudo: &crate::stylo::PseudoArg) -> Vec<String> {
+        use crate::stylo::PseudoArg;
+        let computed = match pseudo {
+            PseudoArg::Element => self.stylo_style(dom, el),
+            PseudoArg::Pseudo(pseudo) => self.stylo_pseudo_style(dom, el, pseudo, false),
+            PseudoArg::Invalid => None,
+        };
+        let Some(computed) = computed else { return Vec::new() };
+        let properties = computed.custom_properties();
+        let mut names: Vec<_> = properties.inherited.iter().chain(properties.non_inherited.iter())
+            .filter(|(_, value)| value.is_some()).map(|(name, _)| format!("--{name}")).collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
     /// Whether the layout engine records the elements whose computed style a
     /// restyle replaces, for [`Self::take_style_changes`] (told to the engine
     /// before every sync).
@@ -1048,6 +1112,31 @@ impl StyleEngine {
         let stamp = self.animation_stamp();
         self.animation_synced.set(stamp);
         self.animation_laid_out.set(stamp);
+    }
+
+    /// A read-only cascade for CSSOM consumers of font units on a transitioning target.
+    pub fn sampled_font_style(
+        &self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>, property: &str,
+        size: Option<&style::properties::ComputedValues>, line_height: Option<&style::properties::ComputedValues>,
+    ) -> Option<crate::timing::StyleSnapshot> {
+        let base = match pseudo {
+            Some(p) => self.pseudo_style(dom, el, p, true)?,
+            None => self.stylo_style(dom, el)?,
+        };
+        if !base.flags.contains(style::computed_value_flags::ComputedValueFlags::USES_FONT_OR_WM_RELATIVE_UNITS) {
+            return None;
+        }
+        let pseudo = pseudo.map(|p| match p {
+            PseudoElement::Before => style::selector_parser::PseudoElement::Before,
+            PseudoElement::After => style::selector_parser::PseudoElement::After,
+            PseudoElement::Marker => style::selector_parser::PseudoElement::Marker,
+        });
+        let sampled = self.external.borrow().as_ref()?.0.sampled_font_style(
+            crate::snapshot::render_key(el), pseudo.as_ref(), size, line_height,
+        )?;
+        // An unrelated property must keep its normal used-value path (e.g. a flex
+        // item's used width). Apply the transient style only for a changed value.
+        (crate::stylo::serialize(&base, property)? != crate::stylo::serialize(&sampled, property)?).then_some(sampled)
     }
 
     /// The value a running CSS transition of `longhand` gives `el` now
@@ -1133,6 +1222,31 @@ impl StyleEngine {
             .collect()
     }
 
+    /// pyro: the used px of `el`'s `anchor()`/`anchor-size()` values as of the last sync
+    /// ([`crate::geometry::GeometrySource::anchor_used`]).
+    pub fn anchor_used(&self, el: NodeId) -> Option<[Option<f32>; 10]> {
+        let external = self.external.borrow();
+        external.as_ref()?.0.anchor_used(crate::snapshot::render_key(el))
+    }
+
+    /// pyro: the elements of this document whose used `anchor()`/`anchor-size()` px changed since
+    /// the last call, with their px then and now
+    /// ([`crate::geometry::GeometrySource::take_anchor_evals`]). Elements gone from `dom` are left
+    /// out.
+    pub fn take_anchor_evals(&self, dom: &Dom) -> Vec<(NodeId, [Option<f32>; 10], [Option<f32>; 10])> {
+        let external = self.external.borrow();
+        let Some((source, _)) = &*external else { return Vec::new() };
+        source
+            .take_anchor_evals()
+            .into_iter()
+            .filter_map(|(key, before, after)| {
+                let el = crate::geometry::node_of(dom, key)?;
+                self.owns(dom, el)?;
+                Some((el, before, after))
+            })
+            .collect()
+    }
+
     pub fn take_style_changes(
         &self,
         dom: &Dom,
@@ -1162,6 +1276,7 @@ impl StyleEngine {
             return false;
         }
         self.registered_properties.push(property);
+        self.invalidate();
         true
     }
 
@@ -1234,6 +1349,7 @@ impl StyleEngine {
     /// styles; `None`: elements have none.
     pub fn set_style_engine(&self, source: Option<std::rc::Rc<dyn crate::geometry::GeometrySource>>) {
         *self.external.borrow_mut() = source.map(|s| (s, None));
+        self.timing_rules.borrow_mut().take();
     }
 
     /// The layout engine synced `dom` (styles and layout).
@@ -1354,6 +1470,7 @@ impl StyleEngine {
         let pseudo = match pseudo {
             PseudoElement::Before => style::selector_parser::PseudoElement::Before,
             PseudoElement::After => style::selector_parser::PseudoElement::After,
+            PseudoElement::Marker => style::selector_parser::PseudoElement::Marker,
         };
         self.stylo_pseudo_style(dom, el, &pseudo, !synthesize)
     }
@@ -1394,7 +1511,7 @@ impl StyleEngine {
                 _ => return None,
             }
         }
-        Some(if pseudo.is_some() && b.display != D::Inline { format!(" {text} ") } else { text })
+        Some(if pseudo.is_some() && b.display.without_ruby() != D::Inline { format!(" {text} ") } else { text })
     }
 
     /// [`ComputedStyle`] from Stylo's computed values, memoized per style
@@ -1456,11 +1573,12 @@ impl StyleEngine {
         // dialog"). One empty-set check when there is no modal dialog.
         if let Some(modal) = dom.topmost_modal() {
             if modal == el {
-                c.inert = e.is_html() && e.attr("inert").is_some();
+                c.host_inert = e.is_html() && e.attr("inert").is_some();
             } else if parent.is_none() && dom.check(modal).is_ok_and(|m| dom.n(m).owner_doc == dom.n(idx).owner_doc) {
-                c.inert = true;
+                c.host_inert = true;
             }
         }
+        c.inert |= c.host_inert;
         self.memo.borrow_mut().insert(el, c);
         c
     }
@@ -1477,12 +1595,22 @@ impl StyleEngine {
     /// next query (CDP `Emulation.setDeviceMetricsOverride`).
     pub fn set_viewport(&mut self, viewport: Viewport) {
         if viewport != self.viewport {
+            self.media_device.take();
             self.viewport = viewport;
             self.invalidate();
         }
     }
 
-    /// `window.matchMedia(query).matches`.
+    /// The app units per device pixel of this viewport's Stylo device (the unit a border-like
+    /// width snaps to, `snap_as_border_width`).
+    pub fn app_units_per_device_pixel(&self) -> i32 {
+        self.media_device.get_or_init(|| crate::picture::sizes_device(&self.viewport)).app_units_per_device_pixel()
+    }
+
+    pub fn matches_media_list(&self, list: &crate::cssom::MediaQueryList) -> bool {
+        list.matches(self.media_device.get_or_init(|| crate::picture::sizes_device(&self.viewport)))
+    }
+
     pub fn match_media(&self, query: &str) -> bool {
         media::matches(query, &self.viewport)
     }
@@ -1577,19 +1705,20 @@ impl StyleEngine {
     /// Text the loader or CSSOM gave `owner`'s sheet; `None` for a
     /// `<style>` element read from the DOM, or no sheet.
     pub fn sheet_text(&self, dom: &Dom, owner: NodeId) -> Option<&str> {
-        self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
-            // pyro: and a link that applies nothing now (its `disabled` attribute, its `rel`).
-            _ if Self::is_off(s, dom) || link_not_stylesheet(dom, owner) => Some(""),
-            SheetSource::Text(t) => Some(t.as_str()),
-            SheetSource::StyleElement => None,
-        })
+        match self.sheets.iter().find(|sheet| sheet.owner == owner) {
+            Some(sheet) if Self::inactive(sheet, dom) => Some(""),
+            Some(sheet) => sheet.supplied_text(dom),
+            None if dom.element(owner).is_ok_and(|el| el.name.local == local_name!("style"))
+                && (dom.sheet_outside_preferred_set(owner) || dom.style_element_blocked(owner)) => Some(""),
+            None => None,
+        }
     }
 
     /// pyro: the text the loader or CSSOM gave `owner`'s sheet, disabled or not (a disabled sheet
     /// keeps its rules; it only applies nothing, which [`Self::sheet_text`] says): the CSSOM's.
     pub fn sheet_own_text(&self, owner: NodeId) -> Option<&str> {
         self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
-            SheetSource::Text(t) => Some(t.as_str()),
+            SheetSource::Text(t) | SheetSource::EditedStyleElement { text: t, .. } => Some(t.as_str()),
             SheetSource::StyleElement => None,
         })
     }
@@ -1603,6 +1732,16 @@ impl StyleEngine {
     /// another style block generation of the owner is not this one's).
     fn is_off(sheet: &Sheet, dom: &Dom) -> bool {
         sheet.disabled && dom.style_sheet_generation(sheet.owner) == sheet.disabled_at
+    }
+
+    fn inactive(sheet: &Sheet, dom: &Dom) -> bool {
+        Self::is_off(sheet, dom)
+            || link_not_stylesheet(dom, sheet.owner)
+            || dom.sheet_outside_preferred_set(sheet.owner)
+            // pyro: a `<style>` whose type is not CSS has no sheet (HTML "update a style block").
+            || dom.style_type_not_css(sheet.owner)
+            // pyro: nor one CSP blocked (`style-src-elem`).
+            || dom.style_element_blocked(sheet.owner)
     }
 
     /// Sets `CSSStyleSheet.disabled` of the sheet of `owner`: a disabled sheet applies nothing.
@@ -1637,12 +1776,12 @@ impl StyleEngine {
     /// script-font sheet).
     pub fn for_each_author_sheet_owned(&self, dom: &Dom, f: &mut dyn FnMut(Option<NodeId>, &str)) {
         for sheet in &self.sheets {
-            if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
+            if !dom.is_connected(sheet.owner).unwrap_or(false) || Self::inactive(sheet, dom) {
                 continue;
             }
-            match &sheet.source {
-                SheetSource::Text(text) => f(Some(sheet.owner), text),
-                SheetSource::StyleElement => f(Some(sheet.owner), &dom.child_text_content(sheet.owner)),
+            match sheet.supplied_text(dom) {
+                Some(text) => f(Some(sheet.owner), text),
+                None => f(Some(sheet.owner), &dom.child_text_content(sheet.owner)),
             }
         }
         if let Some(text) = &self.script_fonts {
@@ -1662,14 +1801,14 @@ impl StyleEngine {
     /// document or a shadow root).
     pub fn for_each_scoped_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(NodeId, &str)) {
         for sheet in &self.sheets {
-            if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
+            if !dom.is_connected(sheet.owner).unwrap_or(false) || Self::inactive(sheet, dom) {
                 continue;
             }
             let Ok(owner) = dom.check(sheet.owner) else { continue };
             let scope = dom.id_of(dom.root_idx(owner));
-            match &sheet.source {
-                SheetSource::Text(text) => f(scope, text),
-                SheetSource::StyleElement => f(scope, &dom.child_text_content(sheet.owner)),
+            match sheet.supplied_text(dom) {
+                Some(text) => f(scope, text),
+                None => f(scope, &dom.child_text_content(sheet.owner)),
             }
         }
         if let Some(text) = &self.script_fonts {
@@ -1749,6 +1888,7 @@ impl StyleEngine {
             // (A link whose `rel` lost `stylesheet` applies nothing, as one that left the document.)
             let on = dom.is_alive(sheet.owner)
                 && dom.is_connected(sheet.owner).unwrap_or(false)
+                && !dom.sheet_outside_preferred_set(sheet.owner)
                 && !(matches!(sheet.source, SheetSource::Text(_)) && link_not_stylesheet(dom, sheet.owner));
             if i < 64 {
                 connected |= u64::from(on) << i;
@@ -1795,12 +1935,12 @@ impl StyleEngine {
     pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
         let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
         // A disabled sheet's text is empty: its own identity, its revision of the toggle.
-        if Self::is_off(sheet, dom) {
+        if Self::inactive(sheet, dom) {
             return Some((sheet.revision << 2) | 2);
         }
-        Some(match &sheet.source {
-            SheetSource::Text(_) => sheet.revision << 2,
-            SheetSource::StyleElement => (dom.style_element_text_revision(owner).unwrap_or_default() << 2) | 1,
+        Some(match sheet.supplied_text(dom) {
+            Some(_) => sheet.revision << 2,
+            None => (dom.style_element_text_revision(owner).unwrap_or_default() << 2) | 1,
         })
     }
 
@@ -1940,6 +2080,11 @@ impl StyleEngine {
         self.computed(dom, el).is_some_and(|c| c.pointer_events_none)
     }
 
+    /// Combined host and CSS inertness, falling back to the DOM rule without a styled box.
+    pub fn is_inert(&self, dom: &Dom, el: NodeId) -> bool {
+        self.computed(dom, el).map_or_else(|| dom.is_inert(el), |c| c.inert)
+    }
+
     /// Blink's VisibleToHitTestRequest, ignoring display:none (StyleManager.zig:687-692).
     /// Inert content is not hit-testable (Blink's UsedPointerEvents).
     pub fn is_hit_testable(&self, dom: &Dom, el: NodeId) -> bool {
@@ -1987,6 +2132,9 @@ impl StyleEngine {
     /// The element's inline declaration of `name` (the `el.style` view),
     /// without the cascade check.
     pub fn inline_declared_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<(String, bool)> {
+        if dom.style_attribute_blocked(el) {
+            return None;
+        }
         let style = dom.element(el).ok()?.attr("style")?;
         InlineStyle::parse(style).get(name)
     }
@@ -2010,6 +2158,15 @@ impl StyleEngine {
     /// applies, so the caller reports the initial value.
     pub fn computed_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
         self.value_with(dom, el, name, false)
+    }
+
+    /// A CSSOM value and the zoom at which its layout lengths were computed.
+    pub(crate) fn computed_value_with_zoom(&self, dom: &Dom, el: NodeId, name: &str) -> Option<(String, f32)> {
+        if crate::gecko_only::handles(name) {
+            return self.gecko_only_value(dom, el, name).map(|value| (value, 1.0));
+        }
+        let style = self.stylo_style(dom, el)?;
+        Some((crate::stylo::serialize(&style, name)?, style.effective_zoom.value()))
     }
 
     /// Computed `display`: the author value or the UA default, blockified
@@ -2044,10 +2201,7 @@ impl StyleEngine {
                 _ => "normal".into(),
             });
         }
-        if crate::gecko_only::handles(name) {
-            return self.gecko_only_value(dom, el, name);
-        }
-        self.stylo_value(dom, el, name)
+        self.computed_value_with_zoom(dom, el, name).map(|(value, _)| value)
     }
 
     /// The animation and transition rules of the document's sheets
@@ -2061,6 +2215,7 @@ impl StyleEngine {
         let unregistered: Vec<(NodeId, u64)> = if dom.has_resource_events() {
             self.unregistered_style_elements(dom)
                 .into_iter()
+                .filter(|owner| !dom.sheet_outside_preferred_set(*owner))
                 .map(|n| (n, dom.style_element_text_revision(n).unwrap_or_default()))
                 .collect()
         } else {
@@ -2078,10 +2233,11 @@ impl StyleEngine {
             let idx = dom.check(*n).ok()?;
             Some((dom.id_of(dom.root_idx(idx)), dom.child_text_content(*n).into_owned()))
         }));
-        let rules = Rc::new(crate::timing::TimingRules::parse_scoped(
-            texts.iter().map(|(scope, text)| (*scope, text.as_str())),
-            &self.viewport,
-        ));
+        let mut rules = crate::timing::TimingRules::parse_scoped(
+            texts.iter().map(|(scope, text)| (*scope, text.as_str())), &self.viewport,
+        );
+        rules.geometry = self.external.borrow().as_ref().map(|(source, _)| Rc::downgrade(source));
+        let rules = Rc::new(rules);
         *self.timing_rules.borrow_mut() = Some((key, unregistered, rules.clone()));
         rules
     }
@@ -2156,6 +2312,34 @@ impl StyleEngine {
         Some(crate::gecko_only::value(dom, &rules, el, name, &inline))
     }
 
+    /// Resolve an SVG DOM font or viewport unit from the element's current computed
+    /// font and writing mode. A detached SVGLength uses the initial style.
+    pub fn svg_relative_unit(&self, dom: &Dom, el: Option<NodeId>, unit: &str) -> f64 {
+        use style::context::TreeCountingCaches;
+        use style::dom::DummyElementContext;
+        use style::properties::StyleBuilder;
+        use style::rule_cache::RuleCacheConditions;
+        use style::stylesheets::container_rule::ContainerSizeQuery;
+        use style::values::computed::Context;
+        use style::values::specified::length::{FontBaseSize, LengthUnit, LineHeightBase, NoCalcLength};
+
+        let unit = LengthUnit::from_str(unit).expect("validated SVG relative length unit");
+        let computed = el.and_then(|el| self.stylo_style(dom, el));
+        let device = self.media_device.get_or_init(|| crate::picture::sizes_device(&self.viewport));
+        let style = computed.as_deref().unwrap_or_else(|| device.default_computed_values());
+        let builder = StyleBuilder::for_derived_style(device, None, style, None);
+        let mut conditions = RuleCacheConditions::default();
+        let mut caches = TreeCountingCaches::default();
+        let context = Context::new_for_animation(
+            builder, false, device.quirks_mode(), &mut conditions,
+            ContainerSizeQuery::none(), &DummyElementContext, &mut caches,
+        );
+        let px = NoCalcLength::new(unit, 1.0).to_computed_value_with_base_size(
+            &context, FontBaseSize::CurrentStyle, LineHeightBase::CurrentStyle,
+        );
+        f64::from(style.effective_zoom.unzoom(px.px()))
+    }
+
     /// computedFontSize (StyleManager.zig:2002-2089): inline `font-size`
     /// declarations and `font-size` attributes up the flat tree.
     pub fn computed_font_size(&self, dom: &Dom, el: Option<NodeId>) -> f64 {
@@ -2195,7 +2379,7 @@ fn containing_block_claims(
                 | WillChangeBits::FIXPOS_CB_NON_SVG
                 | WillChangeBits::CONTAIN,
         )
-        || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
+        || b.used_containment().intersects(Contain::LAYOUT | Contain::PAINT)
         || filtered;
     (fixed, absolute_only)
 }
@@ -2250,12 +2434,15 @@ fn derive_computed(
     ComputedStyle {
         display,
         block_flex_or_grid: d == D::Flex || d == D::Grid,
-        author_display: d.to_u16() != display_keyword_bits(ua),
+        // `<ruby>` and `<rt>` compute to `ruby` and `ruby-text`, inline boxes as their UA `inline`.
+        author_display: d.without_ruby().to_u16() != display_keyword_bits(ua),
         visibility_hidden: style.get_inherited_box().visibility != style::computed_values::visibility::T::Visible,
         pointer_events_none: style.get_inherited_ui().pointer_events
             == style::values::specified::ui::PointerEvents::None,
-        inert: above.inert || (e.is_html() && e.attr("inert").is_some()),
-        in_display_none: display == Display::None || above.in_display_none,
+        inert: style.get_inherited_ui().interactivity == style::values::specified::ui::Interactivity::Inert,
+        host_inert: above.host_inert || (e.is_html() && e.attr("inert").is_some()),
+        in_display_none: display == Display::None || above.in_display_none || above.content_hidden,
+        content_hidden: b.slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden,
         in_opacity_zero: above.in_opacity_zero || effects.opacity == 0.0,
         overflow_x_scrolls: ox == Overflow::Scroll,
         overflow_x_clips: ox != Overflow::Visible,

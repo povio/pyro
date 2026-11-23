@@ -1,0 +1,990 @@
+[
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-blue"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-blue"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-rgb"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-hsl"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "adjacent"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-blue"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-blue"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-rgb"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-hsl"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "adjacent"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-blue"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-blue"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-rgb"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-hsl"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "adjacent"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-blue"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-blue"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-rgb"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-hsl"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "adjacent"
+    },
+    "onceUndo",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "font-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "span-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "span-rgb"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "span-hsl"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "full",
+      "shape": "adjacent"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-rgb"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-hsl"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": false,
+      "selection": "part",
+      "shape": "adjacent"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "font-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "span-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "span-rgb"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "span-hsl"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "full",
+      "shape": "adjacent"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-rgb"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-hsl"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": false,
+      "reverse": true,
+      "selection": "part",
+      "shape": "adjacent"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "font-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "span-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "span-rgb"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "span-hsl"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "full",
+      "shape": "adjacent"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-rgb"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "span-hsl"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": false,
+      "selection": "part",
+      "shape": "adjacent"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "font-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "span-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "span-rgb"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "span-hsl"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "font-styled"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "full",
+      "shape": "adjacent"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-blue"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-rgb"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "span-hsl"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "font-styled"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ],
+  [
+    "core",
+    {
+      "css": true,
+      "reverse": true,
+      "selection": "part",
+      "shape": "adjacent"
+    },
+    "restored",
+    [
+      "connected"
+    ]
+  ]
+]

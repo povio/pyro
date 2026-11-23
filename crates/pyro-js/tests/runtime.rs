@@ -697,6 +697,7 @@ fn typed_module_requests_reach_the_fetcher() {
             match (url.as_str(), ty) {
                 ("http://site.test/d.json", ModuleType::Json) => request.resolve_json(&s, r#"{"a": 1, "b": [2]}"#),
                 ("http://site.test/bad.json", ModuleType::Json) => request.resolve_json(&s, "{oops"),
+                ("http://site.test/t.txt", ModuleType::Text) => request.resolve_text(&s, "line 1\r\n\"line 2\" \0\u{2028}"),
                 ("http://site.test/s.css", ModuleType::Css) => {
                     let sheet = s.eval("({ sheet: 'css' })", None, 1).unwrap().as_object().unwrap();
                     request.resolve_object(&s, sheet)
@@ -741,7 +742,8 @@ fn typed_module_requests_reach_the_fetcher() {
     assert_eq!(out[3], "TypeError: not a JavaScript module: http://site.test/d.json");
     assert!(out[4].as_str().unwrap().starts_with("SyntaxError"), "{}", out[4]);
     assert!(out[5].as_str().unwrap().starts_with("TypeError"), "{}", out[5]);
-    for (i, what) in [(6, "text"), (7, "javascript"), (8, "unknown attribute")] {
+    assert_eq!(out[6], "line 1\r\n\"line 2\" \0\u{2028}");
+    for (i, what) in [(7, "javascript"), (8, "unknown attribute")] {
         assert!(out[i].as_str().unwrap().starts_with("TypeError"), "{what}: {}", out[i]);
     }
     // "webassembly" parses in JavaScriptCore; the fetcher sees it unsupported.
@@ -754,6 +756,7 @@ fn typed_module_requests_reach_the_fetcher() {
             ("http://site.test/d.json".to_string(), ModuleType::JavaScript),
             ("http://site.test/bad.json".to_string(), ModuleType::Json),
             ("http://site.test/wrong.css".to_string(), ModuleType::Css),
+            ("http://site.test/t.txt".to_string(), ModuleType::Text),
             ("http://site.test/w.wasm".to_string(), ModuleType::Unsupported),
         ]
     );

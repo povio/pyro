@@ -225,6 +225,10 @@ pub(crate) struct Scripted {
     /// Its timeline is a scroll or view progress timeline: times are percentages of it, and its
     /// time is the scroll position's.
     scroll: Option<ScrollRef>,
+    /// A CSS transition's object whose own keyframes script replaced (even with none). Read for
+    /// transitions only: a CSS animation's object without keyframes of its own (on a pseudo-element)
+    /// reports it too.
+    replaced_keyframes: bool,
 }
 
 /// A script animation's scroll or view progress timeline (`ScrollTimeline`, `ViewTimeline`).
@@ -318,6 +322,7 @@ impl Pseudo {
             None => Pseudo::None,
             Some(pyro_dom::style::PseudoElement::Before) => Pseudo::Before,
             Some(pyro_dom::style::PseudoElement::After) => Pseudo::After,
+            Some(pyro_dom::style::PseudoElement::Marker) => Pseudo::Marker,
         }
     }
 
@@ -338,7 +343,7 @@ impl Scripted {
     }
 
     /// The current time at `now` (`None`: idle, gone, or no timeline time).
-    fn current(&self, now: f64) -> Option<f64> {
+    pub(crate) fn current(&self, now: f64) -> Option<f64> {
         if self.gone {
             return None;
         }
@@ -376,6 +381,7 @@ pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>)
                         gone: s.gone,
                         pseudo: s.pseudo,
                         scroll: s.scroll,
+                        replaced_keyframes: s.replaced_keyframes,
                     },
                 );
             }
@@ -412,6 +418,10 @@ pub(crate) struct ReportedState {
     pub gone: bool,
     pub pseudo: Pseudo,
     pub scroll: Option<ScrollRef>,
+    /// A CSS transition's object whose own keyframes script replaced (even with none). Read for
+    /// transitions only: a CSS animation's object without keyframes of its own (on a pseudo-element)
+    /// reports it too.
+    pub replaced_keyframes: bool,
 }
 
 impl ReportedState {
@@ -469,6 +479,31 @@ fn css_animation_timing(t: &crate::animation_events::Timeline) -> Option<(Timing
         },
         &timing.style,
     ))
+}
+
+/// The current portion of running transition `timeline` at page time `now` (its eased progress, in
+/// the whole frames [`Source::sample_timeline`] samples it at, or at the current time and easing of
+/// its `CSSTransition`'s effect once script has one), and whether that effect still animates the
+/// transition's own target and property (script did not replace its keyframes, not even with
+/// none: WPT css-transitions `KeyframeEffect-setKeyframes`): then its sampled value is the
+/// transition's current value, from which a transition interrupting it starts (css-transitions-1
+/// §3). `None`: not in effect.
+pub(crate) fn interrupted_transition(
+    state: &crate::animation_events::State,
+    timeline: &crate::animation_events::Timeline,
+    now: f64,
+) -> Option<(f64, bool)> {
+    let scripted = state.scripted.try_borrow().ok()?;
+    let (sample, easing, original) = if let Some(effect) = scripted.values().find(|effect| effect.css == Some(timeline.id())) {
+        let sample = progress(&effect.timing, effect.current(now)?, effect.rate)?;
+        let original_target = effect.el == Some(timeline.el()) && effect.pseudo == Pseudo::of(timeline.pseudo());
+        let own_keyframes = !effect.replaced_keyframes && effect.keyframes.frames.is_empty();
+        (sample, effect.easing.as_deref().unwrap_or("linear"), original_target && own_keyframes)
+    } else {
+        let local = ((now - timeline.start_ms()) / FRAME_MS).floor().max(0.0) * FRAME_MS;
+        (progress(&transition_timing(timeline), local, 1.0)?, timeline.easing().unwrap_or("ease"), true)
+    };
+    Some((pyro_dom::animation::eased_progress(sample.progress, sample.before, easing), original))
 }
 
 /// A CSS transition's timing (a `CSSTransition`'s effect fills backwards).
@@ -726,10 +761,12 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             Some(s) if s.el.is_some() => s.pseudo,
             _ => Pseudo::of(t.pseudo()),
         };
-        let level = match (pseudo.generated_index(), level) {
-            (None, level) => level,
-            (Some(i), Level::Animation) => Level::PseudoAnimation(i),
-            (Some(_), _) => continue,
+        let level = match (pseudo, level) {
+            (Pseudo::None, level) => level,
+            (Pseudo::Marker, Level::Animation) => Level::Marker,
+            (Pseudo::Backdrop, Level::Animation) => Level::Backdrop,
+            (pseudo, Level::Animation) if pseudo.generated_index().is_some() => Level::PseudoAnimation(pseudo.generated_index().unwrap()),
+            _ => continue,
         };
         visit(el, level, effect);
     }
@@ -884,38 +921,80 @@ impl Source {
         pseudo: Option<pyro_dom::style::PseudoElement>,
         longhand: &str,
     ) -> Option<pyro_dom::animation::TransitionValue> {
-        // A shorthand: its longhands' running transitions, together.
-        if let Some(longhands) = pyro_dom::animation::shorthand_longhands(longhand) {
-            let mut out: Option<pyro_dom::timing::StyleSnapshot> = None;
-            for l in longhands {
-                if let Some(pyro_dom::animation::TransitionValue::Style(s)) = self.transition_value_of(el, pseudo, l) {
+        self.transition_sample(el, pseudo, longhand, true)
+    }
+
+    fn transition_sample(
+        &self, el: NodeId, pseudo: Option<pyro_dom::style::PseudoElement>, longhand: &str, include_font_dependencies: bool,
+    ) -> Option<pyro_dom::animation::TransitionValue> {
+        // Combine direct longhand transitions once, on top of a cascade using the
+        // current font metrics when any shorthand component depends on them.
+        let components = pyro_dom::animation::shorthand_longhands(longhand);
+        let page = self.page.upgrade().filter(|page| !page.is_disposed())?;
+        let state = &page.animation_events;
+        let (_, transitions) = state.try_timelines()?;
+        if transitions.is_empty() { return None }
+        let mut font_size = None;
+        let mut line_height = None;
+        for t in transitions.iter().rev().filter(|t| t.is_live() && t.el() == el && t.pseudo() == pseudo) {
+            if components.is_none() && (t.name() == longhand || t.styles.as_ref().is_some_and(|(_, after)|
+                pyro_dom::animation::physical_property(longhand, after) == Some(t.name()))) {
+                return self.sample_timeline(&page, t);
+            }
+            if include_font_dependencies {
+                match t.name() {
+                    "font-size" => { font_size.get_or_insert(t); }
+                    "line-height" => { line_height.get_or_insert(t); }
+                    _ => {}
+                }
+            }
+        }
+        let mut out = if font_size.is_some() || line_height.is_some() {
+            let sampled = |timeline| match self.sample_timeline(&page, timeline) {
+                Some(pyro_dom::animation::TransitionValue::Style(style)) => Some(style),
+                _ => None,
+            };
+            let size = font_size.and_then(sampled);
+            let line = line_height.and_then(sampled);
+            if size.is_some() || line.is_some() {
+                let layout = page.try_layout()?;
+                let dom = page.dom.try_borrow().ok()?;
+                layout.style().sampled_font_style(&dom, el, pseudo, longhand, size.as_deref(), line.as_deref())
+            } else { None }
+        } else { None };
+        if let Some(components) = components {
+            for component in components {
+                if let Some(pyro_dom::animation::TransitionValue::Style(s)) = self.transition_sample(el, pseudo, component, false) {
                     out = Some(match out {
                         None => s,
-                        Some(into) => pyro_dom::animation::with_longhand_of(into, &s, l),
+                        Some(into) => pyro_dom::animation::with_longhand_of(into, &s, component),
                     });
                 }
             }
-            return out.map(pyro_dom::animation::TransitionValue::Style);
         }
-        let page = self.page.upgrade().filter(|page| !page.is_disposed())?;
-        let now = self.now(&page);
+        out.map(pyro_dom::animation::TransitionValue::Style)
+    }
+
+    fn sample_timeline(
+        &self, page: &Rc<PageDom>, t: &crate::animation_events::Timeline,
+    ) -> Option<pyro_dom::animation::TransitionValue> {
+        let el = t.el();
+        let pseudo = t.pseudo();
+        let longhand = t.name();
+        let now = self.now(page);
         let state = &page.animation_events;
-        let (_, transitions) = state.try_timelines()?;
-        let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.pseudo() == pseudo && t.name() == longhand)?;
-        // (One script controls through its `CSSTransition` object follows that object: left out.)
-        if t.has_ended()
-            || state.scripted.try_borrow().ok()?.values().any(|s| s.css == Some(t.id()))
-            || state.effect_removed.try_borrow().ok()?.contains(&t.id())
-        {
+        if state.effect_removed.try_borrow().ok()?.contains(&t.id()) {
             return None;
         }
         let (before, after) = t.styles.as_ref()?;
+        let au_per_dev_px;
         // A transition the style no longer runs to (removed, or the value changed again before the
         // next style change event) is not reported.
         {
             let dom = page.dom.try_borrow().ok()?;
             // (An element going `display: none` has no style of the engine's to compare.)
             let style = page.try_layout()?;
+            au_per_dev_px = style.style().app_units_per_device_pixel();
             let current = match pseudo {
                 None => style.style().stylo_style(&dom, el),
                 Some(pseudo) => style.style().pseudo_style(&dom, el, pseudo, false),
@@ -928,12 +1007,20 @@ impl Source {
         }
         // In whole frames: a transition started since the last frame is at its start, as in a
         // browser, whose timeline time moves only at frames.
-        let local = ((now - t.start_ms()) / FRAME_MS).floor().max(0.0) * FRAME_MS;
-        if local >= t.delay_ms + t.duration_ms {
-            return None;
-        }
-        let p = progress(&transition_timing(t), local, 1.0)?;
-        pyro_dom::animation::transition_value(longhand, before, after, p.progress, p.before, Some(t.easing().unwrap_or("ease")))
+        let scripted = state.scripted.try_borrow().ok()?;
+        let (sample, easing) = if let Some(effect) = scripted.values().find(|effect| effect.css == Some(t.id())) {
+            if effect.el != Some(el) || effect.pseudo != Pseudo::of(pseudo) || effect.scroll.is_some() || !effect.keyframes.frames.is_empty() {
+                return None;
+            }
+            (progress(&effect.timing, effect.current(now)?, effect.rate)?, Some(effect.easing.as_deref().unwrap_or("linear")))
+        } else {
+            let local = ((now - t.start_ms()) / FRAME_MS).floor().max(0.0) * FRAME_MS;
+            if t.has_ended() || local >= t.delay_ms + t.duration_ms {
+                return None;
+            }
+            (progress(&transition_timing(t), local, 1.0)?, Some(t.easing().unwrap_or("ease")))
+        };
+        pyro_dom::animation::transition_value(longhand, before, after, sample.progress, sample.before, easing, au_per_dev_px)
     }
 }
 

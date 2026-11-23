@@ -165,6 +165,11 @@ impl JsClass for Blob {
             let bytes = crate::encoding::uint8_array(s, &b.bytes)?;
             crate::streams::helper(s, &page, "fromBytes", &[bytes])
         });
+        def.method("textStream", 0, |s, b, _a| {
+            let page = crate::target::page_of(s)?;
+            let bytes = crate::encoding::uint8_array(s, &b.bytes)?;
+            crate::streams::helper(s, &page, "textFromBytes", &[bytes])
+        });
     }
 }
 
@@ -330,10 +335,22 @@ pub(crate) fn is_file_list(s: &Scope<'_>, value: Value<'_>) -> bool {
 
 /// `input.files` (null for non-file inputs).
 pub(crate) fn input_files<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
-    if n.page().dom.borrow().input_type(n.id).js()? != pyro_dom::forms::InputType::File {
+    let page = n.page();
+    if page.dom.borrow().input_type(n.id).js()? != pyro_dom::forms::InputType::File {
         return Ok(s.null());
     }
-    let entries = n.page().files.borrow().get(&n.id).cloned().unwrap_or_default();
+    // The same FileList until the selection changes (`PageDom::files_changed`).
+    let generation = page.file_generations.borrow().get(&n.id).copied().unwrap_or(0) as f64;
+    let input = crate::node::node_value(s, page, Some(n.id))?.as_object();
+    if let Some(input) = input {
+        let cached = (s.get_hidden(input, INPUT_FILES)?, s.get_hidden(input, INPUT_FILES_GENERATION)?);
+        if let (Some(list), Some(g)) = cached {
+            if g.to_number()? == generation {
+                return Ok(list);
+            }
+        }
+    }
+    let entries = page.files.borrow().get(&n.id).cloned().unwrap_or_default();
     let mut files = FileListBuilder::new(s)?;
     for e in entries {
         let f = s.wrap::<File>(
@@ -342,8 +359,41 @@ pub(crate) fn input_files<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>
         )?;
         files.push(f.value())?;
     }
-    files.finish(s)
+    let list = files.finish(s)?;
+    if let Some(input) = input {
+        s.set_hidden(input, INPUT_FILES, list)?;
+        s.set_hidden(input, INPUT_FILES_GENERATION, s.number(generation))?;
+    }
+    Ok(list)
 }
+
+/// File `k` of the FileList an input's `files` returned or was set to last,
+/// while the input's selection is still the one that list shows; `None`
+/// when script never saw one (no File identity to keep).
+pub(crate) fn input_file_object<'s>(
+    s: &Scope<'s>,
+    page: &crate::page::PageDom,
+    input: pyro_dom::NodeId,
+    k: usize,
+) -> JsResult<Option<Value<'s>>> {
+    let generation = page.file_generations.borrow().get(&input).copied().unwrap_or(0) as f64;
+    let Some(el) = crate::node::node_value(s, page, Some(input))?.as_object() else { return Ok(None) };
+    let (Some(list), Some(g)) = (s.get_hidden(el, INPUT_FILES)?, s.get_hidden(el, INPUT_FILES_GENERATION)?) else {
+        return Ok(None);
+    };
+    if g.to_number()? != generation {
+        return Ok(None);
+    }
+    match s.unwrap::<FileList>(list) {
+        Some(list) => list.get(s, k),
+        None => Ok(None),
+    }
+}
+
+/// The FileList an input's `files` returned last, and the selection
+/// generation it shows.
+const INPUT_FILES: &str = "__lpInputFiles";
+const INPUT_FILES_GENERATION: &str = "__lpInputFilesGeneration";
 
 /// `input.files = list`: a FileList replaces the selection (bytes are shared,
 /// not copied); null is ignored, as is any list on a non-file input. Events are
@@ -370,7 +420,15 @@ pub(crate) fn set_input_files(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsRe
         let (name, last_modified) = f.file.clone().unwrap_or_default();
         entries.push(FileEntry { name, mime: f.mime.clone(), bytes: f.bytes.clone(), last_modified });
     }
-    n.page().set_input_files(n.id, entries).js()
+    let page = n.page();
+    page.set_input_files(n.id, entries).js()?;
+    // The input's files are this FileList itself, not a copy.
+    if let Some(input) = crate::node::node_value(s, page, Some(n.id))?.as_object() {
+        let generation = page.file_generations.borrow().get(&n.id).copied().unwrap_or(0) as f64;
+        s.set_hidden(input, INPUT_FILES, v)?;
+        s.set_hidden(input, INPUT_FILES_GENERATION, s.number(generation))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {

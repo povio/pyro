@@ -1,0 +1,572 @@
+[
+  {
+    "zeroBasedIndex": 1,
+    "fixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "p",
+      "shape": "previous-list"
+    },
+    "previousFixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "p",
+      "shape": "plain"
+    },
+    "arms": {
+      "parent": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": false,
+        "undoRepeat": true,
+        "undoOriginal": false,
+        "eligibleAfterUndo": false
+      },
+      "first": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "candidate": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "signed": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": false,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": false
+      }
+    }
+  },
+  {
+    "zeroBasedIndex": 2,
+    "fixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "p",
+      "shape": "following-list"
+    },
+    "previousFixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "p",
+      "shape": "previous-list"
+    },
+    "arms": {
+      "parent": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": false,
+        "undoRepeat": true,
+        "undoOriginal": false,
+        "eligibleAfterUndo": false
+      },
+      "first": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "candidate": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "signed": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": false,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": false
+      }
+    }
+  },
+  {
+    "zeroBasedIndex": 3,
+    "fixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "p",
+      "shape": "styled"
+    },
+    "previousFixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "p",
+      "shape": "following-list"
+    },
+    "arms": {
+      "parent": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": false,
+        "undoRepeat": true,
+        "undoOriginal": false,
+        "eligibleAfterUndo": false
+      },
+      "first": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "candidate": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "signed": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": false,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": false
+      }
+    }
+  },
+  {
+    "zeroBasedIndex": 4,
+    "fixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "div",
+      "shape": "plain"
+    },
+    "previousFixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "p",
+      "shape": "styled"
+    },
+    "arms": {
+      "parent": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": false,
+        "undoRepeat": true,
+        "undoOriginal": false,
+        "eligibleAfterUndo": false
+      },
+      "first": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "candidate": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "signed": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": false,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": false
+      }
+    }
+  },
+  {
+    "zeroBasedIndex": 5,
+    "fixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "div",
+      "shape": "previous-list"
+    },
+    "previousFixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "div",
+      "shape": "plain"
+    },
+    "arms": {
+      "parent": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": false,
+        "undoRepeat": true,
+        "undoOriginal": false,
+        "eligibleAfterUndo": false
+      },
+      "first": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "candidate": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "signed": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": false,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": false
+      }
+    }
+  },
+  {
+    "zeroBasedIndex": 6,
+    "fixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "div",
+      "shape": "following-list"
+    },
+    "previousFixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "div",
+      "shape": "previous-list"
+    },
+    "arms": {
+      "parent": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": false,
+        "undoRepeat": true,
+        "undoOriginal": false,
+        "eligibleAfterUndo": false
+      },
+      "first": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "candidate": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "signed": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": false,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": false
+      }
+    }
+  },
+  {
+    "zeroBasedIndex": 7,
+    "fixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "div",
+      "shape": "styled"
+    },
+    "previousFixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "div",
+      "shape": "following-list"
+    },
+    "arms": {
+      "parent": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": false,
+        "undoRepeat": true,
+        "undoOriginal": false,
+        "eligibleAfterUndo": false
+      },
+      "first": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "candidate": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "signed": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": false,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": false
+      }
+    }
+  },
+  {
+    "zeroBasedIndex": 8,
+    "fixture": {
+      "cmd": "insertOrderedList",
+      "block": "div",
+      "sep": "p",
+      "shape": "plain"
+    },
+    "previousFixture": {
+      "cmd": "insertOrderedList",
+      "block": "p",
+      "sep": "div",
+      "shape": "styled"
+    },
+    "arms": {
+      "parent": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": false,
+        "undoRepeat": true,
+        "undoOriginal": false,
+        "eligibleAfterUndo": false
+      },
+      "first": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "candidate": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "signed": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": false,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": false
+      }
+    }
+  },
+  {
+    "zeroBasedIndex": 9,
+    "fixture": {
+      "cmd": "insertOrderedList",
+      "block": "div",
+      "sep": "p",
+      "shape": "previous-list"
+    },
+    "previousFixture": {
+      "cmd": "insertOrderedList",
+      "block": "div",
+      "sep": "p",
+      "shape": "plain"
+    },
+    "arms": {
+      "parent": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": false,
+        "undoRepeat": true,
+        "undoOriginal": false,
+        "eligibleAfterUndo": false
+      },
+      "first": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "candidate": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "signed": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": false,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": false
+      }
+    }
+  },
+  {
+    "zeroBasedIndex": 10,
+    "fixture": {
+      "cmd": "insertOrderedList",
+      "block": "div",
+      "sep": "p",
+      "shape": "following-list"
+    },
+    "previousFixture": {
+      "cmd": "insertOrderedList",
+      "block": "div",
+      "sep": "p",
+      "shape": "previous-list"
+    },
+    "arms": {
+      "parent": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": false,
+        "undoRepeat": true,
+        "undoOriginal": false,
+        "eligibleAfterUndo": false
+      },
+      "first": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "candidate": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": true,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": true
+      },
+      "signed": {
+        "previousFinalAction": "redo",
+        "previousRedo": true,
+        "eligibleAfterPreviousRedo": true,
+        "eligibleAtCurrentStart": false,
+        "repeat": true,
+        "undoRepeat": true,
+        "undoOriginal": true,
+        "eligibleAfterUndo": false
+      }
+    }
+  }
+]

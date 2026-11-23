@@ -1,0 +1,11 @@
+{
+  "constructors": [
+    "function",
+    "function"
+  ],
+  "event": [
+    1000,
+    "unchanged"
+  ],
+  "promiseReads": 0
+}

@@ -68,7 +68,12 @@ impl BaseDocument {
             device_changed || root.has_damaged_descendants() || root.damage().is_none_or(|damage| !damage.is_empty());
         // A size query is the exceptional style read which needs geometry.
         // Ordinary style reads leave construction/layout and damage untouched.
-        if self.stylist.has_container_queries() {
+        let has_queries = self.stylist.has_container_queries();
+        if !has_queries {
+            self.nodes.anchor_query_choices.lock().unwrap().clear();
+            self.nodes.scroll_state_queries.lock().unwrap().clear();
+        }
+        if has_queries || self.has_queried_container_units() {
             // Style-only queries also call the size adapter, including on normal
             // containers. Inspect final styles now that traversal has released
             // element data, and only lay out real size-container dependencies.
@@ -92,13 +97,23 @@ impl BaseDocument {
             // New registrations need their first content-box sample. Known
             // hidden containers have enabled axes with None sizes, so clean
             // reads of them must not keep requesting layout.
-            if needs_layout || (geometry_dirty && !self.nodes.anchor_query_choices.lock().unwrap().is_empty()) {
+            // pyro: as do scroll-state queries (their containers' scroll ranges follow layout).
+            let follows_layout = !self.nodes.anchor_query_choices.lock().unwrap().is_empty()
+                || !self.nodes.scroll_state_queries.lock().unwrap().is_empty();
+            if needs_layout || (geometry_dirty && follows_layout) {
                 self.resolve(current_time_for_animations);
             }
         } else {
             self.nodes.container_query_sizes.lock().unwrap().clear();
-            self.nodes.anchor_query_choices.lock().unwrap().clear();
         }
+    }
+
+    fn has_queried_container_units(&self) -> bool {
+        use style::computed_value_flags::ComputedValueFlags;
+        !self.nodes.container_query_sizes.lock().unwrap().is_empty()
+            && self.nodes.iter().any(|(_, node)| {
+                node.primary_styles().is_some_and(|style| style.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS))
+            })
     }
 
     /// pyro: whether an element's restyle damage reaches layout (a box changed, not only what
@@ -111,6 +126,11 @@ impl BaseDocument {
     pub fn resolve(&mut self, current_time_for_animations: f64) {
         self.anchor_flush_choices.clear();
         self.resolve_in_flush(current_time_for_animations);
+        // pyro: a rendering update's ResizeObserver step that found the layout stale
+        // (`request_remembered_sizes`) remembers the sizes on this one.
+        if self.remembered_pending {
+            self.record_remembered_sizes();
+        }
     }
 
     fn resolve_in_flush(&mut self, current_time_for_animations: f64) {
@@ -187,19 +207,8 @@ impl BaseDocument {
             // pyro: counters and quotes in generated content, before damage propagates.
             self.resolve_generated_content();
             timer.record_time("style");
-            if !self.stylist.has_container_queries() {
-                // pyro: container units (`cqw`, ...) query container sizes too: keep those of a
-                // document that has styles using them.
-                use style::computed_value_flags::ComputedValueFlags;
-                let mut sizes = self.nodes.container_query_sizes.lock().unwrap();
-                if !sizes.is_empty()
-                    && !self.nodes.iter().any(|(_, node)| {
-                        node.primary_styles()
-                            .is_some_and(|style| style.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS))
-                    })
-                {
-                    sizes.clear();
-                }
+            if !self.stylist.has_container_queries() && !self.has_queried_container_units() {
+                self.nodes.container_query_sizes.lock().unwrap().clear();
             }
             phase_profile::mark(0, &mut phase_t);
 
@@ -233,16 +242,35 @@ impl BaseDocument {
 
             // Next we resolve layout with the data resolved by stlist
             self.resolve_layout_in_flush();
+            // pyro: boxes gone in this layout keep no used `anchor()` px to transition from.
+            self.forget_boxless_anchor_used();
             timer.record_time("layout");
             phase_profile::mark(4, &mut phase_t);
-            if self.nodes.classic_scrollbars && self.layout_ran && !self.nodes.container_query_sizes.lock().unwrap().is_empty() {
-                self.resolve_transforms(root_node_id, true, ContainingTransform::default());
-                self.resolve_classic_scrollbars(root_node_id, !checked_query_scrollbars);
-                checked_query_scrollbars = true;
-            }
-            let changed_containers = self.refresh_container_query_sizes();
+            let query_scrollbars = self.nodes.classic_scrollbars
+                && self.layout_ran
+                && !self.nodes.container_query_sizes.lock().unwrap().is_empty();
+            // pyro: a pass may lay out with container sizes that are stale (an earlier layout's,
+            // or this pass's before a container above changed size): its sizes are refreshed
+            // before its scrollbars are checked. A scrollbar shown for a stale size would outlive
+            // the size the refresh corrects, since only the first check removes (WPT
+            // css-conditional `container-queries/scrollbar-container-units-block`, `-inline`,
+            // `container-units-sharing-via-rule-node`): when a size changed, the next pass
+            // checks; else this one does, and samples the sizes its scrollbars leave.
+            let changed_containers = {
+                let changed = self.refresh_container_query_sizes();
+                if changed.is_empty() && query_scrollbars {
+                    self.resolve_transforms(root_node_id, true, ContainingTransform::default());
+                    self.resolve_classic_scrollbars(root_node_id, !checked_query_scrollbars);
+                    checked_query_scrollbars = true;
+                    self.refresh_container_query_sizes()
+                } else {
+                    changed
+                }
+            };
             let choices_changed = pass == 0 && self.refresh_anchored_query_choices();
             let container_sizes_changed = !changed_containers.is_empty();
+            // pyro: `scroll-state(scrollable)` follows the scroll ranges of this layout.
+            let scrollable_changed = !container_sizes_changed && pass < 8 && self.refresh_scroll_state_queries();
             // pyro: the active scroll markers and the scroll buttons' states follow the layout
             // and the scroll positions (`layout::scroll_markers`): a change styles them again.
             let scroll_states_changed = !container_sizes_changed && self.update_target_current();
@@ -254,7 +282,7 @@ impl BaseDocument {
             // pyro: `content-visibility: auto` elements skip or render their contents as they are
             // relevant to the user at this layout; a change lays out again.
             let visibility_changed = !container_sizes_changed && pass < 8 && self.update_content_visibility();
-            if (!choices_changed && !container_sizes_changed && !scroll_states_changed && !marker_counters && !timelines_changed && !visibility_changed)
+            if (!choices_changed && !scrollable_changed && !container_sizes_changed && !scroll_states_changed && !marker_counters && !timelines_changed && !visibility_changed)
                 || pass == 31
             {
                 break;
@@ -362,6 +390,7 @@ impl BaseDocument {
                 .map(|frame| frame.scroll)
                 .filter(|&(x, y)| x.is_finite() && y.is_finite() && (x, y) != (0.0, 0.0));
             if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
+                sub_doc.set_media_environment(self.media_environment);
                 if sub_doc.frame_no_scrollbars != no_scrollbars {
                     sub_doc.frame_no_scrollbars = no_scrollbars;
                     sub_doc.last_layout_space = None;
@@ -373,6 +402,7 @@ impl BaseDocument {
                 sub_viewport.hidpi_scale = self.viewport.hidpi_scale;
                 sub_viewport.zoom = self.viewport.zoom;
                 sub_viewport.color_scheme = self.viewport.color_scheme;
+                sub_viewport.input = self.viewport.input;
 
                 let viewport_scale = self.viewport.scale();
                 sub_viewport.window_size =
@@ -433,16 +463,25 @@ impl BaseDocument {
 
     /// pyro: whether `style` makes a `content-visibility: auto` element whose contents can be
     /// skipped (containment applies: not `display: contents`/`none`, a non-atomic inline, a table
-    /// or an internal table box).
-    fn is_cv_auto(node: &crate::Node) -> bool {
+    /// or an internal table box). `nodes`: the tree `node` is in.
+    fn is_cv_auto(nodes: &crate::NodeTree, node: &crate::Node) -> bool {
         use style::values::specified::box_::{ContentVisibility, DisplayInside, DisplayOutside};
+        // (An outermost `<svg>` element, one whose parent is no SVG element, is a replaced box, atomic
+        // inline: containment applies, as Chrome. The test `damage_inline_svgs` makes.)
+        let svg = node.element_data().is_some_and(|el| {
+            el.name.ns == markup5ever::ns!(svg) && el.name.local == crate::local_name!("svg")
+        }) && !node
+            .parent
+            .and_then(|p| nodes.get(p))
+            .and_then(|p| p.element_data())
+            .is_some_and(|e| e.name.ns == markup5ever::ns!(svg));
         node.is_element()
             && node.primary_styles().is_some_and(|style| {
                 let display = style.get_box().display;
                 style.get_box().slow_clone_content_visibility() == ContentVisibility::Auto
                     && !display.is_contents()
                     && !display.is_none()
-                    && !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
+                    && (svg || !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow))
                     && display.inside() != DisplayInside::Table
                     && display.outside() != DisplayOutside::InternalTable
             })
@@ -455,7 +494,7 @@ impl BaseDocument {
         let new: Vec<NodeId> = self
             .nodes
             .iter()
-            .filter(|(_, node)| !node.flags.contains(NodeFlags::CV_DETERMINED) && Self::is_cv_auto(node))
+            .filter(|(_, node)| !node.flags.contains(NodeFlags::CV_DETERMINED) && Self::is_cv_auto(&self.nodes, node))
             .map(|(id, _)| id)
             .collect();
         for id in new {
@@ -492,9 +531,9 @@ impl BaseDocument {
     /// visual bounds, as an IntersectionObserver sees them), is near the viewport (within half
     /// the viewport's size of it, as Chromium's margin), it holds the focus or a top-layer
     /// element, or a query needs it (`force_content_visibility`); an irrelevant one skips its
-    /// contents, sized by `contain-intrinsic-size` (its last remembered size for `auto`).
-    /// Remembers the content box size of each one shown. Returns whether one changed, which the
-    /// caller lays out again. Each node's placement and whether it is in skipped contents are
+    /// contents, sized by `contain-intrinsic-size` (its last remembered size for `auto`, which
+    /// `record_remembered_sizes` keeps at each rendering update, not at each layout). Returns
+    /// whether one changed, which the caller lays out again. Each node's placement and whether it is in skipped contents are
     /// computed once (memoized up the chains), the focus's and top layer's ancestors once.
     pub(crate) fn update_content_visibility(&mut self) -> bool {
         use crate::node::NodeFlags;
@@ -533,6 +572,31 @@ impl BaseDocument {
                 at = self.nodes[n].parent;
             }
         }
+        // pyro: the anchors positioned boxes used at the last rendering frame
+        // (`commit_cv_anchor_frame`) hold their ancestors (inclusive) up to one the positioned box is
+        // in: an anchor offscreen keeps rendering for a box anchored to it outside its skippable
+        // subtree, not for one inside it (as Chrome; WPT css-contain
+        // `content-visibility-anchor-positioning-003` to `-006`).
+        let mut anchor_steps = 0u64;
+        for &(anchor, positioned) in &self.cv_anchor_frame {
+            let mut theirs: HashSet<NodeId> = HashSet::new();
+            let mut at = self.nodes.get(positioned).map(|_| positioned);
+            while let Some(n) = at {
+                anchor_steps += 1;
+                theirs.insert(n);
+                at = self.nodes[n].parent;
+            }
+            let mut at = self.nodes.get(anchor).map(|_| anchor);
+            while let Some(n) = at {
+                anchor_steps += 1;
+                if theirs.contains(&n) {
+                    break;
+                }
+                holders.insert(n);
+                at = self.nodes[n].parent;
+            }
+        }
+        self.cv_work.set(self.cv_work.get() + anchor_steps);
         // (Chain steps walked, for `cv_work`.)
         let steps = std::cell::Cell::new(0u64);
         // Whether a node is in skipped contents (a skipped ancestor), memoized up the parents.
@@ -632,7 +696,7 @@ impl BaseDocument {
         let mut changed = false;
         for id in candidates {
             steps.set(steps.get() + 1);
-            if !Self::is_cv_auto(&self.nodes[id]) {
+            if !Self::is_cv_auto(&self.nodes, &self.nodes[id]) {
                 // No longer `auto`: shown as its style says.
                 let node = &mut self.nodes[id];
                 if node.flags.contains(NodeFlags::CV_SKIPPED) {
@@ -696,6 +760,14 @@ impl BaseDocument {
             // (A query forced it: rendered until the next frame, `clear_content_visibility_forcing`.)
             let forced = self.nodes[id].flags.contains(NodeFlags::CV_FORCED);
             let relevant = forced || holders.contains(&id) || near;
+            // It starts skipping its contents: it was laid out with them at this layout, its size
+            // then is remembered first, as a rendering update would have (each frame records it
+            // while it shows), so a page that scrolls it away without a frame (no animation frame
+            // or ResizeObserver callbacks) still sizes it as it was, not as its fallback.
+            if !relevant && !self.nodes[id].flags.contains(NodeFlags::CV_SKIPPED) {
+                let work = self.record_remembered_size(id);
+                self.remembered_size_work.set(self.remembered_size_work.get() + work);
+            }
             let node = &mut self.nodes[id];
             if node.flags.contains(NodeFlags::CV_SKIPPED) == relevant {
                 node.flags.set(NodeFlags::CV_SKIPPED, !relevant);
@@ -705,13 +777,6 @@ impl BaseDocument {
                 }
                 // (The memos stand: no box moves until the next layout.)
                 changed = true;
-            } else if relevant {
-                // Shown and laid out with its contents: its last remembered size.
-                let content = (
-                    (l.size.width - l.border.left - l.border.right - l.padding.left - l.padding.right).max(0.0),
-                    (l.size.height - l.border.top - l.border.bottom - l.padding.top - l.padding.bottom).max(0.0),
-                );
-                node.layout_data_mut().remembered_size = Some(content);
             }
         }
         self.cv_work.set(self.cv_work.get() + steps.get());
@@ -729,24 +794,60 @@ impl BaseDocument {
     }
 
     /// pyro: the `content-visibility: auto` elements whose relevance was determined: whether
-    /// they skip their contents, and their last remembered size.
-    pub fn content_visibility_state(&self) -> Vec<(NodeId, bool, Option<(f32, f32)>)> {
+    /// they skip their contents, and their last remembered size; then the other elements a size
+    /// is remembered for (`contain-intrinsic-size: auto`), as not skipping.
+    pub fn content_visibility_state(&self) -> Vec<(NodeId, bool, [Option<f32>; 2])> {
+        use crate::node::NodeFlags;
+        let cv = self
+            .cv_auto
+            .iter()
+            .filter_map(|&id| self.nodes.get(id).map(|n| (id, n)))
+            .map(|(id, n)| (id, n.flags.contains(NodeFlags::CV_SKIPPED), n.layout_data().remembered_size));
+        let remembered = self
+            .cis_auto
+            .iter()
+            .filter(|id| !self.cv_auto.contains(id))
+            .filter_map(|&id| self.nodes.get(id).map(|n| (id, n)))
+            .filter(|(_, n)| n.layout_data().remembered_size != [None; 2])
+            .map(|(id, n)| (id, false, n.layout_data().remembered_size));
+        cv.chain(remembered).collect()
+    }
+
+    /// pyro: the `content-visibility: auto` elements in the document whose relevance was
+    /// determined, and whether they skip their contents (for `contentvisibilityautostatechange`,
+    /// CSS Contain 2 § 4.1), read at a rendering frame's start, when no query forces any.
+    pub fn content_visibility_auto_states(&self) -> Vec<(NodeId, bool)> {
         use crate::node::NodeFlags;
         self.cv_auto
             .iter()
             .filter_map(|&id| self.nodes.get(id).map(|n| (id, n)))
-            .map(|(id, n)| (id, n.flags.contains(NodeFlags::CV_SKIPPED), n.layout_data().remembered_size))
+            .filter(|(_, n)| n.flags.is_in_document() && n.flags.contains(NodeFlags::CV_DETERMINED) && Self::is_cv_auto(&self.nodes, n))
+            .map(|(id, n)| (id, n.flags.contains(NodeFlags::CV_SKIPPED)))
             .collect()
     }
 
     /// pyro: takes the `content-visibility: auto` state another document of the page determined
     /// (`content_visibility_state`): its elements skip or show their contents as there, with its
     /// remembered sizes, until relevance is determined here again.
-    pub fn set_content_visibility_state(&mut self, state: Vec<(NodeId, bool, Option<(f32, f32)>)>) {
+    pub fn set_content_visibility_state(&mut self, state: Vec<(NodeId, bool, [Option<f32>; 2])>) {
         use crate::node::NodeFlags;
         for (id, skipped, size) in state {
             let Some(node) = self.nodes.get_mut(id) else { continue };
-            node.layout_data_mut().remembered_size = size;
+            if node.layout_data().remembered_size != size {
+                node.layout_data_mut().remembered_size = size;
+                // (Its size, while it skips its contents, may be that one.)
+                node.insert_damage(ALL_DAMAGE);
+            }
+            if size != [None; 2] {
+                self.cis_auto.insert(id);
+            }
+            // (An element only a size is remembered for: no relevance to take. One not styled yet
+            // is taken as there, as `update_content_visibility` drops it if it is no `auto` one.)
+            let node = &self.nodes[id];
+            if node.primary_styles().is_some() && !Self::is_cv_auto(&self.nodes, node) {
+                continue;
+            }
+            let node = &self.nodes[id];
             let determined = node.flags.contains(NodeFlags::CV_DETERMINED);
             self.cv_auto.insert(id);
             let node = &mut self.nodes[id];
@@ -762,21 +863,219 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: whether some element may remember a size (`contain-intrinsic-size: auto` in an axis,
+    /// or `content-visibility: auto`), as of the last style traversal.
+    pub fn has_remembered_size_candidates(&self) -> bool {
+        !self.cis_auto.is_empty()
+    }
+
+    /// pyro: after a style traversal (`stylo.rs`), each element that may remember a size forgets
+    /// it in each logical axis whose `contain-intrinsic-size` lost `auto`, at once (WPT css-sizing
+    /// `contain-intrinsic-size/auto-006`, "Losing cis:auto removes last remembered size
+    /// immediately"); one with `auto` in neither axis, or removed, leaves the set. One not styled
+    /// (in a `display: none` subtree) keeps its sizes: they survive its box (`auto-006`).
+    pub(crate) fn retain_contain_intrinsic_auto(&mut self) {
+        if self.cis_auto.is_empty() {
+            return;
+        }
+        // (As `sticky_nodes`: one lookup per element of the set.)
+        let nodes = &mut self.nodes;
+        self.cis_auto.retain(|&id| {
+            let Some(node) = nodes.get_mut(id) else { return false };
+            if !node.flags.is_in_document() {
+                node.layout_data_mut().remembered_size = [None; 2];
+                return false;
+            }
+            let Some(styles) = node.primary_styles() else { return true };
+            let (width, height) = contain_intrinsic_auto(&styles);
+            let vertical = styles.writing_mode.is_vertical();
+            drop(styles);
+            let (inline, block) = if vertical { (height, width) } else { (width, height) };
+            let remembered = &mut node.layout_data_mut().remembered_size;
+            if !inline {
+                remembered[0] = None;
+            }
+            if !block {
+                remembered[1] = None;
+            }
+            inline || block
+        });
+    }
+
+    /// pyro: the last remembered sizes (CSS Sizing 4 § 5.1), at a rendering update, after its
+    /// animation frame callbacks and immediately before its ResizeObserver callbacks (WPT
+    /// css-sizing `contain-intrinsic-size/auto-008`), never at a layout alone (`auto-006`: sized
+    /// normally, then skipping again in the same task, it keeps the earlier size). Each element
+    /// with `contain-intrinsic-size: auto` in an axis remembers its size there
+    /// (`record_remembered_size`). Nothing is laid out again: a size is used only while its
+    /// element skips its contents. On the current layout: a caller whose layout is stale asks
+    /// for it at the next one instead (`request_remembered_sizes`).
+    pub fn record_remembered_sizes(&mut self) {
+        self.remembered_pending = false;
+        let ids: Vec<NodeId> = self.cis_auto.iter().copied().collect();
+        let mut work = 0u64;
+        for id in ids {
+            work += self.record_remembered_size(id);
+        }
+        self.remembered_size_work.set(self.remembered_size_work.get() + work);
+    }
+
+    /// pyro: the rendering update's ResizeObserver step found this document's layout stale: the
+    /// sizes are remembered at the end of its next layout (`resolve`), not by laying it out now
+    /// (an idle page lays nothing out for them).
+    pub fn request_remembered_sizes(&mut self) {
+        if !self.cis_auto.is_empty() {
+            self.remembered_pending = true;
+        }
+    }
+
+    /// pyro: element `id` (of `cis_auto`), when laid out with its contents on the current layout
+    /// (it has a box of this layout, it and its ancestors render, none of them skips its
+    /// contents), remembers its content box size in the logical axes whose
+    /// `contain-intrinsic-size` has `auto` and forgets the others (`auto-009`; size containment
+    /// does not stop it: `auto-011`, `auto-012`). One that skips its contents, has no box (it is
+    /// in a `display: none` subtree, or was never laid out) keeps its sizes: no box is remembered
+    /// as 0x0 (`auto-006`, "Last remembered size survives box destruction"); a disconnected one
+    /// forgets them (`forget-on-disconnect-in-iframe`). Returns the steps taken.
+    fn record_remembered_size(&mut self, id: NodeId) -> u64 {
+        let mut work = 1u64;
+        let Some(node) = self.nodes.get(id) else {
+            self.cis_auto.remove(&id);
+            return work;
+        };
+        if !node.flags.is_in_document() {
+            self.nodes[id].layout_data_mut().remembered_size = [None; 2];
+            self.cis_auto.remove(&id);
+            return work;
+        }
+        // A box of the current layout: the layout hierarchy holds it (the root element heads it).
+        let root = self.try_root_element().map(|r| r.id);
+        if node.layout_parent.get().is_none() && Some(id) != root {
+            return work;
+        }
+        let mut at = Some(id);
+        while let Some(n) = at {
+            work += 1;
+            let node = &self.nodes[n];
+            if node.is_element() {
+                let Some(styles) = node.primary_styles() else { return work };
+                let display = styles.get_box().display;
+                if display.is_none() || (n == id && display.is_contents()) || skips_contents(node, &styles) {
+                    return work;
+                }
+            }
+            at = node.parent;
+        }
+        let node = &self.nodes[id];
+        let Some(styles) = node.primary_styles() else { return work };
+        let (auto_width, auto_height) = contain_intrinsic_auto(&styles);
+        let vertical = styles.writing_mode.is_vertical();
+        drop(styles);
+        let l = *node.final_layout();
+        let width = (l.size.width - l.border.left - l.border.right - l.padding.left - l.padding.right).max(0.0);
+        let height = (l.size.height - l.border.top - l.border.bottom - l.padding.top - l.padding.bottom).max(0.0);
+        let (inline, block, auto_inline, auto_block) =
+            if vertical { (height, width, auto_height, auto_width) } else { (width, height, auto_width, auto_height) };
+        self.nodes[id].layout_data_mut().remembered_size = [auto_inline.then_some(inline), auto_block.then_some(block)];
+        if !auto_inline && !auto_block {
+            self.cis_auto.remove(&id);
+        }
+        work
+    }
+
+    /// pyro: the steps remembering sizes took so far (`record_remembered_size`: elements looked
+    /// up, ancestors walked), at rendering updates and as `content-visibility: auto` elements
+    /// start skipping their contents.
+    pub fn remembered_size_work(&self) -> u64 {
+        self.remembered_size_work.get()
+    }
+
     /// pyro: whether a query forced some `content-visibility: auto` element to render
-    /// (`force_content_visibility`) since the last frame.
+    /// (`force_content_visibility`), or the contents of a `hidden` one to be laid out
+    /// (`force_hidden_contents`), since the last frame.
     pub fn has_content_visibility_forcing(&self) -> bool {
         !self.cv_forced.is_empty()
     }
 
     /// pyro: the elements queries forced to render are rendered only as relevance gives them now:
-    /// called at each frame (`update_content_visibility` determines them at its next layout).
+    /// called at each frame (`update_content_visibility` determines them at its next layout). The
+    /// contents of `hidden` elements forced for a query are skipped again.
     pub fn clear_content_visibility_forcing(&mut self) {
         use crate::node::NodeFlags;
         for id in std::mem::take(&mut self.cv_forced) {
             let Some(node) = self.nodes.get_mut(id) else { continue };
-            node.flags.remove(NodeFlags::CV_FORCED);
+            node.flags.remove(NodeFlags::CV_FORCED | NodeFlags::CV_HIDDEN_FORCED);
             node.insert_damage(ALL_DAMAGE);
         }
+    }
+
+    /// pyro: lays out the contents of the `content-visibility: hidden` ancestors of `node` (all of
+    /// them, nested ones too) for a geometry query that needs its box (`offsetTop`,
+    /// `getBoundingClientRect`, `getClientRects`, a resolved `getComputedStyle` width...): as
+    /// Chromium's forced layout of a locked subtree (CSS Contain 2 § 4.1: skipped contents are
+    /// laid out for an API that needs their layout). They are built until the next frame
+    /// (`clear_content_visibility_forcing`), or a hit test (`clear_hidden_forcing`); the element
+    /// keeps its size containment (its size, and what follows it, do not change), and its
+    /// contents are still neither painted nor hit (a paint clears the forcing before its layout).
+    /// Disjoint from `content-visibility: auto` forcing (`force_content_visibility`, which makes
+    /// an element relevant): only `CV_HIDDEN_FORCED`. Returns whether one was skipping them (the
+    /// caller resolves again).
+    pub fn force_hidden_contents(&mut self, node: NodeId) -> bool {
+        use crate::node::NodeFlags;
+        use style::values::specified::box_::{ContentVisibility, DisplayInside, DisplayOutside};
+        let mut forced = false;
+        let mut at = self.nodes.get(node).and_then(|n| n.parent);
+        while let Some(id) = at {
+            let n = &self.nodes[id];
+            let parent = n.parent;
+            // (Only one whose contents construction skips: containment applies to it, as
+            // `layout::construct` tells; forcing another would lay out again for nothing.)
+            let hidden = n.is_element()
+                && !n.flags.contains(NodeFlags::CV_HIDDEN_FORCED)
+                && n.primary_styles().is_some_and(|s| {
+                    let display = s.get_box().display;
+                    s.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden
+                        && !display.is_contents()
+                        && !display.is_none()
+                        && !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
+                        && display.inside() != DisplayInside::Table
+                        && display.outside() != DisplayOutside::InternalTable
+                });
+            if hidden {
+                let n = &mut self.nodes[id];
+                n.flags.insert(NodeFlags::CV_HIDDEN_FORCED);
+                n.insert_damage(ALL_DAMAGE);
+                self.cv_forced.insert(id);
+                self.unskip_contents(id);
+                forced = true;
+            }
+            at = parent;
+        }
+        forced
+    }
+
+    /// pyro: the contents of `hidden` elements a geometry query forced (`force_hidden_contents`)
+    /// are skipped again before a hit test, which must not find them. Returns whether any were
+    /// (the caller resolves again). `content-visibility: auto` forcing is kept.
+    pub fn clear_hidden_forcing(&mut self) -> bool {
+        use crate::node::NodeFlags;
+        if self.cv_forced.is_empty() {
+            return false;
+        }
+        let mut cleared = false;
+        let nodes = &mut self.nodes;
+        self.cv_forced.retain(|&id| {
+            let Some(node) = nodes.get_mut(id) else { return false };
+            if !node.flags.contains(NodeFlags::CV_HIDDEN_FORCED) {
+                return true;
+            }
+            node.flags.remove(NodeFlags::CV_HIDDEN_FORCED);
+            node.insert_damage(ALL_DAMAGE);
+            cleared = true;
+            // (Kept while a query also forced it as a `content-visibility: auto` element.)
+            node.flags.contains(NodeFlags::CV_FORCED)
+        });
+        cleared
     }
 
     /// pyro: renders the contents of the `content-visibility: auto` ancestors of `node` that skip
@@ -882,6 +1181,58 @@ impl BaseDocument {
         !changed.is_empty()
     }
 
+    /// pyro: the edges each queried scroll-state container can be scrolled towards at this
+    /// layout (CSS Conditional 5 § 7.3.1: the directions its user-scrollable axes have room to
+    /// scroll from the current position; none for an element that is not a scroll container,
+    /// so `overflow: visible | clip | hidden` never match). A container whose edges changed has
+    /// its subtree styled again; ones that stopped being scroll-state containers are dropped.
+    /// Whether any changed.
+    fn refresh_scroll_state_queries(&mut self) -> bool {
+        use style::stylesheets::container_rule::ScrollableEdges;
+        use style::values::specified::ContainerType;
+        let ids: Vec<NodeId> = self.nodes.scroll_state_queries.lock().unwrap().keys().copied().collect();
+        if ids.is_empty() {
+            return false;
+        }
+        let mut changed = Vec::new();
+        let mut dropped = Vec::new();
+        for id in ids {
+            let container = self.nodes.get(id).filter(|node| node.flags.is_in_document()).and_then(|node| {
+                let style = node.primary_styles()?;
+                style.get_box().slow_clone_container_type().contains(ContainerType::SCROLL_STATE).then_some(())
+            });
+            if container.is_none() {
+                dropped.push(id);
+                continue;
+            }
+            // Within a hundredth of a pixel of an end is at it (fractional scroll ranges).
+            const EPSILON: f64 = 0.01;
+            let (offset, min, max) = self.scroll_state(crate::scrolling::ScrollTarget::Node(id), false);
+            let mut edges = ScrollableEdges::empty();
+            edges.set(ScrollableEdges::LEFT, offset.x > min.x + EPSILON);
+            edges.set(ScrollableEdges::RIGHT, offset.x < max.x - EPSILON);
+            edges.set(ScrollableEdges::TOP, offset.y > min.y + EPSILON);
+            edges.set(ScrollableEdges::BOTTOM, offset.y < max.y - EPSILON);
+            let mut queries = self.nodes.scroll_state_queries.lock().unwrap();
+            if let Some(previous) = queries.get_mut(&id)
+                && *previous != edges
+            {
+                *previous = edges;
+                changed.push(id);
+            }
+        }
+        {
+            let mut queries = self.nodes.scroll_state_queries.lock().unwrap();
+            for id in &dropped {
+                queries.remove(id);
+            }
+        }
+        for id in &changed {
+            self.nodes[*id].set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
+        }
+        !changed.is_empty()
+    }
+
     fn refresh_container_query_sizes(&self) -> Vec<NodeId> {
         use style::values::specified::ContainerType;
         let mut changed_ids = Vec::new();
@@ -911,6 +1262,10 @@ impl BaseDocument {
                 && !display.is_none()
                 && !display.is_contents()
                 && !display.is_inline_flow()
+                // pyro: nor a table or an internal table box (no size containment, CSS Contain 2
+                // § 3.1; `query_container_size`): one that becomes one drops its size.
+                && display.inside() != style::values::specified::box_::DisplayInside::Table
+                && display.outside() != style::values::specified::box_::DisplayOutside::InternalTable
                 // pyro: an element inside an `<svg>` (a `<foreignObject>`, which has a CSS box of
                 // its own since it renders its content) is no size query container (CSS
                 // Conditional 5; WPT css-conditional `svg-foreignobject-no-size-container`).
@@ -1058,13 +1413,19 @@ impl BaseDocument {
             let g = bars.gutters;
             overflow.x0 += g.left as f64 * scale;
             overflow.y0 += g.top as f64 * scale;
-            // (Its padding stays in it when the gutters leave no room: Chrome's scrollHeight of a
-            // 4px `overflow: scroll` box with 2px padding is 4, WPT cssom-view
-            // `scrollWidthHeight-contain-layout`.)
+            // (Its padding stays in it when the gutters leave no room: Chrome's scrollHeight of an
+            // empty 4px `overflow: scroll` box with 2px padding is 4.)
             let p = layout.padding;
             overflow.x1 = (overflow.x1 - g.right as f64 * scale).max(overflow.x0 + (p.left + p.right) as f64 * scale);
             overflow.y1 = (overflow.y1 - g.bottom as f64 * scale).max(overflow.y0 + (p.top + p.bottom) as f64 * scale);
         }
+        // (The scrollport, which a scroll container's in-flow bounds start from: each child's padded
+        // in-flow box, even one empty in an axis, is united with it, and `unite_overflow` keeps the
+        // union when it is empty in neither axis. As Chromium: a 0x100 child of a 100x0 scroller makes
+        // its scrollHeight 100 (WPT css-overflow `scrollable-overflow-zero-one-axis`), of a 0x0 one
+        // nothing, and a 300x0 child of a 100x100 one makes its scrollWidth 300; a box that does not
+        // scroll leaves out a child empty in an axis.)
+        let scrollport = overflow;
         // pyro: a multi-column container's content lies in its strip: what it reaches is shown in
         // the columns (`layout::multicol`), added to the padding box below.
         let columns_base =
@@ -1181,9 +1542,12 @@ impl BaseDocument {
                 };
                 overflow = unite_overflow(overflow, child_rect_in_self);
                 if let Some(padding) = scroll_padding {
-                    let padded = self.padded_inflow_box(child_id, padding, scale);
-                    let padded = if in_columns { self.nodes[node_id].column_fragments().unwrap().map_child_rect(Some(child_id), padded, scale) } else { padded };
-                    overflow = unite_overflow(overflow, padded);
+                    let padded = self.padded_inflow_box(child_id, children, padding, scale);
+                    // (A child empty in both axes adds nothing, before it is mapped into a column.)
+                    if padded != Rect::ZERO {
+                        let padded = if in_columns { self.nodes[node_id].column_fragments().unwrap().map_child_rect(Some(child_id), padded, scale) } else { padded };
+                        overflow = unite_overflow(overflow, padded.union(scrollport));
+                    }
                 }
             }
         }
@@ -1217,9 +1581,14 @@ impl BaseDocument {
                 if in_columns { self.columns_rect(node_id, child_rect_in_self, scale) } else { child_rect_in_self };
             overflow = unite_overflow(overflow, child_rect_in_self);
             if let Some(padding) = scroll_padding {
-                let padded = self.padded_inflow_box(pseudo, padding, scale);
-                let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
-                overflow = unite_overflow(overflow, padded);
+                // (A block pseudo is among the layout children, still held here: the margins
+                // collapsed before it are read there.)
+                let siblings = layout_children.as_deref().unwrap_or(&[]);
+                let padded = self.padded_inflow_box(pseudo, siblings, padding, scale);
+                if padded != Rect::ZERO {
+                    let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
+                    overflow = unite_overflow(overflow, padded.union(scrollport));
+                }
             }
         }
 
@@ -1321,13 +1690,27 @@ impl BaseDocument {
     /// side by the container's `padding` and the child's margin there (not below zero), the
     /// child's part of the container's scrollable overflow with the end padding after it. Its
     /// transform is left out, as Blink and Taffy leave it out of the in-flow bounds.
-    fn padded_inflow_box(&self, child_id: NodeId, padding: taffy::Rect<f32>, scale: f64) -> Rect {
+    fn padded_inflow_box(&self, child_id: NodeId, siblings: &[NodeId], padding: taffy::Rect<f32>, scale: f64) -> Rect {
         let child = self.transform_pass_layout(child_id);
         // pyro: the bottom margin as it collapsed with those of the child's last in-flow
         // descendants it collapses through (Chrome: WPT css-overflow
         // `overflow-negative-margin-dynamic`, a -20px margin through a 10px one: -10px).
         let mut child = child;
         child.margin.bottom = self.collapsed_end_margin(child_id, child.margin.bottom, 0);
+        // pyro: a self-collapsing block reaches to the end of the margins collapsed through it,
+        // from where its block starts: its border box sits after `collapse(prev, top)` (the
+        // previous sibling's end margin and its own top one), so what follows it is
+        // `collapse(prev, top, bottom) - collapse(prev, top)`. Measured in Chrome 153, after a
+        // 300px block: `margin: 50px 0` gives scrollHeight 350, `margin: 0 0 50px` 350,
+        // `margin: 20px 0 50px` 350; one that is not self-collapsing keeps its whole end margin
+        // (`overflow: hidden`: 400).
+        if child.size.height == 0.0 && self.self_collapses(child_id, 0) {
+            // (`prev`: the margins collapsed before it, as its largest positive and most negative.)
+            let (pos, neg) = self.margins_collapsed_before(child_id, siblings);
+            let (top, bottom) = (child.margin.top, child.margin.bottom);
+            let at = pos.max(top).max(0.0) + neg.min(top).min(0.0);
+            child.margin.bottom = pos.max(top).max(bottom).max(0.0) + neg.min(top).min(bottom).min(0.0) - at;
+        }
         let pad = |padding: f32, margin: f32| (padding + margin).max(0.0) as f64;
         // pyro: at its place before its relative offset (Chrome's in-flow bounds: an item moved
         // 10px past its scroll container's content edge adds no padding after that; WPT
@@ -1347,7 +1730,11 @@ impl BaseDocument {
             .unwrap_or(taffy::Point { x: 0.0, y: 0.0 });
         let (x, y) = ((child.location.x - offset.x) as f64, (child.location.y - offset.y) as f64);
         let (w, h) = (child.size.width as f64, child.size.height as f64);
-        if !(w > 0.0 && h > 0.0) {
+        // (A child empty in one axis still extends it: its caller unites this with the scrollport,
+        // and keeps the union when it is empty in neither axis. A flex item shrunk to no width
+        // keeps its margin-inline-end; WPT css-overflow
+        // `scrollable-overflow-*with-flex-item-margin-inline-end*`.)
+        if !(w > 0.0 || h > 0.0) {
             return Rect::ZERO;
         }
         Rect::new(
@@ -1356,6 +1743,121 @@ impl BaseDocument {
             (x + w + pad(padding.right, child.margin.right)) * scale,
             (y + h + pad(padding.bottom, child.margin.bottom)) * scale,
         )
+    }
+
+    /// pyro: whether block `node_id` is self-collapsing (CSS 2 § 8.3.1) for its scroll
+    /// container's in-flow bounds: an in-flow, unfloated, non-replaced, horizontal block box with
+    /// no block size that is no formatting context root (`overflow` visible or clip, no layout or
+    /// paint containment, nor any other independent formatting context Taffy knows, nor a
+    /// multi-column container), with no text or line break in its lines, and whose in-flow children
+    /// are all self-collapsing, in a horizontal block container. (A clear with nothing to clear does
+    /// not prevent it; clearance moves the box itself, which its position carries. Its height is
+    /// checked by the caller at depth 0.)
+    fn self_collapses(&self, node_id: NodeId, depth: usize) -> bool {
+        use style::values::computed::Overflow;
+        use style::values::specified::box_::{Contain, DisplayInside, DisplayOutside};
+        let node = &self.nodes[node_id];
+        let Some(style) = node.primary_styles() else { return false };
+        if depth > 16 || (depth > 0 && node.unrounded_layout().size.height != 0.0) {
+            return false;
+        }
+        let display = style.clone_display();
+        let parent_flows = || {
+            let parent = node.layout_parent.get().or(node.parent);
+            parent.is_some_and(|p| {
+                let parent = &self.nodes[p];
+                parent.taffy_display() == taffy::Display::Block
+                    && parent.primary_styles().is_some_and(|s| !s.writing_mode.is_vertical())
+            })
+        };
+        let replaced = node.element_data().is_some_and(|e| {
+            matches!(
+                &*e.name.local,
+                "img" | "video" | "canvas" | "iframe" | "object" | "embed" | "svg" | "input" | "textarea" | "select"
+                    | "button"
+            )
+        });
+        let visible = |o: Overflow| matches!(o, Overflow::Visible | Overflow::Clip);
+        // (As Taffy's `establishes_new_bfc`: a non-`normal` `align-content`, a size container, a
+        // line clamp; and a multi-column container.)
+        let formatting_root = || {
+            use taffy::{BlockContainerStyle, CoreStyle};
+            let layout_style = node.layout_style();
+            layout_style.align_content().keyword != taffy::AlignContentKeyword::Normal
+                || layout_style.contain().establishes_independent_formatting_context()
+                || layout_style.establishes_independent_formatting_context()
+                || crate::layout::multicol::is_multicol_style(&style)
+        };
+        // (An inline root's lines are no layout children: one with text or a line break in them
+        // does not collapse through, as Blitz's inline layout says.)
+        let holds_text = || node.flags.is_inline_root() && self.holds_line_content(node_id, 0);
+        let own = !replaced
+            && !style.writing_mode.is_vertical()
+            && display.inside() == DisplayInside::Flow
+            && display.outside() == DisplayOutside::Block
+            && visible(style.clone_overflow_x())
+            && visible(style.clone_overflow_y())
+            && !style.get_box().used_containment().intersects(Contain::LAYOUT | Contain::PAINT)
+            && style.clone_float() == style::values::computed::Float::None
+            && !node.is_out_of_flow()
+            && (depth > 0 || parent_flows())
+            && !formatting_root()
+            && !holds_text();
+        own && node.layout_children.borrow().as_ref().is_none_or(|children| {
+            children.iter().all(|&c| {
+                let child = &self.nodes[c];
+                !child.is_element() || child.is_out_of_flow() || self.self_collapses(c, depth + 1)
+            })
+        })
+    }
+
+    /// pyro: the margins collapsed before self-collapsing block `node_id` among `siblings` (its
+    /// parent's layout children), as the
+    /// largest positive and the most negative: the top and bottom margins of the self-collapsing
+    /// blocks right before it, and the end margin of the block before those (0 at the start).
+    fn margins_collapsed_before(&self, node_id: NodeId, siblings: &[NodeId]) -> (f32, f32) {
+        let (mut pos, mut neg) = (0f32, 0f32);
+        let mut add = |m: f32| {
+            pos = pos.max(m);
+            neg = neg.min(m);
+        };
+        // (The parent's layout children, passed in: the overflow pass holds them taken out.)
+        let children = siblings;
+        let Some(at) = children.iter().position(|&c| c == node_id) else { return (0.0, 0.0) };
+        for &c in children[..at].iter().rev() {
+            let child = &self.nodes[c];
+            if !child.is_element()
+                || child.is_out_of_flow()
+                || child.primary_styles().is_none_or(|s| s.clone_float() != style::values::computed::Float::None)
+            {
+                continue;
+            }
+            // (The layout the transform pass reads, as `padded_inflow_box` does.)
+            let layout = self.transform_pass_layout(c);
+            if layout.size.height == 0.0 && self.self_collapses(c, 0) {
+                add(layout.margin.top);
+                add(layout.margin.bottom);
+                continue;
+            }
+            add(self.collapsed_end_margin(c, layout.margin.bottom, 0));
+            break;
+        }
+        (pos, neg)
+    }
+
+    /// pyro: whether inline root `node_id` holds line content: text other than collapsible white
+    /// space, or a line break, among its descendants.
+    fn holds_line_content(&self, node_id: NodeId, depth: usize) -> bool {
+        depth < 32
+            && self.nodes[node_id].children.iter().any(|&c| {
+                let child = &self.nodes[c];
+                match &child.data {
+                    crate::node::NodeData::Text(text) => text.content.chars().any(|ch| !matches!(ch, ' ' | '\t' | '\n' | '\r' | '\x0c')),
+                    crate::node::NodeData::Element(e) if e.name.local == markup5ever::local_name!("br") => true,
+                    crate::node::NodeData::Element(_) => self.holds_line_content(c, depth + 1),
+                    _ => false,
+                }
+            })
     }
 
     /// pyro: `margin` (`node_id`'s bottom margin) collapsed with the bottom margin of its last
@@ -1664,7 +2166,7 @@ impl BaseDocument {
             // 2 § 3.2, § 3.4; Taffy's `compute_scrollable_overflow_contribution` agrees). WPT
             // css-contain `contain-layout-ink-overflow-*`.
             use style::values::specified::box_::Contain;
-            let contain = style.get_box().slow_clone_contain();
+            let contain = style.get_box().used_containment();
             // pyro: paint containment alone clips as `overflow: clip` does, at its
             // `overflow-clip-margin` (below; WPT css-overflow `overflow-clip-margin-005`).
             let inline_flow = {
@@ -2221,6 +2723,8 @@ impl BaseDocument {
         self.last_layout_space = Some(available_space);
         self.anchor_index.get_mut().clear();
         self.layout_ran = true;
+        // pyro: the anchors positioned boxes laid out from here on resolve (`record_cv_anchor_use`).
+        self.cv_layout_pass.set(self.cv_layout_pass.get().wrapping_add(1));
         phase_profile::laid_out();
         self.mark_viewport_body();
 
@@ -3332,9 +3836,50 @@ impl BaseDocument {
     }
 }
 
+impl BaseDocument {
+    /// pyro: the size of the document's content (CSS px): its root element's border box and the
+    /// overflow it scrolls to, measured from the root's own edges and not widened to the viewport. A
+    /// document scrolled from the right ([`Self::viewport_scrolls_leftward`]) counts what overflows the
+    /// root leftward, not rightward. (A responsively embedded document's natural size, css-sizing-4
+    /// `frame-sizing`, which pyro gives its iframe.) `None` without a document element.
+    pub fn document_content_size(&self) -> Option<(f64, f64)> {
+        let root = self.try_root_element()?;
+        let (size, overflow) =
+            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / self.viewport().scale_f64()));
+        let width = if self.viewport_scrolls_leftward() {
+            (size.width as f64) - overflow.x0.min(0.0)
+        } else {
+            (size.width as f64).max(overflow.x1)
+        };
+        Some((width, (size.height as f64).max(overflow.y1)))
+    }
+}
+
 /// pyro: whether a document in writing mode `wm` has its horizontal scroll origin on the right:
 /// its content overflows the viewport leftward (`direction: rtl` in horizontal writing, blocks
 /// flowing right to left in `vertical-rl`).
 pub fn scrolls_leftward(wm: style::logical_geometry::WritingMode) -> bool {
     if wm.is_vertical() { !wm.is_vertical_lr() } else { !wm.is_bidi_ltr() }
+}
+
+/// pyro: whether `node` skips its contents (CSS Contain 2 § 4): `content-visibility: hidden`, or
+/// `auto` while not relevant to the user (`BaseDocument::update_content_visibility`).
+pub(crate) fn skips_contents(node: &crate::Node, styles: &style::properties::ComputedValues) -> bool {
+    use crate::node::NodeFlags;
+    use style::values::specified::box_::ContentVisibility;
+    node.flags.contains(NodeFlags::CV_SKIPPED)
+        || (node.is_element() && styles.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden)
+}
+
+/// pyro: whether `contain-intrinsic-width` and `-height` have `auto` (physical: width, height);
+/// `content-visibility: auto` adds it to both (CSS Contain 2 § 4.1, csswg-drafts#8407).
+pub(crate) fn contain_intrinsic_auto(styles: &style::properties::ComputedValues) -> (bool, bool) {
+    use style::values::generics::box_::ContainIntrinsicSize;
+    use style::values::specified::box_::ContentVisibility;
+    let cv_auto = styles.get_box().slow_clone_content_visibility() == ContentVisibility::Auto;
+    let position = styles.get_position();
+    let auto = |size: &style::values::computed::ContainIntrinsicSize| {
+        cv_auto || matches!(size, ContainIntrinsicSize::AutoNone | ContainIntrinsicSize::AutoLength(_))
+    };
+    (auto(&position.contain_intrinsic_width), auto(&position.contain_intrinsic_height))
 }

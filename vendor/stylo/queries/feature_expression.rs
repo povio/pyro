@@ -9,7 +9,7 @@ use super::feature::{Evaluator, QueryFeatureDescription};
 use super::feature::{FeatureFlags, KeywordDiscriminant};
 use crate::context::QuirksMode;
 use crate::custom_properties::{
-    ComputedSubstitutionFunctions, VariableValue as CustomVariableValue,
+    ComputedCustomProperties, ComputedSubstitutionFunctions, VariableValue as CustomVariableValue,
 };
 use crate::derives::*;
 use crate::dom::AttributeTracker;
@@ -40,6 +40,8 @@ pub enum FeatureType {
     Media,
     /// We're parsing a container feature.
     Container,
+    /// pyro: we're parsing a feature of a container query's `scroll-state()` function.
+    ScrollState,
 }
 
 impl FeatureType {
@@ -49,11 +51,12 @@ impl FeatureType {
         #[cfg(feature = "servo")]
         use crate::servo::media_features::MEDIA_FEATURES;
 
-        use crate::stylesheets::container_rule::CONTAINER_FEATURES;
+        use crate::stylesheets::container_rule::{CONTAINER_FEATURES, SCROLL_STATE_FEATURES};
 
         match *self {
             FeatureType::Media => &*MEDIA_FEATURES,
             FeatureType::Container => &CONTAINER_FEATURES,
+            FeatureType::ScrollState => &*SCROLL_STATE_FEATURES,
         }
     }
 
@@ -277,7 +280,25 @@ impl ToCss for QueryFeatureExpression {
         W: fmt::Write,
     {
         dest.write_char('(')?;
+        self.write_body(dest)?;
+        dest.write_char(')')
+    }
+}
 
+impl QueryFeatureExpression {
+    /// pyro: the expression without its parentheses, as a bare `<scroll-state-feature>` in
+    /// `scroll-state()` serializes (`scroll-state(scrollable: left)`).
+    pub fn to_css_unparenthesized<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: fmt::Write,
+    {
+        self.write_body(dest)
+    }
+
+    fn write_body<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
+    where
+        W: fmt::Write,
+    {
         match self.kind {
             QueryFeatureExpressionKind::Empty => self.write_name(dest)?,
             QueryFeatureExpressionKind::Single(ref v)
@@ -305,7 +326,7 @@ impl ToCss for QueryFeatureExpression {
                 }
             },
         }
-        dest.write_char(')')
+        Ok(())
     }
 }
 
@@ -733,6 +754,20 @@ impl QueryExpressionValue {
     ) -> Result<QueryExpressionValue, ParseError> {
         Ok(match for_feature.evaluator {
             Evaluator::OptionalLength(..) | Evaluator::Length(..) => {
+                // pyro: a math function that resolves to the number 0
+                // (`calc(0)`) is a zero length here, as in Blink (WPT
+                // parse-a-sizes-attribute: `(min-width:calc(0))`).
+                let zero = input.try_parse(|i| {
+                    let number = Number::parse(context, i)?;
+                    if number.get().is_none() && number.resolve() == Some(0.0) {
+                        Ok(Length::zero())
+                    } else {
+                        Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+                    }
+                });
+                if let Ok(zero) = zero {
+                    return Ok(QueryExpressionValue::Length(zero));
+                }
                 let length = Length::parse(context, input)?;
                 QueryExpressionValue::Length(length)
             },
@@ -923,6 +958,35 @@ impl QueryStyleRange {
         context: &computed::Context,
         attribute_tracker: &mut AttributeTracker,
     ) -> KleeneValue {
+        self.evaluate_with_properties(context, attribute_tracker, context.inherited_custom_properties(), &mut false)
+    }
+
+    pub(crate) fn for_each_custom_property(&self, f: &mut impl FnMut(Atom)) {
+        let mut visit = |value: &QueryExpressionValue| {
+            if let QueryExpressionValue::Custom(ident) = value {
+                f(ident.undashed());
+            }
+        };
+        match self {
+            Self::StyleRange2 { value1, value2, .. } => {
+                visit(value1);
+                visit(value2);
+            }
+            Self::StyleRange3 { value1, value2, value3, .. } => {
+                visit(value1);
+                visit(value2);
+                visit(value3);
+            }
+        }
+    }
+
+    pub(crate) fn evaluate_with_properties(
+        &self,
+        context: &computed::Context,
+        attribute_tracker: &mut AttributeTracker,
+        properties: &ComputedCustomProperties,
+        attr_tainted: &mut bool,
+    ) -> KleeneValue {
         match self {
             QueryStyleRange::StyleRange2 {
                 value1,
@@ -933,6 +997,8 @@ impl QueryStyleRange {
                     value1,
                     context,
                     attribute_tracker,
+                    properties,
+                    attr_tainted,
                     &mut PrecomputedHashSet::default(),
                 )
                 .as_ref(),
@@ -940,6 +1006,8 @@ impl QueryStyleRange {
                     value2,
                     context,
                     attribute_tracker,
+                    properties,
+                    attr_tainted,
                     &mut PrecomputedHashSet::default(),
                 )
                 .as_ref(),
@@ -958,12 +1026,16 @@ impl QueryStyleRange {
                     value1,
                     context,
                     attribute_tracker,
+                    properties,
+                    attr_tainted,
                     &mut PrecomputedHashSet::default(),
                 );
                 let v2 = Self::resolve_value(
                     value2,
                     context,
                     attribute_tracker,
+                    properties,
+                    attr_tainted,
                     &mut PrecomputedHashSet::default(),
                 );
                 Self::compare_values(v1.as_ref(), v2.as_ref())
@@ -975,6 +1047,8 @@ impl QueryStyleRange {
                                     value3,
                                     context,
                                     attribute_tracker,
+                                    properties,
+                                    attr_tainted,
                                     &mut PrecomputedHashSet::default(),
                                 )
                                 .as_ref(),
@@ -991,6 +1065,8 @@ impl QueryStyleRange {
         value: &QueryExpressionValue,
         context: &computed::Context,
         attribute_tracker: &mut AttributeTracker,
+        properties: &ComputedCustomProperties,
+        attr_tainted: &mut bool,
         visited_set: &mut PrecomputedHashSet<DashedIdent>,
     ) -> Option<Component> {
         match value {
@@ -1003,9 +1079,8 @@ impl QueryStyleRange {
                     .stylist
                     .expect("container queries should have a stylist around");
                 let registration = stylist.get_custom_property_registration(&name);
-                let current_value = context
-                    .inherited_custom_properties()
-                    .get(registration, &name)?;
+                let current_value = properties.get(registration, &name)?;
+                *attr_tainted |= current_value.attr_tainted;
                 match &current_value.v {
                     ValueInner::Component(component) => Some(component.clone()),
                     ValueInner::Universal(v) => {
@@ -1018,21 +1093,20 @@ impl QueryStyleRange {
                                 &v.url_data,
                                 context,
                                 attribute_tracker,
+                                properties,
+                                attr_tainted,
                                 visited_set,
                             )
                         } else {
                             None
                         }
                     },
-                    ValueInner::List(_) => {
-                        debug_assert!(false, "We don't parse list values in style queries");
-                        None
-                    },
+                    ValueInner::List(_) => None,
                 }
             },
             QueryExpressionValue::Function(value) => {
                 let sub_funcs = ComputedSubstitutionFunctions::new(
-                    Some(context.inherited_custom_properties().clone()),
+                    Some(properties.clone()),
                     None,
                 );
                 let stylist = context
@@ -1048,11 +1122,14 @@ impl QueryStyleRange {
                     attribute_tracker,
                 )
                 .ok()?;
+                *attr_tainted |= !substituted.attr_taint.is_empty();
                 Self::resolve_universal(
                     &substituted.css,
                     &value.url_data,
                     context,
                     attribute_tracker,
+                    properties,
+                    attr_tainted,
                     visited_set,
                 )
             },
@@ -1089,6 +1166,8 @@ impl QueryStyleRange {
         url_data: &UrlExtraData,
         context: &computed::Context,
         attribute_tracker: &mut AttributeTracker,
+        properties: &ComputedCustomProperties,
+        attr_tainted: &mut bool,
         visited_set: &mut PrecomputedHashSet<DashedIdent>,
     ) -> Option<Component> {
         let parser_context = ParserContext::new(
@@ -1105,7 +1184,7 @@ impl QueryStyleRange {
         QueryExpressionValue::parse_for_style_range(&parser_context, &mut Parser::new(css_text))
             .ok()
             .and_then(|parsed| {
-                Self::resolve_value(&parsed, context, attribute_tracker, visited_set)
+                Self::resolve_value(&parsed, context, attribute_tracker, properties, attr_tainted, visited_set)
             })
     }
 

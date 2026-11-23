@@ -13,7 +13,8 @@
 //!   composite it onto the bitmap per pixel with the operator, the global
 //!   alpha and the clipping region's coverage ([`composite`]); a shadow is
 //!   made from the source image's alpha, offset and blurred, and composited
-//!   first.
+//!   first. Its source is rendered apart, offset and with room for the blur,
+//!   so geometry off the bitmap still casts a shadow onto it.
 //! - Paths arrive in device coordinates (the canvas transform was applied as
 //!   they were built); strokes are traced in user space and transformed, as
 //!   HTML specifies, so a non-uniform transform shears the pen.
@@ -25,6 +26,7 @@
 pub mod codec;
 mod composite;
 pub mod fonts;
+pub mod image_decoder;
 mod guard;
 pub mod text;
 
@@ -83,10 +85,12 @@ pub enum Composite {
     Saturation,
     Color,
     Luminosity,
+    /// Porter-Duff clear (Fa = 0, Fb = 0).
+    Clear,
 }
 
 impl Composite {
-    pub const ALL: [(&'static str, Composite); 26] = [
+    pub const ALL: [(&'static str, Composite); 27] = [
         ("source-over", Composite::SourceOver),
         ("source-in", Composite::SourceIn),
         ("source-out", Composite::SourceOut),
@@ -113,6 +117,7 @@ impl Composite {
         ("saturation", Composite::Saturation),
         ("color", Composite::Color),
         ("luminosity", Composite::Luminosity),
+        ("clear", Composite::Clear),
     ];
 
     pub fn from_name(name: &str) -> Option<Composite> {
@@ -480,9 +485,31 @@ impl Surface {
         let user = t.inverse() * guard_path(path, self.width, self.height);
         let mut stroke = stroke.clone();
         // A pen wider than the canvas many times over covers what the
-        // canvas shows; the stroker's work grows with the width.
+        // canvas shows; the stroker's work grows with the width. pyro: the
+        // pen is narrowed no further than twice the extent of the path and
+        // the canvas together (user space; up to 16 times the plain limit):
+        // every canvas point then lies within half a pen of every path
+        // point, so the body, caps and joins (miters scale about their
+        // corner) cover the canvas as the wider pen does (WPT
+        // 2d.line.miter.obtuse: a 1600 px miter corner 800 px off a 100 px
+        // canvas).
         let scale = stretch(t);
-        let limit = 4.0 * (f64::from(self.width) + f64::from(self.height)) / scale.max(1e-9);
+        let mut limit = 4.0 * (f64::from(self.width) + f64::from(self.height)) / scale.max(1e-9);
+        if stroke.width > limit {
+            let inverse = t.inverse();
+            let canvas = Rect::new(0.0, 0.0, f64::from(self.width), f64::from(self.height));
+            let corners = [
+                canvas.origin(),
+                Point::new(canvas.x1, 0.0),
+                Point::new(0.0, canvas.y1),
+                Point::new(canvas.x1, canvas.y1),
+            ];
+            let reach = corners.iter().fold(user.bounding_box(), |r, c| r.union_pt(inverse * *c));
+            let extent = 2.0 * reach.width().hypot(reach.height());
+            if extent.is_finite() {
+                limit = limit.max(extent.min(16.0 * limit));
+            }
+        }
         if stroke.width > limit {
             stroke.width = limit;
         }
@@ -503,25 +530,8 @@ impl Surface {
     /// `drawImage`: the `src` rectangle of `image` into the `dst` rectangle
     /// (user space). `src` is clipped to the image, `dst` with it.
     pub fn draw_image(&mut self, image: &Bitmap, src: Rect, dst: Rect, state: &DrawState<'_>) {
-        let bounds = Rect::new(0.0, 0.0, f64::from(image.width()), f64::from(image.height()));
-        let (src, dst) = (src.abs(), dst.abs());
-        if src.width() == 0.0 || src.height() == 0.0 || dst.width() == 0.0 || dst.height() == 0.0 {
-            return;
-        }
-        let clipped = src.intersect(bounds);
-        if clipped.width() <= 0.0 || clipped.height() <= 0.0 {
-            return;
-        }
-        let (sx, sy) = (dst.width() / src.width(), dst.height() / src.height());
-        let dst = Rect::new(
-            dst.x0 + (clipped.x0 - src.x0) * sx,
-            dst.y0 + (clipped.y0 - src.y0) * sy,
-            dst.x0 + (clipped.x1 - src.x0) * sx,
-            dst.y0 + (clipped.y1 - src.y0) * sy,
-        );
-        let to_dst = Affine::translate(dst.origin().to_vec2())
-            * Affine::scale_non_uniform(sx, sy)
-            * Affine::translate(-clipped.origin().to_vec2());
+        let size = (f64::from(image.width()), f64::from(image.height()));
+        let Some((dst, to_dst)) = image_placement(size, src, dst) else { return };
         let pattern = Pattern { image: image.clone(), repeat_x: false, repeat_y: false, transform: to_dst };
         let paint = Paint::Pattern(Arc::new(pattern));
         let t = state.transform;
@@ -530,6 +540,24 @@ impl Surface {
         }
         // The destination as a device path, guarded like any other.
         let path = guard_path(&(t * dst.to_path(0.1)), self.width, self.height);
+        self.draw(&paint, state, Affine::IDENTITY, &mut |ctx, _| ctx.fill_path(&path));
+    }
+
+    /// `drawImage` of a `width` by `height` source without a bitmap (a canvas
+    /// with no context, or one not drawn on yet): transparent black pixels,
+    /// which change the bitmap only under operators that a transparent source
+    /// does not leave alone (`copy`, `source-in`, ...).
+    pub fn draw_transparent_image(&mut self, width: u32, height: u32, src: Rect, dst: Rect, state: &DrawState<'_>) {
+        if composite::bounded(state.composite) && state.filter.is_none() {
+            return;
+        }
+        let Some((dst, _)) = image_placement((f64::from(width), f64::from(height)), src, dst) else { return };
+        let t = state.transform;
+        if !invertible(t) {
+            return;
+        }
+        let path = guard_path(&(t * dst.to_path(0.1)), self.width, self.height);
+        let paint = Paint::Color(Color::from_rgba8(0, 0, 0, 0));
         self.draw(&paint, state, Affine::IDENTITY, &mut |ctx, _| ctx.fill_path(&path));
     }
 
@@ -738,12 +766,30 @@ impl Surface {
                 source = filtered;
             }
         }
+        // pyro: the shadow is cast by the whole drawing, also its parts off the bitmap that its
+        // offset or blur bring onto it, so (without a filter, which needs the drawing at the
+        // bitmap's size) its source is rendered apart, already offset, with room for the blur.
+        let shadow_source = match shadow {
+            Some(shadow) if filter.is_none() => Some(shadow_source(paint, state, geometry, (w, h), &shadow, draw)),
+            _ => None,
+        };
         let mask = self.clip_mask(state.clip);
         let op = state.composite;
         let alpha = state.alpha.clamp(0.0, 1.0);
         let Some(pixmap) = self.pixmap_mut() else { return };
         if let Some(shadow) = shadow {
-            let shadow = composite::shadow(source.data_as_u8_slice(), usize::from(w), usize::from(h), &shadow);
+            let shadow = match shadow_source {
+                Some(ShadowSource { pixmap: s, pad }) => composite::shadow_cropped(
+                    s.data_as_u8_slice(),
+                    usize::from(s.width()),
+                    usize::from(s.height()),
+                    pad,
+                    usize::from(w),
+                    usize::from(h),
+                    &shadow,
+                ),
+                None => composite::shadow(source.data_as_u8_slice(), usize::from(w), usize::from(h), &shadow),
+            };
             composite::apply(pixmap.data_as_u8_slice_mut(), &shadow, alpha, op, mask.as_deref());
         }
         composite::apply(pixmap.data_as_u8_slice_mut(), source.data_as_u8_slice(), alpha, op, mask.as_deref());
@@ -773,6 +819,49 @@ impl Surface {
     }
 }
 
+/// A draw's shadow source: the drawing offset by the shadow's offset, on a
+/// bitmap `pad` pixels larger than the canvas on each side (the reach of the
+/// blur), so geometry off the canvas still casts its shadow onto it.
+struct ShadowSource {
+    pixmap: Pixmap,
+    pad: usize,
+}
+
+fn shadow_source(
+    paint: &Paint,
+    state: &DrawState<'_>,
+    geometry: Affine,
+    (w, h): (u16, u16),
+    shadow: &Shadow,
+    draw: &mut dyn FnMut(&mut RenderContext, &mut Resources),
+) -> ShadowSource {
+    let side = u32::from(w.max(h));
+    // Room for the blur (three box passes of `composite::blur_box` each),
+    // bounded so the bitmap stays a valid canvas size.
+    let reach = (composite::blur_box(shadow.blur / 2.0, usize::try_from(side).unwrap_or(usize::MAX)) * 3 / 2 + 1) as u32;
+    let room = (MAX_SIDE - side) / 2;
+    let mut pad = reach.min(room);
+    while pad > 0 && !valid_size(u32::from(w) + 2 * pad, u32::from(h) + 2 * pad) {
+        pad /= 2;
+    }
+    let (pw, ph) = ((u32::from(w) + 2 * pad) as u16, (u32::from(h) + 2 * pad) as u16);
+    let mut pixmap = Pixmap::new(pw, ph);
+    // Geometry within range of the canvas (see `guard`) cannot be offset onto
+    // it from farther than this.
+    let far = 2.0 * (1e6 + 64.0 * f64::from(side));
+    if !(shadow.offset.x.abs() <= far && shadow.offset.y.abs() <= far) {
+        return ShadowSource { pixmap, pad: pad as usize };
+    }
+    let shift = Affine::translate(shadow.offset + Vec2::new(f64::from(pad), f64::from(pad)));
+    let shifted = DrawState { transform: shift * state.transform, ..state.clone() };
+    let mut ctx = settings(pw, ph);
+    let mut resources = Resources::new();
+    emit(&mut ctx, &mut resources, paint, &shifted, shift * geometry, 1.0, &[], (pw, ph), draw);
+    ctx.flush();
+    ctx.render(&mut pixmap, &mut resources);
+    ShadowSource { pixmap, pad: pad as usize }
+}
+
 /// The coverage (alpha) of what `draw` fills, per pixel.
 fn coverage(w: u16, h: u16, draw: &mut dyn FnMut(&mut RenderContext)) -> Vec<u8> {
     let mut ctx = settings(w, h);
@@ -783,6 +872,31 @@ fn coverage(w: u16, h: u16, draw: &mut dyn FnMut(&mut RenderContext)) -> Vec<u8>
     ctx.flush();
     ctx.render(&mut pixmap, &mut resources);
     pixmap.data_as_u8_slice().chunks_exact(4).map(|p| p[3]).collect()
+}
+
+/// Where `drawImage` puts an image of `size`: `src` clipped to the image and
+/// `dst` with it, and the image-to-user transform; `None` when nothing is drawn.
+fn image_placement(size: (f64, f64), src: Rect, dst: Rect) -> Option<(Rect, Affine)> {
+    let bounds = Rect::new(0.0, 0.0, size.0, size.1);
+    let (src, dst) = (src.abs(), dst.abs());
+    if src.width() == 0.0 || src.height() == 0.0 || dst.width() == 0.0 || dst.height() == 0.0 {
+        return None;
+    }
+    let clipped = src.intersect(bounds);
+    if clipped.width() <= 0.0 || clipped.height() <= 0.0 {
+        return None;
+    }
+    let (sx, sy) = (dst.width() / src.width(), dst.height() / src.height());
+    let dst = Rect::new(
+        dst.x0 + (clipped.x0 - src.x0) * sx,
+        dst.y0 + (clipped.y0 - src.y0) * sy,
+        dst.x0 + (clipped.x1 - src.x0) * sx,
+        dst.y0 + (clipped.y1 - src.y0) * sy,
+    );
+    let to_dst = Affine::translate(dst.origin().to_vec2())
+        * Affine::scale_non_uniform(sx, sy)
+        * Affine::translate(-clipped.origin().to_vec2());
+    Some((dst, to_dst))
 }
 
 /// How much `t` stretches lengths at most (a bound on its largest singular
@@ -944,7 +1058,11 @@ fn gradient_paint(g: &Gradient, alpha: f32) -> Option<peniko::Gradient> {
         }
         GradientKind::Conic { center, angle } => {
             let a = angle as f32;
-            peniko::Gradient::new_sweep(center, a, a + std::f32::consts::TAU)
+            // pyro: vello measures the angle in [0, 2π) and pads outside [start, start + 2π],
+            // so any start other than 0 left part of the turn at an end stop (WPT
+            // 2d.gradient.conic.positive.rotation); a conic gradient is one full turn from any
+            // start, which repeating gives.
+            peniko::Gradient::new_sweep(center, a, a + std::f32::consts::TAU).with_extend(Extend::Repeat)
         }
     };
     let mut gradient = gradient.with_stops(&stops[..]);

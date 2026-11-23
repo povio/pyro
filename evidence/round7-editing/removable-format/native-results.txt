@@ -1,0 +1,10 @@
+test editing_js::undo_and_redo_restore_text_controls_and_hosts ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 694 filtered out; finished in 0.06s
+test editing_js::exec_command_formatting_and_structure ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 694 filtered out; finished in 0.06s
+test editing_js::remove_format_keeps_foreign_elements_and_the_original_suffix ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 694 filtered out; finished in 0.07s
+test editing_js::remove_format_preserves_deletions_and_splits_ids_only_once ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 694 filtered out; finished in 0.06s
+test editing_js::formatting_svg_text_restores_a_visible_caret ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 694 filtered out; finished in 0.12s

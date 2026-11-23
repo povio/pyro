@@ -108,13 +108,20 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         await_graph(s, &page, &url)
     })?;
     native.set_atom("awaitGraph", await_graph_fn.value())?;
+    // fetch(url, init) -> fetch() of the worklet's module: a "paintworklet" request (CSP's
+    // script-src-elem, not connect-src).
+    let module_fetch = crate::fetch::internal_fetch(s, pyro_net::csp::RequestDest::PaintWorklet)?;
+    native.set_atom("fetch", module_fetch.value())?;
     Ok(native)
 }
 
 /// Evaluates `source` (from `url`) as a module in the page's paint worklet global, made on first
-/// use, its imports fetched with the graph's `credentials` mode and recorded as graph `graph`'s. Returns a promise of the calling
-/// realm that settles as the module's evaluation does. paint_worklet.js runs one graph at a time, so
-/// the fetcher installed here serves only this graph's modules.
+/// use, its imports fetched with the graph's `credentials` mode and recorded as graph `graph`'s.
+/// Returns a promise of the calling realm, as HTML's `addModule()` settles: rejected when the graph
+/// fails to load (an import's fetch failed, a parse error) or to link; fulfilled once the module
+/// ran, also when its evaluation threw (that error is reported, as "run a module script" does with
+/// rethrow errors false). paint_worklet.js runs one graph at a time, so the fetcher installed here
+/// serves only this graph's modules.
 fn evaluate<'s>(
     s: &Scope<'s>,
     page: &Rc<PageDom>,
@@ -148,17 +155,100 @@ fn evaluate<'s>(
     );
     let ws = realm.scope()?;
     let settle = Settle::new(s, deferred);
-    match ws.eval_module(source, url) {
-        Ok(evaluation) => settle.when(s, &ws, evaluation, |_, _| None)?,
-        // A module that does not parse (or a failed import): the error, in the caller's realm.
+    match ws.load_module_graph(source, url) {
+        // Loaded (every import fetched, the graph parsed): link and run it.
+        Ok(Some(loading)) => {
+            let loaded = loaded_or_threw(&ws, loading)?;
+            let url = url.to_owned();
+            settle.when(s, &ws, loaded, move |ws, _| Some(run_module(ws, &url)))?
+        }
+        // An engine without module graph phases (JavaScriptCore without patch 0037): one promise for
+        // the graph's load and its evaluation, which cannot tell an evaluation error from a failed
+        // load, so both reject.
+        Ok(None) => match ws.eval_module(source, url) {
+            Ok(evaluation) => settle.when(s, &ws, evaluation, |_, _| None)?,
+            // A module that does not parse (or a failed import): the error, in the caller's realm.
+            Err(e) => settle.now(s, Err(e.to_value(s)))?,
+        },
         Err(e) => settle.now(s, Err(e.to_value(s)))?,
     }
     Ok(promise)
 }
 
+/// HTML "run a module script" (rethrow errors false) for the loaded graph of `url` in the worklet
+/// realm `ws`: a link error is `Err` (the script's error to rethrow, which rejects `addModule()`);
+/// otherwise a promise of `ws` that fulfills once the evaluation settles, an evaluation error
+/// reported rather than rejecting it. (Chrome 158 and WPT worklets/resources/import-tests.js:
+/// "Importing a script which throws should still resolve the given promise".)
+pub(crate) fn run_module<'w>(ws: &Scope<'w>, url: &str) -> JsResult<Value<'w>> {
+    let evaluation = match ws.link_and_evaluate_module(url) {
+        Ok(evaluation) => evaluation,
+        // JavaScriptCore throws the [[EvaluationError]] of a graph without top-level await
+        // synchronously (JSModuleLoader::linkAndEvaluateModule rethrows the entry's error), also when
+        // a module of the graph threw before: the module ran, so report it and fulfill.
+        Err(pyro_js::JsError::Thrown(e)) if !is_link_error(ws, e.get(ws)) => {
+            ws.note_module_evaluation_error(e.get(ws));
+            ws.report_exception(&pyro_js::JsError::Thrown(e));
+            return Ok(ws.undefined());
+        }
+        Err(e) => return Err(e),
+    };
+    let deferred = Rc::new(ws.deferred()?);
+    let promise = deferred.promise.get(ws);
+    let (ran, threw) = (deferred.clone(), deferred);
+    ws.then(
+        evaluation,
+        move |ws, _| {
+            let _ = ran.resolve(ws, ws.undefined());
+        },
+        move |ws, error| {
+            ws.note_module_evaluation_error(error);
+            ws.report_exception(&pyro_js::JsError::thrown(Persistent::new(ws, error)));
+            let _ = threw.resolve(ws, ws.undefined());
+        },
+    )?;
+    Ok(promise)
+}
+
+/// Whether `error`, which linking and evaluating a graph threw, failed its link rather than its
+/// evaluation: a `SyntaxError` (an unresolvable or ambiguous import) that is no module's recorded
+/// evaluation error. A heuristic, as `module_graph_has_script` in pyro-browser's loader: a module
+/// that throws a `SyntaxError` of its own reads as a link error.
+pub(crate) fn is_link_error(ws: &Scope<'_>, error: Value<'_>) -> bool {
+    let Some(object) = error.as_object() else { return false };
+    !ws.is_module_evaluation_error(error)
+        && object.get_atom("name").ok().and_then(|n| n.as_string()).as_deref() == Some("SyntaxError")
+}
+
+/// `loading`, a graph load of the worklet realm `ws`, as a promise of `ws` that fulfills when it
+/// fulfills and also when it rejects with a module's recorded evaluation error: JavaScriptCore
+/// rejects a load that reaches a module whose evaluation threw (JSModuleLoader::loadModule), but
+/// that graph did load; `run_module` then reports the error again, as HTML's rerun does. Any other
+/// rejection (a failed fetch, a parse error) rejects it.
+pub(crate) fn loaded_or_threw<'w>(ws: &Scope<'w>, loading: Value<'_>) -> JsResult<Value<'w>> {
+    let deferred = Rc::new(ws.deferred()?);
+    let promise = deferred.promise.get(ws);
+    let (loaded, failed) = (deferred.clone(), deferred);
+    ws.then(
+        loading,
+        move |ws, value| {
+            let _ = loaded.resolve(ws, value);
+        },
+        move |ws, error| {
+            let _ = if ws.is_module_evaluation_error(error) {
+                failed.resolve(ws, ws.undefined())
+            } else {
+                failed.reject(ws, error)
+            };
+        },
+    )?;
+    Ok(promise)
+}
+
 /// The graph of `url`, a module of the worklet's module map (another graph's import, fetched or
 /// being fetched): a promise of the calling realm that settles once the module and every module it
-/// imports are fetched and evaluated (fulfilled), or one of them failed (rejected with the failure),
+/// imports are fetched and evaluated (fulfilled, an evaluation error reported: `run_module`), or one
+/// of them failed to load or link (rejected with the failure),
 /// as "fetch a worklet script graph" ends; not when the module's own source arrived. `null` without
 /// a worklet realm or an engine that loads graphs in phases (`Scope::load_registered_module_graph`).
 fn await_graph<'s>(s: &Scope<'s>, page: &Rc<PageDom>, url: &str) -> JsResult<Value<'s>> {
@@ -172,26 +262,30 @@ fn await_graph<'s>(s: &Scope<'s>, page: &Rc<PageDom>, url: &str) -> JsResult<Val
     let deferred = s.deferred()?;
     let promise = deferred.promise.get(s);
     let settle = Settle::new(s, deferred);
-    // Loaded: link and evaluate it (a no-op for a module that already ran), whose promise ends it.
+    // Loaded (or reached a module that threw before): link and evaluate it (a no-op for a module that
+    // already ran), whose promise ends it; an evaluation error (also one a module threw before, which
+    // JavaScriptCore throws again) is reported and fulfills it.
+    let loaded = loaded_or_threw(&ws, loading)?;
     let url = url.to_owned();
-    settle.when(s, &ws, loading, move |ws, _| Some(ws.link_and_evaluate_module(&url)))?;
+    settle.when(s, &ws, loaded, move |ws, _| Some(run_module(ws, &url)))?;
     Ok(promise)
 }
 
-/// The calling realm's promise for a worklet operation, settled from the worklet realm's promises.
+/// The calling realm's promise for a worklet operation, settled from the worklet realm's promises
+/// (shared with `crate::audio_worklet`).
 #[derive(Clone)]
-struct Settle {
+pub(crate) struct Settle {
     deferred: Rc<RefCell<Option<pyro_js::Deferred>>>,
     caller: pyro_js::WeakRealm,
 }
 
 impl Settle {
-    fn new(s: &Scope<'_>, deferred: pyro_js::Deferred) -> Settle {
+    pub(crate) fn new(s: &Scope<'_>, deferred: pyro_js::Deferred) -> Settle {
         Settle { deferred: Rc::new(RefCell::new(Some(deferred))), caller: s.realm().downgrade() }
     }
 
     /// Settles it now, in `s` (the caller's realm): fulfilled with undefined, or rejected with the error.
-    fn now(&self, s: &Scope<'_>, result: Result<(), Value<'_>>) -> JsResult<()> {
+    pub(crate) fn now(&self, s: &Scope<'_>, result: Result<(), Value<'_>>) -> JsResult<()> {
         let Some(d) = self.deferred.borrow_mut().take() else { return Ok(()) };
         match result {
             Ok(()) => d.resolve(s, s.undefined()),
@@ -210,7 +304,7 @@ impl Settle {
 
     /// Settles it as `promise` (of the worklet realm `ws`) settles; when it fulfills, `next` may give
     /// the step after it (a value or promise it then settles as, or the error that rejects it).
-    fn when<'s>(
+    pub(crate) fn when<'s>(
         &self,
         s: &Scope<'s>,
         ws: &Scope<'_>,

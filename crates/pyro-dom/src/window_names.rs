@@ -38,10 +38,27 @@ pub fn window_name_hash(units: impl Iterator<Item = u16>) -> u64 {
     units.fold(0xcbf29ce484222325, |h, u| (h ^ u64::from(u)).wrapping_mul(0x100000001b3))
 }
 
-/// Whether this element's `name` attribute names it on the Window. An iframe
-/// names its child window, which the caller resolves.
+/// Whether this element's `name` attribute names it on the Window. An iframe or
+/// frame names its child window (its target name), which the caller resolves, as
+/// an object or embed with one does.
 pub(crate) fn named_by_name(e: &ElementData) -> bool {
     // Atoms compare as integers: asked of every node entering a tree.
+    use markup5ever::local_name;
+    e.is_html()
+        && matches!(
+            e.name.local,
+            local_name!("embed")
+                | local_name!("form")
+                | local_name!("frame")
+                | local_name!("iframe")
+                | local_name!("img")
+                | local_name!("object")
+        )
+}
+
+/// Whether this element's `name` attribute names it on the Document (HTML "the Document
+/// object's supported property names"): embed, form, iframe, img and object; a frame does not.
+pub(crate) fn document_named_by_name(e: &ElementData) -> bool {
     use markup5ever::local_name;
     e.is_html()
         && matches!(
@@ -52,6 +69,17 @@ pub(crate) fn named_by_name(e: &ElementData) -> bool {
                 | local_name!("img")
                 | local_name!("object")
         )
+}
+
+/// Whether this element's `id` names it on the Document: an object, or an img that also has
+/// a non-empty `name`.
+pub(crate) fn document_named_by_id(e: &ElementData) -> bool {
+    e.is_html()
+        && match &*e.name.local {
+            "object" => true,
+            "img" => e.attr_local(&markup5ever::local_name!("name")).is_some_and(|n| !n.is_empty()),
+            _ => false,
+        }
 }
 
 impl Dom {
@@ -85,22 +113,23 @@ impl Dom {
 
     fn announce_element_names(&self, i: u32, hook: &std::rc::Rc<dyn Fn(&str)>) {
         let Some(e) = self.n(i).element() else { return };
-        if !named_by_name(e) {
+        if !document_named_by_name(e) {
             return;
         }
         if let Some(name) = e.attr_local(&markup5ever::local_name!("name")).filter(|v| !v.is_empty()) {
             hook(name);
-            if &*e.name.local == "img" {
-                if let Some(id) = e.id().filter(|v| !v.is_empty()) {
-                    hook(id);
-                }
+        }
+        if document_named_by_id(e) {
+            if let Some(id) = e.id().filter(|v| !v.is_empty()) {
+                hook(id);
             }
         }
     }
 
     /// The elements of `doc`'s tree named `name` on the Document (HTML "the
     /// Document object's supported property names"): embed, form, iframe,
-    /// img and object by `name`, and img by `id` when it also has a `name`.
+    /// img and object by `name`, object by `id`, and img by `id` when it also
+    /// has a `name`.
     pub fn document_named_elements(&self, doc: NodeId, name: &str) -> DomResult<Vec<NodeId>> {
         let r = self.check(doc)?;
         if name.is_empty() || !self.window_name_may_exist(doc, window_name_hash(name.encode_utf16())) {
@@ -110,11 +139,8 @@ impl Dom {
         let mut cur = self.n(r).first_child;
         while cur != NIL {
             if let Some(e) = self.n(cur).element() {
-                if named_by_name(e) && e.attr_local(&markup5ever::local_name!("name")) == Some(name)
-                    || (e.is_html()
-                        && &*e.name.local == "img"
-                        && e.id() == Some(name)
-                        && e.attr_local(&markup5ever::local_name!("name")).is_some_and(|n| !n.is_empty()))
+                if document_named_by_name(e) && e.attr_local(&markup5ever::local_name!("name")) == Some(name)
+                    || (document_named_by_id(e) && e.id() == Some(name))
                 {
                     found.push(self.id_of(cur));
                 }

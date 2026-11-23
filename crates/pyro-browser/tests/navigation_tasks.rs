@@ -72,6 +72,9 @@ fn enormous_history_delta_is_ignored_without_overflow() {
 fn queued_traversal_does_not_apply_a_forward_entry_replaced_by_push_state() {
     let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
+    // A document of its own: navigations of the initial about:blank one replace its entry.
+    t.browser.navigate(page, NavigateOpts::address_bar("about:blank")).unwrap();
+    settle(&mut t);
     eval(&t, page, "location.hash='one';location.hash='two'");
     settle(&mut t);
     eval(&t, page, "history.back()");

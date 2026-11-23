@@ -49,6 +49,7 @@ use pyro_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent
 use rustc_hash::FxHashMap;
 
 use crate::port_link::{Link, Owner, TransitEnd, WeakPipe};
+use crate::structured_clone::MessagePayload;
 
 use crate::event::{EventCore, EventInterface};
 use crate::page::PageDom;
@@ -59,9 +60,8 @@ pub(crate) struct PortInner {
     target: EventTargetData,
     realm: WeakRealm,
     peer: RefCell<Weak<PortInner>>,
-    /// Undelivered messages: data and the event's `ports` array, both already
-    /// in this port's realm.
-    queue: RefCell<VecDeque<(Persistent, Option<Persistent>)>>,
+    /// Cluster-bound messages are deserialized in the port's final receiving realm.
+    queue: RefCell<VecDeque<MessagePayload>>,
     started: Cell<bool>,
     closed: Cell<bool>,
     /// Transferred away: this object no longer stands for the port.
@@ -131,12 +131,11 @@ impl PortInner {
         &self.target.page
     }
 
-    /// Queues `data` (already cloned into this port's realm).
-    fn enqueue(self: &Rc<Self>, data: Persistent, ports: Option<Persistent>) {
+    fn enqueue(self: &Rc<Self>, payload: MessagePayload) {
         if self.closed.get() {
             return;
         }
-        self.queue.borrow_mut().push_back((data, ports));
+        self.queue.borrow_mut().push_back(payload);
         if self.started.get() {
             self.schedule_one();
         }
@@ -186,7 +185,12 @@ impl PortInner {
         if self.closed.get() || self.page().is_disposed() {
             return;
         }
-        let local = self.queue.borrow_mut().pop_front().map(|(data, ports)| (Some(data), ports));
+        let local = self.queue.borrow_mut().pop_front();
+        let local = match local {
+            Some(MessagePayload::Local(data, ports)) => Some((Some(data), ports)),
+            Some(MessagePayload::Serialized(message)) => self.read_wire(&message),
+            None => None,
+        };
         let Some((data, ports)) = local.or_else(|| self.take_remote()) else { return };
         let Some(data) = data else {
             let ev = EventCore::trusted(self.page(), EventInterface::MessageEvent, "messageerror", false, false);
@@ -211,9 +215,14 @@ impl PortInner {
     fn take_remote(&self) -> Option<(Option<Persistent>, Option<Persistent>)> {
         let link = self.remote.borrow().clone()?;
         let message = link.pop()?;
+        self.read_wire(&message)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn read_wire(&self, message: &crate::structured_clone::WireMessage) -> Option<(Option<Persistent>, Option<Persistent>)> {
         let realm = self.realm.upgrade()?;
         let s = realm.scope().ok()?;
-        match crate::structured_clone::decode_with_ports(&s, &message) {
+        match crate::structured_clone::decode_with_ports(&s, message) {
             Ok((value, ports)) => {
                 Some((Some(Persistent::new(&s, value)), ports.map(|p| Persistent::new(&s, p.value()))))
             }
@@ -361,11 +370,9 @@ impl JsClass for MessagePort {
             let receiver = peer.as_ref().and_then(|p| p.realm.upgrade());
             match receiver.as_ref().map(|r| r.scope()).transpose()? {
                 Some(rs) => {
-                    let (cloned, ports) = crate::structured_clone::clone_into(s, &rs, a.get(0), options)?;
-                    let ports =
-                        (ports.get_atom("length")?.to_number()? > 0.0).then(|| Persistent::new(&rs, ports.value()));
+                    let payload = crate::structured_clone::clone_into(s, &rs, a.get(0), options)?;
                     if let Some(peer) = peer.filter(|_| !doomed) {
-                        peer.enqueue(Persistent::new(&rs, cloned), ports);
+                        peer.enqueue(payload);
                     }
                 }
                 None => {
@@ -479,11 +486,14 @@ pub(crate) fn complete_transfer(s: &Scope<'_>, from: pyro_js::Value<'_>, to: pyr
     let queued: Vec<_> = from.queue.borrow_mut().drain(..).collect();
     {
         let mut queue = to.queue.borrow_mut();
-        for (data, ports) in queued {
-            if same_realm {
-                queue.push_back((data, ports));
-            } else if let Ok(copy) = crate::structured_clone::clone_value(s, s.rehome(data.get(s)), s.undefined()) {
-                queue.push_back((Persistent::new(s, copy), ports));
+        for message in queued {
+            match message {
+                MessagePayload::Local(data, ports) if !same_realm => {
+                    if let Ok(copy) = crate::structured_clone::clone_value(s, s.rehome(data.get(s)), s.undefined()) {
+                        queue.push_back(MessagePayload::Local(Persistent::new(s, copy), ports));
+                    }
+                }
+                other => queue.push_back(other),
             }
         }
     }
@@ -583,7 +593,14 @@ fn serialize_queue(port: &PortInner) -> Vec<crate::structured_clone::WireMessage
     if depth < MAX_EXPORT_DEPTH {
         let realm = port.realm.upgrade();
         if let Some(s) = realm.as_ref().and_then(|r| r.scope().ok()) {
-            for (data, ports) in queued {
+            for payload in queued {
+                let (data, ports) = match payload {
+                    MessagePayload::Serialized(message) => {
+                        out.push(message);
+                        continue;
+                    }
+                    MessagePayload::Local(data, ports) => (data, ports),
+                };
                 let options = match ports {
                     Some(ports) => {
                         let o = s.object();
@@ -638,25 +655,39 @@ pub(crate) fn fire_wire_message(
     page: &Rc<PageDom>,
     target: TargetKey,
     message: &crate::structured_clone::WireMessage,
-    origin: String,
+    origin: Option<String>,
 ) {
-    match crate::structured_clone::decode_with_ports(s, message) {
-        Ok((value, ports)) => {
-            let ev = EventCore::trusted(page, EventInterface::MessageEvent, "message", false, false);
-            {
-                let mut fields = ev.fields.borrow_mut();
-                fields.message_data = Some(Persistent::new(s, value));
-                fields.message_ports = ports.map(|p| Persistent::new(s, p.value()));
-                fields.origin = origin;
-            }
-            fire(page, target, &ev);
+    fire_wire_message_from(s, page, target, message, origin, None);
+}
+
+/// [`fire_wire_message`] with the `source` window the event reports, resolved in the realm
+/// reading `event.source` (`None`: null).
+pub(crate) fn fire_wire_message_from(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    target: TargetKey,
+    message: &crate::structured_clone::WireMessage,
+    origin: Option<String>,
+    source: Option<crate::event::MessageSource>,
+) {
+    let (ty, payload) = match crate::structured_clone::decode_with_ports(s, message) {
+        Ok(payload) => ("message", Some(payload)),
+        Err(JsError::Terminated) => return,
+        Err(_) => ("messageerror", None),
+    };
+    let ev = EventCore::trusted(page, EventInterface::MessageEvent, ty, false, false);
+    {
+        let mut f = ev.fields.borrow_mut();
+        if let Some((value, ports)) = payload {
+            f.message_data = Some(Persistent::new(s, value));
+            f.message_ports = ports.map(|p| Persistent::new(s, p.value()));
         }
-        Err(JsError::Terminated) => {}
-        Err(_) => {
-            let ev = EventCore::trusted(page, EventInterface::MessageEvent, "messageerror", false, false);
-            fire(page, target, &ev);
+        if let Some(origin) = origin {
+            f.set_sender_origin(origin);
         }
+        f.message_source_window = source;
     }
+    fire(page, target, &ev);
 }
 
 /// Closes a port [`import_port`] made that will never be reachable.
@@ -770,7 +801,7 @@ impl ChannelInner {
         {
             let mut f = ev.fields.borrow_mut();
             f.message_data = data;
-            f.origin = origin.to_owned();
+            f.set_sender_origin(origin.to_owned());
         }
         fire(self.page(), self.target.key, &ev);
     }

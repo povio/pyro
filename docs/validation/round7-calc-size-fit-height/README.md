@@ -1,0 +1,9 @@
+# Sampled fit-content height: independent Studio QA
+
+Studio ran candidate `f2b0c8d9a7fb570ec1d6f6fc02f282023c561899` once against WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`. MacBook-built development archive SHA-256 `bcb406725ad60516b488d208962a9224b5da24ffb78d9391ebde54fe80ac06ce` (41,312,390 bytes); extracted executable `98f143d9df50485ab310a2d8ae4d356602d60e1eeb3a5ef0a10073ffa836ce55`. Internal hashes verified; native regression passed 1/1 on the builder. The `.gz` files preserve the original bytes when decompressed.
+
+All four inventories and URL/name/within-name ordinal sets match: 3,303 occurrences, 13 complete OK harnesses. No parent or Chrome replay. Original and first follow-up raw arms are in `93a1fca2e72efeb60ad8e8ce7946b085fecb0fcc` under `docs/validation/round7-calc-size-sampled`; direct parent in `d8922f3972b0ab7677b27f629cea7f7c9faa8cc9` under `docs/validation/round7-calc-size-intrinsic-height`. The retained signed Chrome 158 reference is `docs/validation/studio-css-e4ca26/outcomes-stable.json.gz` at the candidate commit.
+
+Passes: original 2,665; auto-basis 2,697; direct parent 2,737; fit-content candidate 2,753. Differences: +88, +56 and +16 respectively, no losses against any arm. All 16 new passes match signed Chrome, split evenly between explicit-height transitions and `transition: all`. At 75% the fit-content height now reads 62.5px instead of the endpoint 50px. All 24 neighboring controls remain passing: four transition, ten CSS Animation and ten Web Animation results. Only physical height changed; all 12 other pages kept identical statuses. There are still 550 failures, including the adjacent stretch-height case at 75% (expected 112.5px, observed 50px).
+
+`comparison.json` lists the per-page and per-control counts and every changed occurrence across the four arms; `candidate.json.gz` preserves the full candidate receipt. This is development conformance evidence, not a release measurement.

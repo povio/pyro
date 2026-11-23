@@ -1,0 +1,760 @@
+{
+  "base": [
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "Enter",
+      "before": "ab",
+      "after": "<div>a</div><div>b</div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "Shift+Enter",
+      "before": "ab",
+      "after": "a<br>b",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "cancel-Enter",
+      "before": "ab",
+      "after": "ab",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "exec",
+      "before": "ab",
+      "after": "<div>a</div><div>b</div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "Enter",
+      "before": "ab",
+      "after": "<div>a</div><div>b</div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "Shift+Enter",
+      "before": "ab",
+      "after": "a<br>b",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "cancel-Enter",
+      "before": "ab",
+      "after": "ab",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "exec",
+      "before": "ab",
+      "after": "<div>a</div><div>b</div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "Enter",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<div><span contenteditable=\"plaintext-only\">a</span></div><div><span contenteditable=\"plaintext-only\">b</span></div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "Shift+Enter",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<span contenteditable=\"plaintext-only\">a<br>b</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "cancel-Enter",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "exec",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<div><span contenteditable=\"plaintext-only\">a</span></div><div><span contenteditable=\"plaintext-only\">b</span></div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "Enter",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<div><span contenteditable=\"true\">a</span></div><div><span contenteditable=\"true\">b</span></div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "Shift+Enter",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<span contenteditable=\"true\">a<br>b</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "cancel-Enter",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<span contenteditable=\"true\">ab</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "exec",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<div><span contenteditable=\"true\">a</span></div><div><span contenteditable=\"true\">b</span></div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    }
+  ],
+  "candidate": [
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "Enter",
+      "before": "ab",
+      "after": "<div>a</div><div>b</div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "Shift+Enter",
+      "before": "ab",
+      "after": "a<br>b",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "cancel-Enter",
+      "before": "ab",
+      "after": "ab",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "exec",
+      "before": "ab",
+      "after": "<div>a</div><div>b</div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "Enter",
+      "before": "ab",
+      "after": "a<br>b",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "Shift+Enter",
+      "before": "ab",
+      "after": "a<br>b",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "cancel-Enter",
+      "before": "ab",
+      "after": "ab",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "exec",
+      "before": "ab",
+      "after": "<div>a</div><div>b</div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "Enter",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<div><span contenteditable=\"plaintext-only\">a</span></div><div><span contenteditable=\"plaintext-only\">b</span></div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "Shift+Enter",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<span contenteditable=\"plaintext-only\">a<br>b</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "cancel-Enter",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "exec",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<div><span contenteditable=\"plaintext-only\">a</span></div><div><span contenteditable=\"plaintext-only\">b</span></div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "Enter",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<div><span contenteditable=\"true\">a</span></div><div><span contenteditable=\"true\">b</span></div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "Shift+Enter",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<span contenteditable=\"true\">a<br>b</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "cancel-Enter",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<span contenteditable=\"true\">ab</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "exec",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<div><span contenteditable=\"true\">a</span></div><div><span contenteditable=\"true\">b</span></div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    }
+  ],
+  "signedChrome158": [
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "Enter",
+      "before": "ab",
+      "after": "a<div>b</div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "Shift+Enter",
+      "before": "ab",
+      "after": "a<br>b",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "cancel-Enter",
+      "before": "ab",
+      "after": "ab",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": null,
+      "key": "exec",
+      "before": "ab",
+      "after": "a<div>b</div>",
+      "events": [
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "Enter",
+      "before": "ab",
+      "after": "a\nb",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "Shift+Enter",
+      "before": "ab",
+      "after": "a\nb",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "cancel-Enter",
+      "before": "ab",
+      "after": "ab",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": null,
+      "key": "exec",
+      "before": "ab",
+      "after": "a<div>b</div>",
+      "events": [
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "Enter",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<span contenteditable=\"plaintext-only\">a\nb</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "Shift+Enter",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<span contenteditable=\"plaintext-only\">a\nb</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "cancel-Enter",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "true",
+      "inner": "plaintext-only",
+      "key": "exec",
+      "before": "<span contenteditable=\"plaintext-only\">ab</span>",
+      "after": "<span contenteditable=\"plaintext-only\">a</span><div><span contenteditable=\"plaintext-only\">b</span></div>",
+      "events": [
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "Enter",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<span contenteditable=\"true\">a</span><div><span contenteditable=\"true\">b</span></div>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ],
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "Shift+Enter",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<span contenteditable=\"true\">a\nb</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertLineBreak"
+        ],
+        [
+          "input",
+          "insertLineBreak"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "cancel-Enter",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<span contenteditable=\"true\">ab</span>",
+      "events": [
+        [
+          "beforeinput",
+          "insertParagraph"
+        ]
+      ]
+    },
+    {
+      "outer": "plaintext-only",
+      "inner": "true",
+      "key": "exec",
+      "before": "<span contenteditable=\"true\">ab</span>",
+      "after": "<span contenteditable=\"true\">a</span><div><span contenteditable=\"true\">b</span></div>",
+      "events": [
+        [
+          "input",
+          "insertParagraph"
+        ]
+      ]
+    }
+  ]
+}
