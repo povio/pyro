@@ -4,7 +4,7 @@ Documentation only. **Do not build until the user authorizes it** (standing ZERO
 
 - Batch branch: `origin/integration/round7-batch-1000` at `9317be985` (when this file was generated).
 - Ledger: `origin/ledger/round7-fix-queue` (`ledger.jsonl`, `estimates.json`).
-- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1226**; Studio **504**; MacBook worker variants (separate column) 220.
+- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1227**; Studio **504**; MacBook worker variants (separate column) 220.
 - Every figure is an estimate from source reading. Tentative pages are counted only where the owner gave a figure or the coordinator ruled.
 
 ## 1. JSC archive
@@ -161,6 +161,7 @@ Build the JSC archive through patch **0041**:
 - e65964a0b (trusted mousedown/mouseup/click blocked at disabled form controls) must keep excluding fieldset/option/optgroup: d7a9963e6 (click() on disabled fieldset dispatches) and the native-click half of fieldset-event-propagation.tentative depend on it (…be6eb5a1).
 - Build-day cleanup (after the test run): drop the redundant in_unload() early return in nav.rs assign() added by 1c2853fef; 28b24967f already fixes the same root (integrator dedupe, coordinator 2026-11-23).
 - Build-day verify: initial-empty-document/window-open-204.html and window-open-nourl.html (tentative, 0). Diagnosed by …ad4efc0e on an existing binary: 2nd Location href resolved against the popup doc; expected fixed by c4d9a5064 + 0192ae1f2.
+- 1d848465f: an iframe whose navigation fails on the network now commits an opaque error document (Chrome) instead of keeping its previous document; aborted navigations and unknown schemes still commit nothing. Risk medium-low (…ad4efc0e).
 
 Additional watchlist notes:
 - 2026-11-22 coordinator: history navigation rate limit risk removed (cc806a11f adds an off switch used by the Playwright drop-in); R-HTML-25 now 7 (recorded on the row).
