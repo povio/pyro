@@ -540,3 +540,9 @@ without a style context (custom properties left as they are): pyro serializes a 
   rule type `Margin` alone), takes every property, as Chrome's margin rules do (WPT css-page `cssom/margin-002`,
   `parsing/margin-rules-002`). Upstream gives the same answer through an empty intersection with
   `DECLARATION_ALLOWED_TYPES`, but only in release builds: debug builds fail its assertion.
+- Round 7 (color mix weights at f64): `color/mix.rs` `ColorMixItem::weight` is f64 (`new` takes any `Into<f64>`), and
+  `mix_many` folds, alpha and premultiplied components are computed in f64 from it; `values/animated/color.rs`
+  `Color::animate` mixes two absolute colors directly (as `from_color_mix` did, in the animation space). An
+  animation's weights `(1 - p, p)` at a huge extrapolated progress (2^31) were (-2^31, 2^31) in f32, summed to 0, and
+  the fold skipped the end color. WPT css/filter-effects `animation/filter-interpolation-002` (drop-shadow color at
+  2147483648).

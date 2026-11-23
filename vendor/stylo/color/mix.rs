@@ -155,14 +155,16 @@ pub struct ColorMixItem {
     /// The color being mixed.
     pub color: AbsoluteColor,
     /// How much this color contributes to the final mix.
-    pub weight: f32,
+    /// pyro: f64, as an animation's weights `(1 - p, p)` are: in f32 they cancel at a large
+    /// extrapolated progress (2^31: -2^31 and 2^31) and the mix kept the start color.
+    pub weight: f64,
 }
 
 impl ColorMixItem {
     /// Create a new color item for mixing.
     #[inline]
-    pub fn new(color: AbsoluteColor, weight: f32) -> Self {
-        Self { color, weight }
+    pub fn new(color: AbsoluteColor, weight: impl Into<f64>) -> Self {
+        Self { color, weight: weight.into() }
     }
 }
 
@@ -212,16 +214,16 @@ pub fn mix_many(
     let mut alpha_multiplier = 1.0;
     if normalize {
         // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
-        let sum: f32 = items.iter().map(|item| item.weight).sum();
+        let sum: f64 = items.iter().map(|item| item.weight).sum();
         if sum == 0.0 {
             // pyro: percentages that sum to zero mix the colors equally into a fully transparent
             // result (css-color-5 "normalize mix percentages": the alpha multiplier is the sum).
-            let equal = 1.0 / items.len() as f32;
+            let equal = 1.0 / items.len() as f64;
             for item in items.iter_mut() {
                 item.weight = equal;
             }
             alpha_multiplier = 0.0;
-        } else if (sum - 1.0).abs() > f32::EPSILON {
+        } else if (sum - 1.0).abs() > f64::from(f32::EPSILON) {
             weight_scale = 1.0 / sum;
             if sum < 1.0 {
                 alpha_multiplier = sum;
@@ -260,7 +262,7 @@ pub fn mix_many(
     }
 
     let components = accumulated_color.raw_components();
-    let alpha = components[3] * alpha_multiplier;
+    let alpha = components[3] * alpha_multiplier as f32;
 
     // FIXME: In rare cases we end up with 0.999995 in the alpha channel,
     //        so we reduce the precision to avoid serializing to
@@ -349,9 +351,9 @@ impl AbsoluteColor {
 /// Mix two colors already in the interpolation color space.
 fn mix_with_weights(
     left: &AbsoluteColor,
-    left_weight: f32,
+    left_weight: f64,
     right: &AbsoluteColor,
-    right_weight: f32,
+    right_weight: f64,
     hue_interpolation: HueInterpolationMethod,
 ) -> AbsoluteColor {
     debug_assert!(right.color_space == left.color_space);
@@ -389,13 +391,13 @@ fn convert_for_mix(color: &AbsoluteColor, color_space: ColorSpace) -> AbsoluteCo
 
 fn interpolate_premultiplied_component(
     left: f32,
-    left_weight: f32,
+    left_weight: f64,
     left_alpha: f32,
     right: f32,
-    right_weight: f32,
+    right_weight: f64,
     right_alpha: f32,
-) -> f32 {
-    left * left_weight * left_alpha + right * right_weight * right_alpha
+) -> f64 {
+    f64::from(left) * left_weight * f64::from(left_alpha) + f64::from(right) * right_weight * f64::from(right_alpha)
 }
 
 // Normalize hue into [0, 360)
@@ -468,13 +470,13 @@ fn adjust_hue(left: &mut f32, right: &mut f32, hue_interpolation: HueInterpolati
 
 fn interpolate_hue(
     mut left: f32,
-    left_weight: f32,
+    left_weight: f64,
     mut right: f32,
-    right_weight: f32,
+    right_weight: f64,
     hue_interpolation: HueInterpolationMethod,
 ) -> f32 {
     adjust_hue(&mut left, &mut right, hue_interpolation);
-    left * left_weight + right * right_weight
+    (f64::from(left) * left_weight + f64::from(right) * right_weight) as f32
 }
 
 struct InterpolatedAlpha {
@@ -483,22 +485,22 @@ struct InterpolatedAlpha {
     /// The adjusted right alpha value.
     right: f32,
     /// The interpolated alpha value.
-    interpolated: f32,
+    interpolated: f64,
     /// Whether the alpha component should be `none`.
     is_none: bool,
 }
 
 fn interpolate_alpha(
     left: f32,
-    left_weight: f32,
+    left_weight: f64,
     right: f32,
-    right_weight: f32,
+    right_weight: f64,
     outcome: ComponentMixOutcome,
 ) -> InterpolatedAlpha {
     // <https://drafts.csswg.org/css-color-4/#interpolation-missing>
     let mut result = match outcome {
         ComponentMixOutcome::Mix => {
-            let interpolated = left * left_weight + right * right_weight;
+            let interpolated = f64::from(left) * left_weight + f64::from(right) * right_weight;
             InterpolatedAlpha {
                 left,
                 right,
@@ -509,13 +511,13 @@ fn interpolate_alpha(
         ComponentMixOutcome::UseLeft => InterpolatedAlpha {
             left,
             right: left,
-            interpolated: left,
+            interpolated: f64::from(left),
             is_none: false,
         },
         ComponentMixOutcome::UseRight => InterpolatedAlpha {
             left: right,
             right,
-            interpolated: right,
+            interpolated: f64::from(right),
             is_none: false,
         },
         ComponentMixOutcome::None => InterpolatedAlpha {
@@ -536,9 +538,9 @@ fn interpolate_alpha(
 
 fn interpolate_premultiplied(
     left: &[f32; 4],
-    left_weight: f32,
+    left_weight: f64,
     right: &[f32; 4],
-    right_weight: f32,
+    right_weight: f64,
     hue_index: Option<usize>,
     hue_interpolation: HueInterpolationMethod,
     outcomes: &[ComponentMixOutcome; 4],
@@ -574,11 +576,11 @@ fn interpolate_premultiplied(
                         alpha.right,
                     );
 
-                    if alpha.interpolated == 0.0 {
+                    (if alpha.interpolated == 0.0 {
                         interpolated
                     } else {
                         interpolated / alpha.interpolated
-                    }
+                    }) as f32
                 };
             },
             ComponentMixOutcome::UseLeft | ComponentMixOutcome::UseRight => {
@@ -616,7 +618,7 @@ fn interpolate_premultiplied(
             },
         }
     }
-    result[3] = alpha.interpolated;
+    result[3] = alpha.interpolated as f32;
 
     (result, flags)
 }

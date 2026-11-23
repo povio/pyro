@@ -26,8 +26,8 @@ impl Animate for AbsoluteColor {
         Ok(mix::mix_many(
             ColorInterpolationMethod::best_interpolation_between(self, other),
             [
-                mix::ColorMixItem::new(*self, left_weight as f32),
-                mix::ColorMixItem::new(*other, right_weight as f32),
+                mix::ColorMixItem::new(*self, left_weight),
+                mix::ColorMixItem::new(*other, right_weight),
             ],
             ColorMixFlags::empty(),
         ))
@@ -83,6 +83,12 @@ pub type ColorMix = GenericColorMix<Color, Percentage>;
 impl Animate for Color {
     #[inline]
     fn animate(&self, other: &Self, procedure: Procedure) -> Result<Self, ()> {
+        // pyro: two absolute colors mix now, at the weights' f64 precision (a mix's percentages
+        // are f32, whose `(1 - p, p)` cancel at a large extrapolated progress such as 2^31), as
+        // the mix of the color-mix() below gives them (in the animation space).
+        if let (Self::Absolute(left), Self::Absolute(right)) = (self, other) {
+            return Ok(Self::Absolute(left.animate(right, procedure)?));
+        }
         let (left_weight, right_weight) = procedure.weights();
 
         Ok(Self::from_color_mix(ColorMix {

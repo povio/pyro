@@ -1438,3 +1438,16 @@ fn computed_font_relative_lengths_follow_the_sampled_transition() {
     "#);
     assert_eq!(values, "290px,30px|300px,45px|font-size,line-height|400px,60px");
 }
+
+/// A color extrapolated to a huge progress (2^31, through the interpolation tests' easing) clips
+/// to the end color: its weights `(1 - p, p)` are kept at f64 precision, where f32 cancelled them
+/// to (-2^31, 2^31) and the mix kept the start color (WPT css/filter-effects
+/// `animation/filter-interpolation-002`).
+#[test]
+fn a_color_extrapolated_to_a_huge_progress_clips_to_the_end_color() {
+    let (_thread, root) = page();
+    let b = (8.0 * 2147483648.0 - 1.0) / 6.0;
+    eval(&root, &format!("document.head.appendChild(document.createElement('style')).textContent = '@keyframes c {{ from {{ color: blue; filter: drop-shadow(20px 10px blue) }} to {{ color: green; filter: drop-shadow(20px 10px green) }} }} #t {{ animation: c 100s -50s cubic-bezier(0, {b}, 1, {b}) paused }}'; document.body.innerHTML = '<div id=t></div>'; 0"));
+    assert_eq!(eval(&root, "getComputedStyle(t).color"), "rgb(0, 255, 0)");
+    assert_eq!(eval(&root, "getComputedStyle(t).filter"), "drop-shadow(rgb(0, 255, 0) 20px 10px 0px)");
+}
