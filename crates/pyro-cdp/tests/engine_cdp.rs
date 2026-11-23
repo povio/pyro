@@ -4122,7 +4122,9 @@ fn child_frames_open_popups_unless_sandboxed() {
     if !seen.iter().any(|m| m["method"] == "Page.loadEventFired") {
         h.until_event(|m| m["method"] == "Page.loadEventFired");
     }
-    let expr = "globalThis.blocked = document.getElementById('s').contentWindow.open('about:blank'); new Promise(r => setTimeout(r, 0)).then(() => blocked.closed)";
+    // Without allow-popups no window opens: window.open returns null (HTML "the rules for choosing
+    // a navigable", WPT html/browsers/sandboxing/sandbox-disallow-popups).
+    let expr = "globalThis.blocked = document.getElementById('s').contentWindow.open('about:blank'); new Promise(r => setTimeout(r, 0)).then(() => blocked === null)";
     let r = h.page("Runtime.evaluate", json!({ "expression": expr, "awaitPromise": true, "returnByValue": true }));
     assert_eq!(r["result"]["result"]["value"], json!(true), "no allow-popups: {r}");
     h.page(
@@ -12171,7 +12173,9 @@ fn post_message_reaches_a_navigated_popup() {
 
 /// A popup opened by a sandboxed (opaque) child of an opaque top-level document has the child's
 /// origin, not the top-level opener's: its later about:blank documents inherit that same origin, so
-/// the child's property access and its postMessage("/") agree about the popup (both reach it).
+/// the child's property access and its postMessage("/") agree about the popup (both reach it). The
+/// popup escapes the sandbox (`allow-popups-to-escape-sandbox`): one that takes the child's sandbox
+/// (HTML "popup sandboxing flag set") gives its about:blank documents new opaque origins instead.
 #[test]
 fn a_popup_takes_the_origin_of_the_document_that_opened_it() {
     let mut h = Harness::new();
@@ -12193,7 +12197,7 @@ onmessage = (e) => {
 };
 </script>"#;
     let top = format!(
-        "<!doctype html><script>window.log = []; onmessage = (e) => log.push(e.data);</script><iframe sandbox='allow-scripts allow-popups' srcdoc=\"{}\"></iframe>",
+        "<!doctype html><script>window.log = []; onmessage = (e) => log.push(e.data);</script><iframe sandbox='allow-scripts allow-popups allow-popups-to-escape-sandbox' srcdoc=\"{}\"></iframe>",
         child.replace('"', "&quot;")
     );
     load_html(&mut h, &top);
