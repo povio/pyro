@@ -1344,10 +1344,10 @@ fn shared_workers_are_shared_between_documents_by_url_and_name() {
     eval(&thread, a, connect);
     until(&mut thread, a, "got.length === 1");
     assert_eq!(eval(&thread, a, "got.join()"), "one:1");
-    // A module worker with the key of the live classic one: `error` at the
-    // new object, no connection. Without the engine's module loader the
-    // constructor throws, as `Worker`'s does.
-    let module = "(() => { try { const m = new SharedWorker('/shared-worker.js', {type: 'module'}); \
+    // A module worker with the key of the live classic one (its name is part of
+    // the key): `error` at the new object, no connection. Without the engine's
+    // module loader the constructor throws, as `Worker`'s does.
+    let module = "(() => { try { const m = new SharedWorker('/shared-worker.js', {type: 'module', name: 'one'}); \
         globalThis.mismatch = []; m.onerror = (e) => mismatch.push(e.type); return 'made' } catch (e) { return e.name } })()";
     if module_shared_workers() {
         assert_eq!(eval(&thread, a, module), "made");
