@@ -171,6 +171,9 @@ jobs:
           mkdir -p "native/linux-$ARCH/lib"
           cp "$stage/pyro" "native/linux-$ARCH/"
           cp "$stage"/lib/* "native/linux-$ARCH/lib/"
+          # The npm copy has no symbol table (the registry rejects a 195 MiB package); the release archive keeps it.
+          strip --strip-all "native/linux-$ARCH/pyro"
+          "native/linux-$ARCH/pyro" eval -e 'console.log("linux-smoke-ok")' | grep -Fx linux-smoke-ok
       - name: Test the client against the bundled browser
         env:
           ARCH: ${{ inputs.arch }}

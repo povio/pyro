@@ -128,6 +128,15 @@ jobs:
           fi
           mkdir -p "native/darwin-$ARCH"
           cp "$binary" "native/darwin-$ARCH/pyro"
+          # The npm copy has no symbol table (the registry rejects a 195 MiB package with 413); the release
+          # archive keeps the symbols. Stripping drops the signature, so sign again with the JIT entitlement.
+          strip "native/darwin-$ARCH/pyro"
+          codesign --force --sign - --entitlements scripts/macos/jit.entitlements "native/darwin-$ARCH/pyro"
+          codesign --verify --strict "native/darwin-$ARCH/pyro"
+          codesign -d --entitlements - "native/darwin-$ARCH/pyro" 2>/dev/null | grep -q com.apple.security.cs.allow-jit
+          if [ "$ARCH" = arm64 ]; then
+            "native/darwin-$ARCH/pyro" eval -e 'console.log("npm-smoke-ok")' | grep -Fx npm-smoke-ok
+          fi
           comparator="target/$RUST_TARGET/release/pyro-snapshot-compare"
           codesign --verify --strict "$comparator"
           mkdir -p "archive/$ARCH"
@@ -199,8 +208,13 @@ jobs:
         run: |
           mkdir -p native/darwin-arm64
           cp target/release/pyro native/darwin-arm64/
+          # No symbol table in the npm copy (see the build job); archive-fork keeps it.
+          strip native/darwin-arm64/pyro
+          codesign --force --sign - --entitlements scripts/macos/jit.entitlements native/darwin-arm64/pyro
           codesign --verify --strict native/darwin-arm64/pyro
+          codesign -d --entitlements - native/darwin-arm64/pyro 2>/dev/null | grep -q com.apple.security.cs.allow-jit
           native/darwin-arm64/pyro version | grep -q 'fork: true'
+          native/darwin-arm64/pyro eval -e 'console.log("npm-smoke-ok")' | grep -Fx npm-smoke-ok
       - uses: actions/upload-artifact@v4
         with:
           name: archive-fork
@@ -281,15 +295,21 @@ jobs:
         run: |
           mkdir -p ../../npm-package
           npm pack --pack-destination ../../npm-package
-          # Our compressed-payload budget, not a registry API guarantee. npm
-          # expands the tarball to base64 in its publication request.
+          # npm pack compresses at a low level; gzip -9 makes the same tarball ~6 MB smaller.
+          for file in ../../npm-package/*.tgz; do
+            gzip -dc "$file" | gzip -9 -n > "$file.9" && mv "$file.9" "$file"
+            tar -tzf "$file" > /dev/null
+          done
+          # Our compressed-payload budget. npm sends the tarball base64-encoded in one request: the registry accepted
+          # 195,675,050 bytes (0.0.50-rc.6) and rejected 204,910,000 bytes with 413 Payload Too Large (0.0.50-rc.8).
+          # 185 MiB stays under the largest size known to be accepted.
           bun --eval '
             import { readdirSync, statSync } from "node:fs";
             const dir = "../../npm-package";
             for (const file of readdirSync(dir).filter(file => file.endsWith(".tgz"))) {
               const size = statSync(`${dir}/${file}`).size;
               console.log(`${file}: ${size} compressed bytes`);
-              if (size > 200 * 1024 * 1024) throw new Error("npm tarball exceeds the 200 MiB release budget");
+              if (size > 185 * 1024 * 1024) throw new Error("npm tarball exceeds the 185 MiB release budget");
             }
           '
           bun test test/binary.test.ts

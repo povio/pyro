@@ -24,8 +24,14 @@ A release candidate tag makes a GitHub prerelease and publishes to npm `next`.
 Linux release executables have debug information removed from staged copies
 before bundle tests; build outputs and runtime symbols are retained. Published
 Linux binaries therefore do not include source-line debug information. The
-combined npm tarball must fit the workflow's 200 MiB compressed-size budget;
-this guards package growth but does not guarantee registry acceptance.
+combined npm tarball must fit the workflow's 185 MiB compressed-size budget. The
+registry takes the package in one base64-encoded request and has a size limit:
+it accepted 195,675,050 bytes (0.0.50-rc.6) and rejected 204,910,000 bytes with
+`413 Payload Too Large` (0.0.50-rc.8), so the budget stays under the largest
+size known to be accepted. To fit, the npm package's four browsers have no
+symbol table (macOS copies are signed again with the JIT entitlement), and the
+tarball is recompressed with `gzip -9`. The release archives keep the symbols:
+symbolize an npm browser's crash with the archive of the same version.
 
 A cold JavaScriptCore build takes about 7 minutes on a hosted runner (measured on
 the first run). WPT calls the platform-specific JSC producers on `main` when their inputs change, so a tag normally
