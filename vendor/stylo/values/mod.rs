@@ -235,8 +235,67 @@ where
 }
 
 thread_local! {
-    // None for public CSS serialization; Some records a negative zero written for reparsing.
+    // None for public CSS serialization; Some records a value written for reparsing that the
+    // public serialization would lose (a negative zero, or a number six significant digits do
+    // not give back).
     static REPARSE_SIGNED_ZERO: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    // pyro: the depth of calc() expressions being serialized: their numbers may be results of
+    // simplification in f32 (1.3 + -0.3 = 1.0000001), which six digits round as intended.
+    static IN_CALCULATION: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    // pyro: the depth of easing functions (`cubic-bezier()`) being serialized, whose numbers are
+    // sampled as they parse.
+    static IN_EASING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// pyro: while alive, an easing function's numbers are being serialized ([`IN_EASING`]).
+pub(crate) struct EasingSerialization;
+
+impl EasingSerialization {
+    pub(crate) fn enter() -> Self {
+        IN_EASING.with(|depth| depth.set(depth.get() + 1));
+        Self
+    }
+}
+
+impl Drop for EasingSerialization {
+    fn drop(&mut self) {
+        IN_EASING.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// pyro: while alive, a calc() expression is being serialized ([`IN_CALCULATION`]).
+pub(crate) struct CalculationSerialization;
+
+impl CalculationSerialization {
+    pub(crate) fn enter() -> Self {
+        IN_CALCULATION.with(|depth| depth.set(depth.get() + 1));
+        Self
+    }
+}
+
+impl Drop for CalculationSerialization {
+    fn drop(&mut self) {
+        IN_CALCULATION.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// pyro: whether six significant digits (the public serialization's) give `v` back.
+fn six_digits_give_back(v: f32) -> bool {
+    struct Buf { bytes: [u8; 32], len: usize }
+    impl Write for Buf {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let end = self.len + s.len();
+            if end > self.bytes.len() { return Err(fmt::Error); }
+            self.bytes[self.len..end].copy_from_slice(s.as_bytes());
+            self.len = end;
+            Ok(())
+        }
+    }
+    let mut buf = Buf { bytes: [0; 32], len: 0 };
+    if write!(buf, "{v:.5e}").is_err() {
+        return true;
+    }
+    std::str::from_utf8(&buf.bytes[..buf.len]).ok().and_then(|s| s.parse::<f32>().ok()) == Some(v)
 }
 
 pub(crate) fn serialize_for_reparse<T>(f: impl FnOnce() -> T) -> (T, bool) {
@@ -286,6 +345,18 @@ where
         if mode.get().is_some() { mode.set(Some(true)); true } else { false }
     }) {
         dest.write_str("-0")?;
+    } else if unit.is_empty()
+        && REPARSE_SIGNED_ZERO.with(|mode| mode.get().is_some())
+        && IN_EASING.with(|depth| depth.get() > 0)
+        && IN_CALCULATION.with(|depth| depth.get() == 0)
+        && !six_digits_give_back(v)
+    {
+        // pyro: for reparsing, a `cubic-bezier()` number at full precision where six significant
+        // digits do not give it back (a script's `cubic-bezier(0, 1.8333333333333333, 1,
+        // 1.8333333333333333)` samples its curve, as Chromium keeps the value it parsed). Not in
+        // a calc() expression, whose numbers can be f32 simplification results.
+        REPARSE_SIGNED_ZERO.with(|mode| mode.set(Some(true)));
+        write!(dest, "{v}")?;
     } else {
         v.to_css(dest)?;
     }

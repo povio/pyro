@@ -2603,6 +2603,7 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
     where
         W: Write,
     {
+        let _calculation = crate::values::CalculationSerialization::enter();
         let write_leaf = |leaf: &L, dest: &mut CssWriter<W>, nested: bool| {
             if SIZE && let Some(factor) = leaf.size_coefficient() {
                 if factor == 1.0 { return dest.write_str("size"); }

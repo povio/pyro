@@ -527,3 +527,11 @@ without a style context (custom properties left as they are): pyro serializes a 
 - Round 7 (CSS Color 4 §7): absolute HSL floors negative saturation without clipping extended
   saturation or lightness before serialization. HSL ↔ HWB uses their common sRGB representation
   directly rather than an XYZ round trip. Mix finalization and CSSOM operand storage are unchanged.
+- Round 7 (reparse precision): `values/mod.rs` `serialize_specified_dimension`, in `serialize_for_reparse` mode, writes
+  a `cubic-bezier()` number (no unit, outside a calc() expression, whose numbers can be f32 simplification results)
+  that six significant digits do not give back at its shortest exact `f32` form and flags it as it flags a negative
+  zero, so `css_for_reparse` gives the inline style's backing text the easing script set (`cubic-bezier(0, 1.8333334,
+  …)`; `cssText` still shows six digits). `generics/easing.rs` `TimingFunction` serializes by hand (as its derive
+  did) to hold `EasingSerialization` around the bezier's numbers; `generics/calc.rs` `write_calculation` holds
+  `CalculationSerialization`. Chromium samples the curve it parsed. WPT css-transforms
+  `animation/transform-composition` (CSS Animations at 1.5).

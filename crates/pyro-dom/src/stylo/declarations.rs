@@ -186,8 +186,12 @@ impl DeclarationBlock {
     }
 }
 
-/// Whether raw CSS contains a numeric token already rounded to negative zero, or a
-/// math function that could produce it. Strings, comments and URL payloads are opaque.
+/// Whether raw CSS contains a numeric token already rounded to negative zero, a math
+/// function that could produce it, or a `cubic-bezier()` with a number its six-significant-digit
+/// serialization does not give back (pyro: kept at full
+/// precision for reparsing, as Chromium samples the curve it parsed; other numbers' last digits
+/// are not worth a reparse backing on every script write). Strings, comments and URL payloads
+/// are opaque.
 pub fn may_need_signed_zero_backing(text: &str) -> bool {
     use cssparser::{Parser, Token};
     use style::values::specified::calc::MathFunction;
@@ -196,12 +200,36 @@ pub fn may_need_signed_zero_backing(text: &str) -> bool {
         MathFunction::from_ident(name).is_ok() || name.eq_ignore_ascii_case("calc-size")
             || name.eq_ignore_ascii_case("calc-mix")
     }
+    // An easing function's numbers are sampled as they parse (a script's interpolation easing).
+    fn easing(name: &str) -> bool {
+        name.eq_ignore_ascii_case("cubic-bezier")
+    }
+    // A plain number six significant digits do not give back, at this level.
+    fn lossy_number(input: &mut Parser) -> bool {
+        let state = input.state();
+        let mut found = false;
+        while let Ok(token) = input.next() {
+            if let Token::Number { value, .. } = token {
+                if value.is_finite() && format!("{value:.5e}").parse::<f32>().is_ok_and(|back| back != *value) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        input.reset(&state);
+        found
+    }
     fn candidate(input: &mut Parser) -> bool {
         while let Ok(token) = input.next() {
             match token {
                 Token::Number { value, .. } | Token::Dimension { value, .. }
                 | Token::Percentage { unit_value: value, .. } if value.to_bits() == (-0.0_f32).to_bits() => return true,
                 Token::Function(name) if math(name) => return true,
+                Token::Function(name) if easing(name) => {
+                    if input.parse_nested_block(|p| {
+                        if lossy_number(p) || candidate(p) { Err(cssparser::ParseError::<()>::custom(())) } else { Ok(()) }
+                    }).is_err() { return true; }
+                }
                 Token::Function(_) | Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
                     // An Err stops the walk as soon as a candidate is found (or the parser's depth limit is hit).
                     if input.parse_nested_block(|p| {
@@ -224,8 +252,25 @@ pub fn may_need_signed_zero_backing(text: &str) -> bool {
         }
         // The tokenizer decodes escaped identifiers (including their optional trailing whitespace).
         _ => true,
-    });
+    }) || more_than_six_digits(bytes);
     possible && candidate(&mut Parser::new(text))
+}
+
+/// Whether `bytes` has a run of more than six digits (`.`s within it skipped): a number that may
+/// have more significant digits than its serialization keeps (screen for [`may_need_signed_zero_backing`]).
+fn more_than_six_digits(bytes: &[u8]) -> bool {
+    let mut run = 0;
+    for &b in bytes {
+        if b.is_ascii_digit() {
+            run += 1;
+            if run > 6 {
+                return true;
+            }
+        } else if b != b'.' {
+            run = 0;
+        }
+    }
+    false
 }
 
 /// `name: value` (with `!important`) as a block of that one declaration
@@ -322,9 +367,42 @@ mod tests {
         for css in [
             "margin: -0em", "margin: -1e-9999px", "width: -.00000000000000000000000000000000000000000000000000001%",
             "z-index: sIgN(1em - 1px)", r#"transform: translate(c\61 lc(1px / -infinity))"#,
+            // An easing's numbers six significant digits do not give back.
+            "animation-timing-function: cubic-bezier(0, 1.8333333333333333, 1, 1.8333333333333333)",
+            "transition: opacity 1s CUBIC-BEZIER(0.1234567, 0, 1, 1)",
         ] {
             assert!(may_need_signed_zero_backing(css), "{css}");
         }
+        // Six significant digits, more digits than the f32 keeps, or numbers outside an easing.
+        for css in [
+            "animation-timing-function: cubic-bezier(0.1000000, 0, 1, 1)", "opacity: 0.12345678",
+            "transform: translateX(37.28374658px)", "width: 33.3333333%",
+        ] {
+            assert!(!may_need_signed_zero_backing(css), "{css}");
+        }
+    }
+
+    /// A number six significant digits do not give back is kept at full precision for reparsing
+    /// (the style attribute shows six), so the inline style's value is the one script set.
+    #[test]
+    fn reparse_text_keeps_numbers_at_full_precision() {
+        let block = DeclarationBlock::parse("animation-timing-function: cubic-bezier(0, 1.8333333333333333, 1, 1.8333333333333333)");
+        assert_eq!(block.css_text(), "animation-timing-function: cubic-bezier(0, 1.83333, 1, 1.83333);");
+        assert_eq!(
+            block.css_for_reparse().as_deref(),
+            Some("animation-timing-function: cubic-bezier(0, 1.8333334, 1, 1.8333334);")
+        );
+        assert_eq!(DeclarationBlock::parse("width: 1.5px").css_for_reparse(), None);
+        // Lengths, numbers outside an easing, and a calc()'s numbers (results of simplification
+        // in f32) keep six digits.
+        assert_eq!(DeclarationBlock::parse("width: 12.3456789px").css_for_reparse(), None);
+        assert_eq!(DeclarationBlock::parse("opacity: 0.123456789").css_for_reparse(), None);
+        assert_eq!(DeclarationBlock::parse("animation-timing-function: steps(3, jump-start), linear(0, 0.5 50%, 1), ease").css_text(),
+            "animation-timing-function: steps(3, jump-start), linear(0 0%, 0.5 50%, 1 100%), ease;");
+        assert_eq!(
+            DeclarationBlock::parse("max-height: calc-size(fit-content, (100px + size) * 1.3 + (200px + size) * -0.3)").css_for_reparse(),
+            None
+        );
     }
 
     #[test]

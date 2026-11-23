@@ -12993,7 +12993,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  
 diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
 --- a/values/generics/calc.rs	2026-11-11 19:55:57
-+++ b/values/generics/calc.rs	2026-11-23 06:58:46
++++ b/values/generics/calc.rs	2026-11-23 13:32:48
 @@ -26,6 +26,30 @@
  use style_traits::{CssWriter, ToCss};
  
@@ -13118,7 +13118,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                              } else {
                                  None
                              }
-@@ -2554,10 +2591,29 @@
+@@ -2554,10 +2591,30 @@
          res
      }
  
@@ -13135,6 +13135,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
      where
          W: Write,
      {
++        let _calculation = crate::values::CalculationSerialization::enter();
 +        let write_leaf = |leaf: &L, dest: &mut CssWriter<W>, nested: bool| {
 +            if SIZE && let Some(factor) = leaf.size_coefficient() {
 +                if factor == 1.0 { return dest.write_str("size"); }
@@ -13149,7 +13150,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
          let write_closing_paren = match self {
              Self::MinMax(_, op) => {
                  dest.write_str(match op {
-@@ -2703,11 +2759,11 @@
+@@ -2703,11 +2760,11 @@
                          dest.write_str(", ")?;
                      }
                      first = false;
@@ -13163,7 +13164,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
              },
              Self::Sum(ref children) => {
                  let mut first = true;
-@@ -2721,24 +2777,24 @@
+@@ -2721,24 +2778,24 @@
                                      // We can unwrap here, because we already
                                      // checked if the value inside is negative.
                                      negated.map(std::ops::Neg::neg).unwrap();
@@ -13193,7 +13194,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                      }
                  }
              },
-@@ -2749,16 +2805,16 @@
+@@ -2749,16 +2806,16 @@
                          match child {
                              Self::Invert(n) => {
                                  dest.write_str(" / ")?;
@@ -13213,7 +13214,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                      }
                  }
              },
-@@ -2767,58 +2823,58 @@
+@@ -2767,58 +2824,58 @@
                  ref center,
                  ref max,
              } => {
@@ -13288,7 +13289,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
              },
              Self::Progress {
                  clamping_mode,
-@@ -2830,28 +2886,28 @@
+@@ -2830,28 +2887,28 @@
                      clamping_mode.to_css(dest)?;
                      dest.write_char(' ')?;
                  }
@@ -13656,6 +13657,67 @@ diff -ruN a/values/generics/column.rs b/values/generics/column.rs
  /// A generic type for `column-count` values.
  #[derive(
      Animate,
+diff -ruN a/values/generics/easing.rs b/values/generics/easing.rs
+--- a/values/generics/easing.rs	2026-11-11 19:55:57
++++ b/values/generics/easing.rs	2026-11-23 13:57:34
+@@ -14,7 +14,6 @@
+     MallocSizeOf,
+     PartialEq,
+     SpecifiedValueInfo,
+-    ToCss,
+     ToShmem,
+     ToTyped,
+     Serialize,
+@@ -112,6 +111,49 @@
+     End,
+ }
+ 
++// pyro: written by hand (as `#[derive(ToCss)]` with the variants' `#[css]` attributes wrote it) so
++// that a `cubic-bezier()`'s numbers serialize inside `EasingSerialization`: for reparsing they keep
++// full precision ([`crate::values::serialize_specified_dimension`]).
++impl<Integer: style_traits::ToCss, Number: style_traits::ToCss, LinearStops: style_traits::ToCss> style_traits::ToCss
++    for TimingFunction<Integer, Number, LinearStops>
++{
++    fn to_css<W>(&self, dest: &mut style_traits::CssWriter<W>) -> std::fmt::Result
++    where
++        W: std::fmt::Write,
++    {
++        use std::fmt::Write as _;
++        match self {
++            Self::Keyword(keyword) => keyword.to_css(dest),
++            Self::CubicBezier { x1, y1, x2, y2 } => {
++                let _easing = crate::values::EasingSerialization::enter();
++                dest.write_str("cubic-bezier(")?;
++                x1.to_css(dest)?;
++                dest.write_str(", ")?;
++                y1.to_css(dest)?;
++                dest.write_str(", ")?;
++                x2.to_css(dest)?;
++                dest.write_str(", ")?;
++                y2.to_css(dest)?;
++                dest.write_char(')')
++            },
++            Self::Steps(intervals, position) => {
++                dest.write_str("steps(")?;
++                intervals.to_css(dest)?;
++                if !is_end(position) {
++                    dest.write_str(", ")?;
++                    position.to_css(dest)?;
++                }
++                dest.write_char(')')
++            },
++            Self::LinearFunction(stops) => {
++                dest.write_str("linear(")?;
++                stops.to_css(dest)?;
++                dest.write_char(')')
++            },
++        }
++    }
++}
++
+ #[inline]
+ fn is_end(position: &StepPosition) -> bool {
+     *position == StepPosition::JumpEnd || *position == StepPosition::End
 diff -ruN a/values/generics/image.rs b/values/generics/image.rs
 --- a/values/generics/image.rs	2026-11-11 19:55:57
 +++ b/values/generics/image.rs	2026-11-15 07:03:49
@@ -14138,7 +14200,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
              self.sink.to_css(dest)?;
 diff -ruN a/values/mod.rs b/values/mod.rs
 --- a/values/mod.rs	2026-11-11 19:55:57
-+++ b/values/mod.rs	2026-11-23 06:58:46
++++ b/values/mod.rs	2026-11-23 13:56:14
 @@ -174,6 +174,14 @@
  /// A CSS integer value.
  pub type CSSInteger = i32;
@@ -14154,13 +14216,74 @@ diff -ruN a/values/mod.rs b/values/mod.rs
  /// Serialize an identifier which is represented as an atom.
  #[cfg(feature = "gecko")]
  pub fn serialize_atom_identifier<W>(ident: &Atom, dest: &mut W) -> fmt::Result
-@@ -226,6 +234,23 @@
+@@ -224,8 +232,84 @@
+     W: Write,
+ {
      serialize_specified_dimension(v, "", /* was_calc = */ false, dest)
++}
++
++thread_local! {
++    // None for public CSS serialization; Some records a value written for reparsing that the
++    // public serialization would lose (a negative zero, or a number six significant digits do
++    // not give back).
++    static REPARSE_SIGNED_ZERO: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
++    // pyro: the depth of calc() expressions being serialized: their numbers may be results of
++    // simplification in f32 (1.3 + -0.3 = 1.0000001), which six digits round as intended.
++    static IN_CALCULATION: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
++    // pyro: the depth of easing functions (`cubic-bezier()`) being serialized, whose numbers are
++    // sampled as they parse.
++    static IN_EASING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
++}
++
++/// pyro: while alive, an easing function's numbers are being serialized ([`IN_EASING`]).
++pub(crate) struct EasingSerialization;
++
++impl EasingSerialization {
++    pub(crate) fn enter() -> Self {
++        IN_EASING.with(|depth| depth.set(depth.get() + 1));
++        Self
++    }
++}
++
++impl Drop for EasingSerialization {
++    fn drop(&mut self) {
++        IN_EASING.with(|depth| depth.set(depth.get().saturating_sub(1)));
++    }
++}
++
++/// pyro: while alive, a calc() expression is being serialized ([`IN_CALCULATION`]).
++pub(crate) struct CalculationSerialization;
++
++impl CalculationSerialization {
++    pub(crate) fn enter() -> Self {
++        IN_CALCULATION.with(|depth| depth.set(depth.get() + 1));
++        Self
++    }
++}
++
++impl Drop for CalculationSerialization {
++    fn drop(&mut self) {
++        IN_CALCULATION.with(|depth| depth.set(depth.get().saturating_sub(1)));
++    }
  }
  
-+thread_local! {
-+    // None for public CSS serialization; Some records a negative zero written for reparsing.
-+    static REPARSE_SIGNED_ZERO: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
++/// pyro: whether six significant digits (the public serialization's) give `v` back.
++fn six_digits_give_back(v: f32) -> bool {
++    struct Buf { bytes: [u8; 32], len: usize }
++    impl Write for Buf {
++        fn write_str(&mut self, s: &str) -> fmt::Result {
++            let end = self.len + s.len();
++            if end > self.bytes.len() { return Err(fmt::Error); }
++            self.bytes[self.len..end].copy_from_slice(s.as_bytes());
++            self.len = end;
++            Ok(())
++        }
++    }
++    let mut buf = Buf { bytes: [0; 32], len: 0 };
++    if write!(buf, "{v:.5e}").is_err() {
++        return true;
++    }
++    std::str::from_utf8(&buf.bytes[..buf.len]).ok().and_then(|s| s.parse::<f32>().ok()) == Some(v)
 +}
 +
 +pub(crate) fn serialize_for_reparse<T>(f: impl FnOnce() -> T) -> (T, bool) {
@@ -14178,7 +14301,7 @@ diff -ruN a/values/mod.rs b/values/mod.rs
  /// Serialize a specified dimension with unit, calc, and NaN/infinity handling (if enabled)
  pub fn serialize_specified_dimension<W>(
      v: f32,
-@@ -257,6 +282,10 @@
+@@ -257,6 +341,22 @@
          if !unit.is_empty() {
              dest.write_str(" * 1")?;
          }
@@ -14186,6 +14309,18 @@ diff -ruN a/values/mod.rs b/values/mod.rs
 +        if mode.get().is_some() { mode.set(Some(true)); true } else { false }
 +    }) {
 +        dest.write_str("-0")?;
++    } else if unit.is_empty()
++        && REPARSE_SIGNED_ZERO.with(|mode| mode.get().is_some())
++        && IN_EASING.with(|depth| depth.get() > 0)
++        && IN_CALCULATION.with(|depth| depth.get() == 0)
++        && !six_digits_give_back(v)
++    {
++        // pyro: for reparsing, a `cubic-bezier()` number at full precision where six significant
++        // digits do not give it back (a script's `cubic-bezier(0, 1.8333333333333333, 1,
++        // 1.8333333333333333)` samples its curve, as Chromium keeps the value it parsed). Not in
++        // a calc() expression, whose numbers can be f32 simplification results.
++        REPARSE_SIGNED_ZERO.with(|mode| mode.set(Some(true)));
++        write!(dest, "{v}")?;
      } else {
          v.to_css(dest)?;
      }
