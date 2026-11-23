@@ -782,19 +782,23 @@ fn a_reversed_transition_is_shortened_by_how_far_it_got() {
 fn an_interrupting_transition_starts_from_the_current_value() {
     // css-transitions-1 §3: a transition interrupting a running one starts from its current value
     // (here 50px, half way through a linear 0px → 100px), not from the before-change style (100px).
-    let (_t, root) = transition_page("#r { height: 10px }");
-    assert_eq!(
-        eval(
-            &root,
-            "globalThis.r = el('r'); r.style.left = '0px'; getComputedStyle(r).transitionProperty;
-             r.style.transition = 'left 100s linear'; r.style.left = '100px';
-             r.getAnimations()[0].currentTime = 50000;
-             r.style.left = '200px';
-             const next = r.getAnimations();
-             next.length + ' ' + next[0].effect.getKeyframes()[0].left + ' ' + getComputedStyle(r).left"
-        ),
-        "1 50px 50px"
+    // (In one page task, whose clock stands still: a test's `eval` runs outside any task, where
+    // the read sampled the live clock a few ms after the new transition started.)
+    let (mut t, root) = transition_page("#r { height: 10px }");
+    eval(
+        &root,
+        "globalThis.r = el('r'); globalThis.result = '';
+         setTimeout(() => { try {
+           r.style.left = '0px'; getComputedStyle(r).transitionProperty;
+           r.style.transition = 'left 100s linear'; r.style.left = '100px';
+           r.getAnimations()[0].currentTime = 50000;
+           r.style.left = '200px';
+           const next = r.getAnimations();
+           result = next.length + ' ' + next[0].effect.getKeyframes()[0].left + ' ' + getComputedStyle(r).left;
+         } catch (e) { result = 'threw ' + e; } }); 0",
     );
+    run_until(&mut t, &root, "result != ''");
+    assert_eq!(eval(&root, "result"), "1 50px 50px");
 }
 
 #[test]
