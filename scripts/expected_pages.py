@@ -66,7 +66,11 @@ for r in L:
                 if c not in p["commits"]:
                     p["commits"].append(c)
             if u in firm:
-                p["confidence"] = "firm"
+                if r.get("confidence_override") == "tentative-counted":  # coordinator ruled: counted, but not firm
+                    if p["confidence"] != "firm":
+                        p["confidence"] = "tentative-counted"
+                else:
+                    p["confidence"] = "firm"
     for u in css_listed:  # Studio CSS pages are outside census 5892e136; listed as owner-reported
         p = pages.setdefault(u, {"url": u, "dir": "css", "machine": "Studio", "variant": "window",
                                  "roots": [], "commits": [], "confidence": "owner-reported (css, not in census)"})
