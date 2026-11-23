@@ -153,3 +153,14 @@ fn display_math_is_a_block_with_its_row_centred() {
     assert_eq!((r[0][0], r[0][2], r[0][3]), (0.0, 200.0, 45.0), "{r:?}");
     assert_eq!(r[1][0], 85.0, "{r:?}");
 }
+
+#[test]
+fn maction_and_semantics_show_their_first_child_and_math_stays_horizontal() {
+    for tag in ["maction", "semantics"] {
+        let r = rects(&format!("<div><math><{tag} id=e>{A}{B}</{tag}></math></div>"), &["e"]);
+        assert_eq!((r[0][2], r[0][3]), (10.0, 20.0), "{tag}: {r:?}");
+    }
+    let r =
+        rects(&format!("<div><math><mrow id=r style='writing-mode:vertical-rl'>{A}{B}</mrow></math></div>"), &["r"]);
+    assert_eq!((r[0][2], r[0][3]), (30.0, 45.0), "{r:?}");
+}

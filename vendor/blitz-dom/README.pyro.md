@@ -3018,6 +3018,12 @@ its content centred (`is_block_math_root`). Not done: stretchy operators, token 
 `mpadded/mpadded-rendering-from-in-flow`, `scripts/scripts-rendering-from-in-flow`, `tables/table-cell-mrow-layout`,
 `mrow/legacy-mfenced-element-001`, `relations/css-styling/width-height-005`, `relations/css-styling/display-2`.
 
+MathML Core's universal user agent rules (`assets/default.css`): `writing-mode: horizontal-tb !important` on every
+MathML element, and `display: none` on every child of `<maction>` and `<semantics>` but the first (not important: an
+author's `display: math` shows them, as in Chromium). `<mspace>` is an inline-block by a user agent rule rather than
+a hint (`mathml_space`), so that the rule hides it. WPT mathml `writing-mode/force-horizontal-tb`,
+`default-properties-on-semantics-and-maction`, `relations/css-styling/ignored-properties-001`.
+
 ## A scroll container's in-flow bounds take boxes empty in one axis
 
 `src/resolve.rs`, `padded_inflow_box` and its callers (`scrollport`): a scroll container's padded in-flow box of a child

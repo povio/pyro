@@ -780,7 +780,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  rtc {
      unicode-bidi: isolate;
  }
-@@ -1128,37 +1583,78 @@
+@@ -1128,37 +1583,86 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -888,6 +888,14 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +m|math[display="block" i] { display: block; math-style: normal; }
 +m|mfrac { padding-inline: 1px; }
 +m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }
++
++/* pyro: MathML Core's user agent rules (Appendix A) for every MathML element and for <maction>
++ * and <semantics>: MathML is laid out horizontally only, and only the first child of an
++ * <maction> or a <semantics> is rendered. */
++m|* { writing-mode: horizontal-tb !important; }
++m|maction > m|*:not(:first-child), m|semantics > m|*:not(:first-child) { display: none; }
++/* pyro: an <mspace> is an inline-block sized by its attributes' hints (`mathml_space`). */
++m|mspace { display: inline-block; }
 diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animation.rs
 new file mode 100644
 --- /dev/null
@@ -43355,11 +43363,13 @@ diff --git a/packages/blitz-dom/src/mathml_space.rs b/packages/blitz-dom/src/mat
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/mathml_space.rs
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,91 @@
 +//! pyro: the size of an `<mspace>` (MathML Core 3.2.4), as presentational hints.
 +//!
 +//! pyro lays no MathML out (MathML content flows as inline boxes), so an `<mspace>` is an
-+//! inline-block whose `width` attribute sets its `width`, and whose `height` and `depth`
++//! inline-block (by a user agent rule in `assets/default.css`, which the rule hiding `<maction>`'s
++//! and `<semantics>`'s later children beats, where a hint would win over it) whose `width`
++//! attribute sets its `width`, and whose `height` and `depth`
 +//! attributes set its `height` (height + depth), lowered by `depth` so that `height` lies above
 +//! the baseline and `depth` below it. Each attribute must be a non-negative CSS `<length>` (no
 +//! percentage, no unitless number): an invalid, negative or percentage value counts as absent,
@@ -43383,7 +43393,7 @@ new file mode 100644
 +    let height = length(local_name!("height"));
 +    let depth = length(local_name!("depth"));
 +
-+    let mut declarations = parse("display", "inline-block");
++    let mut declarations = Vec::new();
 +    if let Some(width) = width {
 +        declarations.extend(parse("width", width));
 +    }

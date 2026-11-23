@@ -1658,3 +1658,11 @@ m|math { math-style: compact; }
 m|math[display="block" i] { display: block; math-style: normal; }
 m|mfrac { padding-inline: 1px; }
 m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }
+
+/* pyro: MathML Core's user agent rules (Appendix A) for every MathML element and for <maction>
+ * and <semantics>: MathML is laid out horizontally only, and only the first child of an
+ * <maction> or a <semantics> is rendered. */
+m|* { writing-mode: horizontal-tb !important; }
+m|maction > m|*:not(:first-child), m|semantics > m|*:not(:first-child) { display: none; }
+/* pyro: an <mspace> is an inline-block sized by its attributes' hints (`mathml_space`). */
+m|mspace { display: inline-block; }

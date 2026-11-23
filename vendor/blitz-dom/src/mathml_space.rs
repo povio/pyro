@@ -1,7 +1,9 @@
 //! pyro: the size of an `<mspace>` (MathML Core 3.2.4), as presentational hints.
 //!
 //! pyro lays no MathML out (MathML content flows as inline boxes), so an `<mspace>` is an
-//! inline-block whose `width` attribute sets its `width`, and whose `height` and `depth`
+//! inline-block (by a user agent rule in `assets/default.css`, which the rule hiding `<maction>`'s
+//! and `<semantics>`'s later children beats, where a hint would win over it) whose `width`
+//! attribute sets its `width`, and whose `height` and `depth`
 //! attributes set its `height` (height + depth), lowered by `depth` so that `height` lies above
 //! the baseline and `depth` below it. Each attribute must be a non-negative CSS `<length>` (no
 //! percentage, no unitless number): an invalid, negative or percentage value counts as absent,
@@ -25,7 +27,7 @@ pub(crate) fn hints(elem: &ElementData) -> Vec<PropertyDeclaration> {
     let height = length(local_name!("height"));
     let depth = length(local_name!("depth"));
 
-    let mut declarations = parse("display", "inline-block");
+    let mut declarations = Vec::new();
     if let Some(width) = width {
         declarations.extend(parse("width", width));
     }
