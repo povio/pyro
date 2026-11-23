@@ -207,7 +207,13 @@ fn cut_selection(page: &Rc<PageDom>, src: &Source, origin: EditSource) {
         Source::Host(h) => {
             let (s, e) = editing::host_range(page, h);
             if s != e {
-                editing::delete_span(page, h, "deleteByCut", s, e);
+                // A script's cut fires no beforeinput (Input Events), as in a control.
+                match origin {
+                    EditSource::Script => {
+                        editing::without_beforeinput(|| editing::delete_span(page, h, "deleteByCut", s, e))
+                    }
+                    EditSource::User => editing::delete_span(page, h, "deleteByCut", s, e),
+                }
             }
         }
         Source::Document => {}

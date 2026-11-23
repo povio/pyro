@@ -33,6 +33,7 @@ pub const STATICS: &[&str] = &[
     "csp::HANDLER_LOCATION",
     "custom::CONSTRUCTIONS",
     "custom::RUNNING",
+    "editing::SCRIPT_COMMANDS",
     "event::TIME_ORIGIN",
     "event_source::SOURCES",
     "fetch::PAGES",
@@ -86,12 +87,13 @@ pub const STATICS: &[&str] = &[
 /// first static that still holds something of them; the thread must then not
 /// serve another client.
 pub fn reset_thread() -> Result<(), &'static str> {
-    let checks: [fn() -> Option<&'static str>; 28] = [
+    let checks: [fn() -> Option<&'static str>; 29] = [
         crate::dom_pages_leftover,
         crate::abort::thread_leftover,
         crate::canvas::thread_leftover,
         crate::csp::thread_leftover,
         crate::custom::thread_leftover,
+        crate::editing::thread_leftover,
         crate::event_source::thread_leftover,
         crate::fetch::thread_leftover,
         crate::formdata::thread_leftover,

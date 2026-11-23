@@ -180,23 +180,25 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
     assert_eq!(eval(r, "i.focus(); document.execCommand('insertText', false, 'a') + ':' + i.value"), "true:ax");
     assert_eq!(eval(r, "ta.focus(); document.execCommand('InsertText', false, 'b') + ':' + ta.value"), "true:by");
     assert_eq!(eval(r, "ce.focus(); document.execCommand('insertText', false, 'c') + ':' + ce.textContent"), "true:c");
-    // A script command in a text control fires input but no beforeinput (Input Events;
-    // 5d77ec73c/bacb54f82, WPT input-events/input-events-exec-command.html). The host still
-    // gets beforeinput.
+    // A script command fires input but no beforeinput, in a text control as in a host (Input
+    // Events; as Chrome, WPT input-events/input-events-exec-command.html).
     assert_eq!(
         eval(r, "log.join(' ')"),
-        "i:input:a:insertText:true ta:input:b:insertText:true \
-         ce:beforeinput:c:insertText:true ce:input:c:insertText:true"
+        "i:input:a:insertText:true ta:input:b:insertText:true ce:input:c:insertText:true"
     );
-    // A canceled beforeinput inserts nothing and fires no input.
+    // So a listener canceling beforeinput stops no command...
     assert_eq!(
         eval(
             r,
             "log.length = 0; ce.addEventListener('beforeinput', ev => ev.preventDefault(), { once: true }); \
              [document.execCommand('insertText', false, 'd'), ce.textContent, log.join()].join('|')"
         ),
-        "true|c|ce:beforeinput:d:insertText:true"
+        "true|cd|ce:input:d:insertText:true"
     );
+    // ...while typing gets the beforeinput, and canceled it inserts nothing and fires no input.
+    eval(r, "log.length = 0");
+    pyro_webapi::input::insert_text(&e.page, "q");
+    assert_eq!(eval(r, "[ce.textContent, log.join()].join('|')"), "cd|ce:beforeinput:q:insertText:true");
     // In a control no beforeinput fires, so a listener canceling it stops nothing.
     assert_eq!(
         eval(
@@ -217,7 +219,7 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
              document.execCommand('insertText', false, 'e'); i.value + ':' + ce.textContent"
         ),
         // (Focus keeps the control's selection: after the "d" it typed.)
-        "adex:c"
+        "adex:cd"
     );
     // With a checkbox focused (which leaves the selection where it is), the selection in the
     // host is the target, as in Chromium.
@@ -226,7 +228,7 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
             r,
             "cb.focus(); [document.execCommand('insertText', false, 'z'), cb.checked, i.value, ce.textContent].join()"
         ),
-        "true,false,adex,cz"
+        "true,false,adex,cdz"
     );
     // After a text field took focus, the selection is outside the host: no editable target.
     assert_eq!(
@@ -234,7 +236,7 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
             r,
             "i.focus(); cb.focus(); [document.execCommand('insertText', false, 'y'), i.value, ce.textContent].join()"
         ),
-        "false,adex,cz"
+        "false,adex,cdz"
     );
 }
 

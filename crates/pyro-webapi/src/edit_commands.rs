@@ -1204,6 +1204,13 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         };
     }
     let Some(Target::Host(host)) = target else { return false };
+    // Input Events: an edit a script's command makes fires `input` but no `beforeinput` (as
+    // Chrome; WPT input-events/input-events-exec-command.html), in a host as in a control.
+    editing::without_beforeinput(|| exec_host_command(page, host, cmd, value))
+}
+
+/// [`exec_command`] in the editing host `host`.
+fn exec_host_command(page: &Rc<PageDom>, host: NodeId, cmd: String, value: &str) -> bool {
     if requires_rich_selection(&cmd) && !rich_selection(page, host, &cmd) {
         return false;
     }

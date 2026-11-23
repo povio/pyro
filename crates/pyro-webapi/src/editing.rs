@@ -496,6 +496,9 @@ pub(crate) fn input_event_with(
     cancelable: bool,
 ) -> bool {
     let Some(key) = page.dom.borrow().node_key(host) else { return true };
+    if ty == "beforeinput" && SCRIPT_COMMANDS.with(|c| c.get() != 0) {
+        return true;
+    }
     let ev = EventCore::trusted(page, EventInterface::InputEvent, ty, true, cancelable);
     {
         let mut f = ev.fields.borrow_mut();
@@ -529,6 +532,30 @@ pub(crate) fn edit_with(
     if before_edit(page, host, input_type, data, transfer) {
         apply_edit(page, host, input_type, data, transfer, op);
     }
+}
+
+thread_local! {
+    /// How many `document.execCommand` host commands are running ([`without_beforeinput`]).
+    static SCRIPT_COMMANDS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Runs `f`, a script's editing command, whose edits fire `input` but no `beforeinput`
+/// (Input Events: execCommand is not user input).
+pub(crate) fn without_beforeinput<R>(f: impl FnOnce() -> R) -> R {
+    struct Running;
+    impl Drop for Running {
+        fn drop(&mut self) {
+            SCRIPT_COMMANDS.with(|c| c.set(c.get() - 1));
+        }
+    }
+    SCRIPT_COMMANDS.with(|c| c.set(c.get() + 1));
+    let _running = Running;
+    f()
+}
+
+/// [`crate::thread_state::reset_thread`]'s part: a command is counted only while it runs.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    SCRIPT_COMMANDS.with(|c| c.get() != 0).then_some("editing::SCRIPT_COMMANDS")
 }
 
 fn before_edit(
