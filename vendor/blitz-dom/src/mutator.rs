@@ -289,6 +289,7 @@ impl DocumentMutator<'_> {
 
         let changed = text.content != value;
         if changed {
+            let emptiness_flipped = text.content.is_empty() != value.is_empty();
             self.mutations_occurred |= node_is_in_document;
             text.content.clear();
             text.content.push_str(value);
@@ -310,6 +311,9 @@ impl DocumentMutator<'_> {
                 let parent = &mut self.doc.nodes[parent_id];
                 parent.insert_damage(CHILDREN_CHANGED);
                 self.respace_operators(parent_id);
+                if emptiness_flipped {
+                    self.restyle_for_text_emptiness_change(parent_id);
+                }
             }
 
             self.maybe_record_node(parent_id);
@@ -328,6 +332,7 @@ impl DocumentMutator<'_> {
         let parent_id = node.parent;
         match node.text_data_mut() {
             Some(data) => {
+                let emptiness_flipped = data.content.is_empty() && !text.is_empty();
                 data.content += text;
                 self.mutations_occurred |= node_is_in_document;
                 if node_is_in_document {
@@ -339,6 +344,9 @@ impl DocumentMutator<'_> {
                 if let Some(parent_id) = parent_id {
                     self.doc.nodes[parent_id].insert_damage(CHILDREN_CHANGED);
                     self.respace_operators(parent_id);
+                    if emptiness_flipped {
+                        self.restyle_for_text_emptiness_change(parent_id);
+                    }
                 }
                 Ok(())
             }
@@ -1194,6 +1202,22 @@ impl DocumentMutator<'_> {
             }
             node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
         }
+    }
+
+    /// pyro: a text child became empty or stopped being empty. Empty text leaves an element
+    /// `:empty` (`stylo.rs` `is_empty`), so the parent restyles where a `:empty` selector looked at
+    /// it, and so do the `:has()` anchors whose argument tests its `:empty`.
+    fn restyle_for_text_emptiness_change(&mut self, parent_id: NodeId) {
+        let parent = &mut self.doc.nodes[parent_id];
+        if !parent.selector_flags().get().contains(ElementSelectorFlags::HAS_EMPTY_SELECTOR) {
+            return;
+        }
+        if let Some(mut data) = parent.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+            data.hint |= RestyleHint::RESTYLE_SELF;
+        }
+        parent.set_dirty_descendants();
+        parent.mark_ancestors_dirty();
+        self.doc.invalidate_relative_selectors_for_ts_state(parent_id, TSStateForInvalidation::EMPTY);
     }
 
     fn restyle_for_child_list_change(

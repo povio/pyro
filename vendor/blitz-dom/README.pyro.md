@@ -2959,7 +2959,10 @@ Test `block_end_trims_self_collapsing_boxes_nested_at_the_bottom` (pyro-render).
 
 `src/stylo.rs`, `is_empty`: an element whose children are all comments or empty text nodes (an empty CDATA
 section, a script's `createTextNode('')`) matches `:empty` (Selectors 4 § 14.2, as Chrome). Upstream counted any
-child. WPT css/selectors/old-tests `css3-modsel-153`, `css3-modsel-d1b`.
+child. WPT css/selectors/old-tests `css3-modsel-153`, `css3-modsel-d1b`. So a text child turning empty or non-empty
+(`set_node_text`, `append_text_to_node`) restyles its parent where it carries `HAS_EMPTY_SELECTOR`, and the `:has()`
+anchors over it (`restyle_for_text_emptiness_change`); test `incremental_style_invalidation_never_serves_stale_geometry`
+(pyro-layout).
 
 ## `:lang()` against an ill-formed tag
 
