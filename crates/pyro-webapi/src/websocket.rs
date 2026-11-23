@@ -330,14 +330,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         }
         let key = NEXT.with(|n| n.replace(n.get() + 1));
         let top_level_site = page.cookie_partition_key();
-        // The handshake's Set-Cookie is same-site when the socket's registrable domain is the
-        // top-level site's, whatever the schemes (as Chromium: an http: page's wss: socket).
-        let schemeless = |key: &str| key.split_once("://").map_or(key.to_owned(), |(_, site)| site.to_owned());
         let same_site = page.cookie_site_context() == pyro_net::cookies::SiteContext::SameSite
-            && top_level_site
-                .as_deref()
-                .zip(pyro_net::cookies::partition_key(&url))
-                .is_some_and(|(top, own)| schemeless(top) == schemeless(&own));
+            && top_level_site.is_some() && pyro_net::cookies::partition_key(&url) == top_level_site;
         let socket = Rc::new(Socket {
             realm: s.realm().downgrade(),
             realm_id: s.realm_id(),

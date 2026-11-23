@@ -951,15 +951,6 @@ impl CookieJar {
     }
 }
 
-/// Whether `a` and `b` have the same registrable domain, whatever their schemes (Chromium's
-/// same-site without schemeful same-site). WebSocket handshakes use it.
-pub fn same_site_schemeless(a: &Url, b: &Url) -> bool {
-    match (host_str(a), host_str(b)) {
-        (Some(a), Some(b)) => site_of(&a) == site_of(&b),
-        _ => false,
-    }
-}
-
 /// Determines the SameSite context of a request initiated by a document at
 /// `initiator` (None = browser-initiated / CDP navigation, treated same-site).
 pub fn site_context(initiator: Option<&Url>, target: &Url, top_level_nav: bool, safe_method: bool) -> SiteContext {
