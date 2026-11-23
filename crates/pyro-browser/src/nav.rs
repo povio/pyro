@@ -123,8 +123,17 @@ impl JointHistory {
 
     /// HTML "clear the forward session history" after a push from step
     /// `from` in frame `except` (which dropped its own forward entries).
+    ///
+    /// Every live member, not only the fully active ones: dropping forward entries of a frame that
+    /// is gone changes nothing, and asking whether a frame is active borrows the frame host, which
+    /// a commit in progress (`Browser::commit_document`) holds.
     fn prune_forward(&self, except: &PageNav, from: u64) {
-        for m in self.members() {
+        let members: Vec<Rc<PageNav>> = {
+            let mut members = self.members.borrow_mut();
+            members.retain(|m| m.strong_count() > 0);
+            members.iter().filter_map(std::rc::Weak::upgrade).collect()
+        };
+        for m in members {
             if std::ptr::eq(Rc::as_ptr(&m), except) {
                 continue;
             }
