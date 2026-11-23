@@ -21,6 +21,10 @@ html/semantics/embedded-content/the-embed-element/
 html/semantics/embedded-content/the-iframe-element/
 html/semantics/links/
 html/semantics/document-metadata/
+mathml/
+web-animations/animation-model/animation-types/
+navigation-timing/
+html/semantics/embedded-content/the-img-element/
 html/semantics/forms/
 html/webappapis/
 html/semantics/scripting-1/
@@ -196,3 +200,6 @@ tools/third_party/pywebsocket3/pywebsocket3/
 tools/third_party/zipp/
 tools/third_party/packaging/
 tools/third_party/certifi/
+# The img element pages (feature dir html/semantics/embedded-content/the-img-element) load:
+html/semantics/embedded-content/resources/common.js
+media/A4.webm
