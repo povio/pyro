@@ -180,9 +180,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     natives.set_atom("ttLevel", tt.value())?;
     // cspEval(code) -> whether the realm's CSP lets `code` compile (`'unsafe-eval'`); a
     // violation is reported otherwise, located at the script that called eval or Function.
+    // Asked after Trusted Types passed `code` (canCompile): with them enforced, CSP3
+    // `'trusted-types-eval'` lets it compile, as for a timer's string handler.
     let csp_eval = s.function("cspEval", |s, _this, a| {
         let code = crate::util::dom_string(a.get(0))?;
         let allowed = crate::target::page_of(s).map_or(true, |page| {
+            if tt_level(&page) == 2 && crate::csp::trusted_types_eval_allows(&page) {
+                return true;
+            }
             let location = if crate::csp::has_policies(&page) { crate::csp::SourceLocation::running(s) } else { None };
             crate::csp::eval_allowed_at(&page, &code, location.as_ref())
         });
