@@ -1206,7 +1206,8 @@ impl Engine {
     /// Patch 0040: `wake` is called whenever the VM schedules deferred work (the settling of
     /// `WebAssembly.compile`, `instantiate` and their streaming forms, finished on a compilation
     /// thread), from any thread and with JavaScriptCore locks held: it may only wake this engine's
-    /// loop, which then calls [`Engine::run_deferred_work`] between tasks. Replaces an earlier
+    /// loop, which then calls [`Engine::run_deferred_work`] between tasks. It is also called once
+    /// here, on this thread, for work a recycled engine holds from before. Replaces an earlier
     /// waker. False (and nothing set) on an engine without the patch, whose deferred work only
     /// a WTF run loop would run.
     pub fn set_deferred_work_waker(&self, wake: impl Fn() + Send + Sync + 'static) -> bool {
@@ -1216,6 +1217,9 @@ impl Engine {
         // SAFETY: the group is alive and used by this thread; `info` stays valid until the
         // callback is replaced or removed (shutdown), the previous one only after this call.
         unsafe { set(self.inner.group, Some(deferred_work_wake), info) };
+        // A recycled engine may hold work scheduled before this waker existed, whose notification
+        // went to the previous one: one wake now lets the new loop run it.
+        waker();
         *self.inner.deferred_waker.borrow_mut() = Some(waker);
         true
     }
@@ -1559,12 +1563,22 @@ impl Engine {
                     unsafe { f(inner.group()) };
                 }
             }
+            // Patch 0040: the VM's deferred work (DeferredWorkTimer, which an embedder runs: some
+            // of it queued for the closed pages, some by the collections here) runs before each
+            // collection, as JavaScriptCore's own run loop would run it. Left queued, a closed
+            // page's global stayed alive (measured: one extra global on every recycled engine's
+            // second client; doWork also ends the VM's synchronous execution, which lets go of
+            // what weak reads kept for it), and the engine was never proven clean again.
+            self.run_deferred_work();
             self.collect_and_finalize(true);
             counts = self.heap_counts();
             if inner.pending_finalizers() == 0 && counts.is_some_and(|c| c.globals <= clean.globals) {
                 break;
             }
         }
+        // (And what the last collection queued: the next client's loop is only woken for work
+        // scheduled once this has run, JavaScriptCore keeping its timer set till then.)
+        self.run_deferred_work();
         let counts = counts.ok_or("no heap statistics")?;
         if inner.pending_finalizers() != 0 {
             return Err("finalizers still pending");
