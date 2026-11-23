@@ -255,8 +255,11 @@
   // SharedArrayBuffer.prototype, also where the global is not exposed (a context that is not
   // cross-origin isolated): pages still get shared buffers from a shared WebAssembly.Memory.
   const sharedProto = typeof SharedArrayBuffer === 'function' ? SharedArrayBuffer.prototype : (() => {
-    try { return getPrototypeOf(new WebAssembly.Memory({ initial: 0, maximum: 0, shared: true }).buffer); }
-    catch (_) { return undefined; }
+    // (A JSC without shared Wasm memory hands out an ArrayBuffer instead: not a shared one.)
+    try {
+      const proto = getPrototypeOf(new WebAssembly.Memory({ initial: 0, maximum: 0, shared: true }).buffer);
+      return proto === ArrayBuffer.prototype ? undefined : proto;
+    } catch (_) { return undefined; }
   })();
   const sharedLength = sharedProto ? getOwnPropertyDescriptor(sharedProto, 'byteLength').get : undefined;
   const isView = ArrayBuffer.isView;

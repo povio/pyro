@@ -84,9 +84,20 @@
   };
   const typedBytes = asBytes(Object.getPrototypeOf(U8.prototype)),
     dataViewBytes = asBytes(DataView.prototype);
-  const bufferGetters = [ArrayBuffer, globalThis.SharedArrayBuffer]
-    .filter(Boolean)
-    .map((C) => get(C.prototype, 'byteLength'));
+  // SharedArrayBuffer.prototype, also without the global (not cross-origin isolated): a shared
+  // WebAssembly.Memory still hands out shared buffers (AllowSharedBufferSource).
+  const sharedProto =
+    typeof SharedArrayBuffer === 'function'
+      ? SharedArrayBuffer.prototype
+      : (() => {
+          try {
+            const proto = Object.getPrototypeOf(new WebAssembly.Memory({ initial: 0, maximum: 0, shared: true }).buffer);
+            return proto === ArrayBuffer.prototype ? undefined : proto;
+          } catch {
+            return undefined;
+          }
+        })();
+  const bufferGetters = [ArrayBuffer.prototype, sharedProto].filter(Boolean).map((p) => get(p, 'byteLength'));
   const cloneBuffers = globalThis.structuredClone;
   function view(v) {
     if (ArrayBuffer.isView(v)) {
