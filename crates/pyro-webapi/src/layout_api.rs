@@ -474,7 +474,9 @@ pub(crate) fn schedule_content_visibility_check(page: &Rc<PageDom>) {
     }
     {
         let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) else { return };
-        if !dom.listens_for(TYPE) && !dom.has_pending_inline_handlers() {
+        // (Another frame's pending handler attributes are its own page's to check: the frames
+        // share one `Dom`.)
+        if !dom.listens_for(TYPE) && !dom.has_pending_inline_handlers_in(page.document()) {
             return;
         }
         if stamp == Some((dom.version(), layout.scroll_generation())) {

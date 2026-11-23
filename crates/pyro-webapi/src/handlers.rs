@@ -399,7 +399,10 @@ pub(crate) fn drain_inline_after_fragment(s: &Scope<'_>, page: &crate::page::Pag
 fn drain_pending(page: &crate::page::PageDom) {
     let Some(realm) = page.main_world_realm() else { return };
     let Ok(s) = realm.scope() else { return };
-    let pending = page.dom.borrow_mut().take_pending_inline_handlers();
+    // Only the page document's: a page's frames share one `Dom`, and another frame's elements
+    // wait for its own bindings (a parent's drain while a child frame's parser is paused on a
+    // script lost the child's `<body onload>`).
+    let pending = page.dom.borrow_mut().take_pending_inline_handlers_of(page.document());
     for id in pending {
         let attrs: Vec<(String, String)> = {
             let dom = page.dom.borrow();
