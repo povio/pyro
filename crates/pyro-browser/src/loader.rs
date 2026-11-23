@@ -2160,6 +2160,16 @@ impl Browser {
         if let Some(nav) = &nav {
             nav.set_incoming_fetch(resource.timing.take());
         }
+        // CSP `sandbox` of the response (enforced, unless the page bypasses CSP): part of the
+        // sandboxing flags that decide the document's origin at commit.
+        let csp_sandbox = resource
+            .header_csp
+            .as_deref()
+            .filter(|_| !self.page(page.page).is_some_and(|p| p.bypass_csp))
+            .and_then(|csp| crate::frames::Sandbox::from_csp(csp.split_once('\n').map_or(csp, |(enforce, _)| enforce)));
+        if let Some(mut state) = self.doc_mut(page) {
+            state.committing_csp_sandbox = csp_sandbox;
+        }
         let committed = self.commit_document(page, opts, loader_id.clone(), &origin, history, unreachable);
         if let Some(nav) = &nav {
             nav.set_incoming_fetch(None);

@@ -86,6 +86,18 @@ fn create_popup(t: &mut BrowserThread, events: &Events) -> PageId {
     page
 }
 
+/// [`create_popup`] as pyro-cdp does it: the page is the one `window.open` made ahead (its
+/// initial about:blank Window is the one the opener holds).
+fn create_prebuilt_popup(t: &mut BrowserThread, events: &Events) -> PageId {
+    let (opener, url, _, ticket) = events.popups().pop().expect("a popup was requested");
+    let prebuilt = ticket.as_ref().and_then(|t| t.take_prebuilt()).expect("a prebuilt popup");
+    let page = t.browser.create_page_with(DEFAULT_CONTEXT, prebuilt).expect("the prebuilt page");
+    t.browser.adopt_popup(page, opener, ticket);
+    t.browser.navigate(page, NavigateOpts::address_bar(&url)).unwrap();
+    settle(t);
+    page
+}
+
 #[test]
 fn popup_keeps_its_opener_and_a_copy_of_the_session_storage() {
     let (mut t, events) = setup();
@@ -349,6 +361,45 @@ fn a_popup_is_a_window_proxy() {
          SecurityError,SecurityError,SecurityError,SecurityError,null,true"
     );
     assert_eq!(eval(&t, x, "window.opener !== null"), "true", "a refused `opener = null` changed nothing");
+}
+
+/// HTML Window reuse: a popup's first document of its creator's origin keeps the initial
+/// about:blank Window (what the opener put on it stays), but not one a CSP `sandbox` directive
+/// (without `allow-same-origin`) gives an opaque origin: the opener has no same-origin handle
+/// into the sandboxed document's globals (WPT content-security-policy/sandbox/window-reuse-*).
+#[test]
+fn a_csp_sandboxed_popup_does_not_reuse_the_initial_window() {
+    let (mut t, events) = setup();
+    let loader = Rc::new(StaticLoader::default());
+    for url in ["http://app.test/a", "http://app.test/plain", "http://app.test/sandboxed"] {
+        loader.insert(url, "text/html", "<p>page</p>", Duration::ZERO);
+    }
+    loader.set_csp("http://app.test/sandboxed", "sandbox allow-scripts");
+    t.browser.set_loader(Some(loader));
+    let a = open_page(&mut t, "http://app.test/a");
+    eval(&t, a, "globalThis.p = window.open('plain'); p.testProperty = 'test'");
+    settle(&mut t);
+    let plain = create_prebuilt_popup(&mut t, &events);
+    assert_eq!(eval(&t, plain, "[origin, typeof testProperty].join()"), "http://app.test,string", "reused");
+    eval(&t, a, "globalThis.q = window.open('sandboxed'); q.testProperty = 'test'");
+    settle(&mut t);
+    let sandboxed = create_prebuilt_popup(&mut t, &events);
+    assert_eq!(eval(&t, sandboxed, "[origin, typeof testProperty].join()"), "null,undefined", "not reused");
+    let try_ = "var t = (f) => { try { return String(f()) } catch (e) { return e.name } };";
+    assert_eq!(
+        eval(&t, a, &format!("{try_} [t(() => q.testProperty), t(() => q.document), t(() => {{ q.injected = 1 }})].join()")),
+        "SecurityError,SecurityError,SecurityError"
+    );
+    assert_eq!(eval(&t, sandboxed, "typeof injected"), "undefined");
+    // Of two enforced policies, the one without `allow-same-origin` still makes it opaque.
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://app.test/two", "text/html", "<p>page</p>", Duration::ZERO);
+    loader.set_csp("http://app.test/two", "sandbox allow-same-origin allow-scripts, sandbox allow-scripts");
+    t.browser.set_loader(Some(loader));
+    eval(&t, a, "globalThis.r = window.open('two'); r.testProperty = 'test'");
+    settle(&mut t);
+    let two = create_prebuilt_popup(&mut t, &events);
+    assert_eq!(eval(&t, two, "[origin, typeof testProperty].join()"), "null,undefined", "two policies");
 }
 
 /// A cross-origin popup's WindowProxy, as HTML's CrossOriginGetOwnPropertyHelper has it: its child

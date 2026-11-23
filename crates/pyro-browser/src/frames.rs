@@ -892,6 +892,7 @@ impl FrameHost {
                 _owner_pin: Some(loader::ResourceNode { dom: self.dom.clone(), node }),
                 required_csp: None,
                 committing_required_csp: None,
+                committing_csp_sandbox: None,
                 enforce_required_csp: None,
                 in_order_scripts: Default::default(),
             },
@@ -1295,12 +1296,19 @@ impl Sandbox {
     /// The flags of a `Content-Security-Policy` `sandbox` directive in `csp` (enforced policies,
     /// comma-separated; directives semicolon-separated), if it has one: those of a `sandbox`
     /// attribute with the directive's tokens (CSP 3 § 6.3.2.1).
+    /// Each enforced policy's flags apply: a document with several policies gets their union
+    /// (the first `sandbox` directive of a policy counts, as CSP ignores duplicates).
     pub fn from_csp(csp: &str) -> Option<Self> {
-        csp.split(',').flat_map(|policy| policy.split(';')).find_map(|directive| {
-            let directive = directive.trim();
-            let (name, value) = directive.split_once(|c: char| c.is_ascii_whitespace()).unwrap_or((directive, ""));
-            name.eq_ignore_ascii_case("sandbox").then(|| Self::parse(Some(value)))
-        })
+        csp.split(',')
+            .filter_map(|policy| {
+                policy.split(';').find_map(|directive| {
+                    let directive = directive.trim();
+                    let (name, value) =
+                        directive.split_once(|c: char| c.is_ascii_whitespace()).unwrap_or((directive, ""));
+                    name.eq_ignore_ascii_case("sandbox").then(|| Self::parse(Some(value)))
+                })
+            })
+            .reduce(|a, b| Self::from_bits(a.to_bits() | b.to_bits()))
     }
 }
 impl Browser {

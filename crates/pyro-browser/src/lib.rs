@@ -611,6 +611,12 @@ pub struct DocumentState {
     /// it starts (so a commit that fails cannot leave it for a later one) and gives the committed
     /// document as `required_csp`. A commit that set none (a top-level document's) leaves none.
     pub(crate) committing_required_csp: Option<String>,
+    /// The sandboxing flags of the enforced `Content-Security-Policy` `sandbox` directive of
+    /// the response about to commit, which `commit_document` takes: they are part of the
+    /// document's sandboxing flag set when its origin is decided (HTML "determining the origin"),
+    /// so without `allow-same-origin` it is opaque and the initial about:blank Window is not
+    /// reused.
+    pub(crate) committing_csp_sandbox: Option<frames::Sandbox>,
     /// The required policy the document about to commit accepted (a local scheme,
     /// `Allow-CSP-From`) and enforces besides its own, which `begin_document` takes as it starts
     /// and appends to the document's CSP list before its parser runs
@@ -1652,6 +1658,7 @@ impl Browser {
                 in_order_scripts: Default::default(),
                 required_csp: None,
                 committing_required_csp: None,
+                committing_csp_sandbox: None,
                 enforce_required_csp: None,
             },
             session_storage,
@@ -2232,6 +2239,7 @@ impl Browser {
         // CSP Embedded Enforcement: the requirement of this commit, taken before anything can fail
         // or run script (a navigation `unload` starts sets its own).
         let required_csp = self.doc_mut(page).and_then(|mut p| p.committing_required_csp.take());
+        let csp_sandbox = self.doc_mut(page).and_then(|mut p| p.committing_csp_sandbox.take());
         // `pageswap` at the document being replaced, then it (and its frames) unloads.
         self.fire_page_swap(page, &opts.url, history, origin);
         self.unload_documents(page);
@@ -2257,7 +2265,7 @@ impl Browser {
         };
         // Attribute changes do not alter the active document's policy. Apply
         // the owner and ancestor restrictions when the next document commits.
-        let sandbox = if let Some(owner) = self.doc(page).and_then(|d| d.main_frame.owner) {
+        let mut sandbox = if let Some(owner) = self.doc(page).and_then(|d| d.main_frame.owner) {
             let mut flags = frames::Sandbox::parse(host.dom.borrow().get_attribute(owner, "sandbox").ok().flatten());
             if let Some(parent) = &inherited {
                 flags.opaque |= parent.sandbox.opaque;
@@ -2282,6 +2290,11 @@ impl Browser {
             flags.scripts_disabled |= disabled;
             flags
         };
+        // The response's CSP `sandbox` directive: its other flags join when the document is made
+        // (`Browser::begin_document`), its opaque origin now.
+        if let Some(flags) = csp_sandbox {
+            sandbox.opaque |= flags.opaque;
+        }
         self.doc_mut(page).ok_or(JsError::ContextDestroyed)?.main_frame.sandbox = sandbox;
         let inherit_url = (matches_about_blank(&opts.url) || opts.url == "about:srcdoc") && inherit_from.is_some();
         let actual_origin = if sandbox.opaque {
