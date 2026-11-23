@@ -670,6 +670,14 @@ impl DocumentMutator<'_> {
         if node_is_in_document {
             self.doc.snapshot_node(node_id, &markup5ever::LocalName::from(field));
             self.restyle_for_attribute_change(node_id, &markup5ever::LocalName::from(field));
+            // pyro: a responsive iframe's content size is its natural size (layout reads it when
+            // it sizes the replaced box): no selector sees the engine's attribute, so the box is
+            // laid out again here (css-sizing-4 `frame-sizing`, WPT css-sizing responsive-iframe).
+            if field == "data-pyro-frame-content-size" {
+                let node = &mut self.doc.nodes[node_id];
+                node.insert_damage(ALL_DAMAGE);
+                node.mark_ancestors_dirty();
+            }
         }
         if field != crate::FRAME_ATTRIBUTE {
             return;
