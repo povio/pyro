@@ -83,7 +83,11 @@ pub(crate) fn css_smooth(page: &Rc<PageDom>, target: Option<NodeId>) -> bool {
             _ => return false,
         },
     };
-    crate::animation_events::style_flush(page, Some(el));
+    // (The read brings the engine's styles up to date. No animation style flush: that would start
+    // the CSS animations a change in this task asks for here, inside the scroll call, and plan
+    // their events before the task adds its listeners, which drops them; they start at the next
+    // frame instead, as for any scroll. WPT css-contain
+    // `content-visibility-animation-and-scroll`.)
     let (Ok(dom), Ok(layout)) = (page.dom.try_borrow(), page.layout.try_borrow()) else { return false };
     layout.computed_style_value(&dom, el, "scroll-behavior") == "smooth"
 }

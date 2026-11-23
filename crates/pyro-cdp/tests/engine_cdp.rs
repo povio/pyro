@@ -11251,6 +11251,29 @@ fn animations_start_after_text_only_changes_from_a_class_or_inline_style() {
 }
 
 #[test]
+fn animation_events_reach_listeners_added_after_a_scroll_in_the_same_task() {
+    // A scroll write reads the box's `scroll-behavior`: that read must not start the animation the
+    // task just asked for and plan its events while nobody listens yet (they were dropped), but
+    // leave it to the next frame, as without the scroll (WPT css-contain
+    // `content-visibility-animation-and-scroll`).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>@keyframes fade{from{opacity:0}} .on{animation:fade 50ms}</style><body style="margin:0"><div id=t style="width:10px;height:10px"></div><div style="height:3000px"></div>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "window.seen = []; t.className = 'on'; window.scrollTo(0, 500); for (const type of ['animationstart', 'animationend']) t.addEventListener(type, e => seen.push(e.type)); scrollY", "as": "y"}},
+            {"eval": {"expression": "new Promise(r => { const t0 = performance.now(); const poll = () => seen.length === 2 || performance.now() - t0 > 2000 ? r(seen.slice()) : requestAnimationFrame(poll); requestAnimationFrame(poll); })", "as": "seen"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["y"], json!(500), "{r}");
+    assert_eq!(r["result"]["reads"]["seen"], json!(["animationstart", "animationend"]), "{r}");
+}
+
+#[test]
 fn nothing_scrolls_into_view_in_content_visibility_hidden_contents() {
     // A geometry query lays out the contents `content-visibility: hidden` skips, but they stay
     // unreachable by scrollIntoView and fragment scrolls (Chromium; WPT css-contain
