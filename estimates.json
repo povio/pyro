@@ -29,58 +29,52 @@
     "fetch/fetch-later": 32,
     "html/dom": 28,
     "html/syntax": 22,
-    "fetch/content-encoding": 21,
     "html/infrastructure": 21,
+    "fetch/content-encoding": 21,
     "scheduler": 19,
     "html/rendering": 18,
     "imagebitmap-renderingcontext": 14,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
-    "fetch/corb": 6,
     "fetch/range": 6,
+    "fetch/corb": 6,
     "fetch/data-urls": 6,
     "fetch/stale-while-revalidate": 5,
-    "fetch/compression-dictionary": 4,
     "html/obsolete": 4,
     "FileAPI": 4,
+    "fetch/compression-dictionary": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
     "html/user-activation": 2,
     "fetch/orb": 2,
     "xhr": 2,
-    "fetch/security": 1,
+    "svg/styling": 1,
+    "fetch/content-type": 1,
     "html/select": 1,
     "IndexedDB": 1,
-    "fetch/redirect-navigate": 1,
-    "quirks": 1,
+    "fetch/security": 1,
     "fetch/redirects": 1,
-    "svg/styling": 1,
-    "fetch/content-type": 1
+    "quirks": 1,
+    "fetch/redirect-navigate": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 59,
+    "macbook_in_scope": 0,
     "studio_in_scope": 0,
     "other_dirs_out_of_scope": 0,
-    "macbook_worker_variants_if_enabled": 6,
+    "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 59,
+   "distinct_census_pages": 0,
    "owner_reported_unlisted": 0,
-   "selector_union": 190,
-   "owner_estimate_reduction": 131,
-   "of_which_tentative": 148,
+   "selector_union": 0,
+   "owner_estimate_reduction": 0,
+   "of_which_tentative": 0,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 0,
-   "by_dir": {
-    "html/canvas": 112,
-    "html/semantics": 38,
-    "html/syntax": 30,
-    "html/dom": 5,
-    "fetch/api": 5
-   }
+   "by_dir": {}
   },
   "queued": {
    "scope": {
@@ -765,7 +759,7 @@
    "tentative": 0
   },
   "P13": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 5,
    "out_of_scope_pages": 0,
    "pages": 5,
@@ -996,14 +990,14 @@
    "tentative": 0
   },
   "F07": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 40,
    "out_of_scope_pages": 0,
    "pages": 40,
    "tentative": 1
   },
   "F08": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 31,
    "out_of_scope_pages": 0,
    "pages": 31,
@@ -1073,7 +1067,7 @@
    "tentative": 0
   },
   "F10": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 34,
    "out_of_scope_pages": 0,
    "pages": 34,
@@ -1633,7 +1627,7 @@
    "tentative": 0
   },
   "R-HTML-9": {
-   "state": "active",
+   "state": "deferred",
    "in_scope_pages": 112,
    "out_of_scope_pages": 0,
    "pages": 112,
@@ -1815,7 +1809,7 @@
    "tentative": 0
   },
   "R-HTML-11": {
-   "state": "claimed",
+   "state": "deferred",
    "in_scope_pages": 42,
    "out_of_scope_pages": 0,
    "pages": 42,
