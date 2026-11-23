@@ -1804,6 +1804,9 @@ impl JsClass for Location {
     type Parent = NoParent;
 
     fn define(def: &mut ClassDef<Self>) {
+        // HTML: Location's [[SetPrototypeOf]] is SetImmutablePrototype and its [[PreventExtensions]]
+        // fails (WPT the-location-interface/location-prototype-setting-same-origin.html).
+        def.immutable_prototype();
         def.accessor("href", |s, n| Ok(s.string(&n.url())), |s, n, v| assign(s, n, v, false));
         def.pure_method("toString", 0, |s, n, _a| Ok(s.string(&n.url())));
         def.method("assign", 1, |s, n, a| {

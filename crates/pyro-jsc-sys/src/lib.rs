@@ -80,6 +80,10 @@ pub const kJSClassAttributeImpureNamedProperties: JSClassAttributes = 1 << 30;
 /// bit): the class is never released, so its objects count no reference to
 /// it (one atomic word every thread making or sweeping its wrappers writes).
 pub const kJSClassAttributeImmortal: JSClassAttributes = 1 << 29;
+/// Patched JSC only (patch 0043, `JSForkPrivate.h`; other builds ignore the bit): the
+/// wrappers keep their prototype (SetImmutablePrototype) and refuse [[PreventExtensions]], as
+/// HTML's Location and cross-origin objects do. `JSObjectSetPrototype` still sets it.
+pub const kJSClassAttributeImmutablePrototype: JSClassAttributes = 1 << 28;
 
 pub type JSRelationCondition = c_uint;
 
@@ -619,6 +623,8 @@ pub mod spi {
         interface_prototype: JSObjectRef,
         parent_prototype: JSObjectRef,
     ) -> bool;
+    /// Patch 0043: the global proxy of `ctx` refuses [[PreventExtensions]] (a WindowProxy).
+    pub type JSGlobalContextSetGlobalProxyRefusesPreventExtensionsFn = unsafe extern "C" fn(ctx: JSGlobalContextRef);
 
     /// Patch 0035: an object passed to eval as code (a TrustedScript), as a new
     /// string the caller releases, or null to leave it unevaluated.
@@ -1038,6 +1044,9 @@ pub mod spi {
         pub install_named_properties: Option<JSGlobalContextInstallNamedPropertiesFn>,
         /// Patch 0041: WebIDL's chain for a window with a named properties object.
         pub set_named_properties_chain: Option<JSGlobalContextSetNamedPropertiesChainFn>,
+        /// Patch 0043: a window's global proxy refuses [[PreventExtensions]].
+        pub set_global_proxy_refuses_prevent_extensions:
+            Option<JSGlobalContextSetGlobalProxyRefusesPreventExtensionsFn>,
         pub adopt_global_proxy: Option<JSGlobalContextAdoptGlobalProxyFn>,
         pub add_impure_property: Option<JSAddImpurePropertyFn>,
         pub set_custom_accessor: Option<JSObjectSetCustomAccessorFn>,
@@ -1243,6 +1252,12 @@ pub mod spi {
             set_named_properties_chain: resolve!("JSGlobalContextSetNamedPropertiesChain"),
             #[cfg(not(any(pyro_jsc_named_properties_chain, not(pyro_jsc_static))))]
             set_named_properties_chain: None,
+            #[cfg(any(pyro_jsc_immutable_prototype_wrappers, not(pyro_jsc_static)))]
+            set_global_proxy_refuses_prevent_extensions: resolve!(
+                "JSGlobalContextSetGlobalProxyRefusesPreventExtensions"
+            ),
+            #[cfg(not(any(pyro_jsc_immutable_prototype_wrappers, not(pyro_jsc_static))))]
+            set_global_proxy_refuses_prevent_extensions: None,
             #[cfg(any(pyro_jsc_adopt_global_proxy, not(pyro_jsc_static)))]
             adopt_global_proxy: resolve!("JSGlobalContextAdoptGlobalProxy"),
             #[cfg(not(any(pyro_jsc_adopt_global_proxy, not(pyro_jsc_static))))]

@@ -300,6 +300,8 @@ pub struct ClassDef<C: JsClass> {
     pub(crate) own_value: Option<NamedFn>,
     pub(crate) hooks: PropertyHooks,
     pub(crate) exposed: bool,
+    /// See [`ClassDef::immutable_prototype`].
+    pub(crate) immutable_prototype: bool,
     pub(crate) indexed_iterable: bool,
     pub(crate) indexed_iterator: bool,
     pub(crate) upcast: Option<UpcastFn>,
@@ -374,6 +376,7 @@ impl<C: JsClass> ClassDef<C> {
             own_value: None,
             hooks: PropertyHooks::default(),
             exposed: true,
+            immutable_prototype: false,
             indexed_iterable: false,
             indexed_iterator: false,
             upcast: None,
@@ -961,6 +964,15 @@ impl<C: JsClass> ClassDef<C> {
         self.exposed = false;
         self
     }
+
+    /// The wrappers keep their prototype and stay extensible, as HTML's `Location` and the
+    /// cross-origin `Window` and `Location` objects do: `Object.setPrototypeOf` to another
+    /// prototype and `Object.preventExtensions` throw (patched JavaScriptCore, patch 0043;
+    /// without it nothing changes). [`crate::Object::set_prototype`] still sets it.
+    pub fn immutable_prototype(&mut self) -> &mut Self {
+        self.immutable_prototype = true;
+        self
+    }
 }
 
 pub(crate) struct ClassInfo {
@@ -1245,6 +1257,9 @@ fn shared_class<C: JsClass>(parent: Option<&'static ClassDefErased>) -> &'static
     if def.announced_names && sys::spi::get().add_impure_property.is_some() {
         debug_assert!(!def.hooks.override_builtins && def.hooks.indexed.is_none(), "announced names need named(false)");
         jsdef.attributes |= sys::kJSClassAttributeImpureNamedProperties;
+    }
+    if def.immutable_prototype {
+        jsdef.attributes |= sys::kJSClassAttributeImmutablePrototype;
     }
     jsdef.parentClass = root_classes().base;
     if has_named_hooks || (def.hooks.indexed.is_some() && indexed_callbacks.is_none()) {

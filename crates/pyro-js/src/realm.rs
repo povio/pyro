@@ -3172,6 +3172,13 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
                 }
             }
         }
+        // Patch 0043: a window's global proxy is a WindowProxy, whose [[PreventExtensions]] fails.
+        if name == "Window" {
+            if let Some(set) = sys::spi::get().set_global_proxy_refuses_prevent_extensions {
+                // SAFETY: the realm's live context.
+                unsafe { set(realm.global_ctx()?) };
+            }
+        }
         // Chain root-first: copy members onto the global, brand instanceof.
         let install_global = realm.helper(scope, "installGlobal")?;
         let mut ps = crate::RootedVec::new();
