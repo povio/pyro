@@ -1036,6 +1036,44 @@ pub(crate) fn may_transition_overlay(page: &Rc<PageDom>, el: NodeId) -> bool {
         .any(|t| t.allow_discrete && matches!(t.property.as_str(), "overlay" | "all"))
 }
 
+/// Hiding `el` (kept in the top layer for its `overlay` transition) after its style flush
+/// ([`style_flush`]): an `overlay` transition of `el` started in this task, its `transitionstart`
+/// not fired (a pending transition, its time still 0: typically `none` → `auto` when it was shown
+/// and hidden with no rendering in between, the show's flush styling it out of the top layer and
+/// the hide's in it), is dropped without events, as if never started. Reversing it at the next
+/// style change event would shorten the `auto` → `none` transition that keeps the element in the
+/// top layer by its progress, 0, taking the element out at once (WPT css-position
+/// `overlay/overlay-transition-backdrop`). One started in an earlier task (an opening that
+/// rendered) is reversed as usual. (A `transitionrun` a listener already heard gets no
+/// `transitioncancel`.)
+pub(crate) fn drop_unrendered_overlay_transition(page: &Rc<PageDom>, el: NodeId) {
+    let state = &page.animation_events;
+    let now = state.task_now(page);
+    let Ok(mut transitions) = state.transitions.try_borrow_mut() else { return };
+    let count = transitions.len();
+    transitions.retain(|t| {
+        let unrendered = t.el == el
+            && t.pseudo.is_none()
+            && t.name == "overlay"
+            && t.live.get()
+            && !t.ended.get()
+            && t.start_ms == now
+            && t.progress.get() == 0;
+        if unrendered {
+            t.live.set(false);
+        }
+        !unrendered
+    });
+    if transitions.len() != count {
+        drop(transitions);
+        state.bump();
+        // (The `CSSTransition` script may hold goes idle.)
+        if state.listed.get() {
+            crate::animations::push_css_runs(page, false);
+        }
+    }
+}
+
 /// The elements kept in the top layer after leaving it ([`pyro_dom::Dom::keep_in_top_layer`])
 /// whose `overlay` transition did not start or is over leave it now.
 fn finish_overlay_exits(page: &Rc<PageDom>) {

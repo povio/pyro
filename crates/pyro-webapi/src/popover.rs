@@ -644,6 +644,9 @@ pub(crate) fn hide_showing_popover(
         queue_toggle(page, el, true, false, source);
     }
     let keep = overlay_style_flush(page, el);
+    if keep {
+        crate::animation_events::drop_unrendered_overlay_transition(page, el);
+    }
     {
         let mut dom = page.dom.borrow_mut();
         if keep {
@@ -1087,6 +1090,9 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
     queue_dialog_toggle(page, el, true, false, source);
     let was_modal = page.dom.borrow().is_modal(el);
     let keep = overlay_style_flush(page, el);
+    if keep {
+        crate::animation_events::drop_unrendered_overlay_transition(page, el);
+    }
     {
         let mut dom = page.dom.borrow_mut();
         if keep {
