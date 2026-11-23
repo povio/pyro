@@ -593,6 +593,10 @@ enum LegacyPreActivation {
 struct ActivationTarget {
     el: NodeId,
     legacy: LegacyPreActivation,
+    /// The elements of the event's path after `el` that the activation could have reached (a
+    /// label without a labeled control passes the click on to the first with activation
+    /// behavior).
+    rest: Vec<NodeId>,
 }
 
 fn local(dom: &Dom, id: NodeId) -> Option<String> {
@@ -620,10 +624,11 @@ fn svg_link_href(dom: &Dom, el: NodeId) -> Option<&str> {
 fn has_activation_behavior(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
         Some("input") => dom.input_type(el).ok() != Some(InputType::Hidden),
-        Some("button") => true,
-        // A label without a labeled control does nothing (as Chromium): a click in it activates
-        // what is around it, such as a button it is in.
-        Some("label") => dom.labeled_control(el).ok().flatten().is_some(),
+        // A label is the activation target whether or not it has a labeled control: which it
+        // has is decided when its activation behavior runs, after the click's listeners, and
+        // without one the click activates what is around it, such as a button or link it is in
+        // (`run_activation_behavior`).
+        Some("button" | "label") => true,
         Some("a" | "area") => dom.has_attribute(el, "href").unwrap_or(false),
         Some("summary") => dom.is_details_summary(el),
         _ => svg_link_href(dom, el).is_some(),
@@ -644,8 +649,8 @@ fn is_submit_button(dom: &Dom, el: NodeId) -> bool {
 /// click inside it does not activate a `label` around it.
 fn swallows_label_click(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
-        // A nested label too: without a labeled control it has no activation behavior, so the
-        // click reaches the outer label, which must not pass it on.
+        // A nested label too: one without a labeled control passes the click on to the outer
+        // label, which must not forward it.
         Some("select" | "textarea" | "details" | "iframe" | "embed" | "label") => true,
         Some("audio" | "video") => dom.has_attribute(el, "controls").unwrap_or(false),
         Some("img") => dom.has_attribute(el, "usemap").unwrap_or(false),
@@ -735,24 +740,28 @@ fn dispatch_click(page: &Rc<PageDom>, target: NodeId, ev: &EventData, handled: b
         if handled {
             return;
         }
-        let el = {
+        let (el, rest) = {
             let dom = page.dom.borrow();
-            path.iter().filter(|item| bubbles || item.at_target()).find_map(|item| {
-                let el = dom.key_node(item.invocation_target)?;
+            let mut items = path
+                .iter()
+                .filter(|item| bubbles || item.at_target())
+                .filter_map(|item| dom.key_node(item.invocation_target));
+            let el = items.by_ref().find(|&el| {
                 // A user's click is not dispatched at a disabled form control
                 // (HTML): it does not activate one it reaches either.
                 let skipped = trusted && dom.is_disabled(el).unwrap_or(false);
-                (!skipped && has_activation_behavior(&dom, el)).then_some(el)
-            })
+                !skipped && has_activation_behavior(&dom, el)
+            });
+            (el, items.collect::<Vec<_>>())
         };
-        activation = el.map(|el| ActivationTarget { el, legacy: legacy_pre_activation(page, el) });
+        activation = el.map(|el| ActivationTarget { el, legacy: legacy_pre_activation(page, el), rest });
     });
-    let Some(ActivationTarget { el, legacy }) = activation else { return not_canceled };
+    let Some(ActivationTarget { el, legacy, rest }) = activation else { return not_canceled };
     if !not_canceled {
         legacy_canceled_activation(page, el, legacy);
         return false;
     }
-    run_activation_behavior(page, el, legacy, target, ev);
+    run_activation_behavior(page, el, legacy, target, ev, &rest);
     true
 }
 
@@ -764,6 +773,7 @@ fn run_activation_behavior(
     legacy: LegacyPreActivation,
     target: NodeId,
     ev: &EventData,
+    rest: &[NodeId],
 ) {
     let Some(name) = local(&page.dom.borrow(), el) else {
         if svg_link_href(&page.dom.borrow(), el).is_some() {
@@ -871,6 +881,29 @@ fn run_activation_behavior(
                     // `:focus-visible` on a checkbox (WPT css/selectors `focus-visible-026`).
                     page.pointer_modality.set(true);
                     focus_element(page, c);
+                }
+            } else {
+                // No labeled control (now, after the listeners: one may have been given or taken
+                // during the click): as Chromium, the click activates the nearest ancestor with
+                // activation behavior instead (WPT the-button-element
+                // controls-inside-link-activation.tentative, popovers/label-in-invoker).
+                // The rest of the event's path as dispatched. A checkbox or radio (only a script
+                // puts a label in one) was never pre-activated: the click stops there.
+                let next = {
+                    let dom = page.dom.borrow();
+                    let trusted = ev.state.borrow().is_trusted;
+                    rest.iter()
+                        .position(|&n| {
+                            let skipped = trusted && dom.is_disabled(n).unwrap_or(false);
+                            !skipped && has_activation_behavior(&dom, n)
+                        })
+                        .filter(|&i| {
+                            local(&dom, rest[i]).as_deref() != Some("input")
+                                || !matches!(dom.input_type(rest[i]), Ok(InputType::Checkbox | InputType::Radio))
+                        })
+                };
+                if let Some(i) = next {
+                    run_activation_behavior(page, rest[i], LegacyPreActivation::None, target, ev, &rest[i + 1..]);
                 }
             }
         }
