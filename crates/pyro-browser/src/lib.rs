@@ -1711,18 +1711,27 @@ impl Browser {
 
     /// Reports the commit and load of `page`'s initial about:blank document
     /// as it is now (a popup's, made by `window.open`; CDP clients wait for a
-    /// commit). False when the page shows another document.
-    pub fn announce_initial_document(&mut self, id: PageId) -> bool {
+    /// commit). False when the page shows another document. A `url` that matches about:blank
+    /// with a query or fragment (`window.open("about:blank#foo")`) becomes the document's URL
+    /// (HTML "URL and history update steps"), without a new document.
+    pub fn announce_initial_document(&mut self, id: PageId, url: &str) -> bool {
         let Some(p) = self.page(id) else { return false };
-        if !p.nav.is_initial_blank() || p.main_frame.url != "about:blank" {
+        if !p.nav.is_initial_blank() || p.main_frame.url != "about:blank" || !matches_about_blank(url) {
             return false;
         }
+        if url != "about:blank" {
+            p.nav.update_initial_blank_url(url);
+            if let Some(p) = self.page_mut(id) {
+                p.main_frame.url = url.to_owned();
+            }
+        }
+        let Some(p) = self.page(id) else { return false };
         let (frame_id, loader_id) = (p.main_frame.id.clone(), p.main_frame.loader_id.clone());
         let timestamp = self.timestamp();
         self.emit(id, PageEvent::FrameNavigated {
             frame_id: frame_id.clone(),
             loader_id: loader_id.clone(),
-            url: "about:blank".into(),
+            url: url.to_owned(),
             reason: NavigationReason::InitialFrameNavigation,
             cdp_request_id: None,
             timestamp,

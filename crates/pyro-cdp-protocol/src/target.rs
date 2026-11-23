@@ -152,7 +152,8 @@ pub trait Host {
     /// Reports again the commit of `page`'s initial about:blank document
     /// (a popup that keeps the one `window.open` made). False when the page
     /// shows another document: the caller navigates instead.
-    fn announce_initial_document(&mut self, _page: PageKey) -> bool {
+    /// `url` matches about:blank (`about:blank#foo`): the initial document takes it.
+    fn announce_initial_document(&mut self, _page: PageKey, _url: &str) -> bool {
         false
     }
     fn close_page(&mut self, page: PageKey);
@@ -2062,9 +2063,12 @@ impl<H: Host> Browser<H> {
             else {
                 continue;
             };
-            // A popup opened without a URL keeps the initial about:blank
-            // document `window.open` made (HTML does not navigate it).
-            let keep_initial = prebuilt && request.url == "about:blank";
+            // A popup opened without a URL, or with one that matches about:blank
+            // (`about:blank#foo`), keeps the initial about:blank document
+            // `window.open` made: HTML does not navigate it, it only takes the URL
+            // ("URL and history update steps").
+            let keep_initial = prebuilt && matches_about_blank(&request.url);
+            let kept_url = request.url.clone();
             let url = (!keep_initial).then_some(request.url);
             let paused = self.auto_attach || self.tab_attach;
             self.targets.push(TargetEntry {
@@ -2074,7 +2078,7 @@ impl<H: Host> Browser<H> {
                 opener_id: Some(opener_id),
                 can_access_opener: request.opener_access,
                 // Paused, a kept document still waits for its announced commit.
-                pending_url: paused.then(|| url.clone().unwrap_or_else(|| "about:blank".into())),
+                pending_url: paused.then(|| url.clone().unwrap_or_else(|| kept_url.clone())),
                 keep_initial,
                 prepared_profile: None,
             });
@@ -2088,7 +2092,7 @@ impl<H: Host> Browser<H> {
                     self.close_target(&target_id, out);
                 }
             } else if keep_initial {
-                self.host.announce_initial_document(page);
+                self.host.announce_initial_document(page, &kept_url);
             } else if url.as_deref().is_some_and(|url| self.host.navigate(page, url).is_err()) {
                 self.close_target(&target_id, out);
             }
@@ -2253,7 +2257,7 @@ impl<H: Host> Browser<H> {
         self.host.set_initial_popup(page, false);
         // A kept initial document: clients (Playwright's `popup` event) wait
         // for a commit, which the host announces for it.
-        if keep_initial && self.host.announce_initial_document(page) {
+        if keep_initial && self.host.announce_initial_document(page, &url) {
             return;
         }
         // about:blank too: clients wait for the commit that replaces the ":" initial document.
@@ -2338,4 +2342,12 @@ struct AutoAttachParams {
     #[serde(default)]
     flatten: bool,
     filter: Option<Vec<TargetFilter>>,
+}
+
+/// HTML "matches about:blank": an `about:` URL whose path is `blank`, with no credentials or
+/// host, whatever its query and fragment.
+fn matches_about_blank(url: &str) -> bool {
+    pyro_net::Url::parse(url).is_ok_and(|u| {
+        u.scheme() == "about" && u.path() == "blank" && u.username().is_empty() && u.password().is_none() && u.host().is_none()
+    })
 }

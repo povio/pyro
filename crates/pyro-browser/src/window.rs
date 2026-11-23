@@ -574,8 +574,8 @@ pub(crate) fn frame_chain_secure(host: &crate::frames::FrameHost, mut key: crate
     loop {
         // A popup's about:blank / about:srcdoc document: its creator's state (`FrameHost::creator_secure`),
         // which already covers the creator's ancestors; it ends the walk, for the popup itself and for
-        // the frames inside it.
-        if key.child.is_none() && matches!(url.as_str(), "about:blank" | "about:srcdoc") {
+        // the frames inside it. Any URL that matches about:blank counts (`about:blank#foo`).
+        if key.child.is_none() && (crate::matches_about_blank(&url) || url == "about:srcdoc") {
             if let Some(secure) = host.creator_secure.get() {
                 return secure;
             }

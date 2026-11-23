@@ -1623,10 +1623,10 @@ impl Host for EngineHost {
         }
     }
 
-    fn announce_initial_document(&mut self, page: PageKey) -> bool {
+    fn announce_initial_document(&mut self, page: PageKey, url: &str) -> bool {
         let Some(id) = self.pages.get(&page).map(|s| s.id) else { return false };
         if let Some(state) = self.pages.get_mut(&page) { state.popup_referrer = None; }
-        let announced = self.thread.browser.announce_initial_document(id);
+        let announced = self.thread.browser.announce_initial_document(id, url);
         self.flush();
         announced
     }
