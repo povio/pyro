@@ -35,7 +35,7 @@ use tokio::sync::{mpsc, oneshot};
 use url::Url;
 
 use super::{tls_config, tls_config_insecure, wall_time, Cmd, Io, NetClient, NetEvent};
-use crate::cookies::{site_context, SiteContext};
+use crate::cookies::SiteContext;
 use crate::proxy::{ProxyConnector, ProxyError};
 use crate::request::{RequestDefaults, RequestId};
 use crate::ws_deflate::{self, Deflate, InflateError};
@@ -567,9 +567,13 @@ impl Io {
         }
         // Credentials mode "include": the jar's cookies for the http(s) URL.
         let origin = Url::parse(&req.origin).ok().filter(|o| o.host_str().is_some());
+        // As Chromium (no schemeful same-site): a handshake to the initiator's registrable
+        // domain is same-site whatever the schemes, so an http: page's wss: socket to its own
+        // site sends its Lax and default cookies.
         let context = match &origin {
             Some(_) if req.cross_site_ancestor => SiteContext::CrossSite,
-            Some(origin) => site_context(Some(origin), http_url, false, true),
+            Some(origin) if crate::cookies::same_site_schemeless(origin, http_url) => SiteContext::SameSite,
+            Some(_) => SiteContext::CrossSite,
             None => SiteContext::CrossSite,
         };
         let cookie = self.cookies.lock().unwrap().header_for_partition(http_url, context, crate::cookies::now_secs(), req.top_level_site.as_deref());
