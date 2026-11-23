@@ -603,6 +603,34 @@ fn canvas_bitmaps_are_lazy_and_reported_for_rendering() {
     assert!(e.page.canvas_bitmaps().is_empty());
 }
 
+/// A canvas that script made, drew on and connected, keeping no reference to it, keeps its
+/// context and bitmap through collections (WPT css/css-borders/corner-shape
+/// `render-corner-shape.html`: its outline canvas painted nothing after a collection before
+/// the screenshot).
+#[test]
+fn an_unreferenced_connected_canvas_keeps_its_bitmap_through_collections() {
+    let e = env("<!doctype html><body>");
+    let r = &e.main;
+    eval(
+        r,
+        "(() => { const a = document.createElement('article'), c = document.createElement('canvas');
+           c.width = 10; c.height = 10; const x = c.getContext('2d'); x.fillStyle = 'red'; x.fillRect(0, 0, 1, 1);
+           a.appendChild(c); document.body.appendChild(a); })();",
+    );
+    for _ in 0..4 {
+        e.page.after_task();
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    let bitmaps = e.page.canvas_bitmaps();
+    assert_eq!(bitmaps.len(), 1);
+    assert_eq!(&bitmaps[0].3[..4], &[255, 0, 0, 255]);
+    assert_eq!(
+        eval(r, "Array.from(document.querySelector('canvas').getContext('2d').getImageData(0, 0, 1, 1).data).join()"),
+        "255,0,0,255"
+    );
+}
+
 /// A display-p3 canvas holds P3 values and is painted in sRGB: its bitmap for rendering is
 /// converted back (WPT css/filter-effects `fecolormatrix-display-p3`: an sRGB image drawn on it
 /// shows the colors it has).

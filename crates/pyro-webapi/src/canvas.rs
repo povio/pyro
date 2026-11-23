@@ -693,6 +693,7 @@ pub fn get_context<'s>(
         let context = MODULE.helper(s, page, "bitmapRenderer", &[element.value()])?;
         page.canvas_used.set(true);
         s.set_hidden(element, BITMAP_RENDERER, context)?;
+        crate::target::pin_wrapper_with_properties(s, element);
         return Ok(context);
     }
     if kind != "2d" {
@@ -714,6 +715,15 @@ pub fn get_context<'s>(
     let context = new_context(s, page, Target::Element(canvas), w, h, space, float16)?;
     page.canvas_used.set(true);
     s.set_hidden(element, CONTEXT_2D, context.value())?;
+    // The context lives on the element's wrapper, and the bitmap with it (the
+    // page holds the surface weakly: `register_canvas`). A canvas made and
+    // drawn on by script that keeps no reference to it (`createElement`,
+    // `getContext`, `appendChild`, and the variable goes) would otherwise lose
+    // its wrapper to the next collection, and with it its pixels: it paints
+    // nothing, and `getContext` answers a new, blank context. So the wrapper
+    // is kept as one script added a property to is: while the canvas is
+    // connected, from whenever it connects.
+    crate::target::pin_wrapper_with_properties(s, element);
     Ok(context.value())
 }
 
