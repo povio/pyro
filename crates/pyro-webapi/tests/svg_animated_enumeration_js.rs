@@ -508,8 +508,8 @@ fn color_functions_keep_calc_in_their_specified_value() {
 }
 
 /// DOM IDL details (WPT dom/idlharness): operations throw a TypeError when called with fewer
-/// arguments than they require; Range and StaticRange inherit node containers from
-/// NodeRange and offsets from AbstractRange; Element's `slot` is unscopable; the Fullscreen API exists, with nothing ever
+/// arguments than they require; Range and StaticRange inherit their boundary points from
+/// AbstractRange, which an OpaqueRange's undefined containers shadow; Element's `slot` is unscopable; the Fullscreen API exists, with nothing ever
 /// fullscreen (requests and exits reject).
 #[test]
 fn dom_idl_arguments_abstract_range_and_fullscreen() {
@@ -525,10 +525,10 @@ fn dom_idl_arguments_abstract_range_and_fullscreen() {
                        name(() => document.evaluate("/")), name(() => AbortSignal.timeout()));
               out.push(name(() => document.body.contains(null)));
               const r = document.createRange();
-              out.push(Object.getPrototypeOf(Range.prototype) === NodeRange.prototype &&
-                         Object.getPrototypeOf(NodeRange.prototype) === AbstractRange.prototype,
-                       Object.getPrototypeOf(StaticRange.prototype) === NodeRange.prototype &&
-                         Object.hasOwn(NodeRange.prototype, "startContainer"),
+              out.push(Object.getPrototypeOf(Range.prototype) === AbstractRange.prototype &&
+                         typeof NodeRange === "undefined",
+                       Object.getPrototypeOf(StaticRange.prototype) === AbstractRange.prototype &&
+                         Object.hasOwn(AbstractRange.prototype, "startContainer"),
                        !Object.hasOwn(Range.prototype, "startOffset"), r.collapsed, r.startContainer === document);
               const sr = new StaticRange({ startContainer: document.body, startOffset: 0, endContainer: document.body, endOffset: 0 });
               out.push(sr.collapsed, sr.endContainer === document.body);
