@@ -6149,14 +6149,17 @@ fn text_controls_fire_selectionchange() {
     let e = env("<body><input id=t value=abc><input id=u></body>");
     let r = &e.main;
     eval(r, "window.sc = 0; window.targets = []; document.addEventListener('selectionchange', (e) => { sc++; targets.push(e.target.id || e.target.nodeName); }, true); document.getElementById('t').focus();");
-    assert_eq!(eval(r, "String(sc) + ':' + targets.join()"), "1:t", "fired on the control, seen at document capture");
+    // Focusing a text field also collapses the document's selection just before it, which
+    // fires selectionchange at the document first (as Chromium; 581fecf5b, WPT
+    // html/interaction/focus/focus-selection.html).
+    assert_eq!(eval(r, "String(sc) + ':' + targets.join()"), "2:#document,t", "fired on the control, seen at document capture");
     eval(r, "const t = document.getElementById('t'); t.setSelectionRange(1, 2); t.select();");
-    assert_eq!(eval(r, "String(sc)"), "3");
+    assert_eq!(eval(r, "String(sc)"), "4");
     input::insert_text(&e.page, "z");
-    assert_eq!(eval(r, "String(sc) + ':' + t.value"), "4:z");
+    assert_eq!(eval(r, "String(sc) + ':' + t.value"), "5:z");
     let k = input::KeyInput { key: "ArrowLeft".into(), code: "ArrowLeft".into(), key_code: 37, ..Default::default() };
     input::dispatch_key(&e.page, input::KeyKind::RawKeyDown, &k);
-    assert_eq!(eval(r, "String(sc)"), "5");
+    assert_eq!(eval(r, "String(sc) + ':' + targets.join()"), "6:#document,t,t,t,t,t");
 }
 
 #[test]
