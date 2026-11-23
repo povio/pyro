@@ -156,14 +156,56 @@ fn absolute(raw: &str, current: [f32; 4]) -> Option<AbsoluteColor> {
     use style::values::specified::Color;
     let computed = match Color::parse_and_compute(&context, &mut cssparser::Parser::new(raw), None) {
         Ok(computed) => computed,
-        // System colors compute only against a device.
-        Err(()) => {
+        // System colors and `light-dark()` compute only against a device. Font-relative lengths
+        // and `random()` / tree-counting functions depend on a style context, which a canvas
+        // color does not have (HTML: an OffscreenCanvas has none; an element canvas's em
+        // resolved against the default device before): such a color is invalid (WPT
+        // 2d.fillStyle.parse.invalid.no-context.em-*, random-*).
+        Err(()) if !needs_style_context(raw) => {
             let device = crate::picture::sizes_device(&crate::media::Viewport::default());
             Color::parse_and_compute(&context, &mut cssparser::Parser::new(raw), Some(&device)).ok()?
         }
+        Err(()) => return None,
     };
     let [r, g, b, a] = current;
     Some(computed.resolve_to_absolute(&AbsoluteColor::srgb_legacy((r * 255.0).round() as u8, (g * 255.0).round() as u8, (b * 255.0).round() as u8, a)))
+}
+
+/// Whether `raw` uses a font-relative length (`1em`, `2rex`, ...) or a function that needs an
+/// element (`random()`, `sibling-index()`, `sibling-count()`).
+fn needs_style_context(raw: &str) -> bool {
+    const UNITS: [&str; 12] = ["em", "ex", "ch", "ic", "cap", "lh", "rem", "rex", "rch", "ric", "rcap", "rlh"];
+    let lower = raw.to_ascii_lowercase();
+    if ["random(", "sibling-index(", "sibling-count("].iter().any(|f| lower.contains(f)) {
+        return true;
+    }
+    let b = lower.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i].is_ascii_digit() || (b[i] == b'.' && b.get(i + 1).is_some_and(u8::is_ascii_digit)) {
+            while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
+                i += 1;
+            }
+            let start = i;
+            while i < b.len() && b[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            if UNITS.contains(&&lower[start..i]) {
+                return true;
+            }
+        } else if b[i].is_ascii_alphabetic()
+            || b[i] == b'#'
+            || (b[i] == b'-' && b.get(i + 1).is_some_and(u8::is_ascii_alphabetic))
+        {
+            // An identifier or hex color: its digits are not a number's.
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'-' || b[i] == b'#') {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
 }
 
 fn srgb(color: &AbsoluteColor) -> [f32; 4] {
