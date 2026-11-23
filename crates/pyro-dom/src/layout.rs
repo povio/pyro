@@ -2424,6 +2424,10 @@ impl Layout {
                 return dom.document_element(self.document()).ok().flatten();
             }
         }
+        // pyro: a `::scroll-button()` painted on top answers its originating element.
+        if let Some(owner) = self.scroll_button_owner_at(dom, x, y) {
+            return Some(owner);
+        }
         if let Some(index) = self.hit_index_for(dom, false) {
             return self.hit_test_indexed(dom, &index, x, y, None);
         }
@@ -2458,7 +2462,25 @@ impl Layout {
             Some(index) => self.hit_test_indexed(dom, &index, x, y, Some(&mut hits)),
             None => self.hit_test_descent(dom, x, y, false, Some(&mut hits)),
         };
-        hits.into_iter().flat_map(|hit| hit.chain).collect()
+        let mut out: Vec<NodeId> = hits.into_iter().flat_map(|hit| hit.chain).collect();
+        // pyro: a `::scroll-button()` painted on top: its originating element comes first.
+        if let Some(owner) = self.scroll_button_owner_at(dom, x, y) {
+            out.retain(|&el| el != owner);
+            out.insert(0, owner);
+        }
+        out
+    }
+
+    /// pyro: the originating element of the `::scroll-button()` the engine paints on top at
+    /// viewport point (`x`, `y`) ([`GeometrySource::scroll_button_owner_at`]): the button's box
+    /// is no element's, so the element boxes this hit test reads cannot put it over the
+    /// element's content or another element (WPT css-overflow `scroll-button-elementFromPoint`).
+    fn scroll_button_owner_at(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
+        let source = self.synced_geometry_source(dom)?;
+        let (sx, sy) = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
+        let key = source.scroll_button_owner_at(x + sx, y + sy)?;
+        // (The engine's hit test does not know inertness: an inert scroller's button is not hit.)
+        crate::geometry::node_of(dom, key).filter(|&owner| !self.style.is_inert(dom, owner))
     }
 
     /// [`Layout::hits_from_point`] from the index, built now if this layout has none yet (tests).

@@ -1414,6 +1414,36 @@ impl BaseDocument {
         Some((delta, self.can_scroll_towards(owner, direction as u8)))
     }
 
+    /// pyro: the originating element of the `::scroll-button()` that the painted hit test (`hit`)
+    /// finds at the document point (`x`, `y`): the hit box is the button's or inside it (its
+    /// text). A hit test answers a button's originating element (CSS Overflow 5 § 2.2; WPT
+    /// css-overflow `scroll-button-elementFromPoint`), which pyro's element-box hit test cannot
+    /// see when the button is painted over the element's content or another element. `None` on
+    /// a page without buttons (no hit test then) or when anything else is on top.
+    pub fn scroll_button_owner_at(&mut self, x: f32, y: f32) -> Option<NodeId> {
+        let has_buttons = self.scroll_pseudo_owners.iter().any(|&owner| {
+            self.nodes
+                .get(owner)
+                .and_then(|node| node.scroll_pseudos())
+                .is_some_and(|pseudos| pseudos.buttons.iter().any(Option::is_some))
+        });
+        if !has_buttons {
+            return None;
+        }
+        let mut id = self.hit(x, y)?.node_id;
+        loop {
+            let node = self.nodes.get(id)?;
+            if let Some((PseudoElement::ScrollButtonAll, origin)) = node.scroll_pseudo() {
+                return Some(origin);
+            }
+            // An element's own box (or one inside it) is no button's.
+            if node.is_element() {
+                return None;
+            }
+            id = node.parent?;
+        }
+    }
+
     /// pyro: whether an element of the document was ever styled with a `scroll-snap-type`.
     pub fn uses_scroll_snap(&self) -> bool {
         self.scroll_snap_styles

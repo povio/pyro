@@ -1130,6 +1130,15 @@ impl Renderer {
         Some((m.key_of(id)?, column))
     }
 
+    /// pyro: the key of the originating element of the `::scroll-button()` that the painted hit
+    /// test finds at the document point (`x`, `y`) of `page` (blitz-dom
+    /// `BaseDocument::scroll_button_owner_at`), what a hit test there answers.
+    pub fn scroll_button_owner_at(&mut self, page: u64, x: f64, y: f64) -> Option<u64> {
+        let m = self.mirrors.get_mut(&page)?;
+        let origin = m.doc.scroll_button_owner_at(x as f32, y as f32)?;
+        m.key_of(origin)
+    }
+
     /// pyro: the `::scroll-button()` of the element `owner` that the painted hit test finds at the
     /// client point (`x`, `y`) of `page` (as [`Self::generated_hit`]): the physical direction it
     /// scrolls and whether it is enabled (blitz-dom `BaseDocument::scroll_button_hit`).

@@ -942,6 +942,13 @@ pub trait GeometrySource {
     fn scroll_button_hit(&self, _owner: u64, _x: f64, _y: f64) -> Option<((i8, i8), bool)> {
         None
     }
+    /// pyro: the key of the originating element of the `::scroll-button()` that the painted hit
+    /// test finds on top at the document point (`x`, `y`): a hit test there answers that element
+    /// (CSS Overflow 5 § 2.2). Its box is no element's, so the element-box hit test misses it
+    /// where it covers the element's content or another element.
+    fn scroll_button_owner_at(&self, _x: f64, _y: f64) -> Option<u64> {
+        None
+    }
     /// pyro: whether an element was ever styled with a `scroll-snap-type`, as of the last sync
     /// (no snapping to look for otherwise).
     fn uses_scroll_snap(&self) -> bool {
