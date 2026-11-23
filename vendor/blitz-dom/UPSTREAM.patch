@@ -610,14 +610,17 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -762,6 +1138,14 @@
+@@ -762,6 +1138,17 @@
      text-align: match-parent;
  }
  
++/* pyro: no `white-space: pre`, unlike the CSS Lists sheet: Chrome gives only an outside
++   marker `pre` (layout::list lays it out preserved), and an inside marker inherits the item's
++   white-space, so it wraps under line-break, word-break and overflow-wrap (WPT css-pseudo
++   marker-line-break, marker-word-break). */
 +::marker, ::before::marker, ::after::marker {
 +    unicode-bidi: isolate;
 +    font-variant-numeric: tabular-nums;
-+    white-space: pre;
 +    text-transform: none;
 +    text-indent: 0;
 +}
@@ -625,7 +628,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* nested lists have no top/bottom margins */
  :is(ul, ol, dir, menu, dl) ul,
  :is(ul, ol, dir, menu, dl) ol,
-@@ -832,16 +1216,49 @@
+@@ -832,16 +1219,49 @@
      position: static ! important;
      float: none ! important;
      border: none ! important;
@@ -675,7 +678,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1268,34 @@
+@@ -851,8 +1271,34 @@
      user-select: none;
  }
  
@@ -710,7 +713,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1329,15 @@
+@@ -886,14 +1332,15 @@
      display: none;
  }
  
@@ -729,7 +732,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1366,11 @@
+@@ -922,6 +1369,11 @@
      display: none !important;
  }
  
@@ -741,7 +744,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -992,12 +1441,23 @@
+@@ -992,12 +1444,23 @@
      height: -moz-fit-content;
  }
  
@@ -766,7 +769,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      position: fixed;
      overflow: auto;
      visibility: visible;
-@@ -1017,6 +1477,8 @@
+@@ -1017,6 +1480,8 @@
      display: inline-block;
      vertical-align: text-bottom;
      text-align: start;
@@ -775,7 +778,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  marquee:is([direction="up"], [direction="down"]) {
-@@ -1082,9 +1544,9 @@
+@@ -1082,9 +1547,9 @@
      font-size: unset;
  }
  
@@ -787,7 +790,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  rtc {
      unicode-bidi: isolate;
  }
-@@ -1128,37 +1590,77 @@
+@@ -1128,37 +1593,77 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -20578,7 +20581,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  ) -> Option<ListItemLayout> {
      let node = &doc.nodes[child_id];
  
-@@ -71,17 +147,139 @@
+@@ -71,17 +147,142 @@
          return None;
      };
  
@@ -20704,9 +20707,12 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          ListStylePosition::Outside => {
 -            let mut parley_style = stylo_to_parley::style(child_id, &styles);
 +            let mut parley_style = stylo_to_parley::style(brush, text_style);
-+            // The marker's suffix space takes room (`white-space: pre` in the UA sheet), as a
-+            // no-break space of a `content` string does.
++            // pyro: an outside marker is `white-space: pre` whatever its style says, as Chrome's
++            // style adjuster makes it (the UA sheet leaves inside markers the item's white-space):
++            // its suffix space takes room, as a no-break space of a `content` string does, and
++            // it never wraps.
 +            parley_style.white_space_collapse = parley::WhiteSpaceCollapse::Preserve;
++            parley_style.text_wrap_mode = parley::TextWrapMode::NoWrap;
 +            if tabular_nums {
 +                parley_style.font_features = parley::FontFeatures::List(std::borrow::Cow::Owned(
 +                    stylo_to_parley::with_tabular_nums(&parley_style.font_features),
@@ -20723,7 +20729,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  parley_style.font_family = font_family;
              }
  
-@@ -93,18 +291,34 @@
+@@ -93,18 +294,34 @@
                  true,
                  &parley_style,
              );
@@ -20758,7 +20764,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  
              ListItemLayoutPosition::Outside(Box::new(layout))
          }
-@@ -112,14 +326,343 @@
+@@ -112,14 +329,343 @@
  
      Some(ListItemLayout {
          marker,
@@ -21103,7 +21109,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          CounterStyle::None => return None,
          CounterStyle::Name(name) => match &*name.0 {
              "lower-alpha" => {
-@@ -132,13 +675,34 @@
+@@ -132,13 +678,34 @@
                  build_alpha_marker(index, &mut marker);
                  Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
              }
@@ -21140,7 +21146,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          },
          CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
          CounterStyle::Symbols { symbols, .. } => {
-@@ -149,12 +713,13 @@
+@@ -149,12 +716,13 @@
                  Marker::Char('•')
              } else {
                  // Cycle through symbols based on index: 1st, 2nd, 1st, 2nd, etc.
@@ -21155,7 +21161,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  };
                  Marker::String(marker_str)
              }
-@@ -171,6 +736,36 @@
+@@ -171,6 +739,36 @@
      None
  }
  
@@ -21192,7 +21198,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  const ALPHABET: [char; 26] = [
      'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
      't', 'u', 'v', 'w', 'x', 'y', 'z',
-@@ -204,24 +799,24 @@
+@@ -204,24 +802,24 @@
  
      #[test]
      fn test_marker_for_disc() {
@@ -21224,7 +21230,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          assert_eq!(result_1, Some(Marker::String("a. ".to_string())));
          assert_eq!(result_2, Some(Marker::String("b. ".to_string())));
          assert_eq!(result_extended_1, Some(Marker::String("aa. ".to_string())));
-@@ -230,10 +825,10 @@
+@@ -230,10 +828,10 @@
  
      #[test]
      fn test_marker_for_upper_alpha() {

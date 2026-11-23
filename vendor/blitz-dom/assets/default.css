@@ -1138,10 +1138,13 @@ li {
     text-align: match-parent;
 }
 
+/* pyro: no `white-space: pre`, unlike the CSS Lists sheet: Chrome gives only an outside
+   marker `pre` (layout::list lays it out preserved), and an inside marker inherits the item's
+   white-space, so it wraps under line-break, word-break and overflow-wrap (WPT css-pseudo
+   marker-line-break, marker-word-break). */
 ::marker, ::before::marker, ::after::marker {
     unicode-bidi: isolate;
     font-variant-numeric: tabular-nums;
-    white-space: pre;
     text-transform: none;
     text-indent: 0;
 }

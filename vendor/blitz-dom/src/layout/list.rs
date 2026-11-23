@@ -265,9 +265,12 @@ fn node_list_item_child(
         }
         ListStylePosition::Outside => {
             let mut parley_style = stylo_to_parley::style(brush, text_style);
-            // The marker's suffix space takes room (`white-space: pre` in the UA sheet), as a
-            // no-break space of a `content` string does.
+            // pyro: an outside marker is `white-space: pre` whatever its style says, as Chrome's
+            // style adjuster makes it (the UA sheet leaves inside markers the item's white-space):
+            // its suffix space takes room, as a no-break space of a `content` string does, and
+            // it never wraps.
             parley_style.white_space_collapse = parley::WhiteSpaceCollapse::Preserve;
+            parley_style.text_wrap_mode = parley::TextWrapMode::NoWrap;
             if tabular_nums {
                 parley_style.font_features = parley::FontFeatures::List(std::borrow::Cow::Owned(
                     stylo_to_parley::with_tabular_nums(&parley_style.font_features),

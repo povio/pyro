@@ -149,6 +149,26 @@ fn marker_rules_space_the_marker_text() {
     assert_eq!(blue(&list("li::marker{word-spacing:40px;letter-spacing:20px}", "disc")), blue(&disc));
 }
 
+/// An inside marker takes the item's `white-space` (no UA `pre`, as in Chrome), so it wraps where
+/// `word-break` lets it: a zero-width item puts each letter of its marker on its own line.
+#[test]
+fn an_inside_marker_wraps_like_the_items_text() {
+    let img = render(
+        "<style>li::marker{color:#00f;content:'ab'} li{width:0;word-break:break-all}</style>\
+         <ul style='list-style-position:inside'><li></li></ul>",
+    );
+    let blue_rows: Vec<u32> = (0..img.height)
+        .filter(|&y| {
+            (0..img.width).any(|x| {
+                let i = (y as usize * img.width as usize + x as usize) * 4;
+                img.data[i..i + 3] == [0, 0, 255]
+            })
+        })
+        .collect();
+    // Line height 60px: the second letter is on the second line.
+    assert!(blue_rows.iter().any(|&y| y < 60) && blue_rows.iter().any(|&y| (60..120).contains(&y)), "{blue_rows:?}");
+}
+
 /// An item with only an inside symbol marker has a line for it.
 #[test]
 fn an_empty_item_has_the_line_of_its_inside_symbol_marker() {
