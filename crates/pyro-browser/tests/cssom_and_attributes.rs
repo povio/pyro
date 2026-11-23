@@ -132,24 +132,30 @@ fn request_headers_drop_forbidden_headers_after_construction() {
 
 #[test]
 fn img_srcset_and_sizes_select_the_current_source() {
+    // currentSrc changes in the microtask a relevant mutation queues (HTML "update the image
+    // data", bbd145c13), so each step is read after a microtask checkpoint.
     let (_t, root) = page();
+    eval(
+        &root,
+        "globalThis.img = document.body.appendChild(document.createElement('img'));
+         globalThis.out = []; globalThis.cur = () => img.currentSrc.split('/').pop();
+         img.src = 'fallback.png'; out.push(cur()); 0",
+    );
+    for step in [
+        "img.srcset = 'two.png 2x'",
+        "img.srcset = 'one.png 1x, two.png 2x'",
+        "img.srcset = 'small.png 100w, large.png 200w'; img.sizes = '100px'",
+        "img.sizes = '200px'",
+        "img.sizes = '(max-width: 1px) 100px, calc(100px + 100px)'",
+        "img.sizes = 'bogus, 100px'",
+        "0",
+    ] {
+        eval(&root, &format!("out.push(cur()); {step}; 0"));
+    }
     assert_eq!(
-        eval(
-            &root,
-            "(() => { const img = document.body.appendChild(document.createElement('img'));
-               const name = () => img.currentSrc.split('/').pop();
-               const out = [];
-               img.src = 'fallback.png'; out.push(name());
-               img.srcset = 'two.png 2x'; out.push(name());
-               img.srcset = 'one.png 1x, two.png 2x'; out.push(name());
-               img.srcset = 'small.png 100w, large.png 200w';
-               img.sizes = '100px'; out.push(name());
-               img.sizes = '200px'; out.push(name());
-               img.sizes = '(max-width: 1px) 100px, calc(100px + 100px)'; out.push(name());
-               img.sizes = 'bogus, 100px'; out.push(name());
-               return out.join(); })()"
-        ),
-        "fallback.png,fallback.png,one.png,small.png,large.png,large.png,small.png"
+        eval(&root, "out.join()"),
+        // The first read, in the mutation's task, is still the empty current request.
+        ",fallback.png,fallback.png,one.png,small.png,large.png,large.png,small.png"
     );
 }
 
