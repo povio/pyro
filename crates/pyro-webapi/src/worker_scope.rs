@@ -980,6 +980,14 @@ fn start_module_graph(state: &WorkerLoop, script: &(String, String)) -> bool {
                         s.report_exception(&e);
                     }
                 }
+                // JavaScriptCore throws the evaluation error of a graph without top-level await
+                // synchronously (as for paint worklets, 6f2c7a9ce): the script ran, so the
+                // error is the worker's own, reported, and what waits is delivered.
+                Err(pyro_js::JsError::Thrown(e)) if !crate::paint_worklet::is_link_error(s, e.get(s)) => {
+                    starting.set(false);
+                    s.note_module_evaluation_error(e.get(s));
+                    s.report_exception(&pyro_js::JsError::Thrown(e));
+                }
                 // A link error (or a parse error JSC reports at link time).
                 Err(_) => load_failed(&link_poster, id),
             }
