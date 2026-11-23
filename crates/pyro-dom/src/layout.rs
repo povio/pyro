@@ -3879,6 +3879,11 @@ impl Layout {
         let doc = self.style.document();
         let mut changes = Vec::new();
         for scroller in scrollers {
+            // (A smooth scroll is moving it: its targets are reported when it lands, before its
+            // `scrollend`; the instant write that started it already chose where it snaps.)
+            if self.smooth_targets.contains(&scroller) {
+                continue;
+            }
             let now = self.snapped.get(&scroller).map_or([None, None], |t| t.map(|b| b.map(|(id, _)| id)));
             let before = self.reported_snaps.get(&scroller).copied().unwrap_or([None, None]);
             if now == before {
@@ -4136,7 +4141,11 @@ impl Layout {
                 continue;
             }
             // (An offset of zero is no scroll: a script read or a reveal that found nothing to do.)
-            if self.element_scroll.get(&el).is_some_and(|&o| o != (0, 0)) || !self.initially_snapped.insert(el) {
+            // (Nor one a smooth scroll moves, put back where it was: script scrolled it.)
+            if self.element_scroll.get(&el).is_some_and(|&o| o != (0, 0))
+                || !self.initially_snapped.insert(el)
+                || self.smooth_targets.contains(&Some(el))
+            {
                 continue;
             }
             let (tx, ty) = self.snap_scroll(dom, Some(el), (0, 0), Some(0), Some(0), None);
@@ -4149,6 +4158,10 @@ impl Layout {
             }
         }
         // pyro: the viewport too, when the root's `scroll-snap-type` snaps mandatorily.
+        // (A smooth scroll moving it, put back where it was: script scrolled it.)
+        if self.smooth_targets.contains(&None) {
+            self.viewport_initially_snapped = true;
+        }
         if self.window_scroll == (0, 0) && !self.viewport_initially_snapped {
             let doc = self.style.document();
             let mandatory = dom.document_element(doc).ok().flatten().is_some_and(|root| {

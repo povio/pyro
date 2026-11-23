@@ -922,10 +922,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // The resize steps: child frames resized since the last update (an autofocus listener may
     // have resized one) fire `resize` before the animation frame callbacks.
     pyro_webapi::PageDom::run_pending_frame_resizes();
-    // pyro: running smooth scrolls advance a frame, queueing their scroll events for the
-    // scroll steps that follow (CSSOM View § 4.1).
-    pyro_webapi::smooth_scroll::step(&w.target.page);
-    pyro_webapi::layout_api::flush_pending_scrolls(&w.target.page);
+    // The scroll steps: the initial snap, running smooth scrolls advance a frame (CSSOM View
+    // § 4.1), then the scroll and snap events.
+    pyro_webapi::layout_api::run_frame_scroll_steps(&w.target.page);
     // pyro: the frame determines `content-visibility: auto` relevance anew (CSS Contain 2 § 4.1).
     pyro_webapi::layout_api::content_visibility_frame(&w.target.page);
     // The style update of the frame before this one, when the document changed since and none

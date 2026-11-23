@@ -11336,6 +11336,27 @@ fn animation_events_reach_listeners_added_after_a_scroll_in_the_same_task() {
 }
 
 #[test]
+fn an_interrupted_smooth_scroll_back_to_the_first_snap_area_fires_no_scrollsnapchange() {
+    // The container snaps to its first area at the first animation frame (reported then, before any
+    // listener), and a smooth scroll that a scroll back to it interrupts lands where it started: no
+    // snap change (WPT css-scroll-snap `scrollsnapchange-on-interrupted-scroll`).
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>#c{overflow-y:scroll;height:500px;width:300px;position:absolute;scroll-snap-type:y mandatory}#c>div{scroll-snap-align:start;height:400px;width:200px;position:absolute}</style><div id=c><div id=a1></div><div id=a2 style="top:400px"></div><div id=a3 style="top:800px"></div></div>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))", "as": "frames"}},
+            {"eval": {"expression": "new Promise(r => { window.log = []; c.addEventListener('scrollsnapchange', e => log.push('change ' + e.snapTargetBlock.id)); const back = () => { c.removeEventListener('scroll', back); c.scrollTo({top: 0, behavior: 'smooth'}); }; c.addEventListener('scroll', back); c.addEventListener('scrollend', () => requestAnimationFrame(() => requestAnimationFrame(() => r([c.scrollTop, ...log])))); c.scrollTo({top: 250, behavior: 'smooth'}); })", "as": "end"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["end"], json!([0]), "{r}");
+}
+
+#[test]
 fn nothing_scrolls_into_view_in_content_visibility_hidden_contents() {
     // A geometry query lays out the contents `content-visibility: hidden` skips, but they stay
     // unreachable by scrollIntoView and fragment scrolls (Chromium; WPT css-contain

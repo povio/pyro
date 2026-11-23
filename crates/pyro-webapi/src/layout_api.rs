@@ -483,6 +483,23 @@ pub fn record_remembered_sizes(page: &PageDom) {
     }
 }
 
+/// pyro: the scroll steps of an animation frame of `page` (HTML "update the rendering"): a
+/// mandatory snap container not yet snapped snaps (CSS Scroll Snap 1 § 6.3: at its first layout,
+/// before script that waits a frame scrolls it), running smooth scrolls advance a frame, the
+/// queued scroll events fire, and so do the snap events of snap targets that changed without a
+/// scroll to report them (the initial snap's, as Chromium; CSS Scroll Snap 2 § 5.1).
+pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
+    if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
+        layout.snap_initial_positions(&dom);
+    }
+    crate::smooth_scroll::step(page);
+    flush_pending_scrolls(page);
+    fire_snap_events(page);
+}
+
 pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     let pending = std::mem::take(&mut *page.pending_scrolls.borrow_mut());
     for ((doc, target), end, _) in pending {
