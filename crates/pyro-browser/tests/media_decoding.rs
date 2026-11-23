@@ -85,7 +85,8 @@ fn offline_context_renders_sources_gain_and_automation() {
          ctx.startRendering().then(b => { globalThis.rendered = b; });
          ctx.oncomplete = e => { globalThis.completed = e.renderedBuffer; };",
     );
-    wait_for(&mut thread, page, "globalThis.rendered !== undefined");
+    // The final statechange ("closed") is queued as a task after completion (bae3648d2).
+    wait_for(&mut thread, page, "globalThis.rendered !== undefined && states.length === 3");
     let out = eval(
         &thread,
         page,
