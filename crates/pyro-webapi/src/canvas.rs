@@ -181,8 +181,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let offscreen = s.function("offscreenContext", |s, _this, a| {
         let page = crate::target::page_of(s)?;
         let (w, h) = (a.get(1).to_number()?, a.get(2).to_number()?);
-        let space = Space::parse(&a.get(4).to_string()?).unwrap_or_default();
-        let context = new_context(s, &page, Target::Offscreen, size_u32(w), size_u32(h), space)?;
+        let (space, float16) = context_settings(&a.get(4).to_string()?);
+        let context = new_context(s, &page, Target::Offscreen, size_u32(w), size_u32(h), space, float16)?;
         s.set_hidden(context, OFFSCREEN, a.get(0))?;
         page.canvas_used.set(true);
         // An OffscreenCanvas of `transferControlToOffscreen`: its frames go
@@ -503,9 +503,25 @@ pub struct ContextData {
     /// The `colorSpace` of the context's settings: the space the bitmap's
     /// values are in.
     space: Space,
+    /// pyro: `colorType: "float16"`. The bitmap stays 8-bit, which cannot keep a float canvas's
+    /// values outside its gamut, so such a canvas does not convert pixels between color spaces
+    /// ([`ContextData::pixel_space`]): it keeps the values it is given in whatever space they
+    /// come, which round-trips them as a float canvas does (WPT color-type `*.f16*`).
+    float16: bool,
 }
 
 impl ContextData {
+    /// The space pixels of space `other` are converted to on their way into or out of the
+    /// bitmap: the context's color space, or `other` itself (no conversion) for a float16
+    /// canvas.
+    fn pixel_space(&self, other: Space) -> Space {
+        if self.float16 {
+            other
+        } else {
+            self.space
+        }
+    }
+
     fn reset(&self) {
         *self.state.borrow_mut() = State::new();
         self.stack.borrow_mut().clear();
@@ -627,6 +643,7 @@ fn new_context<'s>(
     w: u32,
     h: u32,
     space: Space,
+    float16: bool,
 ) -> JsResult<Object<'s>> {
     let data = ContextData {
         page: page.clone(),
@@ -637,6 +654,7 @@ fn new_context<'s>(
         surface: Rc::new(RefCell::new(Surface::new(w, h))),
         clean: Rc::new(Cell::new(true)),
         space,
+        float16,
     };
     match target {
         Target::Element(canvas) => {
@@ -683,8 +701,7 @@ pub fn get_context<'s>(
     // CanvasRenderingContext2DSettings, converted member by member in
     // dictionary order on every call (canvas2d.js `contextSettings`); a cached
     // context ignores the result.
-    let space = MODULE.helper(s, page, "contextSettings", &[settings])?.to_string()?;
-    let space = Space::parse(&space).unwrap_or_default();
+    let (space, float16) = context_settings(&MODULE.helper(s, page, "contextSettings", &[settings])?.to_string()?);
     let element = node_value(s, page, Some(canvas))?;
     let element = element.as_object().ok_or(JsError::ContextDestroyed)?;
     if let Some(existing) = s.get_hidden(element, CONTEXT_2D)? {
@@ -694,10 +711,18 @@ pub fn get_context<'s>(
         return Ok(s.null());
     }
     let (w, h) = canvas_size(page, canvas);
-    let context = new_context(s, page, Target::Element(canvas), w, h, space)?;
+    let context = new_context(s, page, Target::Element(canvas), w, h, space, float16)?;
     page.canvas_used.set(true);
     s.set_hidden(element, CONTEXT_2D, context.value())?;
     Ok(context.value())
+}
+
+/// The color space and whether `colorType` is "float16", from canvas2d.js `contextSettings`
+/// ("display-p3", "srgb float16", ...).
+fn context_settings(settings: &str) -> (Space, bool) {
+    let mut words = settings.split(' ');
+    let space = words.next().and_then(Space::parse).unwrap_or_default();
+    (space, words.next() == Some("float16"))
 }
 
 /// The `colorSpace` member of a settings dictionary (`default` when absent);
@@ -1714,7 +1739,8 @@ fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value
     let v = finite_args_from(&a, 1, if n >= 9 { 8 } else { n - 1 })?;
     let Some(v) = v else { return Ok(s.undefined()) };
     // HTML: the source is converted to the canvas's color space.
-    let source = handle_in(source, c.space);
+    let space = c.pixel_space(source.space);
+    let source = handle_in(source, space);
     let (sw, sh) = (f64::from(source.width), f64::from(source.height));
     let (src, dst) = match v.len() {
         2 => (Rect::new(0.0, 0.0, sw, sh), Rect::new(v[0], v[1], v[0] + sw, v[1] + sh)),
@@ -1876,7 +1902,7 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     }
     c.sync_size();
     let mut pixels = c.surface.borrow_mut().get_image_data(x, y, w as u32, h as u32);
-    pyro_dom::canvas_color::convert_pixels(&mut pixels, c.space, space);
+    pyro_dom::canvas_color::convert_pixels(&mut pixels, c.pixel_space(space), space);
     let data = clamped_array(s, &pixels)?;
     module_helper(s, c, "imageDataOf", &[data, s.number(w as f64), s.number(h as f64), s.string(space.name()), format])
 }
@@ -1924,7 +1950,8 @@ fn put_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     // The ImageData's values are converted to the canvas's color space.
     let from = info.get_index(3)?;
     let from = if from.is_string() { Space::parse(&from.to_string()?) } else { None };
-    pyro_dom::canvas_color::convert_pixels(&mut data, from.unwrap_or_default(), c.space);
+    let from = from.unwrap_or_default();
+    pyro_dom::canvas_color::convert_pixels(&mut data, from, c.pixel_space(from));
     c.sync_size();
     c.surface.borrow_mut().put_image_data(
         &data,
@@ -2247,6 +2274,7 @@ impl ContextData {
             let o = s.object();
             o.set_atom("alpha", s.boolean(true))?;
             o.set_atom("colorSpace", s.string(c.space.name()))?;
+            o.set_atom("colorType", s.string(if c.float16 { "float16" } else { "unorm8" }))?;
             o.set_atom("desynchronized", s.boolean(false))?;
             o.set_atom("willReadFrequently", s.boolean(false))?;
             Ok(o.value())
@@ -2716,7 +2744,8 @@ impl ContextData {
                 }
             };
             let Some(source) = source else { return Ok(s.null()) };
-            let handle = handle_object(s, handle_in(source, c.space))?;
+            let space = c.pixel_space(source.space);
+            let handle = handle_object(s, handle_in(source, space))?;
             module_helper(s, c, "pattern", &[s.string(repetition), handle.value()])
         });
 

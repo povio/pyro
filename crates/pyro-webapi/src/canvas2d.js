@@ -630,8 +630,9 @@
   }
   const COLOR_SPACES = ['srgb', 'srgb-linear', 'display-p3', 'display-p3-linear'];
   // CanvasRenderingContext2DSettings converted member by member in
-  // dictionary order (alpha, colorSpace, desynchronized, willReadFrequently);
-  // the color space. A DOMString conversion of a Symbol throws TypeError.
+  // dictionary order (alpha, colorSpace, colorType, desynchronized,
+  // willReadFrequently): the color space, followed by " float16" for
+  // colorType "float16". A DOMString conversion of a Symbol throws TypeError.
   function contextSettings(options) {
     // getContext's options is `any`: a value that is not an object (false, 123, 'test', a
     // Symbol) gives the default settings, as Chromium converts it, not a TypeError (WPT
@@ -641,9 +642,12 @@
     const raw = d.colorSpace;
     const space = raw === undefined ? 'srgb' : `${raw}`;
     if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
+    const rawType = d.colorType;
+    const type = rawType === undefined ? 'unorm8' : `${rawType}`;
+    if (type !== 'unorm8' && type !== 'float16') throw new TypeErrorC(`The provided value '${type}' is not a valid enum value of type CanvasColorType.`);
     void !!d.desynchronized;
     void !!d.willReadFrequently;
-    return space;
+    return type === 'float16' ? `${space} float16` : space;
   }
   function colorSpace(settings) {
     const o = dict(settings);
