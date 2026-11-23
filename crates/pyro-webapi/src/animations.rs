@@ -294,8 +294,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
 /// `report`'s state: `[target, cssId (-1: none), keyframes, startTime,
 /// holdTime, playbackRate, timeline origin, delay, endDelay, fill,
 /// iterationStart, iterations, duration, direction, easing, composite, gone
-/// (1: shows nothing)]`, keyframes as `[offset, easing, composite,
-/// declarations]` each.
+/// (1: shows nothing), pseudo-element, scroll timeline, keyframes replaced (1: script replaced a
+/// CSS run's own keyframes)]`, keyframes as `[offset, easing, composite, declarations]` each.
 fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::ReportedState> {
     let at = |i: u32| o.get_index(i);
     let num = |i: u32| -> JsResult<f64> { at(i)?.to_number() };
@@ -365,6 +365,7 @@ fn reported(s: &Scope<'_>, o: Object<'_>) -> JsResult<crate::animation_frame::Re
                 })
             }
         },
+        replaced_keyframes: !at(19)?.is_nullish() && num(19)? != 0.0,
     })
 }
 

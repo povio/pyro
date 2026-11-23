@@ -1569,8 +1569,9 @@ struct Starting {
     /// Their events, planned after the cancel events of the transitions
     /// they replace.
     events: Vec<Planned>,
-    /// The running transitions whose end value the after-change style no longer has, none
-    /// replacing them: canceled ([`start_transitions_of`]).
+    /// The running transitions canceled ([`start_transitions_of`]): those whose end value the
+    /// after-change style no longer has, none replacing them, and those whose current value
+    /// already is the after-change value.
     ended: FxHashSet<u64>,
 }
 
@@ -1693,6 +1694,17 @@ fn start_transitions_of(
             if crate::animation_frame::animates(state, rules, el, pseudo, longhand) {
                 continue;
             }
+            // Interrupting a running transition of the property: the new one starts from its
+            // current value, and none starts when that already is the after-change value (the
+            // running one is canceled; css-transitions-1 §3).
+            let mut from = before.clone();
+            if let Some((id, sample)) = interrupted_value(state, el, pseudo, longhand, now_ms, style.app_units_per_device_pixel()) {
+                if pyro_dom::animation::same_computed_value(longhand, &sample, now) {
+                    starting.ended.insert(id);
+                    continue;
+                }
+                from = sample;
+            }
             // Started already in this style change event (an element of a
             // revealed root that changed too): that one is replaced.
             let index = starting.timelines.len();
@@ -1735,8 +1747,8 @@ fn start_transitions_of(
                 epoch: Rc::new(Cell::new(true)),
                 progress: Rc::new(Cell::new(0)),
                 easing: transition.easing.clone(),
-                keyframes: pyro_dom::timing::transition_keyframes(before, now, longhand).map(std::sync::Arc::new),
-                styles: Some((before.clone(), now.clone())),
+                keyframes: pyro_dom::timing::transition_keyframes(&from, now, longhand).map(std::sync::Arc::new),
+                styles: Some((from, now.clone())),
                 reversing,
             };
             let (delay, duration) = (delay_ms, duration_ms);
@@ -1817,9 +1829,35 @@ fn reversed_portion(
     } else {
         1.0
     };
-    let portion = pyro_dom::animation::eased_progress(known.easing.as_deref(), progress);
+    let portion = pyro_dom::animation::eased_progress(progress, false, known.easing.as_deref().unwrap_or("ease"));
     let factor = (portion * old_factor + 1.0 - old_factor).abs().min(1.0);
     Some((factor, end.clone()))
+}
+
+/// The running transition of `el`'s `pseudo`'s `longhand` that a new one interrupts and its
+/// current value (`au_per_dev_px`: the engine's device pixel), when that value is the transition's
+/// own ([`crate::animation_frame::interrupted_transition`]).
+fn interrupted_value(
+    state: &State,
+    el: NodeId,
+    pseudo: Option<PseudoElement>,
+    longhand: &str,
+    now_ms: f64,
+    au_per_dev_px: i32,
+) -> Option<(u64, StyleSnapshot)> {
+    let running = state.transitions.try_borrow().ok()?;
+    let known = running.iter().find(|t| {
+        t.el == el && t.pseudo == pseudo && t.name == longhand && t.live.get() && !t.ended.get()
+    })?;
+    let (from, to) = known.styles.as_ref()?;
+    let (portion, original) = crate::animation_frame::interrupted_transition(state, known, now_ms)?;
+    if !original {
+        return None;
+    }
+    match pyro_dom::animation::transition_value(longhand, from, to, portion, false, Some("linear"), au_per_dev_px)? {
+        pyro_dom::animation::TransitionValue::Style(sample) => Some((known.id, sample)),
+        _ => None,
+    }
 }
 
 /// Fires the events due now (as a task of their own when `defer`) and sets a

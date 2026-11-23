@@ -225,6 +225,10 @@ pub(crate) struct Scripted {
     /// Its timeline is a scroll or view progress timeline: times are percentages of it, and its
     /// time is the scroll position's.
     scroll: Option<ScrollRef>,
+    /// A CSS transition's object whose own keyframes script replaced (even with none). Read for
+    /// transitions only: a CSS animation's object without keyframes of its own (on a pseudo-element)
+    /// reports it too.
+    replaced_keyframes: bool,
 }
 
 /// A script animation's scroll or view progress timeline (`ScrollTimeline`, `ViewTimeline`).
@@ -377,6 +381,7 @@ pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>)
                         gone: s.gone,
                         pseudo: s.pseudo,
                         scroll: s.scroll,
+                        replaced_keyframes: s.replaced_keyframes,
                     },
                 );
             }
@@ -413,6 +418,10 @@ pub(crate) struct ReportedState {
     pub gone: bool,
     pub pseudo: Pseudo,
     pub scroll: Option<ScrollRef>,
+    /// A CSS transition's object whose own keyframes script replaced (even with none). Read for
+    /// transitions only: a CSS animation's object without keyframes of its own (on a pseudo-element)
+    /// reports it too.
+    pub replaced_keyframes: bool,
 }
 
 impl ReportedState {
@@ -470,6 +479,31 @@ fn css_animation_timing(t: &crate::animation_events::Timeline) -> Option<(Timing
         },
         &timing.style,
     ))
+}
+
+/// The current portion of running transition `timeline` at page time `now` (its eased progress, in
+/// the whole frames [`Source::sample_timeline`] samples it at, or at the current time and easing of
+/// its `CSSTransition`'s effect once script has one), and whether that effect still animates the
+/// transition's own target and property (script did not replace its keyframes, not even with
+/// none: WPT css-transitions `KeyframeEffect-setKeyframes`): then its sampled value is the
+/// transition's current value, from which a transition interrupting it starts (css-transitions-1
+/// §3). `None`: not in effect.
+pub(crate) fn interrupted_transition(
+    state: &crate::animation_events::State,
+    timeline: &crate::animation_events::Timeline,
+    now: f64,
+) -> Option<(f64, bool)> {
+    let scripted = state.scripted.try_borrow().ok()?;
+    let (sample, easing, original) = if let Some(effect) = scripted.values().find(|effect| effect.css == Some(timeline.id())) {
+        let sample = progress(&effect.timing, effect.current(now)?, effect.rate)?;
+        let original_target = effect.el == Some(timeline.el()) && effect.pseudo == Pseudo::of(timeline.pseudo());
+        let own_keyframes = !effect.replaced_keyframes && effect.keyframes.frames.is_empty();
+        (sample, effect.easing.as_deref().unwrap_or("linear"), original_target && own_keyframes)
+    } else {
+        let local = ((now - timeline.start_ms()) / FRAME_MS).floor().max(0.0) * FRAME_MS;
+        (progress(&transition_timing(timeline), local, 1.0)?, timeline.easing().unwrap_or("ease"), true)
+    };
+    Some((pyro_dom::animation::eased_progress(sample.progress, sample.before, easing), original))
 }
 
 /// A CSS transition's timing (a `CSSTransition`'s effect fills backwards).

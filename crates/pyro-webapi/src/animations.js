@@ -1362,6 +1362,8 @@
       t.delay, t.endDelay, t.fill === 'auto' ? 'none' : t.fill, t.iterationStart, t.iterations,
       iterationDuration(t), t.direction, t.easing.text === 'linear' ? null : t.easing.text, e.composite,
       gone ? 1 : 0, pseudo, scrollRef,
+      // A CSS run's object whose keyframes script replaced (even with none).
+      a.css !== undefined && e.cssFrames == null && !e.cssFrameSource ? 1 : 0,
     ]);
   }
 

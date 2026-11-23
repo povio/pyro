@@ -315,15 +315,8 @@ pub fn transition_value(
     use style::properties::animated_properties::AnimationValue;
     use style::properties::PropertyDeclarationId;
     use style::values::animated::Procedure;
-    use style::values::generics::easing::BeforeFlag;
     let id = crate::stylo::property_id(longhand)?;
-    let eased = match easing_function(easing.unwrap_or("ease")) {
-        Some(f) => {
-            let flag = if before_flag { BeforeFlag::Set } else { BeforeFlag::Unset };
-            f.calculate_output(progress, flag, 1e-7)
-        }
-        None => progress,
-    };
+    let eased = eased_progress(progress, before_flag, easing.unwrap_or("ease"));
     let id = match id.as_shorthand().err()? {
         PropertyDeclarationId::Longhand(id) => id,
         custom => {
@@ -430,14 +423,13 @@ pub fn transition_value(
     Some(TransitionValue::Style(style::servo_arc::Arc::new(style)))
 }
 
-/// `progress` (an effect's iteration progress) through easing `easing` (CSS text; `None`: `ease`),
-/// as a transition's timing function gives it (its "current portion").
-pub fn eased_progress(easing: Option<&str>, progress: f64) -> f64 {
+/// `progress` (an effect's iteration progress, with its before flag `before`) through easing
+/// `easing` (CSS text; not one: linear), as a transition's timing function gives it (its "current
+/// portion").
+pub fn eased_progress(progress: f64, before: bool, easing: &str) -> f64 {
     use style::values::generics::easing::BeforeFlag;
-    match easing_function(easing.unwrap_or("ease")) {
-        Some(f) => f.calculate_output(progress, BeforeFlag::Unset, 1e-7),
-        None => progress,
-    }
+    let flag = if before { BeforeFlag::Set } else { BeforeFlag::Unset };
+    easing_function(easing).map_or(progress, |function| function.calculate_output(progress, flag, 1e-7))
 }
 
 /// A computed easing from CSS text; `None`: not one.
