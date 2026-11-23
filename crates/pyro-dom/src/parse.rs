@@ -228,6 +228,9 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             if dom.input_seen {
                 dom.radios_after_insert(&[n], dom.is_connected_idx(parent));
             }
+            if dom.selectedcontent_seen {
+                dom.selectedcontent_parsed(n);
+            }
             // Elements of defined names were constructed before their
             // insertion (`Sink::settle_custom`): no upgrade candidates here.
             // Tested inline: no custom element, no call.

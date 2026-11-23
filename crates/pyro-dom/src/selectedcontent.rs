@@ -93,6 +93,37 @@ impl Dom {
         self.selectedcontent_updating = was;
     }
 
+    /// Fills `sc`, one of `select`'s selectedcontents, from `option`, the selected one. When the
+    /// select's selectedcontents show another option (or none is recorded), the select's update
+    /// fills them all and records it: a later change that leaves the selected option as it is
+    /// then updates nothing (a list box without a selected option keeps its selectedcontent when
+    /// an unselected option is removed), and none is left showing an option no longer selected.
+    fn fill_one_selectedcontent(&mut self, select: u32, option: u32, sc: u32) {
+        let shown = self.n(select).element().and_then(|e| e.control.as_ref()).and_then(|c| c.selectedcontent_option);
+        if shown == Some(option) {
+            self.fill_selectedcontent(option, sc);
+        } else {
+            self.update_select_selectedcontent(select, true);
+        }
+    }
+
+    /// The parser inserted selectedcontent `sc`: it shows no option yet, which its select records
+    /// unless it has recorded one (the parser runs no post-connection steps; its own step clones
+    /// a selected option into it later, `Dom::maybe_clone_option_into_selectedcontent`).
+    pub(crate) fn selectedcontent_parsed(&mut self, sc: u32) {
+        if !self.is_selectedcontent(sc) {
+            return;
+        }
+        let select = self.selectedcontent_select(sc);
+        if select == NIL {
+            return;
+        }
+        let control = self.n(select).element().and_then(|e| e.control.as_ref());
+        if !control.is_some_and(|c| c.selectedcontent_option.is_some()) {
+            self.note_selectedcontent_option(select, NIL);
+        }
+    }
+
     /// Records the option `select`'s selectedcontents were filled from.
     pub(crate) fn note_selectedcontent_option(&mut self, select: u32, option: u32) {
         if let Some(e) = self.n_mut(select).element_mut() {
@@ -155,7 +186,7 @@ impl Dom {
                     let select = self.selectedcontent_select(i);
                     if select != NIL {
                         if let Some(option) = self.selectedcontent_shown_option(select) {
-                            self.fill_selectedcontent(option, i);
+                            self.fill_one_selectedcontent(select, option, i);
                         }
                     }
                 } else {
@@ -236,7 +267,7 @@ impl Dom {
                 continue;
             }
             if let Some(option) = self.selectedcontent_shown_option(select) {
-                self.fill_selectedcontent(option, sc);
+                self.fill_one_selectedcontent(select, option, sc);
             }
         }
     }
