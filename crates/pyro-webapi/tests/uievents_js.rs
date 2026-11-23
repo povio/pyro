@@ -180,10 +180,12 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
     assert_eq!(eval(r, "i.focus(); document.execCommand('insertText', false, 'a') + ':' + i.value"), "true:ax");
     assert_eq!(eval(r, "ta.focus(); document.execCommand('InsertText', false, 'b') + ':' + ta.value"), "true:by");
     assert_eq!(eval(r, "ce.focus(); document.execCommand('insertText', false, 'c') + ':' + ce.textContent"), "true:c");
+    // A script command in a text control fires input but no beforeinput (Input Events;
+    // 5d77ec73c/bacb54f82, WPT input-events/input-events-exec-command.html). The host still
+    // gets beforeinput.
     assert_eq!(
         eval(r, "log.join(' ')"),
-        "i:beforeinput:a:insertText:true i:input:a:insertText:true \
-         ta:beforeinput:b:insertText:true ta:input:b:insertText:true \
+        "i:input:a:insertText:true ta:input:b:insertText:true \
          ce:beforeinput:c:insertText:true ce:input:c:insertText:true"
     );
     // A canceled beforeinput inserts nothing and fires no input.
@@ -195,28 +197,44 @@ fn exec_command_insert_text_types_into_the_focused_editable() {
         ),
         "true|c|ce:beforeinput:d:insertText:true"
     );
+    // In a control no beforeinput fires, so a listener canceling it stops nothing.
     assert_eq!(
         eval(
             r,
-            "i.addEventListener('beforeinput', ev => ev.preventDefault(), { once: true }); i.focus(); \
-             [document.execCommand('insertText', false, 'd'), i.value].join('|')"
+            "log.length = 0; i.addEventListener('beforeinput', ev => ev.preventDefault(), { once: true }); i.focus(); \
+             [document.execCommand('insertText', false, 'd'), i.value, log.join()].join('|')"
         ),
-        // (The value the first insertion left: "a" went before the default value's "x".)
-        "true|ax"
+        // (After the "a" the first insertion put before the default value's "x".)
+        "true|adx|i:input:d:insertText:true"
     );
-    // A focused text control wins over the selection still inside the host;
-    // with a checkbox focused that selection is the target, as in Chromium.
+    // A focused text control wins over a selection inside the host. (Focusing a text field
+    // moves the document's selection just before it, as Chromium, 581fecf5b, so the
+    // selection is put back in the host after the focus.)
     assert_eq!(
-        eval(r, "i.focus(); document.execCommand('insertText', false, 'e'); i.value + ':' + ce.textContent"),
-        // (Focus keeps the control's selection: after the "a" it typed at the start.)
-        "aex:c"
+        eval(
+            r,
+            "i.focus(); getSelection().collapse(ce, ce.childNodes.length); \
+             document.execCommand('insertText', false, 'e'); i.value + ':' + ce.textContent"
+        ),
+        // (Focus keeps the control's selection: after the "d" it typed.)
+        "adex:c"
     );
+    // With a checkbox focused (which leaves the selection where it is), the selection in the
+    // host is the target, as in Chromium.
     assert_eq!(
         eval(
             r,
             "cb.focus(); [document.execCommand('insertText', false, 'z'), cb.checked, i.value, ce.textContent].join()"
         ),
-        "true,false,aex,cz"
+        "true,false,adex,cz"
+    );
+    // After a text field took focus, the selection is outside the host: no editable target.
+    assert_eq!(
+        eval(
+            r,
+            "i.focus(); cb.focus(); [document.execCommand('insertText', false, 'y'), i.value, ce.textContent].join()"
+        ),
+        "false,adex,cz"
     );
 }
 
