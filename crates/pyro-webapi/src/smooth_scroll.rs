@@ -122,16 +122,51 @@ fn set_smooth_scrolling(page: &PageDom, target: Option<NodeId>, running: bool) {
 /// Another scroll of `target` (`None`: the viewport) of `page`: a smooth scroll running on it
 /// stops where it is, interrupted.
 pub(crate) fn cancel(page: &Rc<PageDom>, target: Option<NodeId>) {
-    let stopped = RUNNING.with(|r| {
+    if let Some(paused) = pause(page, target) {
+        interrupt(page, paused);
+    }
+}
+
+/// A smooth scroll a scroll write took off its box ([`pause`]): the write either lets it go on
+/// ([`resume`]) or cuts it short ([`interrupt`]).
+pub(crate) struct Paused(Animation);
+
+impl Paused {
+    /// Where the smooth scroll was going.
+    pub(crate) fn destination(&self) -> (i32, i32) {
+        self.0.to
+    }
+}
+
+/// A scroll write of `target` (`None`: the viewport) of `page` begins: a smooth scroll running on
+/// it stops where it is (so the write snaps the box as usual) and is returned, not yet settled.
+pub(crate) fn pause(page: &Rc<PageDom>, target: Option<NodeId>) -> Option<Paused> {
+    let animation = RUNNING.with(|r| {
         let mut r = r.borrow_mut();
         let i = r.iter().position(|a| a.is(page, target))?;
         Some(r.remove(i))
-    });
-    if let Some(animation) = stopped {
-        set_smooth_scrolling(page, target, false);
-        for waiter in animation.waiters {
-            settle(page, &waiter, true);
-        }
+    })?;
+    set_smooth_scrolling(page, target, false);
+    Some(Paused(animation))
+}
+
+/// A paused smooth scroll goes on from where it stopped, `waiter` waiting for it too: a smooth
+/// scroll to where it is already going doesn't interrupt it (Chrome; WPT cssom-view
+/// `smooth-scroll-nonstop`).
+pub(crate) fn resume(page: &Rc<PageDom>, paused: Paused, waiter: &Rc<Waiter>) {
+    let mut animation = paused.0;
+    waiter.remaining.set(waiter.remaining.get() + 1);
+    animation.waiters.push(waiter.clone());
+    let target = animation.target;
+    RUNNING.with(|r| r.borrow_mut().push(animation));
+    set_smooth_scrolling(page, target, true);
+    request_frame(page);
+}
+
+/// A paused smooth scroll ends where it stopped, interrupted.
+pub(crate) fn interrupt(page: &Rc<PageDom>, paused: Paused) {
+    for waiter in paused.0.waiters {
+        settle(page, &waiter, true);
     }
 }
 

@@ -155,15 +155,19 @@ pub(crate) enum ScrollBehavior {
 /// returns the boxes it moved. A moved box that scrolls smoothly (`behavior`, else its
 /// `scroll-behavior`) goes back where it was and smooth-scrolls to where the write put it
 /// (snapped there in the write's direction, [`crate::smooth_scroll`]); another fires its scroll
-/// events. Returns what waits for the smooth scrolls it started, if any.
+/// events. A smooth scroll to where the box's running smooth scroll is going lets that one go on
+/// instead. Returns what waits for the smooth scrolls it started or joined, if any.
 pub(crate) fn perform_scroll(
     page: &Rc<PageDom>,
     behavior: ScrollBehavior,
     boxes: &[Option<NodeId>],
     write: impl FnOnce(&pyro_dom::Dom, &mut pyro_dom::layout::Layout) -> Vec<Option<NodeId>>,
 ) -> Option<Rc<crate::smooth_scroll::Waiter>> {
+    let mut paused: Vec<(Option<NodeId>, crate::smooth_scroll::Paused)> = Vec::new();
     for &target in boxes {
-        crate::smooth_scroll::cancel(page, target);
+        if let Some(p) = crate::smooth_scroll::pause(page, target) {
+            paused.push((target, p));
+        }
     }
     let before = (behavior != ScrollBehavior::Instant).then(|| page.layout.borrow().scroll_positions());
     let moved = {
@@ -182,7 +186,16 @@ pub(crate) fn perform_scroll(
             .as_ref()
             .filter(|_| smooth)
             .map(|before| before.iter().find(|(t, _)| *t == target).map_or((0, 0), |&(_, pos)| pos));
+        // A box the caller could not name before the write (`scrollIntoView` moves the ancestors
+        // the write picks) has its running smooth scroll taken off now.
+        let ongoing = match paused.iter().position(|(t, _)| *t == target) {
+            Some(i) => Some(paused.swap_remove(i).1),
+            None => crate::smooth_scroll::pause(page, target),
+        };
         let Some(from) = from else {
+            if let Some(p) = ongoing {
+                crate::smooth_scroll::interrupt(page, p);
+            }
             fire_scroll(page, target);
             continue;
         };
@@ -194,7 +207,21 @@ pub(crate) fn perform_scroll(
             to
         };
         let w = waiter.get_or_insert_with(crate::smooth_scroll::Waiter::new);
-        crate::smooth_scroll::start(page, target, from, to, w);
+        match ongoing {
+            // (A no-op smooth scroll, as script repeating the same `scrollTo()` each frame: the
+            // running one goes on rather than starting over, so it gets there; WPT cssom-view
+            // `smooth-scroll-nonstop`.)
+            Some(p) if p.destination() == to => crate::smooth_scroll::resume(page, p, w),
+            Some(p) => {
+                crate::smooth_scroll::interrupt(page, p);
+                crate::smooth_scroll::start(page, target, from, to, w);
+            }
+            None => crate::smooth_scroll::start(page, target, from, to, w),
+        }
+    }
+    // The boxes the write didn't move: their smooth scrolls stop where they are.
+    for (_, p) in paused {
+        crate::smooth_scroll::interrupt(page, p);
     }
     waiter
 }
