@@ -1656,4 +1656,4 @@ geolocation, install, usermedia, camera, microphone {
 m|math { math-style: compact; }
 m|math[display="block" i] { math-style: normal; }
 m|mfrac { padding-inline: 1px; }
-m|mfrac > * { math-depth: auto-add; math-style: compact; font-size: math; }
+m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }

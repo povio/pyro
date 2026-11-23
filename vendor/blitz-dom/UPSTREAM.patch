@@ -886,7 +886,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +m|math { math-style: compact; }
 +m|math[display="block" i] { math-style: normal; }
 +m|mfrac { padding-inline: 1px; }
-+m|mfrac > * { math-depth: auto-add; math-style: compact; font-size: math; }
++m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }
 diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animation.rs
 new file mode 100644
 --- /dev/null
