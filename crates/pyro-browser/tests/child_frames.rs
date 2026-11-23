@@ -211,7 +211,9 @@ fn frame_indices_and_names_follow_removal_and_queued_navigation_is_stale_safe() 
     let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
-    eval(&root,"globalThis.a=document.createElement('iframe');globalThis.b=document.createElement('iframe');a.srcdoc='<p>unused</p>';document.body.appendChild(a);document.body.appendChild(b);b.name='second';a.remove()");
+    // (`name` before insertion: a container's later name change leaves its child's name, as in
+    // Chrome since ac2cd04f9.)
+    eval(&root,"globalThis.a=document.createElement('iframe');globalThis.b=document.createElement('iframe');a.srcdoc='<p>unused</p>';document.body.appendChild(a);b.name='second';document.body.appendChild(b);a.remove()");
     settle(&mut t);
     assert_eq!(t.browser.frames(page).len(), 2);
     assert_eq!(t.browser.frames(page)[1].name, "second");
