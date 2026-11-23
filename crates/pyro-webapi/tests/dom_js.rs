@@ -1459,6 +1459,15 @@ fn a_windows_document_has_one_getter_from_install_to_teardown() {
         hs.global().set("held", global.get(&hs)).unwrap();
     }
     eval(&holder, "globalThis.early = Object.getOwnPropertyDescriptor(held, 'document').get");
+    // Taking every descriptor makes every lazy interface, and some modules (EventSource, Web
+    // Audio, the Reporting API) capture window members when made that this test window lacks
+    // (timers, queueMicrotask, performance): it gets stand-ins, as a browser window has them.
+    eval(
+        &main,
+        "globalThis.setTimeout = () => 0; globalThis.clearTimeout = () => {}; \
+         globalThis.queueMicrotask = (f) => { Promise.resolve().then(f); }; \
+         if (!('performance' in globalThis)) globalThis.performance = { now: () => 0 };",
+    );
     assert_eq!(
         eval(
             &main,
