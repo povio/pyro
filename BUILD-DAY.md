@@ -161,7 +161,7 @@ Build the JSC archive through patch **0041**:
 - e65964a0b (trusted mousedown/mouseup/click blocked at disabled form controls) must keep excluding fieldset/option/optgroup: d7a9963e6 (click() on disabled fieldset dispatches) and the native-click half of fieldset-event-propagation.tentative depend on it (…be6eb5a1).
 - Build-day cleanup (after the test run): drop the redundant in_unload() early return in nav.rs assign() added by 1c2853fef; 28b24967f already fixes the same root (integrator dedupe, coordinator 2026-11-23).
 - Build-day verify: initial-empty-document/window-open-204.html and window-open-nourl.html (tentative, 0). Diagnosed by …ad4efc0e on an existing binary: 2nd Location href resolved against the popup doc; expected fixed by c4d9a5064 + 0192ae1f2.
-- 1d848465f: an iframe whose navigation fails on the network now commits an opaque error document (Chrome) instead of keeping its previous document; aborted navigations and unknown schemes still commit nothing. Risk medium-low (…ad4efc0e).
+- 1d848465f (…ad4efc0e): any iframe whose navigation fails on the network (incl. redirect to about:) now commits an opaque error page instead of keeping its old document (Chrome). Check e2e pages with failing iframes together with Studio 6d12c0e4b CSP-blocked frames (coordinator 2026-11-23).
 
 Additional watchlist notes:
 - 2026-11-22 coordinator: history navigation rate limit risk removed (cc806a11f adds an off switch used by the Playwright drop-in); R-HTML-25 now 7 (recorded on the row).
