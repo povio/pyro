@@ -982,7 +982,7 @@ fn lay2_compare_points(p: &Page, r: &mut Rng, label: &str, failures: &mut Vec<St
 }
 
 #[test]
-#[ignore = "fails on main (8cd353766) and on round 7 alike: seeds 13, 22 and 33 hit a different box by descent than by scan after mutations (pre-existing hit-test cache bug, tracked as a follow-up); run with --ignored"]
+#[ignore = "fails on main (8cd353766) and on round 7 alike: seeds 13, 22 and 33 hit a different box by descent than by scan after mutations (pre-existing hit-test bug, tracked as a follow-up); run with --ignored"]
 fn random_pages_with_hit_tests_interleaved_with_mutations_match_the_scan() {
     let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u64>().ok());
     let pages = env("PYRO_HIT_LAY2_PAGES").unwrap_or(if cfg!(debug_assertions) { 6 } else { 40 });
