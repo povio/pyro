@@ -1052,9 +1052,11 @@ impl FrameHost {
         // A `document.open()` on the frame's document from now on stops the navigation the
         // attributes start (a javascript: src).
         let stops = nav.stop_count();
+        nav.attributes_queued.set(nav.attributes_queued.get() + 1);
         self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
             if let Some(mut doc) = b.doc_mut(key) {
                 doc.pending_frame_attributes -= 1;
+                doc.nav.attributes_run.set(doc.nav.attributes_run.get() + 1);
             }
             b.process_iframe_attributes(key, &loader, stops);
             b.maybe_fire_load(parent);
@@ -2470,7 +2472,14 @@ impl Browser {
         }
         host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
         host.lazy_approved.borrow_mut().retain(|k| *k != key);
-        let pending = self.doc(key).is_some_and(|d| d.pending_frame_attributes > 0);
+        // A script navigation cancels the processings queued when it was asked for (not one a
+        // `src` set since queued: WPT iframe-loading-lazy-nav-location-replace-set-src). Tasks
+        // run in order, so those have usually run (and deferred into `lazy_frames`, cleared
+        // above) by the time its task navigates.
+        let pending = self.doc(key).is_some_and(|d| match d.nav.lazy_cancel_limit.get() {
+            Some(limit) => d.nav.attributes_run.get() < limit,
+            None => d.pending_frame_attributes > 0,
+        });
         if pending {
             let mut cancelled = host.lazy_cancelled.borrow_mut();
             if !cancelled.contains(&key) {

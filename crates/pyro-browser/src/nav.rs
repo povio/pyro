@@ -238,6 +238,14 @@ pub struct PageNav {
     /// Script navigations queued ([`PageNav::navigate`]) whose task has not
     /// run yet.
     queued_navigations: Rc<Cell<u32>>,
+    /// Iframe attribute processings queued for this frame, and run
+    /// (`FrameHost::queue_attributes`).
+    pub(crate) attributes_queued: Cell<u64>,
+    pub(crate) attributes_run: Cell<u64>,
+    /// While a script navigation's task navigates: the processings queued
+    /// when it was asked for. HTML "navigate" clears the lazy load
+    /// resumption steps then, so a `src` set after it still lazy loads.
+    pub(crate) lazy_cancel_limit: Cell<Option<u64>>,
     /// A traversal to another document's entry under way: the index it left,
     /// the document it left and the page's step before it, restored if no
     /// document commits.
@@ -345,6 +353,9 @@ impl PageNav {
             rate_limit: Cell::new((Instant::now(), 0)),
             joint,
             queued_navigations: Rc::new(Cell::new(0)),
+            attributes_queued: Cell::new(0),
+            attributes_run: Cell::new(0),
+            lazy_cancel_limit: Cell::new(None),
             traversal_from: Cell::new(None),
             container_policy_pending: Cell::new(None),
             container_policy: Cell::new(None),
@@ -791,6 +802,7 @@ impl PageNav {
             (st.doc_seq, st.stops)
         };
         let frame_id = self.frame_id.clone();
+        let attributes_queued = self.attributes_queued.get();
         let queued = self.queued_navigations.clone();
         queued.set(queued.get().saturating_add(1));
         self.sched.post(TaskSource::Navigation, move |b| {
@@ -830,7 +842,15 @@ impl PageNav {
                 referrer: source_referrer.or_else(|| b.doc(page).map(|p| p.main_frame.url.clone())),
                 referrer_policy: None,
             };
-            if let Err(e) = b.navigate_frame_with_handling(page, opts, history) {
+            let nav = b.doc(page).map(|p| p.nav.clone());
+            if let Some(nav) = &nav {
+                nav.lazy_cancel_limit.set(Some(attributes_queued));
+            }
+            let result = b.navigate_frame_with_handling(page, opts, history);
+            if let Some(nav) = &nav {
+                nav.lazy_cancel_limit.set(None);
+            }
+            if let Err(e) = result {
                 b.report_navigation_error(page, &e);
             }
         });
