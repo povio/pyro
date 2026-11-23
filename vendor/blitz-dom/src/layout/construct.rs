@@ -2311,6 +2311,14 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                             layout_children.push(node_id);
                         } else {
                             node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                            // pyro: an inline box is no inline root. One that was built as one (an
+                            // inline-block made inline again) kept the flag, as only a box built as
+                            // a container resets it, and a geometry query would read the box's own
+                            // stale layout in place of its fragments (`Node::is_non_atomic_inline`).
+                            // An initial letter box stays one.
+                            if !node.flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX) {
+                                node.flags.remove(NodeFlags::IS_INLINE_ROOT);
+                            }
                             iter_children_and_pseudos!(nodes[node_id], |child_id| {
                                 crate::util::ensure_stack(|| find_inline_layout_embedded_boxes_recursive(
                                     nodes,
