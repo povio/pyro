@@ -45,6 +45,10 @@ pub(crate) struct Preloads {
     /// and a string compilation's (`eval`, `Function`, a `setTimeout` string). They can only be
     /// attributed to the inline scripts as a whole ([`InlineNonce`]).
     inline_nonce: InlineNonce,
+    /// The nonce of all the document's script elements whose options were taken, inline or
+    /// external ([`InlineNonce`] over both): what a module fetch without a known referrer is
+    /// checked with on an engine that reports no referrers (the system JavaScriptCore).
+    script_nonce: InlineNonce,
     /// `<link rel=prefetch>` fetches by URL.
     prefetches: HashMap<String, PrefetchEntry>,
     /// Compression dictionary fetches waiting for the document's load event.
@@ -177,6 +181,9 @@ impl Preloads {
                 options.nonce = None;
             }
         }
+        if let Some(nonce) = &options.nonce {
+            self.script_nonce.note(nonce);
+        }
         if self.module_options.len() < MAX_MODULE_OPTIONS || self.module_options.contains_key(&key) {
             self.module_options.insert(key, options);
         }
@@ -185,6 +192,12 @@ impl Preloads {
     /// An inline script of the document with `nonce` ran ([`InlineNonce::note`]).
     pub(crate) fn note_inline_nonce(&mut self, nonce: &str) {
         self.inline_nonce.note(nonce);
+        self.script_nonce.note(nonce);
+    }
+
+    /// The nonce of the document's script elements, inline and external ([`InlineNonce::get`]).
+    pub(crate) fn script_nonce(&self) -> Option<&str> {
+        self.script_nonce.get()
     }
 
     /// The nonce of the document's inline scripts ([`InlineNonce::get`]).

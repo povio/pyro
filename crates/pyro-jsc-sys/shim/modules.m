@@ -220,6 +220,7 @@ JSStringRef pyro_jsc_module_fetch_referrer(JSContextRef ctx) {
     (void)ctx;
     return NULL;
 }
+int pyro_jsc_module_fetch_referrer_available(void) { return 0; }
 
 // The module script phases are the source-built JavaScriptCore's (patch 0037).
 int pyro_jsc_module_phases_available(void) { return 0; }

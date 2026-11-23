@@ -156,6 +156,15 @@ JSStringRef pyro_jsc_module_fetch_referrer(JSContextRef ctx) {
 #endif
 }
 
+// 1 when pyro_jsc_module_fetch_referrer reports referrers (patch 0039).
+int pyro_jsc_module_fetch_referrer_available(void) {
+#ifdef PYRO_JSC_MODULE_FETCH_REFERRER
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 // `type` is 0 (JavaScript) or 1 (JSON).
 JSValueRef pyro_jsc_module_script_create(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *url,
                                        size_t url_len, int type, JSStringRef *error) {

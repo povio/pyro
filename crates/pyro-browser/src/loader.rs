@@ -2736,7 +2736,16 @@ impl Browser {
         registered: bool,
         options: &crate::preload::ModuleFetchOptions,
     ) -> Option<String> {
-        let referrer = referrer?;
+        let Some(referrer) = referrer else {
+            // An engine that reports no referrers (the system JavaScriptCore, without patch 0039)
+            // gives `None` for every import, also for one a script element's code makes: it is
+            // attributed to the document's script elements as a whole, with their nonce while
+            // they all had the same one (fail closed otherwise), as an inline script's is.
+            if pyro_js::module_fetch_referrers_available() {
+                return None;
+            }
+            return self.doc(page)?.preloads.script_nonce().map(str::to_owned);
+        };
         if registered {
             return options.nonce.clone();
         }
