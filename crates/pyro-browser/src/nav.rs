@@ -758,10 +758,13 @@ impl PageNav {
             let Some(source) = pyro_webapi::trusted_types::javascript_url_script(&scope, &page_dom, &source) else { return };
             // HTML "evaluate a javascript: URL": a string result replaces the document
             // (a load the container sees, as for an iframe's src).
+            let started = page_dom.navigation_started();
             let Some(html) = crate::frames::javascript_url_result(&scope, &source) else { return };
             drop(scope);
-            // The script may have navigated or removed the frame meanwhile.
-            if b.doc(key).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
+            // The script may have navigated or removed the frame meanwhile: a navigation it
+            // started (a form's `submit()`, `location`) wins over the result (HTML "navigate to a
+            // javascript: URL": the navigable's ongoing navigation changed).
+            if page_dom.navigation_started() == started && b.doc(key).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
                 let _ = b.begin_javascript_result(key, html);
             }
         });

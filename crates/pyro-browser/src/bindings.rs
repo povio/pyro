@@ -1098,11 +1098,17 @@ fn run_navigation(b: &mut Browser, task: NavigationTask, stops: Option<u64>, mut
         }
         let target = named.unwrap_or(page);
         let realm = b.doc(target).and_then(|p| p.main_frame.main_realm().cloned());
+        let target_dom = b.doc(target).and_then(|p| p.main_frame.page_dom.clone());
+        let started = target_dom.as_ref().map(|d| d.navigation_started());
         let result = realm
             .as_ref()
             .and_then(|realm| realm.scope().ok())
             .and_then(|scope| crate::frames::javascript_url_result(&scope, &source));
-        if let Some(html) = result {
+        // A navigation the script started in the target (a form's `submit()`, `location`) wins
+        // over the string result (HTML "navigate to a javascript: URL": the navigable's ongoing
+        // navigation changed; WPT jsurl-form-submit, anchor-jsurl-form-submit).
+        let navigated = target_dom.as_ref().map(|d| d.navigation_started()) != started;
+        if let Some(html) = result.filter(|_| !navigated) {
             let _ = b.begin_javascript_result(target, html);
         }
         return;
