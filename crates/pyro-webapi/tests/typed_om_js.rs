@@ -151,7 +151,9 @@ fn attribute_style_map_reads_and_writes_the_inline_style() {
     assert_eq!(eval(r, "d.attributeStyleMap.set('height', '3em'); d.style.height"), "3em");
     assert_eq!(eval(r, "try { d.attributeStyleMap.set('height', CSS.deg(1)) } catch (e) { e.name }"), "TypeError");
     assert_eq!(eval(r, "[d.attributeStyleMap.has('width'), d.attributeStyleMap.delete('width'), d.attributeStyleMap.has('width')].join()"), "true,,false");
-    assert_eq!(eval(r, "[...d.attributeStyleMap.keys()].join()"), "height,margin-top");
+    // Inline style order (css-typed-om the-stylepropertymap/inline/iterable.tentative.html):
+    // `height` was set after `margin-top`, so it comes last.
+    assert_eq!(eval(r, "[...d.attributeStyleMap.keys()].join()"), "margin-top,height");
     assert_eq!(eval(r, "d.attributeStyleMap.clear(); d.attributeStyleMap.size"), "0");
 }
 
