@@ -884,7 +884,8 @@ pub fn collection<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, kind: Collect
     }
     let page = page_rc(s)?;
     let options = kind == CollectionKind::Options;
-    let controls = kind == CollectionKind::FormElements;
+    // HTML: form.elements is an HTMLFormControlsCollection, fieldset.elements a plain HTMLCollection.
+    let controls = kind == CollectionKind::FormElements && !is_fieldset(&page.dom.borrow(), root);
     let kind = match kind {
         // DOM "list of elements with qualified name": whether HTML elements
         // are matched against the lowercased name is decided here, by the
