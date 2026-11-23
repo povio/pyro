@@ -4,7 +4,7 @@ Documentation only. **Do not build until the user authorizes it** (standing ZERO
 
 - Batch branch: `origin/integration/round7-batch-1000` at `9317be985` (when this file was generated).
 - Ledger: `origin/ledger/round7-fix-queue` (`ledger.jsonl`, `estimates.json`).
-- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1227**; Studio **504**; MacBook worker variants (separate column) 220.
+- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1228**; Studio **504**; MacBook worker variants (separate column) 220.
 - Every figure is an estimate from source reading. Tentative pages are counted only where the owner gave a figure or the coordinator ruled.
 
 ## 1. JSC archive
