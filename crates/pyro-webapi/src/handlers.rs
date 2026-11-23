@@ -319,16 +319,24 @@ pub(crate) fn compile_handler<'s>(
     // OrdinaryFunctionCreate: no binding of its own name, so `onclick = null` in the body still
     // reaches the element's property).
     let source = format!("({{\"on{ty}\": function ({}) {{\n{body}\n}}}})[\"on{ty}\"]", params.join(", "));
+    // The outer function is evaluated as a script without a URL, laid out as the Function
+    // constructor would lay it out (the same lines; unnamed, so it binds no `anonymous`). Through the constructor it would take
+    // the source origin of whatever script is running when the handler is first read (an inline
+    // script's: the document URL), and its `import()` would carry that script's nonce. An event
+    // handler's script has default fetch options and the document's base URL (HTML "getting the
+    // current value of the event handler"); a script without a URL resolves its imports against
+    // the document base URL and passes down no nonce (WPT string-compilation-nonce-*).
+    let outer = |code: &str| -> JsResult<pyro_js::Object<'s>> {
+        let outer = s.eval(&format!("(function (\n) {{\n{code}\n}})"), None, 1)?;
+        outer.as_object().ok_or_else(|| pyro_js::JsError::type_error("event handler did not compile to a function"))
+    };
     let Some(element) = element else {
-        let outer = s.compile_exempt(|| ctor.construct(&[s.string(&format!("return {source}"))]))?;
-        return outer.call(None, &[]);
+        return outer(&format!("return {source}"))?.call(None, &[]);
     };
     // The scopes are the outer function's: `with` on the document, the form owner (an empty object
     // for none) and the element, read from `this` (not an identifier, so no scope can shadow it,
     // as `arguments` could: a form control or image named "arguments").
-    let outer = s.compile_exempt(|| {
-        ctor.construct(&[s.string(&format!("with(this[0]){{with(this[1]){{with(this[2]){{return {source}}}}}}}"))])
-    })?;
+    let outer = outer(&format!("with(this[0]){{with(this[1]){{with(this[2]){{return {source}}}}}}}"))?;
     let wrap = |id: Option<pyro_dom::NodeId>| -> JsResult<Value<'s>> {
         match id {
             Some(id) => Ok(crate::node::wrap_node(s, page, id)?.value()),
