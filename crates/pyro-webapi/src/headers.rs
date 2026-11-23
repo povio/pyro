@@ -97,6 +97,15 @@ impl HeadersData {
             _ => crate::fetch::extract_mime(&values.join(", ")),
         }
     }
+    /// The `Content-Type` value as Chrome (157-159) gives a Body's Blob its type, for a
+    /// response from the network and a script's Request or Response alike: the combined value,
+    /// ASCII-lowercased and unparsed; "" with a byte outside 0x20..0x7E (as a Blob's type).
+    pub(crate) fn content_type_lowercase(&self) -> Option<String> {
+        let list = self.0.borrow();
+        let values = list.values.get("content-type")?;
+        let value = values.join(", ").to_ascii_lowercase();
+        Some(if value.bytes().all(|b| (0x20..=0x7e).contains(&b)) { value } else { String::new() })
+    }
     /// Whether a (lowercase) header name is present.
     pub(crate) fn contains(&self, name: &str) -> bool {
         self.0.borrow().values.contains_key(name)

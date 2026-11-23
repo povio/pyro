@@ -199,17 +199,21 @@ pub(crate) fn package_body<'s>(
     bytes: Vec<u8>,
     headers: Option<&headers::HeadersData>,
 ) -> JsResult<Value<'s>> {
-    let mime = headers.and_then(headers::HeadersData::mime_type);
     match kind {
         ReadKind::Blob => {
-            let mime = mime.map(|m| m.to_string()).unwrap_or_default();
+            // Fetch "package data" gives the Blob the serialized extracted MIME type; Chrome
+            // gives it the raw Content-Type value, lowercased (FormData/URLSearchParams bodies'
+            // `boundary=` spacing and `UTF-8` stay as written). Chrome's: WPT
+            // fetch/api/response/response-consume.html passes in Chrome 158, whose
+            // fetch/content-type/response.window.html fails the rows that want the extraction.
+            let mime = headers.and_then(headers::HeadersData::content_type_lowercase).unwrap_or_default();
             Ok(s.wrap::<crate::file::Blob>(
                 crate::file::BlobData { bytes: Bytes::from(bytes), mime, file: None },
                 None,
             )?
             .value())
         }
-        ReadKind::FormData => match mime {
+        ReadKind::FormData => match headers.and_then(headers::HeadersData::mime_type) {
             Some(m) if m.matches("application", "x-www-form-urlencoded") => {
                 crate::form_data::from_urlencoded(s, &bytes)
             }

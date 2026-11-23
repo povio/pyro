@@ -380,7 +380,9 @@ fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<V
         return Ok(promise);
     }
     let headers = if matches!(kind, ReadKind::Blob | ReadKind::FormData) {
-        hidden(s, data, HEADERS).ok().and_then(|v| s.unwrap::<Headers>(v).map(|h| h.clone()))
+        // As they are now: a Blob's type and FormData's MIME type come from the headers when the
+        // method is called (Chrome), not from changes made while the body is read.
+        hidden(s, data, HEADERS).ok().and_then(|v| s.unwrap::<Headers>(v).map(|h| HeadersData::from_pairs(h.pairs(), true)))
     } else {
         None
     };
