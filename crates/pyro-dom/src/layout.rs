@@ -4638,6 +4638,9 @@ impl Layout {
     /// container's scroll event followed by the document's viewport event.
     /// Vertical start reveal and horizontal nearest-edge reveal; not full CSS alignment.
     pub fn scroll_into_view_targets(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        if self.in_hidden_contents(dom, el) {
+            return Vec::new();
+        }
         self.force_content_visibility(dom, el);
         if !self.is_visible(dom, el) {
             return Vec::new();
@@ -4721,7 +4724,7 @@ impl Layout {
     /// CSS Overflow 5 § 2.1: `el` is the current scroll target of each scroll container it was
     /// scrolled into view in (and of the viewport).
     fn set_scroll_target(&mut self, dom: &Dom, el: NodeId) {
-        if !self.is_visible(dom, el) {
+        if !self.is_visible(dom, el) || self.in_hidden_contents(dom, el) {
             return;
         }
         use style::values::specified::box_::Overflow as O;
@@ -4836,6 +4839,28 @@ impl Layout {
             .map(|(value, basis)| value.to_used_value(basis).map_or(0.0, Au::to_f64_px))
     }
 
+    /// pyro: whether `el` is in contents a `content-visibility: hidden` ancestor skips. The engine
+    /// displays them, and a geometry query lays them out (unpainted, `layout_box`), but nothing
+    /// scrolls to them: Chromium does not activate a hidden lock for scrollIntoView or a fragment
+    /// (CSS Contain 2 § 4.1; WPT css-contain `content-visibility-056`, `-083`, `-084`).
+    /// (Read from the engine's styles up the flat tree, deriving nothing: an action's reveal
+    /// asks it at every click.)
+    fn in_hidden_contents(&self, dom: &Dom, el: NodeId) -> bool {
+        use style::values::specified::box_::ContentVisibility;
+        let mut cur = flat_parent_element(dom, el);
+        while let Some(node) = cur {
+            if self
+                .style
+                .stylo_style(dom, node)
+                .is_some_and(|s| s.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden)
+            {
+                return true;
+            }
+            cur = flat_parent_element(dom, node);
+        }
+        false
+    }
+
     fn scroll_into_view_offset_targets(
         &mut self,
         dom: &Dom,
@@ -4843,6 +4868,9 @@ impl Layout {
         alignment: RevealAlignment,
         script: bool,
     ) -> Vec<ScrollTarget> {
+        if self.in_hidden_contents(dom, el) {
+            return Vec::new();
+        }
         self.force_content_visibility(dom, el);
         if !self.is_visible(dom, el) {
             return Vec::new();

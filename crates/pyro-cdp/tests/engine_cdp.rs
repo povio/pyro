@@ -11251,6 +11251,34 @@ fn animations_start_after_text_only_changes_from_a_class_or_inline_style() {
 }
 
 #[test]
+fn nothing_scrolls_into_view_in_content_visibility_hidden_contents() {
+    // A geometry query lays out the contents `content-visibility: hidden` skips, but they stay
+    // unreachable by scrollIntoView and fragment scrolls (Chromium; WPT css-contain
+    // `content-visibility-056`, `-083`, `-084`); the hidden element itself is scrolled to.
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body style="margin:0"><div style="height:3000px"></div><div id=c style="content-visibility:hidden;width:150px;height:150px"><div id=t style="width:100px;height:100px"></div></div><div style="height:3000px"></div><div id=v style="height:10px"></div>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"steps": [
+            {"eval": {"expression": "t.getBoundingClientRect(); t.scrollIntoView(); scrollY", "as": "script"}},
+            {"eval": {"expression": "location.hash = 't'; null"}},
+            {"eval": {"expression": "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(scrollY))))", "as": "fragment"}},
+            {"eval": {"expression": "location.hash = 'v'; null"}},
+            {"eval": {"expression": "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(scrollY > 3000))))", "as": "control"}},
+            {"eval": {"expression": "scrollTo(0, 0); c.scrollIntoView(); scrollY > 0", "as": "container"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["script"], json!(0), "{r}");
+    assert_eq!(r["result"]["reads"]["fragment"], json!(0), "{r}");
+    assert_eq!(r["result"]["reads"]["control"], json!(true), "a fragment scroll to a visible element moves: {r}");
+    assert_eq!(r["result"]["reads"]["container"], json!(true), "{r}");
+}
+
+#[test]
 fn custom_property_changes_reach_descendants_that_skip_the_cascade() {
     // A custom property set on a container: descendants that use no var() take
     // the new value without cascading again, yet read it, and var() users and
