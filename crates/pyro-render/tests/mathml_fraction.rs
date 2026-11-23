@@ -1,6 +1,6 @@
 //! MathML fractions (`layout::math` in blitz-dom): an ordinary `<mfrac>` (two element children)
 //! stacks its numerator over its denominator, both centred, with a bar between them painted in
-//! its colour; `linethickness="0"` draws none and brings them closer. An `mfrac` that is not
+//! its colour; `linethickness="0"` draws none. An `mfrac` that is not
 //! ordinary, and an HTML element of that name, keep their children on one line. Assertions are
 //! structural (Chrome's numbers depend on its math font): who is above whom, centring, the 1px
 //! padding beside the bar, and relative gaps.
@@ -110,20 +110,28 @@ fn an_mfrac_stacks_its_numerator_over_its_denominator() {
 }
 
 #[test]
-fn a_ruleless_fraction_is_tighter_and_both_sit_on_the_math_axis() {
+fn a_ruleless_fraction_keeps_the_ruled_gap_without_a_math_table() {
+    // The test font has no MATH table, so both gaps are Chromium's fallbacks: with a bar, a bar's
+    // thickness on each side of it plus the bar (3 bars), without one the stack gap (3 bars).
+    // Chrome 157, `<math style="font-family:monospace">` at 20px: 2.625 and 2.633px inline,
+    // 6.141 and 6.148px in display math. (With a math font, e.g. Chrome's default STIX Two Math,
+    // the ruleless gap is the tighter one; the test fonts have none.) The two gaps are equal by
+    // construction, so this does not tell the paths apart: the stack path's shifts are checked by
+    // `layout::math`'s unit test `shifts_without_a_math_table`, the missing bar by the paint test.
     let gap = |attrs: &str| {
         let r = rects(&format!("<p><math><mfrac id=f {attrs}><mn id=n>1</mn><mn id=d>2</mn></mfrac></math></p>"), &["n", "d"]);
         r[1][1] - bottom(&r[0])
     };
     let (ruled, ruleless, thick) = (gap(""), gap("linethickness=0"), gap("linethickness=10px"));
-    assert!(ruleless < ruled, "{ruleless} < {ruled}");
+    assert!((ruleless - ruled).abs() < 0.5, "{ruleless} = {ruled}");
+    assert!(ruled > 0.0, "{ruled}");
     // A thicker bar pushes them apart by its extra thickness.
     assert!(thick > ruled + 5.0, "{thick} > {ruled} + 5");
 }
 
 #[test]
 fn compact_fractions_shrink_their_children_and_display_ones_do_not() {
-    // `mfrac > * { math-depth: auto-add; font-size: math }`: a script level down (0.71) in inline
+    // `m|mfrac > m|* { math-depth: auto-add; font-size: math }`: a script level down (0.71) in inline
     // math, none in display math (`math-style: normal`).
     let width = |math: &str| {
         rects(&format!("<p>{math}<mfrac><mn id=n>1111</mn><mn>2</mn></mfrac></math></p>"), &["n"])[0][2]
