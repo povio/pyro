@@ -2126,8 +2126,12 @@ impl Writer<'_> {
                     let css = image.to_css_string();
                     let url = css.trim().strip_prefix("url(").and_then(|u| u.strip_suffix(')')).unwrap_or("");
                     let url = url.trim().trim_matches(|c| c == '"' || c == '\'');
-                    let this_document = !self.root.tree().base_url.is_empty()
-                        && crate::document::without_fragment(url) == self.root.tree().base_url;
+                    // (Since local URLs resolve against the document (3e799f754), a fragment-only
+                    // `url(#m)` serializes as written, not against the base URL; WPT css-masking
+                    // `mask-image-3i`, a `<mask>` of another `<svg>` beside an image layer.)
+                    let this_document = url.starts_with('#')
+                        || !self.root.tree().base_url.is_empty()
+                            && crate::document::without_fragment(url) == self.root.tree().base_url;
                     url_fragment(&css)
                         .filter(|fragment| !loaded && this_document && is_document_svg_mask(self.root, fragment))
                 }) {

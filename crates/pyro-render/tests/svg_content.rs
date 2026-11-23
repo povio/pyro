@@ -192,6 +192,20 @@ fn a_css_mask_image_reference_masks_an_svg_element() {
     assert_eq!(px(&img, 75, 50), WHITE);
 }
 
+/// A `url(#m)` layer naming a `<mask>` of another `<svg>`, beside a second layer, is that mask
+/// (WPT css-masking `mask-image-3i`): the fragment-only URL is of this document.
+#[test]
+fn a_css_mask_layer_names_a_mask_of_another_svg() {
+    let img = render(
+        r##"<style>#r { mask-image: url(#m), linear-gradient(transparent, transparent) }</style>
+        <svg width="0" height="0"><mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="100">
+          <rect width="50" height="100" fill="white"/></mask></svg>
+        <svg width="200" height="100"><rect id="r" width="100" height="100" fill="#0000ff"/></svg>"##,
+    );
+    assert_eq!(px(&img, 25, 50), BLUE);
+    assert_eq!(px(&img, 75, 50), WHITE);
+}
+
 #[test]
 fn a_clip_path_attribute_takes_a_basic_shape() {
     // The presentation attribute is the CSS property: a shape and a box.
