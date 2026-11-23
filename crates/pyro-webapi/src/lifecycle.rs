@@ -79,6 +79,20 @@ fn autofocus_top_page(page: &Rc<PageDom>, el: NodeId) -> Option<Rc<PageDom>> {
     (!page.is_nested_frame() && owner.origin_key() == page.origin_key()).then(|| page.clone())
 }
 
+/// The last of HTML's dialog focusing steps: the dialog's top-level document (when same origin)
+/// empties its autofocus candidates and has its autofocus processed.
+pub(crate) fn dialog_processed_autofocus(page: &Rc<PageDom>, dialog: NodeId) {
+    // Candidates already inserted are among those emptied (a child frame's page leaves its
+    // insertions to the top-level page's flush).
+    if !page.is_nested_frame() {
+        collect_autofocus_candidates(page);
+    }
+    if let Some(top) = autofocus_top_page(page, dialog) {
+        top.autofocus_candidates.borrow_mut().clear();
+        top.autofocus_processed.set(true);
+    }
+}
+
 /// HTML's autofocus insertion steps for the elements inserted since the last flush: each
 /// moves to the end of its top-level document's candidates, unless that document already
 /// processed autofocus.

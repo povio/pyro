@@ -932,11 +932,18 @@ fn closed_by(dom: &Dom, el: NodeId) -> ClosedBy {
 }
 
 /// HTML "dialog focusing steps": the autofocus delegate, else the first
-/// focusable descendant being rendered, else the dialog itself.
+/// focusable descendant being rendered, else the dialog itself. Then the
+/// top-level document's autofocus is processed: no later `autofocus`
+/// element takes focus (WPT the-dialog-element/dialog-focusing-steps-prevent-autofocus).
 fn dialog_focusing_steps(page: &Rc<PageDom>, dialog: NodeId) {
     if page.dom.borrow().is_inert(dialog) {
         return;
     }
+    focus_dialog_target(page, dialog);
+    crate::lifecycle::dialog_processed_autofocus(page, dialog);
+}
+
+fn focus_dialog_target(page: &Rc<PageDom>, dialog: NodeId) {
     if let Some(control) = autofocus_delegate(page, dialog) {
         if control != dialog {
             crate::input::focus_element(page, control);
