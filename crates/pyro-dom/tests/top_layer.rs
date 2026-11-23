@@ -170,8 +170,10 @@ fn a_modal_dialog_in_a_shadow_tree_does_not_block_its_hosts() {
 /// css/selectors `hover-toplayer-001`, `focus-within-toplayer-001`, `toplayer-transition-001`).
 #[test]
 fn user_action_pseudo_classes_stop_at_the_top_layer() {
+    // A no-quirks document: in quirks mode a bare `:hover` matches links only (the
+    // :active and :hover quirk).
     let (dom, d) = doc(
-        "<div id=outer><dialog id=dlg><div id=pop popover=manual><input id=inp></div></dialog></div>",
+        "<!doctype html><div id=outer><dialog id=dlg><div id=pop popover=manual><input id=inp></div></dialog></div>",
     );
     let mut dom = dom.borrow_mut();
     let (outer, dlg, pop, inp) =
