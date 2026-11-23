@@ -633,7 +633,10 @@
   // dictionary order (alpha, colorSpace, desynchronized, willReadFrequently);
   // the color space. A DOMString conversion of a Symbol throws TypeError.
   function contextSettings(options) {
-    const d = dict(options);
+    // getContext's options is `any`: a value that is not an object (false, 123, 'test', a
+    // Symbol) gives the default settings, as Chromium converts it, not a TypeError (WPT
+    // 2d.canvas.context.extraargs.{create,cache}).
+    const d = options !== null && (typeof options === 'object' || typeof options === 'function') ? options : {};
     void !!d.alpha;
     const raw = d.colorSpace;
     const space = raw === undefined ? 'srgb' : `${raw}`;
