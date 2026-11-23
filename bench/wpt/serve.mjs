@@ -37,6 +37,13 @@ const HANDLERS = {
     // The page was closed or navigated before the answer was due.
     res.on('close', () => clearTimeout(timer));
   },
+  // dom/nodes/encoding.py: a document whose <meta charset> is the `label` parameter (Document-characterSet-
+  // normalization-*). Served as a file it was the handler's source, without a charset: windows-1252 for every label.
+  'dom/nodes/encoding.py': (u, res) => {
+    const label = (u.searchParams.get('label') ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><meta charset="${label}">`);
+  },
 };
 
 // Paths wptserve routes to another file (tools/serve/serve.py): the idlharness pages load the WebIDL parser by this

@@ -275,8 +275,10 @@ the shard split. Results do not depend on the WPT checkout's own `testharnessrep
 
 `serve.mjs` is a static server, so discovery leaves out the pages that name a wptserve Python handler (`.py`). It
 cannot see a handler that only a page's support file requests, and a handler served as a file answers at once with
-its source. The one such handler in the subset is answered as wptserve answers it (`HANDLERS` in `serve.mjs`):
-`xhr/resources/delay.py`, which the XHR timeout pages and `xhr/abort-during-navigation.window.html` wait on.
+its source. The two such handlers in the subset are answered as wptserve answers them (`HANDLERS` in `serve.mjs`):
+`xhr/resources/delay.py`, which the XHR timeout pages and `xhr/abort-during-navigation.window.html` wait on, and
+`dom/nodes/encoding.py`, the `<meta charset>` documents of `Document-characterSet-normalization-*` (through
+`characterset-helper.js`).
 
 Static files take wptserve's pipes (`?pipe=`, `pipes.mjs`; `bun test bench/wpt/pipes.test.mjs`): `trickle`,
 `header`, `status`, `slice` and `gzip`, not `sub`. `trickle` is the one pages in the subset depend on:
@@ -683,7 +685,8 @@ pages, reftests 27,802 -> 28,219, crashtests 2,031 -> 2,076 (with `--dirs all`).
 - `testharnessreport.js` is ours (a file alias in the generated config), as wptrunner serves its own.
 - It needs Python 3.9+ with `tools/serve/requirements.txt` (today `cryptography`): `fetch-wpt.sh --venv DIR` makes
   `DIR/.git/pyro-venv`, which `wptserve.mjs` uses (`WPT_PYTHON` overrides). macOS's `/usr/bin/python3` is 3.9.6.
-- It covers what `serve.mjs` does by hand: `/resources/WebIDLParser.js`, `?pipe=trickle`, `xhr/resources/delay.py`.
+- It covers what `serve.mjs` does by hand: `/resources/WebIDLParser.js`, `?pipe=trickle`, `xhr/resources/delay.py`,
+  `dom/nodes/encoding.py`.
 - Pages load from the origin their name asks for, as wptrunner loads them: `.https.` and `.serviceworker.` over https,
   `.www.` from the www subdomain.
 - https through wptserve needed a pyro-net fix (2026-11-17): its responses carry no `Content-Length` and end when
