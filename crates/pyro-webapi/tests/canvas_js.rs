@@ -326,6 +326,18 @@ fn canvas_interfaces_are_lazy_globals() {
     assert_eq!(eval(r, "window.ImageData = 1; ImageData"), "1");
 }
 
+/// The test window has no timers: a `setTimeout` that queues its callbacks for
+/// [`run_tasks`], set before the canvas module is made (it captures the global's).
+const TASKS: &str = "globalThis.__tasks = []; globalThis.setTimeout = (f) => __tasks.push(f);";
+
+/// Runs the callbacks queued with the [`TASKS`] `setTimeout`, each a task with its
+/// microtask checkpoint, until none is left.
+fn run_tasks(r: &Realm) {
+    while eval(r, "__tasks.length") != "0" {
+        eval(r, "__tasks.shift()()");
+    }
+}
+
 /// `px(x, y)`: the pixel at (x, y) as "r,g,b,a".
 const PX: &str = "var c = document.getElementById('c'), x = c.getContext('2d'); \
     var px = (X, Y, ctx) => Array.from((ctx || x).getImageData(X, Y, 1, 1).data).join();";
@@ -483,6 +495,7 @@ fn image_data_round_trips_and_draw_image() {
 fn canvas_encodes_png_jpeg_and_blobs() {
     let e = env(CANVAS);
     let r = &e.main;
+    eval(r, TASKS);
     eval(r, PX);
     assert_eq!(eval(r, "c.toDataURL().slice(0, 22)"), "data:image/png;base64,");
     assert_eq!(eval(r, "c.toDataURL('image/jpeg', 0.5).slice(0, 23)"), "data:image/jpeg;base64,");
@@ -498,6 +511,10 @@ fn canvas_encodes_png_jpeg_and_blobs() {
         r,
         "window.decoded = 'pending'; createImageBitmap(blob).then(bm => { var y = document.createElement('canvas').getContext('2d'); y.drawImage(bm, 0, 0); decoded = [bm.width, bm.height, px(0, 0, y), px(1, 0, y)].join('|'); }, err => decoded = 'ERR ' + err);",
     );
+    // createImageBitmap resolves in a task (HTML; 01b84fe5d, WPT
+    // createImageBitmap-resolves-in-task.any.html).
+    assert_eq!(eval(r, "decoded"), "pending");
+    run_tasks(r);
     assert_eq!(eval(r, "decoded"), "100|50|255,0,0,255|0,0,0,0");
 }
 
@@ -505,6 +522,7 @@ fn canvas_encodes_png_jpeg_and_blobs() {
 fn offscreen_canvas_and_image_bitmaps() {
     let e = env(CANVAS);
     let r = &e.main;
+    eval(r, TASKS);
     eval(r, PX);
     assert_eq!(
         eval(r, "var o = new OffscreenCanvas(4, 4); var ox = o.getContext('2d'); [ox === o.getContext('2d'), ox.canvas === o, ox instanceof OffscreenCanvasRenderingContext2D, x instanceof OffscreenCanvasRenderingContext2D, o.getContext('webgl')].join()"),
@@ -534,6 +552,7 @@ fn offscreen_canvas_and_image_bitmaps() {
         r,
         "window.made = null; x.fillStyle = 'blue'; x.fillRect(20, 20, 2, 2); createImageBitmap(c, 20, 20, 2, 2, {resizeWidth: 4, resizeHeight: 4, resizeQuality: 'pixelated'}).then(b => { x.clearRect(0, 0, 100, 50); x.drawImage(b, 0, 0); made = [b.width, b.height, px(3, 3), px(4, 4)].join('|'); });",
     );
+    run_tasks(r);
     assert_eq!(eval(r, "made"), "4|4|0,0,255,255|0,0,0,0");
     eval(r, "window.rejected = null; createImageBitmap({}).catch(e => rejected = e.name);");
     assert_eq!(eval(r, "rejected"), "TypeError");
