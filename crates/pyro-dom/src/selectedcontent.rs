@@ -205,7 +205,7 @@ impl Dom {
         let mut p = parent;
         while p != NIL {
             match self.html_local(p).map(|l| &**l) {
-                Some("datalist" | "hr" | "option") => return NIL,
+                Some("datalist" | "hr" | "option" | "selectedcontent") => return NIL,
                 Some("optgroup") => {
                     if optgroup {
                         return NIL;

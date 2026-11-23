@@ -1208,7 +1208,7 @@ impl Dom {
             parent
         } else {
             match self.html_local(parent).map(|l| &**l) {
-                Some("datalist" | "hr" | "option") => return,
+                Some("datalist" | "hr" | "option" | "selectedcontent") => return,
                 _ => self.subtree_ancestor_select(parent),
             }
         };
@@ -1279,7 +1279,7 @@ impl Dom {
         let mut p = self.n(node).parent;
         while p != NIL {
             match self.html_local(p).map(|l| &**l) {
-                Some("datalist" | "hr" | "option") => return NIL,
+                Some("datalist" | "hr" | "option" | "selectedcontent") => return NIL,
                 Some("optgroup") => {
                     if optgroup {
                         return NIL;
@@ -1315,7 +1315,7 @@ impl Dom {
         let mut p = self.n(opt).parent;
         while p != NIL {
             match self.html_local(p).map(|l| &**l) {
-                Some("datalist" | "hr" | "option") => return NIL,
+                Some("datalist" | "hr" | "option" | "selectedcontent") => return NIL,
                 Some("optgroup") => {
                     if optgroup {
                         return NIL;
@@ -1402,7 +1402,8 @@ impl Dom {
                     out.push(cur);
                     false
                 }
-                Some("hr" | "datalist" | "select") => false,
+                // Nor in a selectedcontent: its contents copy an option, they are not the select's.
+                Some("hr" | "datalist" | "select" | "selectedcontent") => false,
                 Some("optgroup") => {
                     if optgroup != NIL {
                         false
