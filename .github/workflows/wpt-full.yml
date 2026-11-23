@@ -7,8 +7,8 @@ name: WPT full
 # plan). A pull request that changes this workflow or the wptserve glue runs the `smoke` job only: a handful of pages
 # through wptserve on lp-m1, which also checks the runner's Python.
 #
-# Seven balanced shards run up to four at a time on the expanded self-hosted macOS pool. Override the default with
-# the repository variable WPT_FULL_PARALLEL (1..7), or choose it on a manual run. This is job concurrency, not the
+# Eight balanced shards (5 testharness with worker variants, 2 reftest, 1 crashtest) run up to four at a time on the expanded self-hosted macOS pool. Override the default with
+# the repository variable WPT_FULL_PARALLEL (1..8), or choose it on a manual run. This is job concurrency, not the
 # per-shard page-worker count: provision CPU/memory caps per physical machine when several runners share a Mac.
 # Full runs still queue without cancelling an in-progress report; PR smoke runs cancel only their older smoke run.
 
@@ -32,7 +32,7 @@ on:
       parallel:
         description: Maximum simultaneous shards (respect physical-machine CPU and memory budgets)
         type: choice
-        options: ['1', '2', '4', '7']
+        options: ['1', '2', '4', '8']
         default: '4'
       runner-args:
         description: Extra gate.mjs run arguments for every shard (e.g. --dirs css/css-grid to measure one directory)
@@ -86,10 +86,11 @@ jobs:
           KINDS: ${{ inputs.kinds || 'all' }}
           PARALLEL: ${{ inputs.parallel || vars.WPT_FULL_PARALLEL || '4' }}
         run: |
-          case "$PARALLEL" in [1-7]) ;; *) echo "WPT_FULL_PARALLEL must be an integer from 1 to 7" >&2; exit 1 ;; esac
+          case "$PARALLEL" in [1-8]) ;; *) echo "WPT_FULL_PARALLEL must be an integer from 1 to 8" >&2; exit 1 ;; esac
           echo "parallel=$PARALLEL" >> "$GITHUB_OUTPUT"
-          # The shards: 4 testharness, 2 reftest, 1 crashtest (about 8 minutes each), or one kind's.
-          matrix=$(jq -cn --arg k "$KINDS" '[range(4) | {kind: "testharness", shard: ., of: 4}] + [range(2) | {kind: "reftest", shard: ., of: 2}]
+          # The shards: 5 testharness (window pages and, with --worker-globals, their worker variants), 2 reftest,
+          # 1 crashtest (about 8-12 minutes each), or one kind's.
+          matrix=$(jq -cn --arg k "$KINDS" '[range(5) | {kind: "testharness", shard: ., of: 5}] + [range(2) | {kind: "reftest", shard: ., of: 2}]
             + [{kind: "crashtest", shard: 0, of: 1}] | map(select($k == "all" or .kind == $k))')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=wpt-browser&per_page=100" \
@@ -199,14 +200,18 @@ jobs:
           # --slow-jobs: the pages that timed out in the baseline run to their full timeout on that many more workers,
           # nearly idle, beside the others (run.mjs SLOW_JOBS): in a testharness shard they were 1.7% of the pages and
           # 47% of the page time, holding 16 workers for 45 s each.
-          jobs=${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)}; slow=8
-          if [ ${{ matrix.kind }} = testharness ]; then jobs=16; slow=32; fi
+          jobs=${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)}; slow=8; workers=()
+          # --worker-globals: the classic dedicated, shared and service worker variants WPT generates (.any.worker.html
+          # and the like, ~4,300 pages at a421f2fe, ~13% more testharness page time); the summaries and the status
+          # site count them on a line of their own (lib.mjs isWorkerVariant), so the window pages' numbers stay
+          # comparable with runs before them.
+          if [ ${{ matrix.kind }} = testharness ]; then jobs=16; slow=32; workers=(--worker-globals); fi
           # The committed whole-suite baseline (bench/wpt/full/<kind>/) orders and balances the pages by duration, and
           # only the pages whose result differs from it run again (in run 44235329366, 8,875 of a shard's 8,892
           # reruns of every page matched their first run). For a WPT revision it does not cover, gate.mjs runs every
           # page twice (bootstrap).
           bun bench/wpt/gate.mjs run --kind ${{ matrix.kind }} "${extra[@]}" --wpt "${WPT_DIR:-wpt-full}" --bin browser/pyro \
-            --server wptserve --testdriver --dirs all --baseline bench/wpt/full/${{ matrix.kind }}/ --full --jobs "$jobs" \
+            --server wptserve --testdriver "${workers[@]}" --dirs all --baseline bench/wpt/full/${{ matrix.kind }}/ --full --jobs "$jobs" \
             --slow-jobs "$slow" --shard ${{ matrix.shard }}/${{ matrix.of }} "${rerun[@]}" --out "$OUT" --no-check
           gzip -9 "$OUT"
       # Twice: GitHub's artifact service timed out on reftest shard 0's upload in the first nightly (5 attempts in
@@ -260,8 +265,11 @@ jobs:
             for (const f of fs.readdirSync("shards")) {
               const kind = f.split("-")[2];
               const r = JSON.parse(fs.readFileSync("shards/" + f));
-              const k = (by[kind] ??= { pages: 0, complete: 0, allPass: 0, subtests: 0, pass: 0, wallS: 0, restarts: 0 });
+              const at = (name) => (by[name] ??= { pages: 0, complete: 0, allPass: 0, subtests: 0, pass: 0, wallS: 0, restarts: 0 });
+              const k = at(kind);
               for (const t of r.results) {
+                // Worker variants (--worker-globals) on a line of their own (bench/wpt/lib.mjs isWorkerVariant).
+                const k = kind === "testharness" && /\.(worker|sharedworker|serviceworker)(-module)?\.html(\?|$)/.test(t.url) ? at("testharness in workers") : at(kind);
                 const s = t.subtests ?? [];
                 k.pages++; k.subtests += s.length; k.pass += s.filter((x) => x.status === "Pass").length;
                 if (t.status === "complete") k.complete++;
@@ -291,6 +299,10 @@ jobs:
             # Tonight's results replace each page's entry (--replace --match .): a page that matched the committed
             # baseline ran once (two agreeing observations, last commit and tonight), one that differed ran three times
             # and takes their consensus. A lost shard keeps its pages' committed entries (--missing-shards).
+            # Pages the committed baseline does not have yet (the worker variants on the first --worker-globals run)
+            # ran three times and enter with their consensus: commit this artifact to accept them,
+            # `gh run download <run> -n wpt-full-baselines -D bench/wpt/full` (the gates protect nothing of the whole
+            # suite, so nothing fails before that; until then each run reruns them twice).
             bun bench/wpt/gate.mjs update --kind $k --missing-shards --replace --match . --baseline bench/wpt/full/$k/ \
               --out full-baselines/$k/ shards/wpt-full-$k-*.json
           done

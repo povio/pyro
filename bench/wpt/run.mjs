@@ -28,7 +28,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, discover, discoverReftests, plan, shard, readBaselineAt, readJson } from './lib.mjs';
-import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
+import { REFTEST_CONTEXT, reftestEnv, runReftest, testharnessEnv } from './reftest.mjs';
 import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
 import { BROWSER_HOST, startProxy, startWptserve } from './wptserve.mjs';
 import { installTestdriver } from './testdriver.mjs';
@@ -205,7 +205,7 @@ async function startBrowser() {
   child = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'error', '--load-resources', 'stylesheet', '--load-resources', 'iframe', '--cdp-max-connections', '64'],
     // PYRO_PARENT_PID: the browser exits with this runner however it ends. It runs in a process group of its own, so a
     // runner killed with its CI job (a cancelled or superseded run) left it serving on the self-hosted machine.
-    { stdio: KIND === 'crashtest' ? ['ignore', 'ignore', 'pipe'] : 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), ...(RENDERS ? reftestEnv(WPT) : ahemEnv(WPT)), ...(KIND === 'crashtest' ? { RUST_BACKTRACE: process.env.RUST_BACKTRACE ?? '0' } : {}) } });
+    { stdio: KIND === 'crashtest' ? ['ignore', 'ignore', 'pipe'] : 'ignore', detached: true, env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', PYRO_PARENT_PID: String(process.pid), ...(RENDERS ? reftestEnv(WPT) : testharnessEnv(WPT)), ...(KIND === 'crashtest' ? { RUST_BACKTRACE: process.env.RUST_BACKTRACE ?? '0' } : {}) } });
   if (child.stderr) watchStderr(child.stderr);
   for (let i = 0; i < 1000; i++) {
     try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); if (r.ok) { endpoint = `http://127.0.0.1:${port}`; return; } } catch {}
