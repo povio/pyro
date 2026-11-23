@@ -309,7 +309,7 @@ fn repeated_frame_removal_releases_native_realms_without_retaining_the_page() {
 }
 
 #[test]
-fn failed_child_fetch_releases_parent_load_without_destroying_initial_document() {
+fn failed_child_fetch_releases_parent_load_and_commits_the_error_document() {
     let mut t = crate::browser_thread().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert("https://example.test/main", "text/html", "<iframe src='/missing'></iframe>", Duration::ZERO);
@@ -323,7 +323,9 @@ fn failed_child_fetch_releases_parent_load_without_destroying_initial_document()
     assert_eq!(frames.len(), 2);
     assert!(frames.iter().all(|f| f.loaded));
     let child = frames.iter().find(|f| f.parent.is_some()).unwrap();
-    assert_eq!(child.url, "about:blank");
+    // As Chrome, the failed navigation commits the error document (1d848465f; WPT
+    // navigating-across-documents/redirect-to-about).
+    assert_eq!(child.url, "chrome-error://chromewebdata/");
     assert!(events
         .0
         .borrow()

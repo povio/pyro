@@ -48,11 +48,12 @@ fn about_blank_may_change_its_query_and_fragment_only() {
             ("blob:null/x", "SecurityError"),
         ],
     );
-    // pushState too, and the new URL is the document's.
+    // pushState too, and the new URL is the document's. On the initial about:blank document it
+    // replaces the entry (HTML "URL and history update steps"; WPT iframe-src-204-pushState-replaceState).
     let realm = thread.browser.page(page).unwrap().main_frame.main_realm().unwrap().clone();
     let scope = realm.scope().unwrap();
     let pushed = scope.eval("history.pushState({n: 1}, '', '#x'); location.href + ' ' + history.length", None, 1);
-    assert_eq!(pushed.unwrap().to_string().unwrap(), "about:blank#x 2");
+    assert_eq!(pushed.unwrap().to_string().unwrap(), "about:blank#x 1");
     thread.run_until_idle(Some(Instant::now() + Duration::from_millis(100)));
 }
 
