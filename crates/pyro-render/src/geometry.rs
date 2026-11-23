@@ -813,7 +813,7 @@ impl Geometry {
         let mut ancestor = id;
         while ancestor != table {
             let node = doc.get_node(ancestor)?;
-            if transformed(node) {
+            if transformed_table_part(node) {
                 return None;
             }
             ancestor = node.parent?;
@@ -833,7 +833,9 @@ impl Geometry {
         let columns = (info.columns.positions.first()?.start as f64, info.columns.positions.last()?.end as f64);
         let (transform, fixed) = self.transform(doc, table)?;
         let base = table_gutter_base(doc, table);
-        Some(row_track_rect(doc, (row.start as f64, row.end as f64), columns, id, base, transform, fixed))
+        // (Moved by its own relative offset and its group's, as its cells are.)
+        let offset = part_offset(doc, id);
+        Some(row_track_rect(doc, (row.start as f64, row.end as f64), columns, id, base, offset, transform, fixed))
     }
 
     fn column_track_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
@@ -885,7 +887,7 @@ impl Geometry {
         let table = table_of(doc, group)?;
         self.row_tracks_apply(doc, table)?;
         let node = doc.get_node(group)?;
-        if transformed(node) || node.parent != Some(table) {
+        if transformed_table_part(node) || node.parent != Some(table) {
             return None;
         }
         let element = doc.get_node(table)?.element_data()?;
@@ -899,6 +901,7 @@ impl Geometry {
         let (transform, fixed) = self.transform(doc, table)?;
         let base = table_gutter_base(doc, table);
         let unit = |v: f64| v.signum() * ((v.abs() * 64.0 + 0.01).trunc() / 64.0);
+        let group_offset = part_offset(doc, group);
         let mut rows = context.rows.iter().enumerate().filter(|(_, row)| row.group == Some(group)).peekable();
         let mut acc: Option<Rect> = None;
         let mut add = |b: LayoutBox| {
@@ -918,11 +921,12 @@ impl Geometry {
             // as any other child.
             if rows.peek().is_some_and(|(_, row)| row.node_id == c) {
                 let (index, _) = rows.next()?;
-                if transformed(child) {
+                if transformed_table_part(child) {
                     return None;
                 }
                 let track = info.rows.positions.get(index)?;
-                add(row_track_rect(doc, (track.start as f64, track.end as f64), columns, c, base, transform, fixed));
+                // (The group's box moves with the group's relative offset alone, not its rows'.)
+                add(row_track_rect(doc, (track.start as f64, track.end as f64), columns, c, base, group_offset, transform, fixed));
             } else if let Some(b) = self.element_box(doc, c) {
                 add(b);
             }
@@ -1703,21 +1707,43 @@ fn transformed(node: &blitz_dom::Node) -> bool {
     node.transform().as_deref().is_some_and(|transform| *transform != Affine::IDENTITY)
 }
 
+/// How far relative positioning moves table part `id` (`BaseDocument::table_part_offset`).
+fn part_offset(doc: &BaseDocument, id: NodeId) -> kurbo::Vec2 {
+    doc.table_part_offset(id).map_or(kurbo::Vec2::ZERO, |o| kurbo::Vec2::new(o.x as f64, o.y as f64))
+}
+
+/// Whether a row or row group is transformed: a transform the node carries, or, since Blitz
+/// transforms a table part's cells rather than the part itself (its `Node::transform` stays
+/// empty), one its style gives it. Such a part's box is its cells' union, as they were moved; a
+/// relative offset alone shifts its track's box instead (`BaseDocument::table_part_offset`).
+fn transformed_table_part(node: &blitz_dom::Node) -> bool {
+    use style::values::computed::{Rotate, Scale, Translate};
+    transformed(node)
+        || node.primary_styles().is_some_and(|style| {
+            let b = style.get_box();
+            !b.transform.0.is_empty()
+                || !matches!(b.translate, Translate::None)
+                || !matches!(b.rotate, Rotate::None)
+                || !matches!(b.scale, Scale::None)
+        })
+}
+
 /// The box of row `id` from its grid track `(start, end)` across the
 /// table's columns `(left, right)` (see [`Geometry::row_track_box`]), grown
-/// by the collapsed-border gutters (`base`, see [`table_gutter_base`]) and
-/// placed by the table's `transform`.
+/// by the collapsed-border gutters (`base`, see [`table_gutter_base`]), moved by
+/// the row's and its group's relative offsets, and placed by the table's `transform`.
 fn row_track_rect(
     doc: &BaseDocument,
     track: (f64, f64),
     columns: (f64, f64),
     id: NodeId,
     base: Option<(f64, f64)>,
+    offset: kurbo::Vec2,
     transform: Affine,
     fixed: bool,
 ) -> LayoutBox {
     let (gx, top, bottom) = base.map(|b| row_gutters(doc, Some(id), b)).unwrap_or((0.0, 0.0, 0.0));
-    let local = Rect::new(columns.0 - gx, track.0 - top, columns.1 + gx, track.1 + bottom);
+    let local = Rect::new(columns.0 - gx, track.0 - top, columns.1 + gx, track.1 + bottom) + offset;
     LayoutBox::from_rect(transform.transform_rect_bbox(local), fixed)
 }
 

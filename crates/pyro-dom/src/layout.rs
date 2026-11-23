@@ -2807,6 +2807,11 @@ impl Layout {
             if !self_hit && (!svg_viewport || self.computed(dom, el).inert) {
                 continue;
             }
+            // A table column or column group has a box (its tracks, for getBoundingClientRect) but
+            // is never hit: Chrome's elementFromPoint answers the cell or table under it.
+            if self.style.computed(dom, el).is_some_and(|c| c.box_kind == crate::style::BoxKind::TableColumn) {
+                continue;
+            }
             // A box split into fragments (columns) is hit in one of them: its rect is their union.
             if geometry.has_fragments {
                 let fragments = geometry

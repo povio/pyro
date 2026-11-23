@@ -37527,7 +37527,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +                if !group_changes(doc, ctx, child, false, &mut changes) {
 +                    return None;
 +                }
-+            }
+             }
 +            DisplayInside::TableRow => {
 +                let Some(at) = ctx.rows.iter().position(|row| row.node_id == child) else { return None };
 +                match row_changed(doc, child) {
@@ -37535,7 +37535,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +                    Some(false) => {}
 +                    None => return None,
 +                }
-             }
++            }
 +            DisplayInside::Flow | DisplayInside::FlowRoot | DisplayInside::Flex | DisplayInside::Grid if !own => {}
 +            _ => return None,
          }
@@ -37783,8 +37783,8 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +                        paint.splice(ca..cb, ctx.cells[ca..ca + new_cells].iter().map(|cell| cell.node_id));
 +                    }
 +                }
-+            }
-+        }
+             }
+         }
 +        if widths_kept {
 +            // Measured again; the column widths stand while the cells keep their columns, or the
 +            // rows were appended.
@@ -37815,7 +37815,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            for cell in &mut ctx.cells[at..at + row.cell_count as usize] {
 +                cell.row = r as u16;
 +                cell.style.grid_row.start = style_helpers::line(r as i16 + 1);
-             }
++            }
 +            if let Some(placement) = ctx.placement.as_mut() {
 +                for area in &mut placement.areas[at..at + row.cell_count as usize] {
 +                    area.height = taffy::Line { start: r as u16, end: r as u16 + 1 };
@@ -37858,7 +37858,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        let (ca, cb) = cell_range(&ctx.cells, span.clone());
 +        for at in ca..cb.min(first_moved) {
 +            doc.nodes[ctx.cells[at].node_id].layout_data_mut().table_cell_index = at as u32;
-         }
++        }
      }
  
 -    style.grid_template_columns = column_sizes.into_iter().map(|dim| dim.into()).collect();
@@ -37930,11 +37930,11 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +                if area.0 < area.2 && area.1 < area.3 {
 +                    offer_box(edges, doc, cell.node_id, area, CELL_PRIORITY, &range);
 +                }
-             }
++            }
 +            offer_rows_groups_and_table(edges, doc, table, &ctx.rows, &ctx.columns, around, &range);
 +            for cell in &ctx.cells[ca..cb] {
 +                clear_spanned(edges, cell_area(cell, ncols), &range);
-+            }
+             }
 +            touched.push((ca, cb));
          }
 -        BorderCollapse::Collapse => first_cell_border
@@ -39089,7 +39089,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      fn set_detailed_grid_info(
          &mut self,
          _node_id: taffy::NodeId,
-@@ -851,3 +4196,659 @@
+@@ -851,3 +4196,676 @@
          *self.ctx.computed_grid_info.borrow_mut() = Some(detailed_grid_info);
      }
  }
@@ -39561,6 +39561,23 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +}
 +
 +impl BaseDocument {
++    /// pyro: how far relative positioning moves table row or row group `node_id` (and, with it,
++    /// its cells): its own offset and, for a row, its row group's ([`table_part_relative_offset`]).
++    /// `None` when neither is relatively positioned.
++    pub fn table_part_offset(&self, node_id: NodeId) -> Option<taffy::Point<f32>> {
++        let table = table_of(self, node_id);
++        // (A row's group as Blitz moves its cells: its parent when that is a row group.)
++        let group = row_group_of(self, node_id);
++        let mut offset: Option<taffy::Point<f32>> = None;
++        for (part, parent) in [(Some(node_id), group.or(table)), (group, table)] {
++            let Some(own) = part.and_then(|part| table_part_relative_offset(self, part, parent)) else { continue };
++            let sum = offset.get_or_insert(taffy::Point::ZERO);
++            sum.x += own.x;
++            sum.y += own.y;
++        }
++        offset
++    }
++
 +    /// pyro: the row group and row (`[group, row]`) of table cell `cell_id`, from its table's
 +    /// context; `None` for a node that is no cell of a table laid out.
 +    pub fn table_cell_parts(&self, cell_id: NodeId) -> Option<[Option<NodeId>; 2]> {
