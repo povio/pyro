@@ -133,7 +133,8 @@ impl Dom {
     /// Only direct text children supply a clean textarea's default value.
     /// Tracked when the textarea has value ranges or a selection script set.
     pub(crate) fn tracked_textarea_value(&self, parent: u32) -> Option<(NodeId, String)> {
-        if self.html_local(parent) != Some(&local_name!("textarea")) {
+        // A node without a parent (a fresh clone, a removed node) is in no textarea.
+        if parent == NIL || self.html_local(parent) != Some(&local_name!("textarea")) {
             return None;
         }
         let el = self.n(parent).element()?;
