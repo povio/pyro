@@ -432,6 +432,37 @@ impl Browser {
             Some(selected) if !lazy && !restart => selected,
             _ => bindings.dom.borrow().picture_candidate_auto(node, &bindings.viewport(), auto_width),
         };
+        // HTML "update the image data" step 6: an image in the list of available images is
+        // taken at once, before any lazy loading (WPT
+        // the-img-element/image-loading-lazy-use-list-of-available-images.html).
+        let deferred_now = deferred_now && {
+            let url = {
+                let dom = bindings.dom.borrow();
+                let selected = candidate.as_ref().map(|c| c.url.clone());
+                selected
+                    .or_else(|| dom.get_attribute(node, "src").ok().flatten().map(str::to_owned))
+                    .filter(|v| !v.trim().is_empty())
+                    .and_then(|v| {
+                        let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| base.clone());
+                        url::Url::parse(&base).ok()?.join(v.trim()).ok()
+                    })
+                    .map(String::from)
+            };
+            let one_x = candidate.as_ref().is_none_or(|c| c.density == 1.0);
+            let available = url.filter(|_| one_x).is_some_and(|url| {
+                let policy = crate::loader::element_referrer_policy(&bindings.dom.borrow(), node)
+                    .unwrap_or_else(|| bindings.referrer_policy());
+                let cors = image_cors(&bindings.dom.borrow(), node);
+                bindings.available_html_image(&url, cors, policy, url::Url::parse(&base).ok()).is_some()
+            });
+            if available {
+                // Taken now: a source selected while it was deferred is no longer waiting.
+                if let Some(mut p) = self.doc_mut(page) {
+                    p.images.deferred.remove(&node);
+                }
+            }
+            !available
+        };
         if deferred_now {
             // Not rendered and lazy: select now, fetch once rendered (or eager).
             bindings.dom.borrow_mut().set_image_source(node, candidate.as_ref().map(|c| c.url.as_str()));
