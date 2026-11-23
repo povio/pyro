@@ -5336,12 +5336,15 @@ fn keydown_default_action_retargets_within_document_and_stops_after_owner_switch
 #[test]
 fn focus_transition_change_reentry_and_disposal_stop_remaining_events() {
     let e = env("<body><input id=a><input id=b><input id=c></body>");
+    eval(&e.main, "const a=document.getElementById('a'),b=document.getElementById('b'),c=document.getElementById('c'); a.focus()");
+    // A user edit: change on blur needs one, a value script set is not
+    // enough (as Chrome; WPT forms/the-input-element/change-set-value.html).
+    input::insert_text(&e.page, "changed");
     assert_eq!(
         eval(
             &e.main,
             r#"
-        const a=document.getElementById('a'),b=document.getElementById('b'),c=document.getElementById('c');
-        globalThis.events=[];a.focus();a.value='changed';
+        globalThis.events=[];
         a.onchange=()=>{events.push('change');c.focus()};a.onblur=()=>events.push('stale blur');
         b.onfocus=()=>events.push('stale focus');b.focus();document.activeElement.id+'|'+events.join()
     "#
