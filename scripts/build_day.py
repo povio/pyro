@@ -18,6 +18,8 @@ w(f"- **Freeze SHA (last content commit): `{FREEZE}`** — every credited commit
 w(f"- Batch branch tip when generated: `{TIP}`. Commits after the freeze are build-only: the evidence removal 3047718ed "
   "and `fix(build):` compile fixes for batch commits; no new features. Build the tip, not the bare freeze SHA "
   "(the freeze SHA alone still contains the evidence files and does not compile).")
+w("- **Built SHA (census binary): `538e00c58`** = freeze + 3047718ed + 16 `fix(build)` commits (incl. 469bc73df workers, "
+  "d4a9a35de iframe re-navigation, 538e00c58 editing). Binary 9317be985 was discarded (worker-start regression).")
 w("- Expected pages per root and per page (for hit rates after the census): `expected-pages.jsonl` "
   "(url, dir, machine, window/worker variant, roots, commits, firm/tentative) and `expected-roots.jsonl` "
   "(per root: commits, owner, window firm/tentative, worker variants, owner figure, unlisted owner counts); "
