@@ -2204,6 +2204,49 @@ fn serve_attachment(
     (address, server)
 }
 
+/// A CSP-sandboxed page (`sandbox allow-scripts`) that navigates itself to a `blob:` or `data:`
+/// document it made keeps its policies and sandbox there (the document has the policy container
+/// of the one that navigated to it): its origin stays opaque and, without allow-popups,
+/// window.open returns null.
+#[test]
+fn a_csp_sandboxed_page_keeps_its_sandbox_in_local_scheme_documents() {
+    for kind in ["blob", "data"] {
+        let body: &'static [u8] = Box::leak(
+            format!(
+                r#"<!doctype html><script>
+const html = '<script>document.title = [self.origin, String(window.open("about:blank"))].join()<\/script>';
+location = {} ;
+</script>"#,
+                if kind == "blob" {
+                    "URL.createObjectURL(new Blob([html], { type: 'text/html' }))"
+                } else {
+                    "'data:text/html,' + encodeURIComponent(html)"
+                }
+            )
+            .into_bytes()
+            .into_boxed_slice(),
+        );
+        let (addr, server) =
+            serve_attachment(1, "Content-Type: text/html\r\nContent-Security-Policy: sandbox allow-scripts\r\n", body);
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page_with_events("Page.navigate", json!({ "url": format!("http://{addr}/sandboxed") }));
+        let scheme = format!("{kind}:");
+        h.until_event(move |m| {
+            m["method"] == "Page.frameNavigated"
+                && m["params"]["frame"]["url"].as_str().is_some_and(|u| u.starts_with(scheme.as_str()))
+        });
+        h.run_for(100);
+        assert_eq!(eval_value(&mut h, "document.title"), json!("null,null"), "{kind}");
+        // The embedder's navigation (Page.navigate) is not the sandboxed page's: no sandbox.
+        let fresh = "data:text/html,<script>document.title = String(window.open('about:blank') !== null)</script>";
+        h.page_with_events("Page.navigate", json!({ "url": fresh }));
+        h.run_for(100);
+        assert_eq!(eval_value(&mut h, "document.title"), json!("true"), "{kind}: Page.navigate");
+        server.join().unwrap();
+    }
+}
+
 #[test]
 fn content_disposition_attachment_navigation_becomes_download() {
     // Recorded from headless Chromium: the navigation starts, is aborted

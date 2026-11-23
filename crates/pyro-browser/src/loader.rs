@@ -2097,12 +2097,7 @@ impl Browser {
         if self.csp_inherit_next.as_ref().is_some_and(|(k, _)| *k == page) {
             return self.csp_inherit_next.take().map(|(_, i)| i);
         }
-        let bare = url.split(['?', '#']).next().unwrap_or(url);
-        let scheme = bare.split(':').next().unwrap_or("").to_ascii_lowercase();
-        let local = matches!(scheme.as_str(), "blob" | "data")
-            || bare.eq_ignore_ascii_case("about:blank")
-            || bare.eq_ignore_ascii_case("about:srcdoc");
-        if !local {
+        if !is_local_scheme(url) {
             return None;
         }
         let host = self.page(page.page).map(|p| p.frames.clone())?;
@@ -2163,8 +2158,32 @@ impl Browser {
         // CSP `sandbox` of the response (enforced, unless the page bypasses CSP): part of the
         // sandboxing flags that decide the document's origin at commit.
         // A `javascript:` result adds those of the document it replaces.
-        let inherited_sandbox =
+        let mut inherited_sandbox =
             self.csp_sandbox_next.take_if(|(k, _)| *k == page).map(|(_, flags)| flags);
+        // A top-level frame's local-scheme document (`blob:`, `data:`, about:blank) has the policy
+        // container of the document that navigated to it (HTML "determining navigation params
+        // policy container"; for `blob:` its URL's creator). Pyro does not track that document
+        // here; when the frame's current document is CSP-sandboxed and a document started the
+        // navigation (not the embedder or a history traversal, which restore no policy
+        // container of it), it is that one or a document allowed to navigate it, and its
+        // policies and sandbox are kept: a sandboxed page cannot shed them by navigating itself
+        // to a `blob:` or `data:` URL it made.
+        let document_initiated = opts.cdp_request_id.is_none()
+            && !matches!(opts.reason, crate::NavigationReason::AddressBar | crate::NavigationReason::History);
+        let bypass = self.page(page.page).is_some_and(|p| p.bypass_csp);
+        let mut kept_csp = None;
+        if document_initiated
+            && !bypass
+            && page.child.is_none()
+            && inherited_sandbox.is_none()
+            && is_local_scheme(&resource.url)
+        {
+            let current = self.doc(page).and_then(|d| Some((d.csp_sandbox?, d.main_frame.page_dom.clone()?)));
+            if let Some((flags, dom)) = current {
+                inherited_sandbox = Some(flags);
+                kept_csp = Some(pyro_webapi::csp::InheritedCsp::of(&dom));
+            }
+        }
         let csp_sandbox = resource
             .header_csp
             .as_deref()
@@ -2213,7 +2232,10 @@ impl Browser {
         }
         // A local-scheme document inherits its policies before its parser starts, so a `<meta>`
         // of its own adds to them ([`Browser::local_scheme_csp`]).
-        let inherited = self.local_scheme_csp(page, &resource.url);
+        let inherited = match kept_csp {
+            Some(kept) => Some(kept),
+            None => self.local_scheme_csp(page, &resource.url),
+        };
         if let Some(inherited) = inherited.filter(|_| !bypass_csp && resource.header_csp.is_none()) {
             inherited.apply(&page_dom);
         }
@@ -4470,4 +4492,11 @@ mod disposition_tests {
         assert_eq!(suggested_filename("", "http://h/dir/file.pdf?x=1"), "file.pdf");
         assert_eq!(suggested_filename("", "blob:http://h/uuid"), "download");
     }
+}
+
+/// A local-scheme URL for CSP inheritance (CSP3 § 4.2.1): `blob:`, `data:`, about:blank, about:srcdoc.
+fn is_local_scheme(url: &str) -> bool {
+    let bare = url.split(['?', '#']).next().unwrap_or(url);
+    let scheme = bare.split(':').next().unwrap_or("").to_ascii_lowercase();
+    matches!(scheme.as_str(), "blob" | "data") || bare.eq_ignore_ascii_case("about:blank") || bare.eq_ignore_ascii_case("about:srcdoc")
 }
