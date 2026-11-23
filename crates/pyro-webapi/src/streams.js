@@ -501,6 +501,13 @@
     rcClear(c);
     rsClose(c.stream);
   }
+  // Streams "ReadableStream close" for a stream a specification (Fetch) set up with byte
+  // reading support: the controller closes, then a pending BYOB request is answered with 0
+  // bytes, which settles the read waiting on it with done (as respond(0) would).
+  function bcSourceClose(c) {
+    bcClose(c);
+    if (c.stream.state === 'closed' && c.pending.length > 0) bcRespondClosed(c);
+  }
   // ReadableByteStreamControllerPullInto. `buffer` is the view's buffer,
   // not yet transferred.
   function bcPullInto(c, buffer, byteOffset, byteLength, ctor, elementSize, min, req) {
@@ -2393,7 +2400,7 @@
   };
   const bytesBody = (bytes) => byteBody((c) => {
     if (bytes.length > 0) bcEnqueue(c, bytes);
-    if (rcCanClose(c)) bcClose(c);
+    if (rcCanClose(c)) bcSourceClose(c);
     return resolved();
   }, () => resolved());
   return {
@@ -2427,7 +2434,7 @@
         return then(p, (r) => {
           if (!rcCanClose(c)) return;
           if (r.done) {
-            bcClose(c);
+            bcSourceClose(c);
             return;
           }
           bcEnqueue(c, r.value);
