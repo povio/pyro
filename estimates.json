@@ -11,9 +11,9 @@
    },
    "distinct_census_pages": 1593,
    "owner_reported_unlisted": 14,
-   "selector_union": 1840,
-   "owner_estimate_reduction": 261,
-   "of_which_tentative": 226,
+   "selector_union": 1832,
+   "owner_estimate_reduction": 253,
+   "of_which_tentative": 218,
    "studio_css_reported_pages_not_deduped": 355,
    "studio_css_listed_distinct": 40,
    "by_dir": {
@@ -36,7 +36,6 @@
     "imagebitmap-renderingcontext": 14,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
-    "fetch/compression-dictionary": 8,
     "encoding": 7,
     "fetch/corb": 6,
     "fetch/range": 6,
@@ -46,17 +45,17 @@
     "FileAPI": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
-    "fetch/orb": 2,
     "xhr": 2,
+    "fetch/orb": 2,
     "html/user-activation": 2,
-    "fetch/security": 1,
-    "fetch/redirect-navigate": 1,
-    "fetch/redirects": 1,
     "fetch/content-type": 1,
+    "fetch/redirects": 1,
     "quirks": 1,
-    "svg/styling": 1,
     "IndexedDB": 1,
-    "html/select": 1
+    "svg/styling": 1,
+    "fetch/security": 1,
+    "html/select": 1,
+    "fetch/redirect-navigate": 1
    }
   },
   "in_progress": {
@@ -78,8 +77,8 @@
     "html/canvas": 112,
     "html/semantics": 38,
     "html/syntax": 30,
-    "html/dom": 5,
-    "fetch/api": 5
+    "fetch/api": 5,
+    "html/dom": 5
    }
   },
   "queued": {
@@ -2340,7 +2339,7 @@
    "tentative": 6
   },
   "R-FETCH-DICT": {
-   "state": "implemented-unbuilt",
+   "state": "held",
    "in_scope_pages": 8,
    "out_of_scope_pages": 0,
    "pages": 8,
