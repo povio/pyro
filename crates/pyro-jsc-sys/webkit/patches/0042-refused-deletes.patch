@@ -1,4 +1,4 @@
-Pyro patch 0039: a deleteProperty callback can refuse the delete.
+Pyro patch 0042: a deleteProperty callback can refuse the delete.
 
 A C API class's deleteProperty callback could only claim a delete (true) or let the ordinary
 [[Delete]] run (false), which succeeds for a property the object does not really have. WebIDL's
@@ -18,7 +18,7 @@ index a8d80d1..472f0aa 100644
  
  namespace JSC {
  
-+// Pyro patch 0039 (JSFork.cpp): set by JSObjectRefuseDeleteProperty during a deleteProperty callback.
++// Pyro patch 0042 (JSFork.cpp): set by JSObjectRefuseDeleteProperty during a deleteProperty callback.
 +bool& callbackDeletePropertyRefused();
 +
  inline PreferredPrimitiveType toPreferredPrimitiveType(JSGlobalObject*, JSValue);
@@ -57,7 +57,7 @@ index 2d911cf..cef51ac 100644
  
 +namespace JSC {
 +
-+// Pyro patch 0039: per thread, as a deleteProperty callback runs on the thread that holds the VM's lock.
++// Pyro patch 0042: per thread, as a deleteProperty callback runs on the thread that holds the VM's lock.
 +bool& callbackDeletePropertyRefused()
 +{
 +    static thread_local bool refused { false };

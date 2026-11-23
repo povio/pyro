@@ -3066,7 +3066,7 @@ unsafe extern "C" fn delete_property_hook(
             // WebIDL [[Delete]] of a legacy platform object: false for a
             // supported index, and for a visible named property when there is
             // no deleter (a TypeError in strict mode code, as for a
-            // non-configurable property). Needs patch 0039; without it the
+            // non-configurable property). Needs patch 0042; without it the
             // ordinary [[Delete]] runs and succeeds.
             if hc.legacy {
                 if let Some(refuse) = sys::spi::get().refuse_delete_property {
