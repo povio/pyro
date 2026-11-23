@@ -841,6 +841,13 @@ patched JavaScriptCore included, so `args: ['--fork']` works without a separate
 browser. The Intel browser uses macOS's system JavaScriptCore and has no fork
 mode.
 
+The bundled browsers have no symbol table, which keeps the package under npm's
+size limit. A browser panic still reports its message and source location, but
+without a named backtrace. For one, run the same version's browser from the
+[GitHub release](https://github.com/povio/pyro/releases) with
+`PYRO_BIN=<path to its pyro> RUST_BACKTRACE=1`. On Apple silicon that is the
+`macos-arm64-fork` archive, the same build as the bundled browser.
+
 `args` takes any `pyro serve` flag (`pyro serve --help`
 lists them). For screenshots and PDFs that should wrap like Chrome's, pass
 `args: ['--hyphen-digit-breaks', 'on']` (or set

@@ -24,8 +24,41 @@ A release candidate tag makes a GitHub prerelease and publishes to npm `next`.
 Linux release executables have debug information removed from staged copies
 before bundle tests; build outputs and runtime symbols are retained. Published
 Linux binaries therefore do not include source-line debug information. The
-combined npm tarball must fit the workflow's 200 MiB compressed-size budget;
-this guards package growth but does not guarantee registry acceptance.
+combined npm tarball must fit the workflow's 185 MiB compressed-size budget. The
+registry takes the package in one base64-encoded request and has a size limit:
+it accepted 195,675,050 bytes (0.0.50-rc.6) and rejected 204,910,000 bytes with
+`413 Payload Too Large` (0.0.50-rc.8), so the budget stays under the largest
+size known to be accepted. To fit, the npm package's four browsers have no
+symbol table (macOS copies are signed again with the JIT entitlement), and the
+tarball is recompressed with `gzip -9`. Each build job smoke-runs its stripped
+copy where the runner can execute it (`eval` in a page; on macOS also the
+signature and the allow-jit entitlement), so a broken copy fails the release
+before anything is published. The Intel macOS copy cannot run on `lp-m1` (no
+Rosetta 2) and has no smoke leg since #387. Instead,
+`scripts/release/same-code.py` checks that every section of each stripped macOS
+copy is byte-for-byte the same as in the unstripped browser.
+
+The release archives keep the symbols. Each npm browser is the same build as one
+archive:
+
+| npm platform | release archive with its symbols |
+|---|---|
+| darwin-arm64 | `pyro-rust-vX.Y.Z-macos-arm64-fork.tar.gz` |
+| darwin-x64 | `pyro-rust-vX.Y.Z-macos-x64.tar.gz` |
+| linux-arm64 | `pyro-rust-vX.Y.Z-linux-arm64.tar.gz` |
+| linux-x64 | `pyro-rust-vX.Y.Z-linux-x64.tar.gz` |
+
+A panic in an npm browser prints its message and source location (`file:line`)
+but no usable backtrace: `RUST_BACKTRACE=1` shows no frames, and
+`RUST_BACKTRACE=full` shows addresses without the executable's load address, so
+they cannot be mapped to the archive's symbols offline
+([#421](https://github.com/povio/pyro/issues/421)). To get a named backtrace,
+reproduce with the archive's browser of the same version:
+
+```sh
+tar xzf pyro-rust-vX.Y.Z-macos-arm64-fork.tar.gz
+PYRO_BIN="$PWD/pyro-rust-vX.Y.Z-macos-arm64-fork/pyro" RUST_BACKTRACE=1 npx pyro ...
+```
 
 A cold JavaScriptCore build takes about 7 minutes on a hosted runner (measured on
 the first run). WPT calls the platform-specific JSC producers on `main` when their inputs change, so a tag normally

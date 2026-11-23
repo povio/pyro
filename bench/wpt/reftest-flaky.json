@@ -4,6 +4,9 @@
   "css/css-backgrounds/animations/background-color-transition-currentcolor.html": {
    "reason": "Timing: the page's reftest-wait is removed only after two rAFs, a transition's anim.ready and one more rAF; in CI run 44298843277 (--jobs 16, lp-m1) it was not removed within 10 s on the first run (setup 2 ms, goto 6 ms, settle 10,002 ms, no browser restart, the only incomplete page of the shard) and passed both reruns. Today's CI runs: 8 of 9 executions pass (5 at --jobs 8, 1 at 12, 2 reruns at 16); locally 80 of 80 (--repeat 40 at --jobs 16 and 8, load 100). Its pass stays gated whenever it completes.",
    "allowIncomplete": true
+  },
+  "css/css-borders/corner-shape/render-corner-shape.html?corner-shape=-2&border-top-right-radius=100%&border-top-width=20&border-bottom-width=20&shadow-position=inset&shadow-spread=10": {
+   "reason": "Nondeterministic on lp-m1 CI runners, never reproduced locally: the inset shadow inside the contoured inner edge (corner-shape -2, round-7 f71e74599 family) renders either exactly like the reference (0 px) or with 883 px differing, max 255 (fuzzy allows max 112 over 662 px). Main WPT run 45215670344 (e8176817c, shard 2 on worker-3-m1): pass. Main run 45230604936 (4a1c2750b, shard 2 on worker-3-m1): 1996 px, then reruns 883 px / 0 / 883 px / 0 (gate passed). Main run 45251303433 (c38a6248b): pass. PR #420 run 45260311287 (shard 1 on worker-3-m1, a CI-only change): 883 px in all 4 executions. Locally (MacBook, rc7 builds e8176817c, standard and fork) 20 of 20 pass at --jobs 1 and 3 of 3 at --jobs 16 alongside the other 112 corner-shape variants (0 px each). Root cause handed to the regression fix lane (item 38)."
   }
  }
 }
