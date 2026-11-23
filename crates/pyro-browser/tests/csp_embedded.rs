@@ -294,6 +294,7 @@ fn the_required_policy_is_snapshot_when_the_navigation_starts() {
             content_language: None,
             last_modified: None,
             reporting_endpoints: None,
+            dictionary_links: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
             sent_referrer: None,

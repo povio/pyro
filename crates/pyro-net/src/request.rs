@@ -46,6 +46,8 @@ pub enum Destination {
     WebSocket,
     /// `navigator.sendBeacon`.
     Beacon,
+    /// `<link rel=compression-dictionary>` (`Sec-Fetch-Dest: empty`).
+    CompressionDictionary,
     Other,
 }
 
@@ -80,7 +82,7 @@ impl Destination {
             Destination::EventSource => "EventSource",
             Destination::WebSocket => "WebSocket",
             Destination::Beacon => "Ping",
-            Destination::Other => "Other",
+            Destination::CompressionDictionary | Destination::Other => "Other",
         }
     }
 }

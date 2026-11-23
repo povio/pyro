@@ -47,6 +47,55 @@ pub(crate) struct Preloads {
     inline_nonce: InlineNonce,
     /// `<link rel=prefetch>` fetches by URL.
     prefetches: HashMap<String, PrefetchEntry>,
+    /// Compression dictionary fetches waiting for the document's load event.
+    dictionaries: Vec<DeferredFetch>,
+}
+
+/// A fetch started once the document has loaded.
+type DeferredFetch = Box<dyn FnOnce(&mut Browser)>;
+
+/// The resolved URLs of a document response's `Link` header values with the
+/// `compression-dictionary` relation (RFC 8288 link-values; others are skipped).
+pub(crate) fn compression_dictionary_links<'a>(values: impl Iterator<Item = &'a str>, base: &url::Url) -> Vec<String> {
+    let mut out = Vec::new();
+    for value in values {
+        let mut rest = value;
+        loop {
+            rest = rest.trim_start_matches(|c: char| c == ',' || c.is_ascii_whitespace());
+            let Some(after) = rest.strip_prefix('<') else { break };
+            let Some(end) = after.find('>') else { break };
+            let target = &after[..end];
+            rest = &after[end + 1..];
+            // The link's parameters, up to the next link-value (a quoted `,` stays in its value).
+            let mut quoted = false;
+            let split = rest.char_indices().find(|&(_, c)| {
+                if c == '"' {
+                    quoted = !quoted;
+                }
+                c == ',' && !quoted
+            });
+            let (params, next) = match split {
+                Some((i, _)) => (&rest[..i], &rest[i..]),
+                None => (rest, ""),
+            };
+            rest = next;
+            let dictionary = params.split(';').any(|p| {
+                let Some((name, value)) = p.split_once('=') else { return false };
+                name.trim().eq_ignore_ascii_case("rel")
+                    && value
+                        .trim()
+                        .trim_matches('"')
+                        .split_ascii_whitespace()
+                        .any(|r| r.eq_ignore_ascii_case("compression-dictionary"))
+            });
+            if dictionary {
+                if let Ok(url) = base.join(target.trim()) {
+                    out.push(url.to_string());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Called with whether a prefetch succeeded (`load`) or not (`error`).
@@ -474,6 +523,36 @@ struct PrefetchTarget {
     referrer: Option<String>,
 }
 
+/// A compression dictionary's request (`ResourceKind::Dictionary`).
+fn dictionary_request(
+    page: FrameKey,
+    url: String,
+    frame_id: String,
+    loader_id: String,
+    referrer: Option<String>,
+    referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    crossorigin: Option<String>,
+) -> FetchRequest {
+    FetchRequest {
+        csp: None,
+        required_csp: None,
+        parser_priority: false,
+        credentials: None,
+        post: None,
+        url,
+        kind: ResourceKind::Dictionary,
+        page: page.page,
+        referrer,
+        referrer_policy,
+        frame_id: Some(frame_id),
+        loader_id: Some(loader_id),
+        crossorigin,
+        initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
+        module: None,
+        part: None,
+    }
+}
+
 /// The URL of an `imagesrcset`'s first image candidate.
 fn first_srcset_url(srcset: &str) -> Option<String> {
     let first = srcset.split(',').map(str::trim).find(|c| !c.is_empty())?;
@@ -481,45 +560,88 @@ fn first_srcset_url(srcset: &str) -> Option<String> {
 }
 
 impl Browser {
-    /// `<link rel=compression-dictionary>`: fetches the dictionary at `url`, a low-priority fetch
-    /// of its own each time the link's URL or CORS settings change (no fetch is shared between
-    /// links), and the link gets `load` for any response or `error` for a network error, as a
-    /// prefetch. (The dictionary itself is not kept: no request advertises it.)
+    /// `<link rel=compression-dictionary>`: fetches the dictionary at `url` (the network client
+    /// registers it), a fetch of its own each time the link's URL or CORS settings change (no
+    /// fetch is shared between links) once the document has loaded, and the link gets `load` for
+    /// any response or `error` for a network error, as a prefetch.
     fn dictionary_link(&mut self, page: FrameKey, frame: &crate::Frame, url: String, target: PrefetchTarget) {
         let PrefetchTarget { node, hold, bindings, crossorigin, referrer_policy, referrer } = target;
         let doc_id = bindings.document();
-        let finish = move |_: &mut Browser, result: Result<crate::Resource, String>| {
-            let _hold = hold;
+        let loader = frame.loader_id.clone();
+        let (frame_id, loader_id) = (frame.id.0.clone(), frame.loader_id.0.clone());
+        self.after_load(page, &loader, move |b: &mut Browser| {
             if bindings.is_disposed() || bindings.document() != doc_id {
                 return;
             }
-            pyro_webapi::lifecycle::resource_loaded(&bindings, node, result.is_ok());
-        };
-        let Some(resource_loader) = self.loader_for(page) else {
-            self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
+            let finish = move |_: &mut Browser, result: Result<crate::Resource, String>| {
+                let _hold = hold;
+                if bindings.is_disposed() || bindings.document() != doc_id {
+                    return;
+                }
+                pyro_webapi::lifecycle::resource_loaded(&bindings, node, result.is_ok());
+            };
+            let Some(resource_loader) = b.loader_for(page) else {
+                b.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
+                return;
+            };
+            let mut request = dictionary_request(page, url, frame_id, loader_id, referrer, referrer_policy, crossorigin);
+            let Some(finish) = b.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
+            if let Some(cancel) = b.fetch_document_resource(page, &resource_loader, request, finish) {
+                cancel.disarm();
+            }
+        });
+    }
+
+    /// The document's `Link` headers with `rel=compression-dictionary`: each is fetched once the
+    /// document has loaded (CSP checks it at the document, `connect-src`).
+    pub(crate) fn dictionary_headers(&mut self, page: FrameKey, urls: Vec<String>) {
+        let Some(frame) = self.doc(page).map(|d| d.main_frame.clone()) else { return };
+        let loader = frame.loader_id.clone();
+        for url in urls.into_iter().take(MAX_PRELOADS) {
+            let (frame_id, loader_id) = (frame.id.0.clone(), frame.loader_id.0.clone());
+            let referrer = frame.navigation_referrer();
+            self.after_load(page, &loader, move |b: &mut Browser| {
+                let Some(resource_loader) = b.loader_for(page) else { return };
+                let request = dictionary_request(page, url, frame_id, loader_id, referrer, None, None);
+                if let Some(cancel) = b.fetch_document_resource(page, &resource_loader, request, Box::new(|_, _| {})) {
+                    cancel.disarm();
+                }
+            });
+        }
+    }
+
+    /// Runs `fetch` once `page`'s document (of `loader`) has fired its load event, or its load
+    /// was aborted: now, or then ([`Browser::start_dictionary_fetches`]); not if another document
+    /// has replaced it by then. Its callers bound how many wait (`MAX_PRELOADS` links, as many
+    /// headers).
+    fn after_load(&mut self, page: FrameKey, loader: &crate::LoaderId, fetch: impl FnOnce(&mut Browser) + 'static) {
+        let Some(mut doc) = self.doc_mut(page) else { return };
+        if doc.main_frame.loader_id != *loader {
             return;
+        }
+        let loader = loader.clone();
+        let fetch = move |b: &mut Browser| {
+            if b.doc(page).is_some_and(|d| d.main_frame.loader_id == loader) {
+                fetch(b);
+            }
         };
-        let mut request = FetchRequest {
-            csp: None,
-            required_csp: None,
-            parser_priority: false,
-            credentials: None,
-            post: None,
-            url,
-            kind: ResourceKind::Prefetch,
-            page: page.page,
-            referrer,
-            referrer_policy,
-            frame_id: Some(frame.id.0.clone()),
-            loader_id: Some(frame.loader_id.0.clone()),
-            crossorigin,
-            initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
-            module: None,
-            part: None,
+        if !doc.main_frame.loaded {
+            doc.preloads.dictionaries.push(Box::new(fetch));
+            return;
+        }
+        drop(doc);
+        self.scheduler().post(TaskSource::Networking, fetch);
+    }
+
+    /// The document's load event fired (or `window.stop()` aborted its load): the compression
+    /// dictionaries waiting for it are fetched.
+    pub(crate) fn start_dictionary_fetches(&mut self, page: FrameKey) {
+        let fetches = match self.doc_mut(page) {
+            Some(mut doc) => std::mem::take(&mut doc.preloads.dictionaries),
+            None => return,
         };
-        let Some(finish) = self.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
-        if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, finish) {
-            cancel.disarm();
+        for fetch in fetches {
+            self.scheduler().post(TaskSource::Networking, fetch);
         }
     }
 

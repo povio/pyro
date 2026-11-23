@@ -92,6 +92,11 @@ pub enum ResourceKind {
     /// (CSP: `default-src`, as Chrome), no-cors unless the link has `crossorigin`. Low
     /// priority, never speculated, and it does not delay the document's load event.
     Prefetch,
+    /// A compression dictionary (`<link rel=compression-dictionary>`, a `Link` header): destination
+    /// "compression-dictionary" (`Sec-Fetch-Dest: empty`), CORS mode, credentials by the link's
+    /// `crossorigin` ("same-origin" without one), CSP `connect-src`. Fetched after the document's
+    /// load event, never speculated.
+    Dictionary,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +204,9 @@ pub struct Resource {
     /// A document's `Reporting-Endpoints` response header, if any (the
     /// endpoints its CSP `report-to` names; `PageDom::set_reporting_endpoints`).
     pub reporting_endpoints: Option<String>,
+    /// A document's `Link: <url>; rel="compression-dictionary"` headers, resolved: fetched after
+    /// its `load` event.
+    pub dictionary_links: Vec<String>,
     /// The response's `Referrer-Policy` header (a document's default policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// A document's response asked for an origin-keyed agent cluster
@@ -418,6 +426,7 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Fetch => pyro_net::Destination::Fetch,
             // Destination "": `Other` sends `Sec-Fetch-Dest: empty` in no-cors mode.
             ResourceKind::Prefetch => pyro_net::Destination::Other,
+            ResourceKind::Dictionary => pyro_net::Destination::CompressionDictionary,
         };
         // Resource Timing: the document that gets this fetch's entry.
         let document = requesting_document(browser, &request);
@@ -439,7 +448,7 @@ impl ResourceLoader for NetLoader {
                 req.cross_site_ancestor = document.is_none_or(|d| d.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite);
             }
         }
-        if request.kind == ResourceKind::ModuleScript || request.crossorigin.is_some() {
+        if matches!(request.kind, ResourceKind::ModuleScript | ResourceKind::Dictionary) || request.crossorigin.is_some() {
             req.mode = pyro_net::RequestMode::Cors;
         } else if request.kind == ResourceKind::Track {
             req.mode = pyro_net::RequestMode::SameOrigin;
@@ -558,6 +567,7 @@ impl ResourceLoader for NetLoader {
                 content_language: None,
                 last_modified: None,
                 reporting_endpoints: None,
+                dictionary_links: Vec::new(),
                 referrer_policy: None,
                 origin_agent_cluster: false,
                 sent_referrer: document.then(|| {
@@ -643,6 +653,7 @@ impl ResourceLoader for NetLoader {
                     content_language: None,
                     last_modified: None,
                     reporting_endpoints: None,
+                    dictionary_links: Vec::new(),
                     referrer_policy: None,
                     origin_agent_cluster: false,
                     sent_referrer: None,
@@ -719,6 +730,14 @@ impl ResourceLoader for NetLoader {
                                 (!values.is_empty()).then(|| values.join(","))
                             })
                             .flatten(),
+                        dictionary_links: if document {
+                            crate::preload::compression_dictionary_links(
+                                h.headers.get_all(http::header::LINK).iter().filter_map(|v| v.to_str().ok()),
+                                &h.url,
+                            )
+                        } else {
+                            Vec::new()
+                        },
                         referrer_policy: pyro_net::ReferrerPolicy::from_header(
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
@@ -810,6 +829,8 @@ pub(crate) fn csp_dest(request: &FetchRequest) -> Option<pyro_net::csp::RequestD
         ResourceKind::Fetch => RequestDest::Empty,
         // `<link rel=prefetch>`: default-src, or any fetch directive that allows it (Chrome).
         ResourceKind::Prefetch => RequestDest::Prefetch,
+        // A compression dictionary: connect-src (Fetch's "compression-dictionary" destination).
+        ResourceKind::Dictionary => RequestDest::Empty,
         ResourceKind::Document | ResourceKind::Download => return None,
     })
 }
@@ -1080,6 +1101,7 @@ impl ResourceLoader for StaticLoader {
                         content_language: None,
                         last_modified: None,
                         reporting_endpoints: None,
+                        dictionary_links: Vec::new(),
                         referrer_policy,
                         origin_agent_cluster: false,
                         sent_referrer: sent_referrer.clone(),
@@ -2007,6 +2029,7 @@ impl Browser {
             content_language: None,
             last_modified: None,
             reporting_endpoints: None,
+            dictionary_links: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
             sent_referrer: None,
@@ -2218,6 +2241,9 @@ impl Browser {
         }
         if let Some(refresh) = resource.refresh.as_deref() {
             self.refresh_header(page, refresh);
+        }
+        if !resource.dictionary_links.is_empty() {
+            self.dictionary_headers(page, resource.dictionary_links.clone());
         }
         if resource.content_language.is_some() {
             let _ = dom.borrow_mut().set_content_language(doc, resource.content_language.as_deref());
@@ -3423,6 +3449,8 @@ impl Browser {
         state.main_frame.loaded = true;
         drop(state);
         self.sync_root(page.page);
+        // No load event comes: what waited for it is fetched now.
+        self.start_dictionary_fetches(page);
     }
 
     /// `document.close()` ended the script-created parser: "the end" steps
@@ -3556,6 +3584,8 @@ impl Browser {
         if let Some(nav) = self.doc(page).map(|d| d.nav.clone()) {
             nav.notify_timeline("navigation");
         }
+        // Compression dictionaries wait for `load` (as Chromium's idle-priority fetches).
+        self.start_dictionary_fetches(page);
         if !host.matches(page, &frame.loader_id) {
             return;
         }
@@ -4352,6 +4382,7 @@ mod disposition_tests {
             content_language: None,
             last_modified: None,
             reporting_endpoints: None,
+            dictionary_links: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
             sent_referrer: None,

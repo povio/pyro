@@ -258,9 +258,12 @@ pub fn fetch_dest(destination: Destination) -> &'static str {
         Destination::Video => "video",
         Destination::Track => "track",
         Destination::WebSocket => "websocket",
-        Destination::Xhr | Destination::Fetch | Destination::EventSource | Destination::Beacon | Destination::Other => {
-            "empty"
-        }
+        Destination::Xhr
+        | Destination::Fetch
+        | Destination::EventSource
+        | Destination::Beacon
+        | Destination::CompressionDictionary
+        | Destination::Other => "empty",
     }
 }
 

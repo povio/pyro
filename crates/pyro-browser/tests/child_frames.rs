@@ -272,6 +272,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             content_language: None,
             last_modified: None,
             reporting_endpoints: None,
+            dictionary_links: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
             sent_referrer: None,

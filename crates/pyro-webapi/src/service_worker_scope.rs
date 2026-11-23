@@ -460,6 +460,9 @@ fn redirect_name(redirect: pyro_net::RedirectMode) -> &'static str {
 }
 
 fn destination_name(destination: pyro_net::Destination) -> &'static str {
+    if destination == pyro_net::Destination::CompressionDictionary {
+        return "compression-dictionary";
+    }
     match pyro_net::referrer::fetch_dest(destination) {
         "empty" => "",
         other => other,
