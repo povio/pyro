@@ -452,6 +452,11 @@ impl ResourceLoader for NetLoader {
             req.mode = pyro_net::RequestMode::Cors;
         } else if request.kind == ResourceKind::Track {
             req.mode = pyro_net::RequestMode::SameOrigin;
+        } else if request.kind == ResourceKind::Fetch {
+            // `<link rel=preload as=fetch>` without `crossorigin`: HTML "create a potential-CORS
+            // request" makes it no-cors (destination "" alone would make it CORS, as for
+            // `fetch()`), so a service worker may answer it with an opaque response, as in Chrome.
+            req.mode = pyro_net::RequestMode::NoCors;
         }
         req.credentials = request.effective_credentials();
         if req.url.scheme() == "blob" {
