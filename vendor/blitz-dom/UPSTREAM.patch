@@ -567,20 +567,10 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -287,9 +639,20 @@
+@@ -287,9 +639,10 @@
      margin: 8px;
  }
  
-+/* https://html.spec.whatwg.org/multipage/rendering.html#tables-2: a form the parser put
-+   straight into a table, row group or row is not rendered, whatever author styles say. */
-+table > form,
-+thead > form,
-+tbody > form,
-+tfoot > form,
-+tr > form {
-+    display: none !important;
-+}
-+
 +/* pyro: not `multicol`, an unknown element in HTML (inline, no margins), as Chromium computes
 +   it (WPT html/rendering margin-collapsing-quirks/multicol-*-mode). */
  p,
@@ -590,7 +580,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      display: block;
      margin-block-start: 1em;
      margin-block-end: 1em;
-@@ -569,6 +932,19 @@
+@@ -569,6 +922,19 @@
      text-align: center;
  }
  
@@ -610,7 +600,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -762,6 +1138,17 @@
+@@ -762,6 +1128,17 @@
      text-align: match-parent;
  }
  
@@ -628,7 +618,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* nested lists have no top/bottom margins */
  :is(ul, ol, dir, menu, dl) ul,
  :is(ul, ol, dir, menu, dl) ol,
-@@ -832,16 +1219,49 @@
+@@ -832,16 +1209,49 @@
      position: static ! important;
      float: none ! important;
      border: none ! important;
@@ -678,7 +668,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1271,34 @@
+@@ -851,8 +1261,34 @@
      user-select: none;
  }
  
@@ -713,7 +703,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1332,15 @@
+@@ -886,14 +1322,15 @@
      display: none;
  }
  
@@ -732,7 +722,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1369,11 @@
+@@ -922,6 +1359,11 @@
      display: none !important;
  }
  
@@ -744,7 +734,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -992,12 +1444,23 @@
+@@ -992,12 +1434,23 @@
      height: -moz-fit-content;
  }
  
@@ -769,7 +759,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      position: fixed;
      overflow: auto;
      visibility: visible;
-@@ -1017,6 +1480,8 @@
+@@ -1017,6 +1470,8 @@
      display: inline-block;
      vertical-align: text-bottom;
      text-align: start;
@@ -778,7 +768,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  marquee:is([direction="up"], [direction="down"]) {
-@@ -1082,9 +1547,9 @@
+@@ -1082,9 +1537,9 @@
      font-size: unset;
  }
  
@@ -790,7 +780,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  rtc {
      unicode-bidi: isolate;
  }
-@@ -1128,37 +1593,77 @@
+@@ -1128,37 +1583,77 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */

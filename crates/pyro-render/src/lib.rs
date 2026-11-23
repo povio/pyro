@@ -771,6 +771,15 @@ const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: sys
 static NO_TRANSITIONS: std::sync::LazyLock<blitz_dom::UserAgentStylesheet> = std::sync::LazyLock::new(|| {
     blitz_dom::UserAgentStylesheet::parse("*, *::before, *::after { transition: none !important; animation-name: none !important; }")
 });
+/// UA rules of HTML documents only (an XHTML document is styled without them, as Chrome):
+/// HTML's rendering section hides a form the HTML parser put straight into a table, row group or
+/// row, whatever author styles say (WPT html/rendering/non-replaced-elements/tables/form-in-tables
+/// and form-in-tables-xhtml).
+static HTML_ONLY: std::sync::LazyLock<blitz_dom::UserAgentStylesheet> = std::sync::LazyLock::new(|| {
+    blitz_dom::UserAgentStylesheet::parse(
+        "table > form, thead > form, tbody > form, tfoot > form, tr > form { display: none !important; }",
+    )
+});
 /// Chrome's `<input type=file>` box ("Choose File · No file chosen"): Blitz
 /// lays the control out with no content to size it by, so it would be
 /// zero-sized and never visible or clickable.
@@ -1250,6 +1259,9 @@ impl Renderer {
         // screen). Layout queries, screenshots and PDFs take the end state.
         config.ua_stylesheets.push(NO_TRANSITIONS.clone());
         config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(FILE_INPUT));
+        if !config.xml_document {
+            config.ua_stylesheets.push(HTML_ONLY.clone());
+        }
         config
     }
 
@@ -4878,6 +4890,11 @@ impl blitz_dom::HtmlParserProvider for SvgImageParser {
     fn parse_document(&self, html: &str, mut config: DocumentConfig) -> Box<dyn blitz_dom::Document> {
         config.ua_stylesheets.push(NO_TRANSITIONS.clone());
         config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(FILE_INPUT));
+        // A frame is rebuilt from its HTML serialization (`xml_document` is false here) and
+        // inherits its parent's sheets: an HTML parent's already hold HTML_ONLY.
+        if !config.xml_document && !config.ua_stylesheets.contains(&HTML_ONLY) {
+            config.ua_stylesheets.push(HTML_ONLY.clone());
+        }
         config.html_parser_provider = Some(Arc::new(SvgImageParser));
         let mut doc = blitz_html::HtmlDocument::from_html(html, config);
         // The frame's scrolled elements and moved sticky boxes, as the page has them.
