@@ -7,10 +7,11 @@ name: Native tests
 # wptiter (release-fast without LTO, as the Linux WPT build): the layout/hit-test suites take minutes in debug.
 # Tests marked #[ignore] fail on main for known reasons named in their attribute; run them with `-- --ignored`.
 
+# Manual only for now. Its first Linux runs (#417, c8d3ee02b) failed 46 tests that pass on macOS: Chromium-parity
+# layout and text tests whose numbers were measured with macOS fonts, and engine_reuse's fork-based recycling. Until
+# those are portable (font fixtures or macOS gating, and engine_reuse checked on Linux), a pull request trigger would
+# only be red. List: the follow-up issue "make the native tests portable to Linux".
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
