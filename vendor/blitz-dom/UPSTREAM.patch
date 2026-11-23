@@ -40976,10 +40976,11 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  /// The nodes themsleves, and their data.
  pub mod node;
-@@ -45,22 +48,52 @@
+@@ -45,22 +48,53 @@
  mod debug;
  mod events;
  mod font_metrics;
++mod mathml_operator;
 +pub use font_metrics::font_metrics_provider;
  mod form;
 +mod has_invalidation;
@@ -41029,7 +41030,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  mod stylo_device;
  mod stylo_to_cursor_icon;
  mod stylo_to_kurbo;
-@@ -76,7 +109,7 @@
+@@ -76,7 +110,7 @@
      css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
  };
  pub use stylo_taffy::CopyStyleGetters;
@@ -41038,7 +41039,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  pub mod net;
  pub mod util;
-@@ -84,7 +117,7 @@
+@@ -84,7 +118,7 @@
  #[cfg(feature = "accessibility")]
  mod accessibility;
  
@@ -41047,7 +41048,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  pub use crate::layout::replaced::IntrinsicSizes;
  pub use crate::layout::text_transform::{full_size_kana, full_width};
  #[cfg(feature = "custom-widget")]
-@@ -93,10 +126,18 @@
+@@ -93,10 +127,18 @@
  pub use blitz_traits::node_id::NodeId;
  // Re-export taffy: it is part of blitz-dom's public API (e.g. `Node::style`,
  // `Node::final_layout`)
@@ -41068,6 +41069,1331 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  pub use markup5ever::{
      LocalName, Namespace, NamespaceStaticSet, Prefix, PrefixStaticSet, QualName, local_name,
      namespace_prefix, namespace_url, ns,
+diff --git a/packages/blitz-dom/src/mathml_operator.rs b/packages/blitz-dom/src/mathml_operator.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/mathml_operator.rs
+@@ -0,0 +1,1320 @@
++//! pyro: the spacing around an ordinary MathML `<mo>` in a row (MathML Core § 3.2.4.2, "Layout of
++//! operators"): its `lspace`/`rspace` attributes, else the operator dictionary's values for its
++//! text and form. The spacing is the operator's inline-start and inline-end margins, a
++//! presentational hint (`build_presentational_hints`), so it lies outside the operator's box as
++//! in Chrome. An operator that is not a child of a row (a fraction's or a script's) takes none:
++//! fractions, scripts and embellished operators are laid out elsewhere.
++
++use crate::node::{ElementData, Node, NodeData};
++use blitz_traits::node_id::NodeId;
++use markup5ever::{local_name, ns};
++
++#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
++pub(crate) enum Form {
++    Infix,
++    Prefix,
++    Postfix,
++}
++
++/// The default spacing of an operator the dictionary lacks: 5/18 em (thickmathspace) each side.
++const DEFAULT_SPACING: (u8, u8) = (5, 5);
++
++/// An `<mo>`'s inline-start and inline-end spacing (`spacing`, `None` when the operator takes no
++/// row spacing).
++pub(crate) struct Spacing {
++    pub start: Side,
++    pub end: Side,
++}
++
++pub(crate) enum Side {
++    /// The dictionary's value, in 1/18 em.
++    Eighteenths(u8),
++    /// An `lspace`/`rspace` attribute's value as written, and the dictionary's value for when it
++    /// does not parse as a `<length>`.
++    Explicit(String, u8),
++}
++
++/// MathML elements whose children are laid out as a row (MathML Core § 3.3.1, "mrow-like").
++fn is_row(name: &str) -> bool {
++    matches!(name, "math" | "mrow" | "mstyle" | "mpadded" | "mphantom" | "merror" | "msqrt" | "mtd" | "menclose")
++}
++
++/// Whether a change to `node`'s children or text can change some `<mo>`'s spacing: `node` is an
++/// `<mo>` (its text) or a row (its children's forms).
++pub(crate) fn affects_spacing(node: &Node) -> bool {
++    node.data
++        .downcast_element()
++        .is_some_and(|e| e.name.ns == ns!(mathml) && (e.name.local == local_name!("mo") || is_row(&e.name.local)))
++}
++
++pub(crate) fn spacing(node: &Node, elem: &ElementData) -> Option<Spacing> {
++    if elem.name.ns != ns!(mathml) || elem.name.local != local_name!("mo") {
++        return None;
++    }
++    let parent = node.parent.map(|id| node.with(id))?;
++    let parent_elem = parent.data.downcast_element()?;
++    if parent_elem.name.ns != ns!(mathml) || !is_row(&parent_elem.name.local) {
++        return None;
++    }
++    let form = explicit_form(elem).unwrap_or_else(|| row_form(parent, node.id));
++    let text = node.text_content();
++    let (l, r) = lookup(text.trim_matches(|c: char| c.is_ascii_whitespace()), form);
++    let side = |attr: &str, default: u8| {
++        elem.attrs()
++            .iter()
++            .find(|a| a.name.ns == ns!() && &*a.name.local == attr)
++            .map(|a| a.value.trim())
++            .filter(|v| valid_space(v))
++            .map_or(Side::Eighteenths(default), |v| Side::Explicit(v.to_string(), default))
++    };
++    Some(Spacing { start: side("lspace", l), end: side("rspace", r) })
++}
++
++fn explicit_form(elem: &ElementData) -> Option<Form> {
++    let value = elem.attrs().iter().find(|a| a.name.ns == ns!() && a.name.local == local_name!("form"))?;
++    match value.value.to_ascii_lowercase().as_str() {
++        "infix" => Some(Form::Infix),
++        "prefix" => Some(Form::Prefix),
++        "postfix" => Some(Form::Postfix),
++        _ => None,
++    }
++}
++
++/// MathML Core § 3.2.4.1: the first of several element children of its row is a prefix, the last
++/// a postfix, any other (or an only child) an infix operator.
++fn row_form(parent: &Node, id: NodeId) -> Form {
++    let mut elements = parent.children.iter().copied().filter(|c| matches!(parent.with(*c).data, NodeData::Element(_)));
++    let first = elements.next();
++    let last = elements.last();
++    match (first, last) {
++        (Some(f), Some(_)) if f == id => Form::Prefix,
++        (Some(_), Some(l)) if l == id => Form::Postfix,
++        _ => Form::Infix,
++    }
++}
++
++/// A `<length>` without a sign or a percentage: the values Chrome honours (anything else falls
++/// back to the dictionary).
++fn valid_space(value: &str) -> bool {
++    !value.is_empty() && !value.starts_with('-') && !value.contains('%')
++}
++
++/// MathML Core § 3.2.4.1, "Dictionary-based attributes": the entry for (content, form), else for
++/// the content in the other forms in the order infix, postfix, prefix, else the default.
++pub(crate) fn lookup(content: &str, form: Form) -> (u8, u8) {
++    let find = |form: Form| {
++        DICTIONARY
++            .binary_search_by(|(c, f, _, _)| c.as_bytes().cmp(content.as_bytes()).then(f.cmp(&form)))
++            .ok()
++            .map(|i| (DICTIONARY[i].2, DICTIONARY[i].3))
++    };
++    find(form)
++        .or_else(|| [Form::Infix, Form::Postfix, Form::Prefix].into_iter().filter(|f| *f != form).find_map(find))
++        .unwrap_or(DEFAULT_SPACING)
++}
++
++/// MathML Core's operator dictionary, (content, form, lspace, rspace) in 1/18 em, sorted by the
++/// content's UTF-8 bytes and then the form. Generated from WPT `mathml/support/operator-dictionary.json`
++/// (sha256 ec331ebfcd13db2286572ef0a60a0059104b3c3cfb092cb581c4cdfeac090340, WPT a421f2fea5eb).
++#[rustfmt::skip]
++static DICTIONARY: &[(&str, Form, u8, u8)] = &[
++    ("!", Form::Prefix, 0, 0),
++    ("!", Form::Postfix, 0, 0),
++    ("!!", Form::Postfix, 0, 0),
++    ("!=", Form::Infix, 5, 5),
++    ("\"", Form::Postfix, 0, 0),
++    ("%", Form::Infix, 3, 3),
++    ("%", Form::Postfix, 0, 0),
++    ("&", Form::Postfix, 0, 0),
++    ("&&", Form::Infix, 4, 4),
++    ("'", Form::Postfix, 0, 0),
++    ("(", Form::Prefix, 0, 0),
++    (")", Form::Postfix, 0, 0),
++    ("*", Form::Infix, 3, 3),
++    ("**", Form::Infix, 3, 3),
++    ("*=", Form::Infix, 5, 5),
++    ("+", Form::Infix, 4, 4),
++    ("+", Form::Prefix, 0, 0),
++    ("++", Form::Postfix, 0, 0),
++    ("+=", Form::Infix, 5, 5),
++    (",", Form::Infix, 0, 3),
++    ("-", Form::Infix, 4, 4),
++    ("-", Form::Prefix, 0, 0),
++    ("--", Form::Postfix, 0, 0),
++    ("-=", Form::Infix, 5, 5),
++    ("->", Form::Infix, 5, 5),
++    (".", Form::Infix, 3, 3),
++    ("/", Form::Infix, 4, 4),
++    ("//", Form::Infix, 5, 5),
++    ("/=", Form::Infix, 5, 5),
++    (":", Form::Infix, 0, 3),
++    (":=", Form::Infix, 5, 5),
++    (";", Form::Infix, 0, 3),
++    ("<", Form::Infix, 5, 5),
++    ("<=", Form::Infix, 5, 5),
++    ("<>", Form::Infix, 3, 3),
++    ("=", Form::Infix, 5, 5),
++    ("==", Form::Infix, 5, 5),
++    (">", Form::Infix, 5, 5),
++    (">=", Form::Infix, 5, 5),
++    ("?", Form::Infix, 3, 3),
++    ("@", Form::Infix, 3, 3),
++    ("[", Form::Prefix, 0, 0),
++    ("\\", Form::Infix, 0, 0),
++    ("]", Form::Postfix, 0, 0),
++    ("^", Form::Infix, 3, 3),
++    ("^", Form::Postfix, 0, 0),
++    ("_", Form::Infix, 0, 0),
++    ("_", Form::Postfix, 0, 0),
++    ("`", Form::Postfix, 0, 0),
++    ("{", Form::Prefix, 0, 0),
++    ("|", Form::Infix, 5, 5),
++    ("|", Form::Prefix, 0, 0),
++    ("|", Form::Postfix, 0, 0),
++    ("||", Form::Infix, 5, 5),
++    ("||", Form::Prefix, 0, 0),
++    ("||", Form::Postfix, 0, 0),
++    ("}", Form::Postfix, 0, 0),
++    ("~", Form::Postfix, 0, 0),
++    ("\u{A8}", Form::Postfix, 0, 0),
++    ("\u{AC}", Form::Prefix, 0, 0),
++    ("\u{AF}", Form::Postfix, 0, 0),
++    ("\u{B0}", Form::Postfix, 0, 0),
++    ("\u{B1}", Form::Infix, 4, 4),
++    ("\u{B1}", Form::Prefix, 0, 0),
++    ("\u{B2}", Form::Postfix, 0, 0),
++    ("\u{B3}", Form::Postfix, 0, 0),
++    ("\u{B4}", Form::Postfix, 0, 0),
++    ("\u{B7}", Form::Infix, 3, 3),
++    ("\u{B8}", Form::Postfix, 0, 0),
++    ("\u{B9}", Form::Postfix, 0, 0),
++    ("\u{D7}", Form::Infix, 3, 3),
++    ("\u{F7}", Form::Infix, 4, 4),
++    ("\u{2C6}", Form::Postfix, 0, 0),
++    ("\u{2C7}", Form::Postfix, 0, 0),
++    ("\u{2C9}", Form::Postfix, 0, 0),
++    ("\u{2CA}", Form::Postfix, 0, 0),
++    ("\u{2CB}", Form::Postfix, 0, 0),
++    ("\u{2CD}", Form::Postfix, 0, 0),
++    ("\u{2D8}", Form::Postfix, 0, 0),
++    ("\u{2D9}", Form::Postfix, 0, 0),
++    ("\u{2DA}", Form::Postfix, 0, 0),
++    ("\u{2DC}", Form::Postfix, 0, 0),
++    ("\u{2DD}", Form::Postfix, 0, 0),
++    ("\u{2F7}", Form::Postfix, 0, 0),
++    ("\u{302}", Form::Postfix, 0, 0),
++    ("\u{311}", Form::Postfix, 0, 0),
++    ("\u{2016}", Form::Prefix, 0, 0),
++    ("\u{2016}", Form::Postfix, 0, 0),
++    ("\u{2018}", Form::Prefix, 0, 0),
++    ("\u{2019}", Form::Postfix, 0, 0),
++    ("\u{201A}", Form::Postfix, 0, 0),
++    ("\u{201B}", Form::Postfix, 0, 0),
++    ("\u{201C}", Form::Prefix, 0, 0),
++    ("\u{201D}", Form::Postfix, 0, 0),
++    ("\u{201E}", Form::Postfix, 0, 0),
++    ("\u{201F}", Form::Postfix, 0, 0),
++    ("\u{2022}", Form::Infix, 3, 3),
++    ("\u{2032}", Form::Postfix, 0, 0),
++    ("\u{2033}", Form::Postfix, 0, 0),
++    ("\u{2034}", Form::Postfix, 0, 0),
++    ("\u{2035}", Form::Postfix, 0, 0),
++    ("\u{2036}", Form::Postfix, 0, 0),
++    ("\u{2037}", Form::Postfix, 0, 0),
++    ("\u{203E}", Form::Postfix, 0, 0),
++    ("\u{2043}", Form::Infix, 3, 3),
++    ("\u{2044}", Form::Infix, 4, 4),
++    ("\u{2057}", Form::Postfix, 0, 0),
++    ("\u{2061}", Form::Infix, 0, 0),
++    ("\u{2062}", Form::Infix, 0, 0),
++    ("\u{2063}", Form::Infix, 0, 0),
++    ("\u{2064}", Form::Infix, 0, 0),
++    ("\u{20DB}", Form::Postfix, 0, 0),
++    ("\u{20DC}", Form::Postfix, 0, 0),
++    ("\u{2145}", Form::Prefix, 3, 0),
++    ("\u{2146}", Form::Prefix, 3, 0),
++    ("\u{2190}", Form::Infix, 5, 5),
++    ("\u{2191}", Form::Infix, 5, 5),
++    ("\u{2192}", Form::Infix, 5, 5),
++    ("\u{2193}", Form::Infix, 5, 5),
++    ("\u{2194}", Form::Infix, 5, 5),
++    ("\u{2195}", Form::Infix, 5, 5),
++    ("\u{2196}", Form::Infix, 5, 5),
++    ("\u{2197}", Form::Infix, 5, 5),
++    ("\u{2198}", Form::Infix, 5, 5),
++    ("\u{2199}", Form::Infix, 5, 5),
++    ("\u{219A}", Form::Infix, 5, 5),
++    ("\u{219B}", Form::Infix, 5, 5),
++    ("\u{219C}", Form::Infix, 5, 5),
++    ("\u{219D}", Form::Infix, 5, 5),
++    ("\u{219E}", Form::Infix, 5, 5),
++    ("\u{219F}", Form::Infix, 5, 5),
++    ("\u{21A0}", Form::Infix, 5, 5),
++    ("\u{21A1}", Form::Infix, 5, 5),
++    ("\u{21A2}", Form::Infix, 5, 5),
++    ("\u{21A3}", Form::Infix, 5, 5),
++    ("\u{21A4}", Form::Infix, 5, 5),
++    ("\u{21A5}", Form::Infix, 5, 5),
++    ("\u{21A6}", Form::Infix, 5, 5),
++    ("\u{21A7}", Form::Infix, 5, 5),
++    ("\u{21A8}", Form::Infix, 5, 5),
++    ("\u{21A9}", Form::Infix, 5, 5),
++    ("\u{21AA}", Form::Infix, 5, 5),
++    ("\u{21AB}", Form::Infix, 5, 5),
++    ("\u{21AC}", Form::Infix, 5, 5),
++    ("\u{21AD}", Form::Infix, 5, 5),
++    ("\u{21AE}", Form::Infix, 5, 5),
++    ("\u{21AF}", Form::Infix, 5, 5),
++    ("\u{21B0}", Form::Infix, 5, 5),
++    ("\u{21B1}", Form::Infix, 5, 5),
++    ("\u{21B2}", Form::Infix, 5, 5),
++    ("\u{21B3}", Form::Infix, 5, 5),
++    ("\u{21B4}", Form::Infix, 5, 5),
++    ("\u{21B5}", Form::Infix, 5, 5),
++    ("\u{21B6}", Form::Infix, 5, 5),
++    ("\u{21B7}", Form::Infix, 5, 5),
++    ("\u{21B8}", Form::Infix, 5, 5),
++    ("\u{21B9}", Form::Infix, 5, 5),
++    ("\u{21BA}", Form::Infix, 5, 5),
++    ("\u{21BB}", Form::Infix, 5, 5),
++    ("\u{21BC}", Form::Infix, 5, 5),
++    ("\u{21BD}", Form::Infix, 5, 5),
++    ("\u{21BE}", Form::Infix, 5, 5),
++    ("\u{21BF}", Form::Infix, 5, 5),
++    ("\u{21C0}", Form::Infix, 5, 5),
++    ("\u{21C1}", Form::Infix, 5, 5),
++    ("\u{21C2}", Form::Infix, 5, 5),
++    ("\u{21C3}", Form::Infix, 5, 5),
++    ("\u{21C4}", Form::Infix, 5, 5),
++    ("\u{21C5}", Form::Infix, 5, 5),
++    ("\u{21C6}", Form::Infix, 5, 5),
++    ("\u{21C7}", Form::Infix, 5, 5),
++    ("\u{21C8}", Form::Infix, 5, 5),
++    ("\u{21C9}", Form::Infix, 5, 5),
++    ("\u{21CA}", Form::Infix, 5, 5),
++    ("\u{21CB}", Form::Infix, 5, 5),
++    ("\u{21CC}", Form::Infix, 5, 5),
++    ("\u{21CD}", Form::Infix, 5, 5),
++    ("\u{21CE}", Form::Infix, 5, 5),
++    ("\u{21CF}", Form::Infix, 5, 5),
++    ("\u{21D0}", Form::Infix, 5, 5),
++    ("\u{21D1}", Form::Infix, 5, 5),
++    ("\u{21D2}", Form::Infix, 5, 5),
++    ("\u{21D3}", Form::Infix, 5, 5),
++    ("\u{21D4}", Form::Infix, 5, 5),
++    ("\u{21D5}", Form::Infix, 5, 5),
++    ("\u{21D6}", Form::Infix, 5, 5),
++    ("\u{21D7}", Form::Infix, 5, 5),
++    ("\u{21D8}", Form::Infix, 5, 5),
++    ("\u{21D9}", Form::Infix, 5, 5),
++    ("\u{21DA}", Form::Infix, 5, 5),
++    ("\u{21DB}", Form::Infix, 5, 5),
++    ("\u{21DC}", Form::Infix, 5, 5),
++    ("\u{21DD}", Form::Infix, 5, 5),
++    ("\u{21DE}", Form::Infix, 5, 5),
++    ("\u{21DF}", Form::Infix, 5, 5),
++    ("\u{21E0}", Form::Infix, 5, 5),
++    ("\u{21E1}", Form::Infix, 5, 5),
++    ("\u{21E2}", Form::Infix, 5, 5),
++    ("\u{21E3}", Form::Infix, 5, 5),
++    ("\u{21E4}", Form::Infix, 5, 5),
++    ("\u{21E5}", Form::Infix, 5, 5),
++    ("\u{21E6}", Form::Infix, 5, 5),
++    ("\u{21E7}", Form::Infix, 5, 5),
++    ("\u{21E8}", Form::Infix, 5, 5),
++    ("\u{21E9}", Form::Infix, 5, 5),
++    ("\u{21EA}", Form::Infix, 5, 5),
++    ("\u{21EB}", Form::Infix, 5, 5),
++    ("\u{21EC}", Form::Infix, 5, 5),
++    ("\u{21ED}", Form::Infix, 5, 5),
++    ("\u{21EE}", Form::Infix, 5, 5),
++    ("\u{21EF}", Form::Infix, 5, 5),
++    ("\u{21F0}", Form::Infix, 5, 5),
++    ("\u{21F1}", Form::Infix, 5, 5),
++    ("\u{21F2}", Form::Infix, 5, 5),
++    ("\u{21F3}", Form::Infix, 5, 5),
++    ("\u{21F4}", Form::Infix, 5, 5),
++    ("\u{21F5}", Form::Infix, 5, 5),
++    ("\u{21F6}", Form::Infix, 5, 5),
++    ("\u{21F7}", Form::Infix, 5, 5),
++    ("\u{21F8}", Form::Infix, 5, 5),
++    ("\u{21F9}", Form::Infix, 5, 5),
++    ("\u{21FA}", Form::Infix, 5, 5),
++    ("\u{21FB}", Form::Infix, 5, 5),
++    ("\u{21FC}", Form::Infix, 5, 5),
++    ("\u{21FD}", Form::Infix, 5, 5),
++    ("\u{21FE}", Form::Infix, 5, 5),
++    ("\u{21FF}", Form::Infix, 5, 5),
++    ("\u{2200}", Form::Prefix, 0, 0),
++    ("\u{2201}", Form::Prefix, 0, 0),
++    ("\u{2202}", Form::Prefix, 3, 0),
++    ("\u{2203}", Form::Prefix, 0, 0),
++    ("\u{2204}", Form::Prefix, 0, 0),
++    ("\u{2206}", Form::Infix, 0, 0),
++    ("\u{2207}", Form::Prefix, 0, 0),
++    ("\u{2208}", Form::Infix, 5, 5),
++    ("\u{2209}", Form::Infix, 5, 5),
++    ("\u{220A}", Form::Infix, 5, 5),
++    ("\u{220B}", Form::Infix, 5, 5),
++    ("\u{220C}", Form::Infix, 5, 5),
++    ("\u{220D}", Form::Infix, 5, 5),
++    ("\u{220F}", Form::Prefix, 3, 3),
++    ("\u{2210}", Form::Prefix, 3, 3),
++    ("\u{2211}", Form::Prefix, 3, 3),
++    ("\u{2212}", Form::Infix, 4, 4),
++    ("\u{2212}", Form::Prefix, 0, 0),
++    ("\u{2213}", Form::Infix, 4, 4),
++    ("\u{2213}", Form::Prefix, 0, 0),
++    ("\u{2214}", Form::Infix, 4, 4),
++    ("\u{2215}", Form::Infix, 4, 4),
++    ("\u{2216}", Form::Infix, 4, 4),
++    ("\u{2217}", Form::Infix, 3, 3),
++    ("\u{2218}", Form::Infix, 3, 3),
++    ("\u{2219}", Form::Infix, 3, 3),
++    ("\u{221A}", Form::Prefix, 3, 0),
++    ("\u{221B}", Form::Prefix, 3, 0),
++    ("\u{221C}", Form::Prefix, 3, 0),
++    ("\u{221D}", Form::Infix, 5, 5),
++    ("\u{221F}", Form::Prefix, 0, 0),
++    ("\u{2220}", Form::Prefix, 0, 0),
++    ("\u{2221}", Form::Prefix, 0, 0),
++    ("\u{2222}", Form::Prefix, 0, 0),
++    ("\u{2223}", Form::Infix, 5, 5),
++    ("\u{2224}", Form::Infix, 5, 5),
++    ("\u{2225}", Form::Infix, 5, 5),
++    ("\u{2226}", Form::Infix, 5, 5),
++    ("\u{2227}", Form::Infix, 4, 4),
++    ("\u{2228}", Form::Infix, 4, 4),
++    ("\u{2229}", Form::Infix, 4, 4),
++    ("\u{222A}", Form::Infix, 4, 4),
++    ("\u{222B}", Form::Prefix, 3, 3),
++    ("\u{222C}", Form::Prefix, 3, 3),
++    ("\u{222D}", Form::Prefix, 3, 3),
++    ("\u{222E}", Form::Prefix, 3, 3),
++    ("\u{222F}", Form::Prefix, 3, 3),
++    ("\u{2230}", Form::Prefix, 3, 3),
++    ("\u{2231}", Form::Prefix, 3, 3),
++    ("\u{2232}", Form::Prefix, 3, 3),
++    ("\u{2233}", Form::Prefix, 3, 3),
++    ("\u{2234}", Form::Prefix, 0, 0),
++    ("\u{2235}", Form::Prefix, 0, 0),
++    ("\u{2236}", Form::Infix, 4, 4),
++    ("\u{2237}", Form::Infix, 5, 5),
++    ("\u{2238}", Form::Infix, 4, 4),
++    ("\u{2239}", Form::Infix, 5, 5),
++    ("\u{223A}", Form::Infix, 5, 5),
++    ("\u{223B}", Form::Infix, 5, 5),
++    ("\u{223C}", Form::Infix, 5, 5),
++    ("\u{223C}", Form::Prefix, 0, 0),
++    ("\u{223D}", Form::Infix, 5, 5),
++    ("\u{223E}", Form::Infix, 5, 5),
++    ("\u{2240}", Form::Infix, 3, 3),
++    ("\u{2241}", Form::Infix, 5, 5),
++    ("\u{2242}", Form::Infix, 5, 5),
++    ("\u{2243}", Form::Infix, 5, 5),
++    ("\u{2244}", Form::Infix, 5, 5),
++    ("\u{2245}", Form::Infix, 5, 5),
++    ("\u{2246}", Form::Infix, 5, 5),
++    ("\u{2247}", Form::Infix, 5, 5),
++    ("\u{2248}", Form::Infix, 5, 5),
++    ("\u{2249}", Form::Infix, 5, 5),
++    ("\u{224A}", Form::Infix, 5, 5),
++    ("\u{224B}", Form::Infix, 5, 5),
++    ("\u{224C}", Form::Infix, 5, 5),
++    ("\u{224D}", Form::Infix, 5, 5),
++    ("\u{224E}", Form::Infix, 5, 5),
++    ("\u{224F}", Form::Infix, 5, 5),
++    ("\u{2250}", Form::Infix, 5, 5),
++    ("\u{2251}", Form::Infix, 5, 5),
++    ("\u{2252}", Form::Infix, 5, 5),
++    ("\u{2253}", Form::Infix, 5, 5),
++    ("\u{2254}", Form::Infix, 5, 5),
++    ("\u{2255}", Form::Infix, 5, 5),
++    ("\u{2256}", Form::Infix, 5, 5),
++    ("\u{2257}", Form::Infix, 5, 5),
++    ("\u{2258}", Form::Infix, 5, 5),
++    ("\u{2259}", Form::Infix, 5, 5),
++    ("\u{225A}", Form::Infix, 5, 5),
++    ("\u{225B}", Form::Infix, 5, 5),
++    ("\u{225C}", Form::Infix, 5, 5),
++    ("\u{225D}", Form::Infix, 5, 5),
++    ("\u{225E}", Form::Infix, 5, 5),
++    ("\u{225F}", Form::Infix, 5, 5),
++    ("\u{2260}", Form::Infix, 5, 5),
++    ("\u{2261}", Form::Infix, 5, 5),
++    ("\u{2262}", Form::Infix, 5, 5),
++    ("\u{2263}", Form::Infix, 5, 5),
++    ("\u{2264}", Form::Infix, 5, 5),
++    ("\u{2265}", Form::Infix, 5, 5),
++    ("\u{2266}", Form::Infix, 5, 5),
++    ("\u{2267}", Form::Infix, 5, 5),
++    ("\u{2268}", Form::Infix, 5, 5),
++    ("\u{2269}", Form::Infix, 5, 5),
++    ("\u{226A}", Form::Infix, 5, 5),
++    ("\u{226B}", Form::Infix, 5, 5),
++    ("\u{226C}", Form::Infix, 5, 5),
++    ("\u{226D}", Form::Infix, 5, 5),
++    ("\u{226E}", Form::Infix, 5, 5),
++    ("\u{226F}", Form::Infix, 5, 5),
++    ("\u{2270}", Form::Infix, 5, 5),
++    ("\u{2271}", Form::Infix, 5, 5),
++    ("\u{2272}", Form::Infix, 5, 5),
++    ("\u{2273}", Form::Infix, 5, 5),
++    ("\u{2274}", Form::Infix, 5, 5),
++    ("\u{2275}", Form::Infix, 5, 5),
++    ("\u{2276}", Form::Infix, 5, 5),
++    ("\u{2277}", Form::Infix, 5, 5),
++    ("\u{2278}", Form::Infix, 5, 5),
++    ("\u{2279}", Form::Infix, 5, 5),
++    ("\u{227A}", Form::Infix, 5, 5),
++    ("\u{227B}", Form::Infix, 5, 5),
++    ("\u{227C}", Form::Infix, 5, 5),
++    ("\u{227D}", Form::Infix, 5, 5),
++    ("\u{227E}", Form::Infix, 5, 5),
++    ("\u{227F}", Form::Infix, 5, 5),
++    ("\u{2280}", Form::Infix, 5, 5),
++    ("\u{2281}", Form::Infix, 5, 5),
++    ("\u{2282}", Form::Infix, 5, 5),
++    ("\u{2283}", Form::Infix, 5, 5),
++    ("\u{2284}", Form::Infix, 5, 5),
++    ("\u{2285}", Form::Infix, 5, 5),
++    ("\u{2286}", Form::Infix, 5, 5),
++    ("\u{2287}", Form::Infix, 5, 5),
++    ("\u{2288}", Form::Infix, 5, 5),
++    ("\u{2289}", Form::Infix, 5, 5),
++    ("\u{228A}", Form::Infix, 5, 5),
++    ("\u{228B}", Form::Infix, 5, 5),
++    ("\u{228C}", Form::Infix, 4, 4),
++    ("\u{228D}", Form::Infix, 4, 4),
++    ("\u{228E}", Form::Infix, 4, 4),
++    ("\u{228F}", Form::Infix, 5, 5),
++    ("\u{2290}", Form::Infix, 5, 5),
++    ("\u{2291}", Form::Infix, 5, 5),
++    ("\u{2292}", Form::Infix, 5, 5),
++    ("\u{2293}", Form::Infix, 4, 4),
++    ("\u{2294}", Form::Infix, 4, 4),
++    ("\u{2295}", Form::Infix, 4, 4),
++    ("\u{2296}", Form::Infix, 4, 4),
++    ("\u{2297}", Form::Infix, 3, 3),
++    ("\u{2298}", Form::Infix, 4, 4),
++    ("\u{2299}", Form::Infix, 3, 3),
++    ("\u{229A}", Form::Infix, 3, 3),
++    ("\u{229B}", Form::Infix, 3, 3),
++    ("\u{229C}", Form::Infix, 5, 5),
++    ("\u{229D}", Form::Infix, 4, 4),
++    ("\u{229E}", Form::Infix, 4, 4),
++    ("\u{229F}", Form::Infix, 4, 4),
++    ("\u{22A0}", Form::Infix, 3, 3),
++    ("\u{22A1}", Form::Infix, 3, 3),
++    ("\u{22A2}", Form::Infix, 5, 5),
++    ("\u{22A3}", Form::Infix, 5, 5),
++    ("\u{22A6}", Form::Infix, 5, 5),
++    ("\u{22A7}", Form::Infix, 5, 5),
++    ("\u{22A8}", Form::Infix, 5, 5),
++    ("\u{22A9}", Form::Infix, 5, 5),
++    ("\u{22AA}", Form::Infix, 5, 5),
++    ("\u{22AB}", Form::Infix, 5, 5),
++    ("\u{22AC}", Form::Infix, 5, 5),
++    ("\u{22AD}", Form::Infix, 5, 5),
++    ("\u{22AE}", Form::Infix, 5, 5),
++    ("\u{22AF}", Form::Infix, 5, 5),
++    ("\u{22B0}", Form::Infix, 5, 5),
++    ("\u{22B1}", Form::Infix, 5, 5),
++    ("\u{22B2}", Form::Infix, 5, 5),
++    ("\u{22B3}", Form::Infix, 5, 5),
++    ("\u{22B4}", Form::Infix, 5, 5),
++    ("\u{22B5}", Form::Infix, 5, 5),
++    ("\u{22B6}", Form::Infix, 5, 5),
++    ("\u{22B7}", Form::Infix, 5, 5),
++    ("\u{22B8}", Form::Infix, 5, 5),
++    ("\u{22BA}", Form::Infix, 3, 3),
++    ("\u{22BB}", Form::Infix, 4, 4),
++    ("\u{22BC}", Form::Infix, 4, 4),
++    ("\u{22BD}", Form::Infix, 4, 4),
++    ("\u{22BE}", Form::Prefix, 0, 0),
++    ("\u{22BF}", Form::Prefix, 0, 0),
++    ("\u{22C0}", Form::Prefix, 3, 3),
++    ("\u{22C1}", Form::Prefix, 3, 3),
++    ("\u{22C2}", Form::Prefix, 3, 3),
++    ("\u{22C3}", Form::Prefix, 3, 3),
++    ("\u{22C4}", Form::Infix, 3, 3),
++    ("\u{22C5}", Form::Infix, 3, 3),
++    ("\u{22C6}", Form::Infix, 3, 3),
++    ("\u{22C7}", Form::Infix, 3, 3),
++    ("\u{22C8}", Form::Infix, 5, 5),
++    ("\u{22C9}", Form::Infix, 3, 3),
++    ("\u{22CA}", Form::Infix, 3, 3),
++    ("\u{22CB}", Form::Infix, 3, 3),
++    ("\u{22CC}", Form::Infix, 3, 3),
++    ("\u{22CD}", Form::Infix, 5, 5),
++    ("\u{22CE}", Form::Infix, 4, 4),
++    ("\u{22CF}", Form::Infix, 4, 4),
++    ("\u{22D0}", Form::Infix, 5, 5),
++    ("\u{22D1}", Form::Infix, 5, 5),
++    ("\u{22D2}", Form::Infix, 4, 4),
++    ("\u{22D3}", Form::Infix, 4, 4),
++    ("\u{22D4}", Form::Infix, 5, 5),
++    ("\u{22D5}", Form::Infix, 5, 5),
++    ("\u{22D6}", Form::Infix, 5, 5),
++    ("\u{22D7}", Form::Infix, 5, 5),
++    ("\u{22D8}", Form::Infix, 5, 5),
++    ("\u{22D9}", Form::Infix, 5, 5),
++    ("\u{22DA}", Form::Infix, 5, 5),
++    ("\u{22DB}", Form::Infix, 5, 5),
++    ("\u{22DC}", Form::Infix, 5, 5),
++    ("\u{22DD}", Form::Infix, 5, 5),
++    ("\u{22DE}", Form::Infix, 5, 5),
++    ("\u{22DF}", Form::Infix, 5, 5),
++    ("\u{22E0}", Form::Infix, 5, 5),
++    ("\u{22E1}", Form::Infix, 5, 5),
++    ("\u{22E2}", Form::Infix, 5, 5),
++    ("\u{22E3}", Form::Infix, 5, 5),
++    ("\u{22E4}", Form::Infix, 5, 5),
++    ("\u{22E5}", Form::Infix, 5, 5),
++    ("\u{22E6}", Form::Infix, 5, 5),
++    ("\u{22E7}", Form::Infix, 5, 5),
++    ("\u{22E8}", Form::Infix, 5, 5),
++    ("\u{22E9}", Form::Infix, 5, 5),
++    ("\u{22EA}", Form::Infix, 5, 5),
++    ("\u{22EB}", Form::Infix, 5, 5),
++    ("\u{22EC}", Form::Infix, 5, 5),
++    ("\u{22ED}", Form::Infix, 5, 5),
++    ("\u{22F2}", Form::Infix, 5, 5),
++    ("\u{22F3}", Form::Infix, 5, 5),
++    ("\u{22F4}", Form::Infix, 5, 5),
++    ("\u{22F5}", Form::Infix, 5, 5),
++    ("\u{22F6}", Form::Infix, 5, 5),
++    ("\u{22F7}", Form::Infix, 5, 5),
++    ("\u{22F8}", Form::Infix, 5, 5),
++    ("\u{22F9}", Form::Infix, 5, 5),
++    ("\u{22FA}", Form::Infix, 5, 5),
++    ("\u{22FB}", Form::Infix, 5, 5),
++    ("\u{22FC}", Form::Infix, 5, 5),
++    ("\u{22FD}", Form::Infix, 5, 5),
++    ("\u{22FE}", Form::Infix, 5, 5),
++    ("\u{22FF}", Form::Infix, 5, 5),
++    ("\u{2301}", Form::Infix, 5, 5),
++    ("\u{2305}", Form::Infix, 3, 3),
++    ("\u{2306}", Form::Infix, 3, 3),
++    ("\u{2308}", Form::Prefix, 0, 0),
++    ("\u{2309}", Form::Postfix, 0, 0),
++    ("\u{230A}", Form::Prefix, 0, 0),
++    ("\u{230B}", Form::Postfix, 0, 0),
++    ("\u{2310}", Form::Prefix, 0, 0),
++    ("\u{2319}", Form::Prefix, 0, 0),
++    ("\u{2322}", Form::Postfix, 0, 0),
++    ("\u{2323}", Form::Postfix, 0, 0),
++    ("\u{2329}", Form::Prefix, 0, 0),
++    ("\u{232A}", Form::Postfix, 0, 0),
++    ("\u{237C}", Form::Infix, 5, 5),
++    ("\u{238B}", Form::Infix, 5, 5),
++    ("\u{23B4}", Form::Postfix, 0, 0),
++    ("\u{23B5}", Form::Postfix, 0, 0),
++    ("\u{23CD}", Form::Postfix, 0, 0),
++    ("\u{23DC}", Form::Postfix, 0, 0),
++    ("\u{23DD}", Form::Postfix, 0, 0),
++    ("\u{23DE}", Form::Postfix, 0, 0),
++    ("\u{23DF}", Form::Postfix, 0, 0),
++    ("\u{23E0}", Form::Postfix, 0, 0),
++    ("\u{23E1}", Form::Postfix, 0, 0),
++    ("\u{2772}", Form::Prefix, 0, 0),
++    ("\u{2773}", Form::Postfix, 0, 0),
++    ("\u{2794}", Form::Infix, 5, 5),
++    ("\u{2795}", Form::Infix, 4, 4),
++    ("\u{2795}", Form::Prefix, 0, 0),
++    ("\u{2796}", Form::Infix, 4, 4),
++    ("\u{2796}", Form::Prefix, 0, 0),
++    ("\u{2797}", Form::Infix, 4, 4),
++    ("\u{2798}", Form::Infix, 5, 5),
++    ("\u{2799}", Form::Infix, 5, 5),
++    ("\u{279A}", Form::Infix, 5, 5),
++    ("\u{279B}", Form::Infix, 5, 5),
++    ("\u{279C}", Form::Infix, 5, 5),
++    ("\u{279D}", Form::Infix, 5, 5),
++    ("\u{279E}", Form::Infix, 5, 5),
++    ("\u{279F}", Form::Infix, 5, 5),
++    ("\u{27A0}", Form::Infix, 5, 5),
++    ("\u{27A1}", Form::Infix, 5, 5),
++    ("\u{27A5}", Form::Infix, 5, 5),
++    ("\u{27A6}", Form::Infix, 5, 5),
++    ("\u{27A7}", Form::Infix, 5, 5),
++    ("\u{27A8}", Form::Infix, 5, 5),
++    ("\u{27A9}", Form::Infix, 5, 5),
++    ("\u{27AA}", Form::Infix, 5, 5),
++    ("\u{27AB}", Form::Infix, 5, 5),
++    ("\u{27AC}", Form::Infix, 5, 5),
++    ("\u{27AD}", Form::Infix, 5, 5),
++    ("\u{27AE}", Form::Infix, 5, 5),
++    ("\u{27AF}", Form::Infix, 5, 5),
++    ("\u{27B1}", Form::Infix, 5, 5),
++    ("\u{27B2}", Form::Infix, 5, 5),
++    ("\u{27B3}", Form::Infix, 5, 5),
++    ("\u{27B4}", Form::Infix, 5, 5),
++    ("\u{27B5}", Form::Infix, 5, 5),
++    ("\u{27B6}", Form::Infix, 5, 5),
++    ("\u{27B7}", Form::Infix, 5, 5),
++    ("\u{27B8}", Form::Infix, 5, 5),
++    ("\u{27B9}", Form::Infix, 5, 5),
++    ("\u{27BA}", Form::Infix, 5, 5),
++    ("\u{27BB}", Form::Infix, 5, 5),
++    ("\u{27BC}", Form::Infix, 5, 5),
++    ("\u{27BD}", Form::Infix, 5, 5),
++    ("\u{27BE}", Form::Infix, 5, 5),
++    ("\u{27C0}", Form::Prefix, 0, 0),
++    ("\u{27C2}", Form::Infix, 5, 5),
++    ("\u{27CB}", Form::Infix, 3, 3),
++    ("\u{27CD}", Form::Infix, 3, 3),
++    ("\u{27E6}", Form::Prefix, 0, 0),
++    ("\u{27E7}", Form::Postfix, 0, 0),
++    ("\u{27E8}", Form::Prefix, 0, 0),
++    ("\u{27E9}", Form::Postfix, 0, 0),
++    ("\u{27EA}", Form::Prefix, 0, 0),
++    ("\u{27EB}", Form::Postfix, 0, 0),
++    ("\u{27EC}", Form::Prefix, 0, 0),
++    ("\u{27ED}", Form::Postfix, 0, 0),
++    ("\u{27EE}", Form::Prefix, 0, 0),
++    ("\u{27EF}", Form::Postfix, 0, 0),
++    ("\u{27F0}", Form::Infix, 5, 5),
++    ("\u{27F1}", Form::Infix, 5, 5),
++    ("\u{27F2}", Form::Infix, 5, 5),
++    ("\u{27F3}", Form::Infix, 5, 5),
++    ("\u{27F4}", Form::Infix, 5, 5),
++    ("\u{27F5}", Form::Infix, 5, 5),
++    ("\u{27F6}", Form::Infix, 5, 5),
++    ("\u{27F7}", Form::Infix, 5, 5),
++    ("\u{27F8}", Form::Infix, 5, 5),
++    ("\u{27F9}", Form::Infix, 5, 5),
++    ("\u{27FA}", Form::Infix, 5, 5),
++    ("\u{27FB}", Form::Infix, 5, 5),
++    ("\u{27FC}", Form::Infix, 5, 5),
++    ("\u{27FD}", Form::Infix, 5, 5),
++    ("\u{27FE}", Form::Infix, 5, 5),
++    ("\u{27FF}", Form::Infix, 5, 5),
++    ("\u{2900}", Form::Infix, 5, 5),
++    ("\u{2901}", Form::Infix, 5, 5),
++    ("\u{2902}", Form::Infix, 5, 5),
++    ("\u{2903}", Form::Infix, 5, 5),
++    ("\u{2904}", Form::Infix, 5, 5),
++    ("\u{2905}", Form::Infix, 5, 5),
++    ("\u{2906}", Form::Infix, 5, 5),
++    ("\u{2907}", Form::Infix, 5, 5),
++    ("\u{2908}", Form::Infix, 5, 5),
++    ("\u{2909}", Form::Infix, 5, 5),
++    ("\u{290A}", Form::Infix, 5, 5),
++    ("\u{290B}", Form::Infix, 5, 5),
++    ("\u{290C}", Form::Infix, 5, 5),
++    ("\u{290D}", Form::Infix, 5, 5),
++    ("\u{290E}", Form::Infix, 5, 5),
++    ("\u{290F}", Form::Infix, 5, 5),
++    ("\u{2910}", Form::Infix, 5, 5),
++    ("\u{2911}", Form::Infix, 5, 5),
++    ("\u{2912}", Form::Infix, 5, 5),
++    ("\u{2913}", Form::Infix, 5, 5),
++    ("\u{2914}", Form::Infix, 5, 5),
++    ("\u{2915}", Form::Infix, 5, 5),
++    ("\u{2916}", Form::Infix, 5, 5),
++    ("\u{2917}", Form::Infix, 5, 5),
++    ("\u{2918}", Form::Infix, 5, 5),
++    ("\u{2919}", Form::Infix, 5, 5),
++    ("\u{291A}", Form::Infix, 5, 5),
++    ("\u{291B}", Form::Infix, 5, 5),
++    ("\u{291C}", Form::Infix, 5, 5),
++    ("\u{291D}", Form::Infix, 5, 5),
++    ("\u{291E}", Form::Infix, 5, 5),
++    ("\u{291F}", Form::Infix, 5, 5),
++    ("\u{2920}", Form::Infix, 5, 5),
++    ("\u{2921}", Form::Infix, 5, 5),
++    ("\u{2922}", Form::Infix, 5, 5),
++    ("\u{2923}", Form::Infix, 5, 5),
++    ("\u{2924}", Form::Infix, 5, 5),
++    ("\u{2925}", Form::Infix, 5, 5),
++    ("\u{2926}", Form::Infix, 5, 5),
++    ("\u{2927}", Form::Infix, 5, 5),
++    ("\u{2928}", Form::Infix, 5, 5),
++    ("\u{2929}", Form::Infix, 5, 5),
++    ("\u{292A}", Form::Infix, 5, 5),
++    ("\u{292B}", Form::Infix, 5, 5),
++    ("\u{292C}", Form::Infix, 5, 5),
++    ("\u{292D}", Form::Infix, 5, 5),
++    ("\u{292E}", Form::Infix, 5, 5),
++    ("\u{292F}", Form::Infix, 5, 5),
++    ("\u{2930}", Form::Infix, 5, 5),
++    ("\u{2931}", Form::Infix, 5, 5),
++    ("\u{2932}", Form::Infix, 5, 5),
++    ("\u{2933}", Form::Infix, 5, 5),
++    ("\u{2934}", Form::Infix, 5, 5),
++    ("\u{2935}", Form::Infix, 5, 5),
++    ("\u{2936}", Form::Infix, 5, 5),
++    ("\u{2937}", Form::Infix, 5, 5),
++    ("\u{2938}", Form::Infix, 5, 5),
++    ("\u{2939}", Form::Infix, 5, 5),
++    ("\u{293A}", Form::Infix, 5, 5),
++    ("\u{293B}", Form::Infix, 5, 5),
++    ("\u{293C}", Form::Infix, 5, 5),
++    ("\u{293D}", Form::Infix, 5, 5),
++    ("\u{293E}", Form::Infix, 5, 5),
++    ("\u{293F}", Form::Infix, 5, 5),
++    ("\u{2940}", Form::Infix, 5, 5),
++    ("\u{2941}", Form::Infix, 5, 5),
++    ("\u{2942}", Form::Infix, 5, 5),
++    ("\u{2943}", Form::Infix, 5, 5),
++    ("\u{2944}", Form::Infix, 5, 5),
++    ("\u{2945}", Form::Infix, 5, 5),
++    ("\u{2946}", Form::Infix, 5, 5),
++    ("\u{2947}", Form::Infix, 5, 5),
++    ("\u{2948}", Form::Infix, 5, 5),
++    ("\u{2949}", Form::Infix, 5, 5),
++    ("\u{294A}", Form::Infix, 5, 5),
++    ("\u{294B}", Form::Infix, 5, 5),
++    ("\u{294C}", Form::Infix, 5, 5),
++    ("\u{294D}", Form::Infix, 5, 5),
++    ("\u{294E}", Form::Infix, 5, 5),
++    ("\u{294F}", Form::Infix, 5, 5),
++    ("\u{2950}", Form::Infix, 5, 5),
++    ("\u{2951}", Form::Infix, 5, 5),
++    ("\u{2952}", Form::Infix, 5, 5),
++    ("\u{2953}", Form::Infix, 5, 5),
++    ("\u{2954}", Form::Infix, 5, 5),
++    ("\u{2955}", Form::Infix, 5, 5),
++    ("\u{2956}", Form::Infix, 5, 5),
++    ("\u{2957}", Form::Infix, 5, 5),
++    ("\u{2958}", Form::Infix, 5, 5),
++    ("\u{2959}", Form::Infix, 5, 5),
++    ("\u{295A}", Form::Infix, 5, 5),
++    ("\u{295B}", Form::Infix, 5, 5),
++    ("\u{295C}", Form::Infix, 5, 5),
++    ("\u{295D}", Form::Infix, 5, 5),
++    ("\u{295E}", Form::Infix, 5, 5),
++    ("\u{295F}", Form::Infix, 5, 5),
++    ("\u{2960}", Form::Infix, 5, 5),
++    ("\u{2961}", Form::Infix, 5, 5),
++    ("\u{2962}", Form::Infix, 5, 5),
++    ("\u{2963}", Form::Infix, 5, 5),
++    ("\u{2964}", Form::Infix, 5, 5),
++    ("\u{2965}", Form::Infix, 5, 5),
++    ("\u{2966}", Form::Infix, 5, 5),
++    ("\u{2967}", Form::Infix, 5, 5),
++    ("\u{2968}", Form::Infix, 5, 5),
++    ("\u{2969}", Form::Infix, 5, 5),
++    ("\u{296A}", Form::Infix, 5, 5),
++    ("\u{296B}", Form::Infix, 5, 5),
++    ("\u{296C}", Form::Infix, 5, 5),
++    ("\u{296D}", Form::Infix, 5, 5),
++    ("\u{296E}", Form::Infix, 5, 5),
++    ("\u{296F}", Form::Infix, 5, 5),
++    ("\u{2970}", Form::Infix, 5, 5),
++    ("\u{2971}", Form::Infix, 5, 5),
++    ("\u{2972}", Form::Infix, 5, 5),
++    ("\u{2973}", Form::Infix, 5, 5),
++    ("\u{2974}", Form::Infix, 5, 5),
++    ("\u{2975}", Form::Infix, 5, 5),
++    ("\u{2976}", Form::Infix, 5, 5),
++    ("\u{2977}", Form::Infix, 5, 5),
++    ("\u{2978}", Form::Infix, 5, 5),
++    ("\u{2979}", Form::Infix, 5, 5),
++    ("\u{297A}", Form::Infix, 5, 5),
++    ("\u{297B}", Form::Infix, 5, 5),
++    ("\u{297C}", Form::Infix, 5, 5),
++    ("\u{297D}", Form::Infix, 5, 5),
++    ("\u{297E}", Form::Infix, 5, 5),
++    ("\u{297F}", Form::Infix, 5, 5),
++    ("\u{2980}", Form::Prefix, 0, 0),
++    ("\u{2980}", Form::Postfix, 0, 0),
++    ("\u{2981}", Form::Infix, 5, 5),
++    ("\u{2982}", Form::Infix, 5, 5),
++    ("\u{2983}", Form::Prefix, 0, 0),
++    ("\u{2984}", Form::Postfix, 0, 0),
++    ("\u{2985}", Form::Prefix, 0, 0),
++    ("\u{2986}", Form::Postfix, 0, 0),
++    ("\u{2987}", Form::Prefix, 0, 0),
++    ("\u{2988}", Form::Postfix, 0, 0),
++    ("\u{2989}", Form::Prefix, 0, 0),
++    ("\u{298A}", Form::Postfix, 0, 0),
++    ("\u{298B}", Form::Prefix, 0, 0),
++    ("\u{298C}", Form::Postfix, 0, 0),
++    ("\u{298D}", Form::Prefix, 0, 0),
++    ("\u{298E}", Form::Postfix, 0, 0),
++    ("\u{298F}", Form::Prefix, 0, 0),
++    ("\u{2990}", Form::Postfix, 0, 0),
++    ("\u{2991}", Form::Prefix, 0, 0),
++    ("\u{2992}", Form::Postfix, 0, 0),
++    ("\u{2993}", Form::Prefix, 0, 0),
++    ("\u{2994}", Form::Postfix, 0, 0),
++    ("\u{2995}", Form::Prefix, 0, 0),
++    ("\u{2996}", Form::Postfix, 0, 0),
++    ("\u{2997}", Form::Prefix, 0, 0),
++    ("\u{2998}", Form::Postfix, 0, 0),
++    ("\u{2999}", Form::Prefix, 0, 0),
++    ("\u{2999}", Form::Postfix, 0, 0),
++    ("\u{299B}", Form::Prefix, 0, 0),
++    ("\u{299C}", Form::Prefix, 0, 0),
++    ("\u{299D}", Form::Prefix, 0, 0),
++    ("\u{299E}", Form::Prefix, 0, 0),
++    ("\u{299F}", Form::Prefix, 0, 0),
++    ("\u{29A0}", Form::Prefix, 0, 0),
++    ("\u{29A1}", Form::Prefix, 0, 0),
++    ("\u{29A2}", Form::Prefix, 0, 0),
++    ("\u{29A3}", Form::Prefix, 0, 0),
++    ("\u{29A4}", Form::Prefix, 0, 0),
++    ("\u{29A5}", Form::Prefix, 0, 0),
++    ("\u{29A6}", Form::Prefix, 0, 0),
++    ("\u{29A7}", Form::Prefix, 0, 0),
++    ("\u{29A8}", Form::Prefix, 0, 0),
++    ("\u{29A9}", Form::Prefix, 0, 0),
++    ("\u{29AA}", Form::Prefix, 0, 0),
++    ("\u{29AB}", Form::Prefix, 0, 0),
++    ("\u{29AC}", Form::Prefix, 0, 0),
++    ("\u{29AD}", Form::Prefix, 0, 0),
++    ("\u{29AE}", Form::Prefix, 0, 0),
++    ("\u{29AF}", Form::Prefix, 0, 0),
++    ("\u{29B6}", Form::Infix, 5, 5),
++    ("\u{29B7}", Form::Infix, 5, 5),
++    ("\u{29B8}", Form::Infix, 4, 4),
++    ("\u{29B9}", Form::Infix, 5, 5),
++    ("\u{29BC}", Form::Infix, 4, 4),
++    ("\u{29C0}", Form::Infix, 5, 5),
++    ("\u{29C1}", Form::Infix, 5, 5),
++    ("\u{29C4}", Form::Infix, 4, 4),
++    ("\u{29C5}", Form::Infix, 4, 4),
++    ("\u{29C6}", Form::Infix, 3, 3),
++    ("\u{29C7}", Form::Infix, 3, 3),
++    ("\u{29C8}", Form::Infix, 3, 3),
++    ("\u{29CE}", Form::Infix, 5, 5),
++    ("\u{29CF}", Form::Infix, 5, 5),
++    ("\u{29D0}", Form::Infix, 5, 5),
++    ("\u{29D1}", Form::Infix, 5, 5),
++    ("\u{29D2}", Form::Infix, 5, 5),
++    ("\u{29D3}", Form::Infix, 5, 5),
++    ("\u{29D4}", Form::Infix, 3, 3),
++    ("\u{29D5}", Form::Infix, 3, 3),
++    ("\u{29D6}", Form::Infix, 3, 3),
++    ("\u{29D7}", Form::Infix, 3, 3),
++    ("\u{29D8}", Form::Prefix, 0, 0),
++    ("\u{29D9}", Form::Postfix, 0, 0),
++    ("\u{29DA}", Form::Prefix, 0, 0),
++    ("\u{29DB}", Form::Postfix, 0, 0),
++    ("\u{29DF}", Form::Infix, 5, 5),
++    ("\u{29E1}", Form::Infix, 5, 5),
++    ("\u{29E2}", Form::Infix, 3, 3),
++    ("\u{29E3}", Form::Infix, 5, 5),
++    ("\u{29E4}", Form::Infix, 5, 5),
++    ("\u{29E5}", Form::Infix, 5, 5),
++    ("\u{29E6}", Form::Infix, 5, 5),
++    ("\u{29F4}", Form::Infix, 5, 5),
++    ("\u{29F5}", Form::Infix, 4, 4),
++    ("\u{29F6}", Form::Infix, 4, 4),
++    ("\u{29F7}", Form::Infix, 4, 4),
++    ("\u{29F8}", Form::Infix, 4, 4),
++    ("\u{29F9}", Form::Infix, 4, 4),
++    ("\u{29FA}", Form::Infix, 4, 4),
++    ("\u{29FB}", Form::Infix, 4, 4),
++    ("\u{29FC}", Form::Prefix, 0, 0),
++    ("\u{29FD}", Form::Postfix, 0, 0),
++    ("\u{2A00}", Form::Prefix, 3, 3),
++    ("\u{2A01}", Form::Prefix, 3, 3),
++    ("\u{2A02}", Form::Prefix, 3, 3),
++    ("\u{2A03}", Form::Prefix, 3, 3),
++    ("\u{2A04}", Form::Prefix, 3, 3),
++    ("\u{2A05}", Form::Prefix, 3, 3),
++    ("\u{2A06}", Form::Prefix, 3, 3),
++    ("\u{2A07}", Form::Prefix, 3, 3),
++    ("\u{2A08}", Form::Prefix, 3, 3),
++    ("\u{2A09}", Form::Prefix, 3, 3),
++    ("\u{2A0A}", Form::Prefix, 3, 3),
++    ("\u{2A0B}", Form::Prefix, 3, 3),
++    ("\u{2A0C}", Form::Prefix, 3, 3),
++    ("\u{2A0D}", Form::Prefix, 3, 3),
++    ("\u{2A0E}", Form::Prefix, 3, 3),
++    ("\u{2A0F}", Form::Prefix, 3, 3),
++    ("\u{2A10}", Form::Prefix, 3, 3),
++    ("\u{2A11}", Form::Prefix, 3, 3),
++    ("\u{2A12}", Form::Prefix, 3, 3),
++    ("\u{2A13}", Form::Prefix, 3, 3),
++    ("\u{2A14}", Form::Prefix, 3, 3),
++    ("\u{2A15}", Form::Prefix, 3, 3),
++    ("\u{2A16}", Form::Prefix, 3, 3),
++    ("\u{2A17}", Form::Prefix, 3, 3),
++    ("\u{2A18}", Form::Prefix, 3, 3),
++    ("\u{2A19}", Form::Prefix, 3, 3),
++    ("\u{2A1A}", Form::Prefix, 3, 3),
++    ("\u{2A1B}", Form::Prefix, 3, 3),
++    ("\u{2A1C}", Form::Prefix, 3, 3),
++    ("\u{2A1D}", Form::Infix, 3, 3),
++    ("\u{2A1D}", Form::Prefix, 3, 3),
++    ("\u{2A1E}", Form::Infix, 3, 3),
++    ("\u{2A1E}", Form::Prefix, 3, 3),
++    ("\u{2A1F}", Form::Infix, 4, 4),
++    ("\u{2A20}", Form::Infix, 4, 4),
++    ("\u{2A21}", Form::Infix, 4, 4),
++    ("\u{2A22}", Form::Infix, 4, 4),
++    ("\u{2A23}", Form::Infix, 4, 4),
++    ("\u{2A24}", Form::Infix, 4, 4),
++    ("\u{2A25}", Form::Infix, 4, 4),
++    ("\u{2A26}", Form::Infix, 4, 4),
++    ("\u{2A27}", Form::Infix, 4, 4),
++    ("\u{2A28}", Form::Infix, 4, 4),
++    ("\u{2A29}", Form::Infix, 4, 4),
++    ("\u{2A2A}", Form::Infix, 4, 4),
++    ("\u{2A2B}", Form::Infix, 4, 4),
++    ("\u{2A2C}", Form::Infix, 4, 4),
++    ("\u{2A2D}", Form::Infix, 4, 4),
++    ("\u{2A2E}", Form::Infix, 4, 4),
++    ("\u{2A2F}", Form::Infix, 3, 3),
++    ("\u{2A30}", Form::Infix, 3, 3),
++    ("\u{2A31}", Form::Infix, 3, 3),
++    ("\u{2A32}", Form::Infix, 3, 3),
++    ("\u{2A33}", Form::Infix, 3, 3),
++    ("\u{2A34}", Form::Infix, 3, 3),
++    ("\u{2A35}", Form::Infix, 3, 3),
++    ("\u{2A36}", Form::Infix, 3, 3),
++    ("\u{2A37}", Form::Infix, 3, 3),
++    ("\u{2A38}", Form::Infix, 4, 4),
++    ("\u{2A39}", Form::Infix, 4, 4),
++    ("\u{2A3A}", Form::Infix, 4, 4),
++    ("\u{2A3B}", Form::Infix, 3, 3),
++    ("\u{2A3C}", Form::Infix, 3, 3),
++    ("\u{2A3D}", Form::Infix, 3, 3),
++    ("\u{2A3E}", Form::Infix, 4, 4),
++    ("\u{2A3F}", Form::Infix, 3, 3),
++    ("\u{2A40}", Form::Infix, 4, 4),
++    ("\u{2A41}", Form::Infix, 4, 4),
++    ("\u{2A42}", Form::Infix, 4, 4),
++    ("\u{2A43}", Form::Infix, 4, 4),
++    ("\u{2A44}", Form::Infix, 4, 4),
++    ("\u{2A45}", Form::Infix, 4, 4),
++    ("\u{2A46}", Form::Infix, 4, 4),
++    ("\u{2A47}", Form::Infix, 4, 4),
++    ("\u{2A48}", Form::Infix, 4, 4),
++    ("\u{2A49}", Form::Infix, 4, 4),
++    ("\u{2A4A}", Form::Infix, 4, 4),
++    ("\u{2A4B}", Form::Infix, 4, 4),
++    ("\u{2A4C}", Form::Infix, 4, 4),
++    ("\u{2A4D}", Form::Infix, 4, 4),
++    ("\u{2A4E}", Form::Infix, 4, 4),
++    ("\u{2A4F}", Form::Infix, 4, 4),
++    ("\u{2A50}", Form::Infix, 3, 3),
++    ("\u{2A51}", Form::Infix, 4, 4),
++    ("\u{2A52}", Form::Infix, 4, 4),
++    ("\u{2A53}", Form::Infix, 4, 4),
++    ("\u{2A54}", Form::Infix, 4, 4),
++    ("\u{2A55}", Form::Infix, 4, 4),
++    ("\u{2A56}", Form::Infix, 4, 4),
++    ("\u{2A57}", Form::Infix, 4, 4),
++    ("\u{2A58}", Form::Infix, 4, 4),
++    ("\u{2A59}", Form::Infix, 4, 4),
++    ("\u{2A5A}", Form::Infix, 4, 4),
++    ("\u{2A5B}", Form::Infix, 4, 4),
++    ("\u{2A5C}", Form::Infix, 4, 4),
++    ("\u{2A5D}", Form::Infix, 4, 4),
++    ("\u{2A5E}", Form::Infix, 4, 4),
++    ("\u{2A5F}", Form::Infix, 4, 4),
++    ("\u{2A60}", Form::Infix, 4, 4),
++    ("\u{2A61}", Form::Infix, 4, 4),
++    ("\u{2A62}", Form::Infix, 4, 4),
++    ("\u{2A63}", Form::Infix, 4, 4),
++    ("\u{2A64}", Form::Infix, 3, 3),
++    ("\u{2A65}", Form::Infix, 3, 3),
++    ("\u{2A66}", Form::Infix, 5, 5),
++    ("\u{2A67}", Form::Infix, 5, 5),
++    ("\u{2A68}", Form::Infix, 5, 5),
++    ("\u{2A69}", Form::Infix, 5, 5),
++    ("\u{2A6A}", Form::Infix, 5, 5),
++    ("\u{2A6B}", Form::Infix, 5, 5),
++    ("\u{2A6C}", Form::Infix, 5, 5),
++    ("\u{2A6D}", Form::Infix, 5, 5),
++    ("\u{2A6E}", Form::Infix, 5, 5),
++    ("\u{2A6F}", Form::Infix, 5, 5),
++    ("\u{2A70}", Form::Infix, 5, 5),
++    ("\u{2A71}", Form::Infix, 5, 5),
++    ("\u{2A72}", Form::Infix, 5, 5),
++    ("\u{2A73}", Form::Infix, 5, 5),
++    ("\u{2A74}", Form::Infix, 5, 5),
++    ("\u{2A75}", Form::Infix, 5, 5),
++    ("\u{2A76}", Form::Infix, 5, 5),
++    ("\u{2A77}", Form::Infix, 5, 5),
++    ("\u{2A78}", Form::Infix, 5, 5),
++    ("\u{2A79}", Form::Infix, 5, 5),
++    ("\u{2A7A}", Form::Infix, 5, 5),
++    ("\u{2A7B}", Form::Infix, 5, 5),
++    ("\u{2A7C}", Form::Infix, 5, 5),
++    ("\u{2A7D}", Form::Infix, 5, 5),
++    ("\u{2A7E}", Form::Infix, 5, 5),
++    ("\u{2A7F}", Form::Infix, 5, 5),
++    ("\u{2A80}", Form::Infix, 5, 5),
++    ("\u{2A81}", Form::Infix, 5, 5),
++    ("\u{2A82}", Form::Infix, 5, 5),
++    ("\u{2A83}", Form::Infix, 5, 5),
++    ("\u{2A84}", Form::Infix, 5, 5),
++    ("\u{2A85}", Form::Infix, 5, 5),
++    ("\u{2A86}", Form::Infix, 5, 5),
++    ("\u{2A87}", Form::Infix, 5, 5),
++    ("\u{2A88}", Form::Infix, 5, 5),
++    ("\u{2A89}", Form::Infix, 5, 5),
++    ("\u{2A8A}", Form::Infix, 5, 5),
++    ("\u{2A8B}", Form::Infix, 5, 5),
++    ("\u{2A8C}", Form::Infix, 5, 5),
++    ("\u{2A8D}", Form::Infix, 5, 5),
++    ("\u{2A8E}", Form::Infix, 5, 5),
++    ("\u{2A8F}", Form::Infix, 5, 5),
++    ("\u{2A90}", Form::Infix, 5, 5),
++    ("\u{2A91}", Form::Infix, 5, 5),
++    ("\u{2A92}", Form::Infix, 5, 5),
++    ("\u{2A93}", Form::Infix, 5, 5),
++    ("\u{2A94}", Form::Infix, 5, 5),
++    ("\u{2A95}", Form::Infix, 5, 5),
++    ("\u{2A96}", Form::Infix, 5, 5),
++    ("\u{2A97}", Form::Infix, 5, 5),
++    ("\u{2A98}", Form::Infix, 5, 5),
++    ("\u{2A99}", Form::Infix, 5, 5),
++    ("\u{2A9A}", Form::Infix, 5, 5),
++    ("\u{2A9B}", Form::Infix, 5, 5),
++    ("\u{2A9C}", Form::Infix, 5, 5),
++    ("\u{2A9D}", Form::Infix, 5, 5),
++    ("\u{2A9E}", Form::Infix, 5, 5),
++    ("\u{2A9F}", Form::Infix, 5, 5),
++    ("\u{2AA0}", Form::Infix, 5, 5),
++    ("\u{2AA1}", Form::Infix, 5, 5),
++    ("\u{2AA2}", Form::Infix, 5, 5),
++    ("\u{2AA3}", Form::Infix, 5, 5),
++    ("\u{2AA4}", Form::Infix, 5, 5),
++    ("\u{2AA5}", Form::Infix, 5, 5),
++    ("\u{2AA6}", Form::Infix, 5, 5),
++    ("\u{2AA7}", Form::Infix, 5, 5),
++    ("\u{2AA8}", Form::Infix, 5, 5),
++    ("\u{2AA9}", Form::Infix, 5, 5),
++    ("\u{2AAA}", Form::Infix, 5, 5),
++    ("\u{2AAB}", Form::Infix, 5, 5),
++    ("\u{2AAC}", Form::Infix, 5, 5),
++    ("\u{2AAD}", Form::Infix, 5, 5),
++    ("\u{2AAE}", Form::Infix, 5, 5),
++    ("\u{2AAF}", Form::Infix, 5, 5),
++    ("\u{2AB0}", Form::Infix, 5, 5),
++    ("\u{2AB1}", Form::Infix, 5, 5),
++    ("\u{2AB2}", Form::Infix, 5, 5),
++    ("\u{2AB3}", Form::Infix, 5, 5),
++    ("\u{2AB4}", Form::Infix, 5, 5),
++    ("\u{2AB5}", Form::Infix, 5, 5),
++    ("\u{2AB6}", Form::Infix, 5, 5),
++    ("\u{2AB7}", Form::Infix, 5, 5),
++    ("\u{2AB8}", Form::Infix, 5, 5),
++    ("\u{2AB9}", Form::Infix, 5, 5),
++    ("\u{2ABA}", Form::Infix, 5, 5),
++    ("\u{2ABB}", Form::Infix, 5, 5),
++    ("\u{2ABC}", Form::Infix, 5, 5),
++    ("\u{2ABD}", Form::Infix, 5, 5),
++    ("\u{2ABE}", Form::Infix, 5, 5),
++    ("\u{2ABF}", Form::Infix, 5, 5),
++    ("\u{2AC0}", Form::Infix, 5, 5),
++    ("\u{2AC1}", Form::Infix, 5, 5),
++    ("\u{2AC2}", Form::Infix, 5, 5),
++    ("\u{2AC3}", Form::Infix, 5, 5),
++    ("\u{2AC4}", Form::Infix, 5, 5),
++    ("\u{2AC5}", Form::Infix, 5, 5),
++    ("\u{2AC6}", Form::Infix, 5, 5),
++    ("\u{2AC7}", Form::Infix, 5, 5),
++    ("\u{2AC8}", Form::Infix, 5, 5),
++    ("\u{2AC9}", Form::Infix, 5, 5),
++    ("\u{2ACA}", Form::Infix, 5, 5),
++    ("\u{2ACB}", Form::Infix, 5, 5),
++    ("\u{2ACC}", Form::Infix, 5, 5),
++    ("\u{2ACD}", Form::Infix, 5, 5),
++    ("\u{2ACE}", Form::Infix, 5, 5),
++    ("\u{2ACF}", Form::Infix, 5, 5),
++    ("\u{2AD0}", Form::Infix, 5, 5),
++    ("\u{2AD1}", Form::Infix, 5, 5),
++    ("\u{2AD2}", Form::Infix, 5, 5),
++    ("\u{2AD3}", Form::Infix, 5, 5),
++    ("\u{2AD4}", Form::Infix, 5, 5),
++    ("\u{2AD5}", Form::Infix, 5, 5),
++    ("\u{2AD6}", Form::Infix, 5, 5),
++    ("\u{2AD7}", Form::Infix, 5, 5),
++    ("\u{2AD8}", Form::Infix, 5, 5),
++    ("\u{2AD9}", Form::Infix, 5, 5),
++    ("\u{2ADA}", Form::Infix, 5, 5),
++    ("\u{2ADB}", Form::Infix, 4, 4),
++    ("\u{2ADC}", Form::Infix, 3, 3),
++    ("\u{2ADD}", Form::Infix, 3, 3),
++    ("\u{2ADE}", Form::Infix, 5, 5),
++    ("\u{2ADF}", Form::Infix, 5, 5),
++    ("\u{2AE0}", Form::Infix, 5, 5),
++    ("\u{2AE1}", Form::Infix, 5, 5),
++    ("\u{2AE2}", Form::Infix, 5, 5),
++    ("\u{2AE3}", Form::Infix, 5, 5),
++    ("\u{2AE4}", Form::Infix, 5, 5),
++    ("\u{2AE5}", Form::Infix, 5, 5),
++    ("\u{2AE6}", Form::Infix, 5, 5),
++    ("\u{2AE7}", Form::Infix, 5, 5),
++    ("\u{2AE8}", Form::Infix, 5, 5),
++    ("\u{2AE9}", Form::Infix, 5, 5),
++    ("\u{2AEA}", Form::Infix, 5, 5),
++    ("\u{2AEB}", Form::Infix, 5, 5),
++    ("\u{2AEC}", Form::Prefix, 0, 0),
++    ("\u{2AED}", Form::Prefix, 0, 0),
++    ("\u{2AEE}", Form::Infix, 5, 5),
++    ("\u{2AF2}", Form::Infix, 5, 5),
++    ("\u{2AF3}", Form::Infix, 5, 5),
++    ("\u{2AF4}", Form::Infix, 5, 5),
++    ("\u{2AF5}", Form::Infix, 5, 5),
++    ("\u{2AF6}", Form::Infix, 4, 4),
++    ("\u{2AF7}", Form::Infix, 5, 5),
++    ("\u{2AF8}", Form::Infix, 5, 5),
++    ("\u{2AF9}", Form::Infix, 5, 5),
++    ("\u{2AFA}", Form::Infix, 5, 5),
++    ("\u{2AFB}", Form::Infix, 4, 4),
++    ("\u{2AFC}", Form::Prefix, 3, 3),
++    ("\u{2AFD}", Form::Infix, 4, 4),
++    ("\u{2AFE}", Form::Infix, 3, 3),
++    ("\u{2AFF}", Form::Prefix, 3, 3),
++    ("\u{2B00}", Form::Infix, 5, 5),
++    ("\u{2B01}", Form::Infix, 5, 5),
++    ("\u{2B02}", Form::Infix, 5, 5),
++    ("\u{2B03}", Form::Infix, 5, 5),
++    ("\u{2B04}", Form::Infix, 5, 5),
++    ("\u{2B05}", Form::Infix, 5, 5),
++    ("\u{2B06}", Form::Infix, 5, 5),
++    ("\u{2B07}", Form::Infix, 5, 5),
++    ("\u{2B08}", Form::Infix, 5, 5),
++    ("\u{2B09}", Form::Infix, 5, 5),
++    ("\u{2B0A}", Form::Infix, 5, 5),
++    ("\u{2B0B}", Form::Infix, 5, 5),
++    ("\u{2B0C}", Form::Infix, 5, 5),
++    ("\u{2B0D}", Form::Infix, 5, 5),
++    ("\u{2B0E}", Form::Infix, 5, 5),
++    ("\u{2B0F}", Form::Infix, 5, 5),
++    ("\u{2B10}", Form::Infix, 5, 5),
++    ("\u{2B11}", Form::Infix, 5, 5),
++    ("\u{2B30}", Form::Infix, 5, 5),
++    ("\u{2B31}", Form::Infix, 5, 5),
++    ("\u{2B32}", Form::Infix, 5, 5),
++    ("\u{2B33}", Form::Infix, 5, 5),
++    ("\u{2B34}", Form::Infix, 5, 5),
++    ("\u{2B35}", Form::Infix, 5, 5),
++    ("\u{2B36}", Form::Infix, 5, 5),
++    ("\u{2B37}", Form::Infix, 5, 5),
++    ("\u{2B38}", Form::Infix, 5, 5),
++    ("\u{2B39}", Form::Infix, 5, 5),
++    ("\u{2B3A}", Form::Infix, 5, 5),
++    ("\u{2B3B}", Form::Infix, 5, 5),
++    ("\u{2B3C}", Form::Infix, 5, 5),
++    ("\u{2B3D}", Form::Infix, 5, 5),
++    ("\u{2B3E}", Form::Infix, 5, 5),
++    ("\u{2B3F}", Form::Infix, 5, 5),
++    ("\u{2B40}", Form::Infix, 5, 5),
++    ("\u{2B41}", Form::Infix, 5, 5),
++    ("\u{2B42}", Form::Infix, 5, 5),
++    ("\u{2B43}", Form::Infix, 5, 5),
++    ("\u{2B44}", Form::Infix, 5, 5),
++    ("\u{2B45}", Form::Infix, 5, 5),
++    ("\u{2B46}", Form::Infix, 5, 5),
++    ("\u{2B47}", Form::Infix, 5, 5),
++    ("\u{2B48}", Form::Infix, 5, 5),
++    ("\u{2B49}", Form::Infix, 5, 5),
++    ("\u{2B4A}", Form::Infix, 5, 5),
++    ("\u{2B4B}", Form::Infix, 5, 5),
++    ("\u{2B4C}", Form::Infix, 5, 5),
++    ("\u{2B4D}", Form::Infix, 5, 5),
++    ("\u{2B4E}", Form::Infix, 5, 5),
++    ("\u{2B4F}", Form::Infix, 5, 5),
++    ("\u{2B5A}", Form::Infix, 5, 5),
++    ("\u{2B5B}", Form::Infix, 5, 5),
++    ("\u{2B5C}", Form::Infix, 5, 5),
++    ("\u{2B5D}", Form::Infix, 5, 5),
++    ("\u{2B5E}", Form::Infix, 5, 5),
++    ("\u{2B5F}", Form::Infix, 5, 5),
++    ("\u{2B60}", Form::Infix, 5, 5),
++    ("\u{2B61}", Form::Infix, 5, 5),
++    ("\u{2B62}", Form::Infix, 5, 5),
++    ("\u{2B63}", Form::Infix, 5, 5),
++    ("\u{2B64}", Form::Infix, 5, 5),
++    ("\u{2B65}", Form::Infix, 5, 5),
++    ("\u{2B66}", Form::Infix, 5, 5),
++    ("\u{2B67}", Form::Infix, 5, 5),
++    ("\u{2B68}", Form::Infix, 5, 5),
++    ("\u{2B69}", Form::Infix, 5, 5),
++    ("\u{2B6A}", Form::Infix, 5, 5),
++    ("\u{2B6B}", Form::Infix, 5, 5),
++    ("\u{2B6C}", Form::Infix, 5, 5),
++    ("\u{2B6D}", Form::Infix, 5, 5),
++    ("\u{2B6E}", Form::Infix, 5, 5),
++    ("\u{2B6F}", Form::Infix, 5, 5),
++    ("\u{2B70}", Form::Infix, 5, 5),
++    ("\u{2B71}", Form::Infix, 5, 5),
++    ("\u{2B72}", Form::Infix, 5, 5),
++    ("\u{2B73}", Form::Infix, 5, 5),
++    ("\u{2B76}", Form::Infix, 5, 5),
++    ("\u{2B77}", Form::Infix, 5, 5),
++    ("\u{2B78}", Form::Infix, 5, 5),
++    ("\u{2B79}", Form::Infix, 5, 5),
++    ("\u{2B7A}", Form::Infix, 5, 5),
++    ("\u{2B7B}", Form::Infix, 5, 5),
++    ("\u{2B7C}", Form::Infix, 5, 5),
++    ("\u{2B7D}", Form::Infix, 5, 5),
++    ("\u{2B80}", Form::Infix, 5, 5),
++    ("\u{2B81}", Form::Infix, 5, 5),
++    ("\u{2B82}", Form::Infix, 5, 5),
++    ("\u{2B83}", Form::Infix, 5, 5),
++    ("\u{2B84}", Form::Infix, 5, 5),
++    ("\u{2B85}", Form::Infix, 5, 5),
++    ("\u{2B86}", Form::Infix, 5, 5),
++    ("\u{2B87}", Form::Infix, 5, 5),
++    ("\u{2B88}", Form::Infix, 5, 5),
++    ("\u{2B89}", Form::Infix, 5, 5),
++    ("\u{2B8A}", Form::Infix, 5, 5),
++    ("\u{2B8B}", Form::Infix, 5, 5),
++    ("\u{2B8C}", Form::Infix, 5, 5),
++    ("\u{2B8D}", Form::Infix, 5, 5),
++    ("\u{2B8E}", Form::Infix, 5, 5),
++    ("\u{2B8F}", Form::Infix, 5, 5),
++    ("\u{2B94}", Form::Infix, 5, 5),
++    ("\u{2B95}", Form::Infix, 5, 5),
++    ("\u{2BA0}", Form::Infix, 5, 5),
++    ("\u{2BA1}", Form::Infix, 5, 5),
++    ("\u{2BA2}", Form::Infix, 5, 5),
++    ("\u{2BA3}", Form::Infix, 5, 5),
++    ("\u{2BA4}", Form::Infix, 5, 5),
++    ("\u{2BA5}", Form::Infix, 5, 5),
++    ("\u{2BA6}", Form::Infix, 5, 5),
++    ("\u{2BA7}", Form::Infix, 5, 5),
++    ("\u{2BA8}", Form::Infix, 5, 5),
++    ("\u{2BA9}", Form::Infix, 5, 5),
++    ("\u{2BAA}", Form::Infix, 5, 5),
++    ("\u{2BAB}", Form::Infix, 5, 5),
++    ("\u{2BAC}", Form::Infix, 5, 5),
++    ("\u{2BAD}", Form::Infix, 5, 5),
++    ("\u{2BAE}", Form::Infix, 5, 5),
++    ("\u{2BAF}", Form::Infix, 5, 5),
++    ("\u{2BB0}", Form::Infix, 5, 5),
++    ("\u{2BB1}", Form::Infix, 5, 5),
++    ("\u{2BB2}", Form::Infix, 5, 5),
++    ("\u{2BB3}", Form::Infix, 5, 5),
++    ("\u{2BB4}", Form::Infix, 5, 5),
++    ("\u{2BB5}", Form::Infix, 5, 5),
++    ("\u{2BB6}", Form::Infix, 5, 5),
++    ("\u{2BB7}", Form::Infix, 5, 5),
++    ("\u{2BB8}", Form::Infix, 5, 5),
++    ("\u{2BD1}", Form::Infix, 5, 5),
++    ("\u{1EEF0}", Form::Postfix, 0, 0),
++    ("\u{1EEF1}", Form::Postfix, 0, 0),
++];
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn dictionary_is_sorted_for_lookup() {
++        assert!(DICTIONARY.windows(2).all(|w| (w[0].0.as_bytes(), w[0].1) < (w[1].0.as_bytes(), w[1].1)));
++    }
++
++    #[test]
++    fn dictionary_spacing_of_common_operators() {
++        assert_eq!(lookup("+", Form::Infix), (4, 4));
++        assert_eq!(lookup("=", Form::Infix), (5, 5));
++        assert_eq!(lookup(",", Form::Infix), (0, 3));
++        assert_eq!(lookup("+", Form::Prefix), (0, 0));
++        // `=` has no prefix entry: its infix one.
++        assert_eq!(lookup("=", Form::Prefix), (5, 5));
++        // Not in the dictionary: thickmathspace each side.
++        assert_eq!(lookup("xyz", Form::Infix), DEFAULT_SPACING);
++    }
++}
 diff --git a/packages/blitz-dom/src/mathml_space.rs b/packages/blitz-dom/src/mathml_space.rs
 new file mode 100644
 --- /dev/null
@@ -41261,25 +42587,27 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          id
      }
  
-@@ -265,7 +308,7 @@
+@@ -265,7 +308,8 @@
              // affect the parent's layout (text may wrap differently, change size, etc.)
              if let Some(parent_id) = parent_id {
                  let parent = &mut self.doc.nodes[parent_id];
 -                parent.insert_damage(ALL_DAMAGE);
 +                parent.insert_damage(CHILDREN_CHANGED);
++                self.respace_operators(parent_id);
              }
  
              self.maybe_record_node(parent_id);
-@@ -293,7 +336,7 @@
+@@ -293,7 +337,8 @@
                      );
                  }
                  if let Some(parent_id) = parent_id {
 -                    self.doc.nodes[parent_id].insert_damage(ALL_DAMAGE);
 +                    self.doc.nodes[parent_id].insert_damage(CHILDREN_CHANGED);
++                    self.respace_operators(parent_id);
                  }
                  Ok(())
              }
-@@ -320,12 +363,133 @@
+@@ -320,12 +365,133 @@
          }
      }
  
@@ -41413,7 +42741,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -356,7 +520,15 @@
+@@ -356,7 +522,15 @@
                  .attribute_changed(&name.local, old_value, Some(value));
          }
  
@@ -41430,7 +42758,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if node_is_in_document {
              devtools!(
                  self,
-@@ -380,6 +552,9 @@
+@@ -380,6 +554,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
@@ -41440,7 +42768,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("open") {
-@@ -389,11 +564,14 @@
+@@ -389,11 +566,14 @@
          let tag = &element.name.local;
          let attr = &name.local;
  
@@ -41457,7 +42785,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              element.classes = crate::node::parse_classes(value);
          }
  
-@@ -409,13 +587,14 @@
+@@ -409,13 +589,14 @@
              return;
          }
  
@@ -41474,7 +42802,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              node.disable();
              return;
          }
-@@ -440,7 +619,22 @@
+@@ -440,7 +621,22 @@
  
          if (tag, attr) == tag_and_attr!("input", "checked") {
              set_input_checked_state(element, value.to_string());
@@ -41498,7 +42826,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              self.load_image(node_id);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.load_custom_paint_src(node_id);
-@@ -450,17 +644,114 @@
+@@ -450,17 +646,114 @@
              self.load_linked_stylesheet(node_id);
          } else if (tag, attr) == tag_and_attr!("iframe", "src")
              || (tag, attr) == tag_and_attr!("iframe", "srcdoc")
@@ -41613,7 +42941,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -478,11 +769,14 @@
+@@ -478,11 +771,14 @@
              return;
          };
  
@@ -41629,7 +42957,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          self.mutations_occurred |= node_is_in_document;
          if node_is_in_document {
              devtools!(
-@@ -503,11 +797,11 @@
+@@ -503,11 +799,11 @@
                  .attribute_changed(&name.local, old_value, None);
          }
  
@@ -41643,7 +42971,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              element.classes.clear();
          }
  
-@@ -522,6 +816,9 @@
+@@ -522,6 +818,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
@@ -41653,7 +42981,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("open") {
-@@ -542,23 +839,40 @@
+@@ -542,23 +841,40 @@
          let tag = &element.name.local;
          let attr = &name.local;
  
@@ -41698,7 +43026,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
      }
  
-@@ -602,11 +916,14 @@
+@@ -602,11 +918,14 @@
  
      /// Remove the node from it's parent but don't drop it
      pub fn remove_node(&mut self, node_id: NodeId) {
@@ -41713,7 +43041,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let node = &mut self.doc.nodes[node_id];
  
-@@ -614,11 +931,12 @@
+@@ -614,11 +933,12 @@
          if let Some(parent_id) = node.parent.take() {
              self.mutations_occurred |= node_is_in_document;
              let parent = &mut self.doc.nodes[parent_id];
@@ -41728,7 +43056,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -639,8 +957,12 @@
+@@ -639,8 +959,12 @@
          node_id: NodeId,
          on_drop: &mut dyn FnMut(NodeId),
      ) -> Option<Node> {
@@ -41741,7 +43069,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let node = self.doc.drop_node_ignoring_parent_with(node_id, on_drop);
          self.mutations_occurred |= node_is_in_document;
-@@ -648,13 +970,14 @@
+@@ -648,13 +972,14 @@
          // Update child_idx values
          if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
              let parent = &mut self.doc.nodes[parent_id];
@@ -41758,7 +43086,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -668,13 +991,19 @@
+@@ -668,13 +993,19 @@
      }
  
      pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
@@ -41779,7 +43107,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          for child_id in children {
-@@ -697,6 +1026,84 @@
+@@ -697,6 +1028,84 @@
      /// is hinted: its snapshot lets Stylo's invalidator find the siblings and descendants
      /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
      /// through the computed style (whose diff yields the damage); other attributes may not.
@@ -41864,7 +43192,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn restyle_for_attribute_change(&mut self, node_id: NodeId, attr: &LocalName) {
          let node = &mut self.doc.nodes[node_id];
          let is_style = *attr == local_name!("style");
-@@ -727,6 +1134,8 @@
+@@ -727,6 +1136,8 @@
          // A table's `cellpadding` is a presentational hint on its cells, not on the table.
          let restyles_cells = *attr == local_name!("cellpadding")
              && node.data.is_element_with_tag_name(&local_name!("table"));
@@ -41873,7 +43201,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
              data.hint |= if is_style {
                  RestyleHint::RESTYLE_STYLE_ATTRIBUTE
-@@ -748,27 +1157,52 @@
+@@ -748,27 +1159,78 @@
      }
  
      /// Restyle an in-document element whose child list changed, `changed` being the position
@@ -41893,12 +43221,38 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +    /// unchanged): they are restyled whenever the parent carries a sibling-dependent flag. The
 +    /// same conditions inside a `:has()` argument reach their anchors through
 +    /// `invalidate_relative_selectors_for_ts_state`.
++    /// pyro: an `<mo>`'s spacing follows its text and its position in its row
++    /// (`mathml_operator`): `node_id`'s children or text changed, so its operators, or it when it is
++    /// one, build their presentational hints again.
++    fn respace_operators(&mut self, node_id: NodeId) {
++        if !crate::mathml_operator::affects_spacing(&self.doc.nodes[node_id]) {
++            return;
++        }
++        let node = &self.doc.nodes[node_id];
++        let is_mo = |n: &crate::node::Node| {
++            n.element_data().is_some_and(|e| e.name.ns == markup5ever::ns!(mathml) && e.name.local == local_name!("mo"))
++        };
++        let operators: Vec<NodeId> = if is_mo(node) {
++            vec![node_id]
++        } else {
++            node.children.iter().copied().filter(|c| is_mo(&self.doc.nodes[*c])).collect()
++        };
++        for id in operators {
++            let node = &mut self.doc.nodes[id];
++            if let Some(element) = node.element_data_mut() {
++                element.attrs.forget_presentational_hints();
++            }
++            node.set_restyle_hint(RestyleHint::RESTYLE_SELF);
++        }
++    }
++
 +    fn restyle_for_child_list_change(
 +        &mut self,
 +        parent_id: NodeId,
 +        changed: Range<usize>,
 +        removed_element: bool,
 +    ) {
++        self.respace_operators(parent_id);
 +        // pyro: the scroll markers of the groups around a changed child (`layout::scroll_markers`).
 +        self.doc.scroll_markers_dirty = true;
          let parent = &self.doc.nodes[parent_id];
@@ -41939,7 +43293,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              || flags.intersects(
                  ElementSelectorFlags::HAS_SLOW_SELECTOR
                      | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
-@@ -776,18 +1210,43 @@
+@@ -776,18 +1238,43 @@
              )
          {
              hint |= RestyleHint::RESTYLE_DESCENDANTS;
@@ -41986,7 +43340,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  if !children[..changed.start].iter().any(is_element) {
                      edge[0] = children[changed.end..].iter().copied().find(is_element);
                  }
-@@ -799,10 +1258,30 @@
+@@ -799,10 +1286,30 @@
                          .find(is_element);
                  }
              }
@@ -42018,7 +43372,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          let parent = &mut self.doc.nodes[parent_id];
-@@ -878,12 +1357,32 @@
+@@ -878,12 +1385,32 @@
          // would remove both the old and the newly-inserted entries from the
          // parent's child list, and anchor indices would be computed against a
          // child list that still contains the moved nodes.
@@ -42051,7 +43405,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let child = &mut self.doc.nodes[child_id];
              let child_was_in_doc = child.flags.is_in_document();
              self.mutations_occurred |= child_was_in_doc;
-@@ -892,12 +1391,13 @@
+@@ -892,12 +1419,13 @@
              };
  
              let old_parent = &mut self.doc.nodes[old_parent_id];
@@ -42067,7 +43421,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved {
-@@ -911,19 +1411,30 @@
+@@ -911,19 +1439,30 @@
          }
  
          let new_parent = &mut self.doc.nodes[parent_id];
@@ -42101,7 +43455,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  child.set_restyle_hint(RestyleHint::restyle_subtree());
              }
  
-@@ -938,10 +1449,61 @@
+@@ -938,10 +1477,61 @@
                  );
              }
  
@@ -42163,7 +43517,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              }
          }
  
-@@ -975,6 +1537,23 @@
+@@ -975,6 +1565,23 @@
          self.maybe_record_node(parent_id);
      }
  
@@ -42187,7 +43541,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      /// The nearest preceding sibling of `node_id` in `parent_id`'s children
      /// that devtools show (not a whitespace-only text node or anonymous block)
      #[cfg(feature = "devtools")]
-@@ -1142,6 +1721,9 @@
+@@ -1142,6 +1749,9 @@
          for id in self.style_nodes.drain() {
              self.doc.process_style_element(id);
          }
@@ -42197,7 +43551,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          for id in self.form_nodes.drain() {
              self.doc.reset_form_owner(id);
-@@ -1173,9 +1755,14 @@
+@@ -1173,9 +1783,14 @@
  
      fn flush_eager_ops(&mut self) {
          let mut ops = mem::take(&mut self.eager_op_queue);
@@ -42213,7 +43567,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  SpecialOp::LoadIframe(node_id) => self.load_iframe(node_id),
                  SpecialOp::LoadStylesheet(node_id) => self.load_linked_stylesheet(node_id),
                  SpecialOp::UnloadStylesheet(node_id) => self.unload_stylesheet(node_id),
-@@ -1222,12 +1809,51 @@
+@@ -1222,12 +1837,51 @@
                  }
                  _ if has_custom_widget => {}
                  "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
@@ -42266,7 +43620,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      self.eager_op_queue
                          .push(SpecialOp::ProcessButtonInput(node_id));
                      self.form_nodes.insert(node_id);
-@@ -1359,13 +1985,18 @@
+@@ -1359,13 +2013,18 @@
          let rel_attr = node.attr(local_name!("rel"));
          let href_attr = node.attr(local_name!("href"));
  
@@ -42285,7 +43639,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              return;
          }
  
-@@ -1382,6 +2013,12 @@
+@@ -1382,6 +2041,12 @@
                  guard: self.doc.guard.clone(),
                  net_provider: self.doc.net_provider.clone(),
                  abort_signal: self.doc.abort_signal.clone(),
@@ -42298,7 +43652,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              },
          );
  
-@@ -1391,11 +2028,12 @@
+@@ -1391,11 +2056,12 @@
                  .insert(handler.request_id());
          }
  
@@ -42316,7 +43670,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      }
  
      fn unload_stylesheet(&mut self, node_id: NodeId) {
-@@ -1413,6 +2051,11 @@
+@@ -1413,6 +2079,11 @@
              }
          };
  
@@ -42328,7 +43682,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let guard = self.doc.guard.read();
          self.doc.stylist.remove_stylesheet(stylesheet, &guard);
          self.doc
-@@ -1420,21 +2063,127 @@
+@@ -1420,21 +2091,127 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -42461,7 +43815,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      let node = &mut self.doc.nodes[target_id];
                      node.element_data_mut().unwrap().special_data =
                          SpecialElementData::Image(Box::new(cached_image.clone()));
-@@ -1458,15 +2207,18 @@
+@@ -1458,15 +2235,18 @@
                      .pending_images
                      .insert(src_string.to_string(), vec![(target_id, ImageType::Image)]);
  
@@ -42482,7 +43836,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      ),
                  );
              }
-@@ -1483,6 +2235,15 @@
+@@ -1483,6 +2263,15 @@
              return;
          }
  
@@ -42498,7 +43852,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node = &self.doc.nodes[target_id];
          let Some(element) = node.element_data() else {
              return;
-@@ -1544,12 +2305,27 @@
+@@ -1544,12 +2333,27 @@
              return;
          }
  
@@ -42527,7 +43881,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let id = self.create_text_node(&value);
              self.append_children(target_id, &[id]);
              return;
-@@ -1579,6 +2355,20 @@
+@@ -1579,6 +2383,20 @@
      }
  }
  
@@ -42548,7 +43902,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +3167,50 @@
+@@ -2377,6 +3195,50 @@
          }
      }
  
@@ -42599,7 +43953,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3922,254 @@
+@@ -3088,3 +3950,254 @@
          );
      }
  }
@@ -43800,9 +45154,9 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
 +                name: QualName::new(None, crate::PYRO_STATE_NS.into(), local.into()),
 +                value: value.to_owned(),
 +            }),
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: removes the engine's state attribute `local`.
 +    pub fn remove_state(&mut self, local: &str) -> Option<Attribute> {
 +        let idx = self.reserved.iter().position(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == local)?;
@@ -43817,9 +45171,9 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
 +                name: QualName::new(None, markup5ever::ns!(), canonical.into()),
 +                value: value.to_owned(),
 +            }),
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// pyro: removes the engine's attribute `canonical`.
 +    pub fn remove_reserved(&mut self, canonical: &str) -> Option<Attribute> {
 +        let idx = self.reserved.iter().position(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == canonical)?;
@@ -43835,7 +45189,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
          let existing_attr = self.inner.iter_mut().find(|a| a.name == name);
          if let Some(existing_attr) = existing_attr {
              existing_attr.value.clear();
-@@ -42,9 +158,16 @@
+@@ -42,9 +158,22 @@
      }
  
      pub fn remove(&mut self, name: &QualName) -> Option<Attribute> {
@@ -43843,6 +45197,12 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
          let idx = self.inner.iter().position(|attr| attr.name == *name);
          idx.map(|idx| self.inner.remove(idx))
      }
++
++    /// pyro: drop the cached presentational hints, for hints that depend on more than the
++    /// attributes (an `<mo>`'s text and position, `mathml_operator`).
++    pub fn forget_presentational_hints(&mut self) {
++        self.presentational_hints.take();
++    }
 +
 +    /// pyro: the cached presentational hints, built by `build`
 +    /// when no cascade asked since the last write.
@@ -43852,7 +45212,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
  }
  
  impl Deref for Attributes {
-@@ -55,6 +178,33 @@
+@@ -55,6 +184,33 @@
  }
  impl DerefMut for Attributes {
      fn deref_mut(&mut self) -> &mut Self::Target {
@@ -58240,7 +59600,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          /// `<length-percentage>`. `ignoring_zero` selects the spec's separate
          /// "maps to the dimension property (ignoring zero)" mapping, where a
          /// zero value is dropped rather than honoured.
-@@ -1083,6 +1937,37 @@
+@@ -1083,6 +1937,65 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
  
@@ -58275,10 +59635,38 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            }
 +        }
 +
++        /// pyro: `value` parsed as the CSS `property`'s value, as an author would write it (no
++        /// unitless lengths): its declarations, or none when it does not parse.
++        fn parse_css_declaration(property: &str, value: &str) -> Vec<PropertyDeclaration> {
++            use style::properties::{PropertyId, SourcePropertyDeclaration, parse_one_declaration_into};
++            use style::stylesheets::{CssRuleType, Origin};
++            use style_traits::ParsingMode;
++
++            let Ok(property) = PropertyId::parse_enabled_for_all_content(property) else {
++                return Vec::new();
++            };
++            let mut declarations = SourcePropertyDeclaration::default();
++            let parsed = parse_one_declaration_into(
++                &mut declarations,
++                property,
++                value,
++                Origin::Author,
++                &crate::url::DocumentUrl::default().url_extra_data(),
++                None,
++                ParsingMode::DEFAULT,
++                style::context::QuirksMode::NoQuirks,
++                CssRuleType::Style,
++            );
++            match parsed {
++                Ok(()) => declarations.drain().declarations.collect(),
++                Err(_) => Vec::new(),
++            }
++        }
++
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1092,6 +1977,53 @@
+@@ -1092,6 +2005,53 @@
                  attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
              });
  
@@ -58332,7 +59720,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
          let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
          let mut lang = None;
-@@ -1100,6 +2032,28 @@
+@@ -1100,6 +2060,28 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -58361,7 +59749,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,12 +2079,42 @@
+@@ -1125,12 +2107,42 @@
                  }
              }
  
@@ -58404,7 +59792,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                      _ => None,
                  };
  
-@@ -1139,6 +2123,67 @@
+@@ -1139,6 +2151,67 @@
                  }
              }
  
@@ -58472,7 +59860,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `valign` on HTML table row groups, rows and cells maps to
              // `vertical-align`, matched ASCII case-insensitively. `vertical-align`
              // is a shorthand in Stylo, so push the three longhands each keyword
-@@ -1164,7 +2209,7 @@
+@@ -1164,7 +2237,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -58481,7 +59869,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2315,9 @@
+@@ -1270,7 +2343,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -58492,7 +59880,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1307,6 +2354,21 @@
+@@ -1307,6 +2382,21 @@
                  }
              }
  
@@ -58514,7 +59902,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `body` carries four legacy margin attributes, as pixel lengths:
              // marginwidth and marginheight set both sides of an axis, and
              // leftmargin and topmargin set one side each.
-@@ -1358,6 +2420,16 @@
+@@ -1358,6 +2448,16 @@
                  }
              }
  
@@ -58531,7 +59919,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1367,154 +2439,89 @@
+@@ -1367,154 +2467,107 @@
                  }
              }
  
@@ -58566,23 +59954,32 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
          }
  
-+        if let Some(lang) = lang {
-+            push_style(PropertyDeclaration::XLang(XLang(Atom::from(lang))));
-+        }
-+
-         // A table's `cellpadding` attribute maps to the padding of its cells (not
+-        // A table's `cellpadding` attribute maps to the padding of its cells (not
 -        // those of nested tables), as a pixel length. The table is the first
 -        // ancestor that isn't a row or row group.
-+        // those of nested tables), as a pixel length. The table owns the
-+        // declarations and its cells borrow them.
-         // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
+-        // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
 -        if *tag == local_name!("td") || *tag == local_name!("th") {
 -            let mut ancestor = self.parent_node();
 -            let mut cellpadding = None;
 -            while let Some(node) = ancestor {
 -                let Some(elem) = node.data.downcast_element() else {
 -                    break;
--                };
++        if let Some(lang) = lang {
++            push_style(PropertyDeclaration::XLang(XLang(Atom::from(lang))));
++        }
++
++        // pyro: an `<mo>` in a row is spaced by its inline-start and inline-end margins
++        // (`mathml_operator`).
++        if let Some(spacing) = crate::mathml_operator::spacing(self, elem) {
++            use crate::mathml_operator::Side;
++            let em = |n: u8| format!("{}em", n as f64 / 18.0);
++            for (property, side) in [("margin-inline-start", spacing.start), ("margin-inline-end", spacing.end)] {
++                let declarations = match side {
++                    Side::Eighteenths(n) => parse_css_declaration(property, &em(n)),
++                    Side::Explicit(value, n) => Some(parse_css_declaration(property, &value))
++                        .filter(|d| !d.is_empty())
++                        .unwrap_or_else(|| parse_css_declaration(property, &em(n))),
+                 };
 -                let name = &elem.name.local;
 -                let is_table_internal = *name == local_name!("tr")
 -                    || *name == local_name!("tbody")
@@ -58595,9 +59992,17 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 -                        });
 -                    }
 -                    break;
--                }
++                for declaration in declarations {
++                    push_style(declaration);
+                 }
 -                ancestor = node.parent_node();
--            }
+             }
++        }
++
++        // A table's `cellpadding` attribute maps to the padding of its cells (not
++        // those of nested tables), as a pixel length. The table owns the
++        // declarations and its cells borrow them.
++        // https://html.spec.whatwg.org/multipage/rendering.html#tables-2
 +        let mut cells = Vec::new();
 +        if *tag == local_name!("table") {
 +            let cellpadding = elem
@@ -58750,7 +60155,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2534,47 @@
+@@ -1527,6 +2580,47 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -58798,7 +60203,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2582,208 @@
+@@ -1534,11 +2628,208 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -59007,7 +60412,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2791,269 @@
+@@ -1546,14 +2837,269 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -59277,7 +60682,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +3097,12 @@
+@@ -1597,6 +3143,12 @@
      }
  }
  
@@ -59290,7 +60695,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +3175,41 @@
+@@ -1669,12 +3221,41 @@
                      .push(pe_node_id);
              }
          }
@@ -59332,7 +60737,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3224,46 @@
+@@ -1689,24 +3270,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -59387,7 +60792,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3294,842 @@
+@@ -1737,3 +3340,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
