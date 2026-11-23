@@ -1168,5 +1168,11 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 /// This module's part of [`crate::thread_state::reset_thread`]: what of its
 /// per-thread state still holds something, if any does.
 pub(crate) fn thread_leftover() -> Option<&'static str> {
-    RUNNING.with(|r| !r.borrow().is_empty()).then_some("custom::RUNNING")
+    if RUNNING.with(|r| !r.borrow().is_empty()) {
+        return Some("custom::RUNNING");
+    }
+    if CONSTRUCTIONS.with(|c| !c.borrow().is_empty()) {
+        return Some("custom::CONSTRUCTIONS");
+    }
+    association::thread_leftover()
 }

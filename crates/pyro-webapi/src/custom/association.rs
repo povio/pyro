@@ -233,6 +233,16 @@ pub(crate) fn registry_argument(
     Ok(obj.key.association())
 }
 
+/// [`crate::thread_state::reset_thread`]'s part for the scoped registries' owners: the entries of
+/// closed pages are dropped, one whose page is alive is named.
+pub(super) fn thread_leftover() -> Option<&'static str> {
+    OWNERS.with(|owners| {
+        let mut owners = owners.borrow_mut();
+        owners.retain(|_, page| page.strong_count() > 0);
+        (!owners.is_empty()).then_some("association::OWNERS")
+    })
+}
+
 pub(super) fn scoped_registries_exist() -> bool {
     OWNERS.with(|owners| !owners.borrow().is_empty())
 }

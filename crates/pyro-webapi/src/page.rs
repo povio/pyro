@@ -3695,3 +3695,13 @@ impl PageDom {
         self.sheet_responses.borrow().get(&node).copied().unwrap_or(SheetResponse { generation: 0, origin_clean: true })
     }
 }
+
+/// [`crate::thread_state::reset_thread`]'s part: the child frames waiting for their resize steps
+/// are dropped when closed, one still alive is named.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    PENDING_FRAME_RESIZES.with(|p| {
+        let mut p = p.borrow_mut();
+        p.retain(|page| page.strong_count() > 0);
+        (!p.is_empty()).then_some("page::PENDING_FRAME_RESIZES")
+    })
+}

@@ -277,3 +277,13 @@ fn resolve(page: &Rc<PageDom>, realm: WeakRealm, deferred: Deferred, interrupted
         }
     }));
 }
+
+/// [`crate::thread_state::reset_thread`]'s part: the smooth scrolls of closed pages are dropped
+/// (as [`step`] drops them), one of a page still alive is named.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    RUNNING.with(|r| {
+        let mut r = r.borrow_mut();
+        r.retain(|a| a.page.strong_count() > 0);
+        (!r.is_empty()).then_some("smooth_scroll::RUNNING")
+    })
+}

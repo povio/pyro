@@ -1502,3 +1502,9 @@ pub(crate) fn define_command_invoker<C: JsClass<Data = NodeData>>(def: &mut Clas
         },
     );
 }
+
+/// [`crate::thread_state::reset_thread`]'s part: a dialog is in [`CANCELING`] only while its
+/// `cancel` event fires.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    CANCELING.with(|c| !c.borrow().is_empty()).then_some("popover::CANCELING")
+}

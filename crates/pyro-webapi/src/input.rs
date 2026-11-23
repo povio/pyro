@@ -4057,3 +4057,9 @@ fn common_ancestor(dom: &Dom, a: NodeId, b: NodeId) -> Option<NodeId> {
     }
     None
 }
+
+/// [`crate::thread_state::reset_thread`]'s part: [`focus_element_from_script`] restores the
+/// option when it returns, so outside of a call it is unset.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    FOCUS_VISIBLE_OPTION.with(|f| f.get().is_some()).then_some("input::FOCUS_VISIBLE_OPTION")
+}

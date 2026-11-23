@@ -765,3 +765,9 @@ mod nonceable_tests {
         }
     }
 }
+
+/// [`crate::thread_state::reset_thread`]'s part: [`with_handler_location`] restores the slot when
+/// it returns, so outside of a call it is empty.
+pub(crate) fn thread_leftover() -> Option<&'static str> {
+    HANDLER_LOCATION.with(|l| l.borrow().is_some()).then_some("csp::HANDLER_LOCATION")
+}
