@@ -535,3 +535,8 @@ without a style context (custom properties left as they are): pyro serializes a 
   did) to hold `EasingSerialization` around the bezier's numbers; `generics/calc.rs` `write_calculation` holds
   `CalculationSerialization`. Chromium samples the curve it parsed. WPT css-transforms
   `animation/transform-composition` (CSS Animations at 1.5).
+- Round 7 (margin rules in the CSSOM): `properties/properties.mako.rs` `NonCustomPropertyId::allowed_in_rule`: a
+  margin rule parsed on its own, outside its `@page` (Pyro's CSSOM reparses a `CSSMarginRule`'s declarations with the
+  rule type `Margin` alone), takes every property, as Chrome's margin rules do (WPT css-page `cssom/margin-002`,
+  `parsing/margin-rules-002`). Upstream gives the same answer through an empty intersection with
+  `DECLARATION_ALLOWED_TYPES`, but only in release builds: debug builds fail its assertion.

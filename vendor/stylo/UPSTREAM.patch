@@ -4141,8 +4141,22 @@ diff -ruN a/properties/mod.rs b/properties/mod.rs
  }
 diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 --- a/properties/properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/properties.mako.rs	2026-11-23 06:58:46
-@@ -809,6 +809,11 @@
++++ b/properties/properties.mako.rs	2026-11-23 14:12:20
+@@ -401,6 +401,13 @@
+     /// Returns whether a given rule allows a given property.
+     #[inline]
+     pub(super) fn allowed_in_rule(self, rule_types: CssRuleTypes) -> bool {
++        // A margin rule parsed on its own, outside its @page (Pyro's CSSOM reparses a CSSMarginRule's
++        // declarations), takes every property, as Chrome's margin rules do (WPT css-page cssom/margin-002,
++        // parsing/margin-rules-002). Upstream reaches the same answer through an empty intersection below,
++        // in release builds only.
++        if rule_types == CssRuleTypes::from(CssRuleType::Margin) {
++            return true;
++        }
+         let allowed_types = rule_types.intersection(CssRuleTypes::DECLARATION_ALLOWED_TYPES);
+         debug_assert!(
+             !allowed_types.is_empty(),
+@@ -809,6 +816,11 @@
  }
  
  impl LonghandId {
@@ -4154,7 +4168,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      /// Returns an iterator over all the shorthands that include this longhand.
      pub fn shorthands(self) -> NonCustomPropertyIterator<ShorthandId> {
          // first generate longhand to shorthands lookup map
-@@ -1557,7 +1562,8 @@
+@@ -1557,7 +1569,8 @@
              /// Whether this is a multicol style.
              #[cfg(feature = "servo")]
              pub fn is_multicol(&self) -> bool {
@@ -4164,7 +4178,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              }
          % endif
      }
-@@ -1621,6 +1627,12 @@
+@@ -1621,6 +1634,12 @@
      /// relevant link for this element. A element's "relevant link" is the
      /// element being matched if it is a link or the nearest ancestor link.
      visited_style: Option<Arc<ComputedValues>>,
@@ -4177,16 +4191,16 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  }
  
  /// The struct that Servo uses to represent computed values.
-@@ -1642,20 +1654,59 @@
+@@ -1642,20 +1661,59 @@
      inner: ComputedValuesInner,
  
      /// The pseudo-element that we're using.
 -    pseudo: Option<PseudoElement>,
 +    pseudo: Option<Box<PseudoElement>>,
- }
- 
++}
++
 +#[cfg(feature = "servo")]
- impl ComputedValues {
++impl ComputedValues {
 +    /// pyro: whether every inherited style struct and every other inherited
 +    /// input (flags, zoom, writing mode) of `self` equals `other`'s: what a
 +    /// child inherits but custom properties.
@@ -4222,9 +4236,9 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +    pub fn has_visited_or_attr_references(&self) -> bool {
 +        self.inner.visited_style.is_some() || self.inner.attribute_references.is_some()
 +    }
-+}
-+
-+impl ComputedValues {
+ }
+ 
+ impl ComputedValues {
      /// Returns the pseudo-element that this style represents.
      #[cfg(feature = "servo")]
      pub fn pseudo(&self) -> Option<PseudoElement> {
@@ -4240,7 +4254,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      }
  
      /// Returns whether this style's display value is equal to contents.
-@@ -1883,14 +1934,28 @@
+@@ -1883,16 +1941,30 @@
                  writing_mode,
                  rules,
                  visited_style,
@@ -4254,8 +4268,8 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 -            pseudo: pseudo.cloned(),
 +            pseudo: pseudo.cloned().map(Box::new),
          })
-+    }
-+
+     }
+ 
 +    /// pyro: this style as `getComputedStyle` reports it: for a visited link and its contents,
 +    /// the visited-dependent properties unvisited (`pyro_unvisited`); `None` for any other.
 +    pub fn pyro_unvisited_view(&self) -> Option<ComputedValues> {
@@ -4267,10 +4281,12 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +        % endif
 +        % endfor
 +        Some(view)
-     }
- 
++    }
++
      /// Get the initial computed values.
-@@ -1923,6 +1988,7 @@
+     pub fn initial_values_with_font_override(default_font: super::style_structs::Font) -> Arc<Self> {
+         use crate::computed_value_flags::ComputedValueFlags;
+@@ -1923,6 +1995,7 @@
                  writing_mode: WritingMode::empty(),
                  rules: None,
                  visited_style: None,
@@ -4278,7 +4294,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
                  effective_zoom: crate::values::computed::Zoom::ONE,
                  flags: ComputedValueFlags::empty(),
              },
-@@ -2013,13 +2079,14 @@
+@@ -2013,13 +2086,14 @@
                  writing_mode: self.writing_mode.clone(),
                  rules: self.rules.clone(),
                  visited_style: self.visited_style.clone(),
@@ -4294,7 +4310,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
          })
      }
  
-@@ -2028,6 +2095,7 @@
+@@ -2028,6 +2102,7 @@
          self.visited_style.as_deref()
      }
  
@@ -4302,7 +4318,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      % for style_struct in data.active_style_structs():
          /// Clone the ${style_struct.name} struct.
          #[inline]
-@@ -2234,6 +2302,8 @@
+@@ -2234,6 +2309,8 @@
      /// for this element.  A element's "relevant link" is the element being
      /// matched if it is a link or the nearest ancestor link.
      pub visited_style: Option<Arc<ComputedValues>>,
@@ -4311,7 +4327,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      % for style_struct in data.active_style_structs():
          ${style_struct.ident}: StyleStructRef<'a, style_structs::${style_struct.name}>,
      % endfor
-@@ -2271,6 +2341,7 @@
+@@ -2271,6 +2348,7 @@
              color_scheme: inherited_style.get_inherited_ui().color_scheme_bits(),
              flags: Cell::new(flags),
              visited_style: None,
@@ -4319,7 +4335,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              % for style_struct in data.active_style_structs():
              % if style_struct.inherited:
              ${style_struct.ident}: StyleStructRef::Borrowed(inherited_style.get_${style_struct.name_lower}()),
-@@ -2317,12 +2388,57 @@
+@@ -2317,12 +2395,57 @@
              color_scheme: style_to_derive_from.get_inherited_ui().color_scheme_bits(),
              flags: Cell::new(style_to_derive_from.flags),
              visited_style: None,
@@ -4377,7 +4393,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      }
  
      /// Copy the reset properties from `style`.
-@@ -2550,7 +2666,8 @@
+@@ -2550,7 +2673,8 @@
  
      /// Turns this `StyleBuilder` into a proper `ComputedValues` instance.
      pub fn build(self) -> Arc<ComputedValues> {
@@ -4387,7 +4403,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              self.pseudo,
              self.substitution_functions.custom_properties,
              self.attribute_references,
-@@ -2562,7 +2679,13 @@
+@@ -2562,7 +2686,13 @@
              % for style_struct in data.active_style_structs():
              self.${style_struct.ident}.build(),
              % endfor
@@ -4402,7 +4418,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      }
  
      /// Get the substitution function maps if necessary.
-@@ -2769,7 +2892,8 @@
+@@ -2769,7 +2899,8 @@
  #[cfg(feature = "gecko")]
  size_of_test!(ComputedValues, 248);
  #[cfg(feature = "servo")]

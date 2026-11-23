@@ -401,6 +401,13 @@ impl NonCustomPropertyId {
     /// Returns whether a given rule allows a given property.
     #[inline]
     pub(super) fn allowed_in_rule(self, rule_types: CssRuleTypes) -> bool {
+        // A margin rule parsed on its own, outside its @page (Pyro's CSSOM reparses a CSSMarginRule's
+        // declarations), takes every property, as Chrome's margin rules do (WPT css-page cssom/margin-002,
+        // parsing/margin-rules-002). Upstream reaches the same answer through an empty intersection below,
+        // in release builds only.
+        if rule_types == CssRuleTypes::from(CssRuleType::Margin) {
+            return true;
+        }
         let allowed_types = rule_types.intersection(CssRuleTypes::DECLARATION_ALLOWED_TYPES);
         debug_assert!(
             !allowed_types.is_empty(),
