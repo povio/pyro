@@ -1414,6 +1414,16 @@ impl BaseDocument {
         Some((delta, self.can_scroll_towards(owner, direction as u8)))
     }
 
+    /// pyro: whether an element of the document has a `::scroll-button()` box.
+    pub fn has_scroll_buttons(&self) -> bool {
+        self.scroll_pseudo_owners.iter().any(|&owner| {
+            self.nodes
+                .get(owner)
+                .and_then(|node| node.scroll_pseudos())
+                .is_some_and(|pseudos| pseudos.buttons.iter().any(Option::is_some))
+        })
+    }
+
     /// pyro: the originating element of the `::scroll-button()` that the painted hit test (`hit`)
     /// finds at the document point (`x`, `y`): the hit box is the button's or inside it (its
     /// text). A hit test answers a button's originating element (CSS Overflow 5 § 2.2; WPT
@@ -1421,13 +1431,7 @@ impl BaseDocument {
     /// see when the button is painted over the element's content or another element. `None` on
     /// a page without buttons (no hit test then) or when anything else is on top.
     pub fn scroll_button_owner_at(&mut self, x: f32, y: f32) -> Option<NodeId> {
-        let has_buttons = self.scroll_pseudo_owners.iter().any(|&owner| {
-            self.nodes
-                .get(owner)
-                .and_then(|node| node.scroll_pseudos())
-                .is_some_and(|pseudos| pseudos.buttons.iter().any(Option::is_some))
-        });
-        if !has_buttons {
+        if !self.has_scroll_buttons() {
             return None;
         }
         let mut id = self.hit(x, y)?.node_id;

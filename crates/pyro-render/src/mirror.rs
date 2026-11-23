@@ -262,6 +262,11 @@ impl Mirror {
         Ok(mirror)
     }
 
+    /// The nodes [`Mirror::set_element_scroll`] scrolled last.
+    pub(crate) fn scrolled_nodes(&self) -> &[NodeId] {
+        &self.scrolled
+    }
+
     /// The Blitz node of `key`.
     /// Scrolls the elements keyed in `offsets` (CSS px) and puts the ones
     /// scrolled last time and absent now back at the origin.

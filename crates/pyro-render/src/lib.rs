@@ -1134,19 +1134,71 @@ impl Renderer {
     /// test finds at the document point (`x`, `y`) of `page` (blitz-dom
     /// `BaseDocument::scroll_button_owner_at`), what a hit test there answers.
     pub fn scroll_button_owner_at(&mut self, page: u64, x: f64, y: f64) -> Option<u64> {
-        let m = self.mirrors.get_mut(&page)?;
-        let origin = m.doc.scroll_button_owner_at(x as f32, y as f32)?;
-        m.key_of(origin)
+        self.at_page_scroll(page, |m| {
+            let origin = m.doc.scroll_button_owner_at(x as f32, y as f32)?;
+            m.key_of(origin)
+        })?
     }
 
     /// pyro: the `::scroll-button()` of the element `owner` that the painted hit test finds at the
     /// client point (`x`, `y`) of `page` (as [`Self::generated_hit`]): the physical direction it
     /// scrolls and whether it is enabled (blitz-dom `BaseDocument::scroll_button_hit`).
     pub fn scroll_button_hit(&mut self, page: u64, owner: u64, x: f64, y: f64) -> Option<((i8, i8), bool)> {
-        let mirror = self.mirrors.get_mut(&page)?;
-        let owner = mirror.node(owner)?;
-        let scroll = mirror.doc.viewport_scroll();
-        mirror.doc.scroll_button_hit(owner, (x + scroll.x) as f32, (y + scroll.y) as f32)
+        self.at_page_scroll(page, |mirror| {
+            let owner = mirror.node(owner)?;
+            let scroll = mirror.doc.viewport_scroll();
+            mirror.doc.scroll_button_hit(owner, (x + scroll.x) as f32, (y + scroll.y) as f32)
+        })?
+    }
+
+    /// pyro: runs `f` on `page`'s mirror at the page's scroll positions as last told
+    /// ([`Self::set_timeline_scroll`]: the elements it lists, the others it scrolled before at the
+    /// origin, and the viewport's) instead of those of its last capture, which the document keeps
+    /// between captures, then puts those back. A hit test between captures (a click after a
+    /// script or button scroll) is where the page is, and a button's enabled state is that of
+    /// its scroller's current offset.
+    /// Nothing runs on a page without scroll buttons (`None`).
+    fn at_page_scroll<R>(&mut self, page: u64, f: impl FnOnce(&mut mirror::Mirror) -> R) -> Option<R> {
+        if !self.mirrors.get(&page)?.doc.has_scroll_buttons() {
+            return None;
+        }
+        self.unforce_hidden_contents(page);
+        let scroll = self.timeline_scroll.get(&page).map(|s| (s.elements.clone(), s.viewport));
+        let m = self.mirrors.get_mut(&page)?;
+        let Some((elements, viewport)) = scroll else { return Some(f(m)) };
+        let now: Vec<(blitz_dom::NodeId, (f64, f64))> =
+            elements.iter().filter_map(|&(key, offset)| Some((m.node(key)?, offset))).collect();
+        let ids: Vec<blitz_dom::NodeId> = m.scrolled_nodes().iter().copied().chain(now.iter().map(|&(id, _)| id)).collect();
+        let mut saved: Vec<(blitz_dom::NodeId, blitz_dom::Point<f64>)> = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        for id in ids {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(node) = m.doc.get_node_mut(id) else { continue };
+            let (x, y) = now.iter().find(|&&(n, _)| n == id).map_or((0.0, 0.0), |&(_, offset)| offset);
+            let offset = blitz_dom::Point { x, y };
+            // (Only changed offsets are written: a write bumps the geometry generation.)
+            if *node.scroll_offset() != offset {
+                saved.push((id, *node.scroll_offset()));
+                *node.scroll_offset_mut() = offset;
+            }
+        }
+        let old_viewport = m.doc.viewport_scroll();
+        let viewport = blitz_dom::Point { x: viewport.0, y: viewport.1 };
+        if old_viewport != viewport {
+            m.doc.set_viewport_scroll(viewport);
+        }
+        let result = f(m);
+        if old_viewport != viewport {
+            m.doc.set_viewport_scroll(old_viewport);
+        }
+        for (id, offset) in saved.into_iter().rev() {
+            if let Some(node) = m.doc.get_node_mut(id) {
+                *node.scroll_offset_mut() = offset;
+            }
+        }
+        Some(result)
     }
 
     /// pyro: whether an element of the page's document was ever styled with a `scroll-snap-type`.
