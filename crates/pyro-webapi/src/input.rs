@@ -644,7 +644,9 @@ fn is_submit_button(dom: &Dom, el: NodeId) -> bool {
 /// click inside it does not activate a `label` around it.
 fn swallows_label_click(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
-        Some("select" | "textarea" | "details" | "iframe" | "embed") => true,
+        // A nested label too: without a labeled control it has no activation behavior, so the
+        // click reaches the outer label, which must not pass it on.
+        Some("select" | "textarea" | "details" | "iframe" | "embed" | "label") => true,
         Some("audio" | "video") => dom.has_attribute(el, "controls").unwrap_or(false),
         Some("img") => dom.has_attribute(el, "usemap").unwrap_or(false),
         _ => false,
