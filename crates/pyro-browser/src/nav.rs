@@ -89,6 +89,9 @@ pub(crate) struct JointHistory {
     current: Cell<u64>,
     /// The navigation states of the page's frames.
     members: RefCell<Vec<std::rc::Weak<PageNav>>>,
+    /// Counts the traversals applied: of several asked for in one task the
+    /// first wins.
+    traversals: Cell<u64>,
 }
 
 impl JointHistory {
@@ -948,6 +951,8 @@ impl PageNav {
             let step = entry.step;
             if apply_traversal(b, page, &frame_id, index, entry, current_doc, joint.current.get()) {
                 joint.current.set(step);
+                // A `history.go()` asked for before this applied loses (first wins).
+                joint.traversals.set(joint.traversals.get() + 1);
             }
         });
     }
@@ -974,16 +979,22 @@ impl PageNav {
             })
         };
         let Some(target) = target else { return };
+        let traversals = joint.traversals.get();
         let source = (self.page, self.frame_id.clone());
         self.sched.post(TaskSource::Navigation, move |b| {
-            // A traversal (or push) applied since this one was asked for
-            // wins, as does one still loading another document: of
-            // `go(-3); go(-2)` in one task the first wins, as in Chrome.
-            if joint.current.get() != from {
+            // The target was computed when the traversal was asked for (HTML: from the original
+            // placement): a same-document navigation since does not cancel it, as long as the
+            // target step is still in the history (a push may have pruned it). A traversal
+            // applied since, or one still loading another document, wins: of `go(-3); go(-2)`
+            // (or `back(); forward()`) in one task the first wins, as in Chrome.
+            if joint.traversals.get() != traversals {
                 return;
             }
             let members = joint.members();
             if members.iter().any(|m| m.traversal_pending(m.state.borrow().doc_seq)) {
+                return;
+            }
+            if !JointHistory::steps(&members).contains(&target) {
                 return;
             }
             let changes: Vec<_> = members
@@ -1021,9 +1032,10 @@ impl PageNav {
             }) {
                 return;
             }
-            joint.current.set(target);
+            let prev = joint.current.replace(target);
+            joint.traversals.set(traversals + 1);
             for (nav, (index, entry, current_doc)) in changes {
-                apply_traversal(b, nav.page, &nav.frame_id, index, entry, current_doc, from);
+                apply_traversal(b, nav.page, &nav.frame_id, index, entry, current_doc, prev);
             }
         });
     }
