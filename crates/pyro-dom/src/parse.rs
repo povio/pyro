@@ -1221,6 +1221,9 @@ impl DocumentParser {
     /// and `document.open()`'s); script-created templates never patch.
     pub fn enable_template_patches(&mut self) {
         enable_inline_patches(&mut self.tok.sink, true);
+        if let Some(patches) = &self.tok.sink.sink.patches {
+            patches.borrow_mut().live = true;
+        }
     }
 
     /// An XML document (`is_xml_mime`): validated whole once the response

@@ -266,3 +266,26 @@ fn json_document_keeps_utf8_text_across_chunks_and_charset_hints() {
     assert_eq!(data.charset, "UTF-8");
     assert_eq!(dom.text_content(dom.body(doc).unwrap().unwrap()).unwrap().as_deref(), Some(text));
 }
+
+#[test]
+fn document_parser_keeps_sanitize_patches_inert() {
+    // The document's parser patches a `<template for>` live, but has no sanitizer: a
+    // `sanitize` one stays an ordinary template (its contents inert), the target untouched.
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = dom.borrow_mut().create_document(DocumentKind::Html, "http://t/");
+    let mut p = DocumentParser::new(dom.clone(), doc, false).unwrap();
+    p.enable_template_patches();
+    let html = "<div id=a><?start name='a'>old a<?end></div><template for=a sanitize><b id=sa>new</b></template>\
+                <div id=b><?start name='b'>old b<?end></div><template for=b><b id=sb>new</b></template>";
+    let mut step = p.feed(html);
+    while let ParseStep::Script(_) = step {
+        step = p.resume();
+    }
+    p.end();
+    let d = dom.borrow();
+    let a = d.get_element_by_id(doc, "a").unwrap().unwrap();
+    assert_eq!(d.text_content(a).unwrap().unwrap(), "old a");
+    assert!(d.get_element_by_id(doc, "sa").unwrap().is_none());
+    let b = d.get_element_by_id(doc, "b").unwrap().unwrap();
+    assert_eq!(d.text_content(b).unwrap().unwrap(), "new");
+}

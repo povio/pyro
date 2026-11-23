@@ -16,6 +16,9 @@ pub(super) struct Patches {
     // In a scriptless document parse the actual document body is on the
     // open-elements stack whenever the parser inserts a template into it.
     pub(super) document_scope: bool,
+    // The document's own parser (the loader's, `document.open()`'s): patched
+    // contents become live as they are parsed, scripts and custom elements included.
+    pub(super) live: bool,
     // The tree builder asks for the template contents when inserting its
     // children. Nested template elements have different content fragments.
     by_contents: FxHashMap<u32, Patch>,
@@ -39,6 +42,12 @@ impl Patches {
                 .attr("shadowrootmode")
                 .is_some_and(|v| v.eq_ignore_ascii_case("open") || v.eq_ignore_ascii_case("closed"))
         {
+            return false;
+        }
+        // A `sanitize` patch must reach the document only through the sanitizer (no scripts, no
+        // custom element constructors). The document's parser has none: it keeps such a template
+        // as an ordinary, inert one rather than stream its contents live.
+        if self.live && el.attr("sanitize").is_some() {
             return false;
         }
         let Some(name) = el.attr("for").filter(|name| !name.is_empty()) else { return false };
