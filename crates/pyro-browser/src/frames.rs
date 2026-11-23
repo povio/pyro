@@ -403,6 +403,9 @@ impl FrameHost {
         host.dom_peers.borrow_mut().push(Rc::downgrade(self));
         let key: FrameKey = id.into();
         let dom = bindings::create(&host, key, "about:blank", &frame.loader_id)?;
+        // HTML Window reuse: the popup's first same-origin document keeps this Window (what the
+        // opener put on it, `w.addEventListener("load", …)` included), as an iframe's does.
+        dom.set_reusable_window(true);
         // CSP: its initial about:blank document, and the local-scheme documents it loads later
         // (`window.open` of a `blob:` or `javascript:` URL), have its creator's policies.
         if let Some(creator) = self.page_dom(opener) {
@@ -652,7 +655,19 @@ impl FrameHost {
         loader::install_module_fetcher(self.sched.clone(), key, realm);
         self.push_realm(key, None, realm)?;
         // Bindings stay installed on the global; init scripts run again.
-        self.finish_realm(realm, key, &None, &[], &scripts)
+        self.finish_realm(realm, key, &None, &[], &scripts)?;
+        // A top-level frame's navigation clears its execution contexts for automation clients
+        // (CDP `Runtime.executionContextsCleared`): the kept realm is announced again as the new
+        // document's. A child frame's contexts are not cleared.
+        if key.child.is_none() {
+            self.emit(PageEvent::RealmCreated {
+                frame_id: frame.id,
+                realm: realm.id(),
+                world: None,
+                origin: frame.origin,
+            });
+        }
+        Ok(())
     }
     /// The frame's WindowProxy for its new main-world `realm`: the proxy of
     /// the frame's first document, which `realm` adopts, as browsers keep one
@@ -2538,13 +2553,16 @@ impl Browser {
         // javascript: URL": that document's policy container), taken as its commit begins.
         self.csp_inherit_next = frame.page_dom.as_ref().map(|dom| (key, pyro_webapi::csp::InheritedCsp::of(dom)));
         let loader = LoaderId(format!("{:032X}", self.next()));
+        // HTML "evaluate a javascript: URL": the new document's referrer is the replaced
+        // document's (not the navigation initiator's URL), kept as it is.
+        let referrer = frame.page_dom.as_ref().map(|dom| dom.document_referrer()).filter(|r| !r.is_empty());
         let opts = NavigateOpts {
             post: None,
             url: frame.url.clone(),
             reason: NavigationReason::Script,
             cdp_request_id: None,
-            referrer: None,
-            referrer_policy: None,
+            referrer_policy: referrer.as_ref().map(|_| pyro_net::ReferrerPolicy::UnsafeUrl),
+            referrer,
         };
         self.emit(
             key.page,

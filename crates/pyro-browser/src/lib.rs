@@ -2372,12 +2372,12 @@ impl Browser {
             host.store_ancestor_origins(page);
         }
         let (old_dom, replaced) = old_dom;
-        // A child frame's initial about:blank Window made reusable
+        // A child frame's or popup's initial about:blank Window made reusable
         // (`FrameHost::reuse_realm`) becomes the new document's: it keeps its
         // realm, event target and what script put on it, as browsers keep
         // the Window object.
         let reused = match &old_dom {
-            Some(dom) if page.child.is_some() && initial_same_origin && dom.reusable_window() => {
+            Some(dom) if initial_same_origin && dom.reusable_window() => {
                 let at = old.iter().position(|r| {
                     r.world.is_none() && !r.realm.is_deferred() && !r.realm.is_disposed() && !r.realm.is_lingering()
                 });
