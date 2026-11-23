@@ -431,6 +431,10 @@ fn external_form_controls_require_connection_and_retarget_to_the_host() {
     assert_eq!(dom.form_owner(button).unwrap(), None);
     assert_eq!(dom.form_owner(input).unwrap(), Some(form));
     assert_eq!(dom.owned_form_elements(form).unwrap(), [input]);
-    dom.set_attribute(input, "form", "f").unwrap();
-    assert_eq!(dom.form_owner(input).unwrap(), None);
+    // A disconnected control's form attribute is not looked up: it keeps its
+    // nearest ancestor form (HTML "reset the form owner"; f09e4e33e, WPT
+    // forms/form-control-infrastructure/form_attribute.html), even with an ID
+    // that names no form.
+    dom.set_attribute(input, "form", "nope").unwrap();
+    assert_eq!(dom.form_owner(input).unwrap(), Some(form));
 }
