@@ -96,6 +96,29 @@ for r in L:
                   "studio_receipt_pages": studio_receipt, "css_listed": len(css_listed) or None,
                   "title": r.get("title")})
 
+# Pages a root targets that Pyro already passes in baseline c3372ad21: listed, 0 credit.
+_strict_rc5 = set()
+for l in gzip.open(B + "comparison/pages.jsonl.gz", "rt"):
+    x = json.loads(l)
+    if x[2][2] and not x[1][2]:
+        _strict_rc5.add(x[0])
+_already = ns["already_passing"]() & _strict_rc5
+for r in L:
+    if r["state"] not in IMPL:
+        continue
+    pl = r.get("page_list")
+    cand = [u for u in pl if u in _already] if isinstance(pl, list) else \
+           [u for u in _already if SEL.get(r["id"]) and any(re.search(p, u) for p in SEL[r["id"]])]
+    for u in cand:
+        p = pages.setdefault(u, {"url": u, "dir": u.split("/")[0], "machine": mach(u),
+                                 "variant": "worker" if W(u) else "window",
+                                 "roots": [], "commits": [], "confidence": "alreadyPassing (c3372ad21, 0 credit)"})
+        if r["id"] not in p["roots"]:
+            p["roots"].append(r["id"])
+        for c in shas(r.get("commit")):
+            if c not in p["commits"]:
+                p["commits"].append(c)
+
 with open("expected-pages.jsonl", "w") as f:
     for u in sorted(pages):
         f.write(json.dumps({**pages[u], "freeze": FREEZE}, ensure_ascii=False) + "\n")

@@ -3,25 +3,25 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 1230,
+    "macbook_in_scope": 1216,
     "studio_in_scope": 504,
     "other_dirs_out_of_scope": 35,
     "macbook_worker_variants_if_enabled": 220,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1595,
+   "distinct_census_pages": 1581,
    "owner_reported_unlisted": 14,
-   "selector_union": 1836,
-   "owner_estimate_reduction": 255,
-   "of_which_tentative": 222,
+   "selector_union": 1805,
+   "owner_estimate_reduction": 238,
+   "of_which_tentative": 196,
    "studio_css_reported_pages_not_deduped": 355,
    "studio_css_listed_distinct": 40,
    "by_dir": {
-    "html/semantics": 499,
+    "html/semantics": 494,
     "html/canvas": 477,
     "html/browsers": 141,
-    "html/interaction": 117,
     "referrer-policy": 114,
+    "html/interaction": 91,
     "fetch/api": 76,
     "html/editing": 59,
     "content-security-policy": 52,
@@ -37,25 +37,25 @@
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
-    "fetch/corb": 6,
-    "fetch/range": 6,
     "fetch/data-urls": 6,
+    "fetch/range": 6,
+    "fetch/corb": 6,
     "fetch/stale-while-revalidate": 5,
-    "html/obsolete": 4,
     "FileAPI": 4,
     "fetch/compression-dictionary": 4,
-    "fetch/nosniff": 3,
+    "html/obsolete": 4,
     "fetch/http-cache": 3,
-    "html/user-activation": 2,
+    "fetch/nosniff": 3,
     "fetch/orb": 2,
     "xhr": 2,
+    "html/user-activation": 2,
+    "IndexedDB": 1,
+    "svg/styling": 1,
+    "quirks": 1,
+    "fetch/redirects": 1,
     "fetch/content-type": 1,
     "fetch/redirect-navigate": 1,
     "fetch/security": 1,
-    "fetch/redirects": 1,
-    "svg/styling": 1,
-    "IndexedDB": 1,
-    "quirks": 1,
     "html/select": 1
    }
   },
@@ -80,22 +80,21 @@
    "scope": {
     "macbook_in_scope": 0,
     "studio_in_scope": 126,
-    "other_dirs_out_of_scope": 23,
+    "other_dirs_out_of_scope": 16,
     "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 27,
+   "distinct_census_pages": 18,
    "owner_reported_unlisted": 0,
-   "selector_union": 27,
+   "selector_union": 18,
    "owner_estimate_reduction": 0,
    "of_which_tentative": 0,
    "studio_css_reported_pages_not_deduped": 126,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "webidl": 19,
+    "webidl": 11,
     "svg/path": 4,
-    "workers": 3,
-    "dom/nodes": 1
+    "workers": 3
    }
   }
  },
@@ -137,10 +136,10 @@
   },
   "Q01": {
    "state": "retired",
-   "in_scope_pages": 55,
-   "out_of_scope_pages": 106,
-   "pages": 161,
-   "tentative": 30
+   "in_scope_pages": 27,
+   "out_of_scope_pages": 51,
+   "pages": 78,
+   "tentative": 24
   },
   "Q02": {
    "state": "implemented-unbuilt",
@@ -194,8 +193,8 @@
   "Q08": {
    "state": "out-of-scope",
    "in_scope_pages": 0,
-   "out_of_scope_pages": 1,
-   "pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 0,
    "tentative": 0
   },
   "Q09": {
@@ -740,15 +739,15 @@
   "P10": {
    "state": "proposed",
    "in_scope_pages": 0,
-   "out_of_scope_pages": 1,
-   "pages": 1,
+   "out_of_scope_pages": 0,
+   "pages": 0,
    "tentative": 0
   },
   "P11": {
    "state": "proposed",
    "in_scope_pages": 0,
-   "out_of_scope_pages": 19,
-   "pages": 19,
+   "out_of_scope_pages": 11,
+   "pages": 11,
    "tentative": 0
   },
   "P12": {
@@ -768,9 +767,9 @@
   "P14": {
    "state": "deferred",
    "in_scope_pages": 0,
-   "out_of_scope_pages": 229,
-   "pages": 229,
-   "tentative": 21
+   "out_of_scope_pages": 209,
+   "pages": 209,
+   "tentative": 2
   },
   "P15": {
    "state": "deferred",
@@ -795,24 +794,24 @@
   },
   "F02a": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 60,
+   "in_scope_pages": 38,
    "out_of_scope_pages": 0,
-   "pages": 60,
-   "tentative": 60
+   "pages": 38,
+   "tentative": 38
   },
   "F02b": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 13,
+   "in_scope_pages": 11,
    "out_of_scope_pages": 0,
-   "pages": 13,
-   "tentative": 13
+   "pages": 11,
+   "tentative": 11
   },
   "F02c": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 21,
+   "in_scope_pages": 19,
    "out_of_scope_pages": 0,
-   "pages": 21,
-   "tentative": 21
+   "pages": 19,
+   "tentative": 19
   },
   "F02d": {
    "state": "implemented-unbuilt",
@@ -837,9 +836,9 @@
   },
   "F03": {
    "state": "split",
-   "in_scope_pages": 63,
+   "in_scope_pages": 62,
    "out_of_scope_pages": 0,
-   "pages": 63,
+   "pages": 62,
    "tentative": 5
   },
   "F03a": {
@@ -900,9 +899,9 @@
   },
   "F04": {
    "state": "split",
-   "in_scope_pages": 66,
+   "in_scope_pages": 47,
    "out_of_scope_pages": 0,
-   "pages": 66,
+   "pages": 47,
    "tentative": 0
   },
   "F04a": {
@@ -991,23 +990,23 @@
   },
   "F07": {
    "state": "retired",
-   "in_scope_pages": 40,
+   "in_scope_pages": 12,
    "out_of_scope_pages": 0,
-   "pages": 40,
+   "pages": 12,
    "tentative": 1
   },
   "F08": {
    "state": "deferred",
-   "in_scope_pages": 31,
+   "in_scope_pages": 29,
    "out_of_scope_pages": 0,
-   "pages": 31,
+   "pages": 29,
    "tentative": 0
   },
   "F08a": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 24,
+   "in_scope_pages": 22,
    "out_of_scope_pages": 0,
-   "pages": 24,
+   "pages": 22,
    "tentative": 0
   },
   "F08b": {
@@ -1628,10 +1627,10 @@
   },
   "R-HTML-9": {
    "state": "deferred",
-   "in_scope_pages": 112,
+   "in_scope_pages": 109,
    "out_of_scope_pages": 0,
-   "pages": 112,
-   "tentative": 112
+   "pages": 109,
+   "tentative": 109
   },
   "R-HTML-9a": {
    "state": "implemented-unbuilt",
@@ -1775,16 +1774,16 @@
   },
   "R-HTML-10a": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 22,
+   "in_scope_pages": 20,
    "out_of_scope_pages": 0,
-   "pages": 22,
+   "pages": 20,
    "tentative": 0
   },
   "R-HTML-10b": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 16,
+   "in_scope_pages": 15,
    "out_of_scope_pages": 0,
-   "pages": 16,
+   "pages": 15,
    "tentative": 0
   },
   "R-HTML-10c": {
@@ -1894,10 +1893,10 @@
   },
   "R-HTML-15": {
    "state": "deferred",
-   "in_scope_pages": 27,
+   "in_scope_pages": 26,
    "out_of_scope_pages": 0,
-   "pages": 27,
-   "tentative": 27
+   "pages": 26,
+   "tentative": 26
   },
   "R-HTML-15a": {
    "state": "implemented-unbuilt",
@@ -2300,9 +2299,9 @@
   },
   "R-FETCH-META": {
    "state": "excluded",
-   "in_scope_pages": 27,
+   "in_scope_pages": 22,
    "out_of_scope_pages": 0,
-   "pages": 27,
+   "pages": 22,
    "tentative": 1
   },
   "R-FETCH-LATER-C": {
@@ -2363,9 +2362,9 @@
   },
   "R-IDB-3": {
    "state": "retired",
-   "in_scope_pages": 6,
+   "in_scope_pages": 3,
    "out_of_scope_pages": 0,
-   "pages": 6,
+   "pages": 3,
    "tentative": 0
   },
   "SC-TOM-timing-keywords": {
@@ -3181,14 +3180,14 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 1990,
+ "implemented_total_estimate": 1976,
  "milestones_reached": [
   250,
   500,
   750,
   1000
  ],
- "macbook_in_scope_implemented": 1230,
+ "macbook_in_scope_implemented": 1216,
  "macbook_in_scope_milestones": [
   100,
   200,

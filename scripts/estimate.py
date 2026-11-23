@@ -53,12 +53,22 @@ SEL={
  'OWN-blob-textstream':[r'^FileAPI/.*[Tt]ext[Ss]tream'],
 }
 MACHINE_DIRS={'MacBook':('html/','fetch/','IndexedDB/','encoding/'),'Studio':('css/','referrer-policy/','content-security-policy/')}
+ALREADY='/Users/xban1x/Library/Caches/lightningpanda/round7-build/baselines/c3372ad21-pages.jsonl.gz'
+def already_passing():
+  # pages Pyro already passes (strict) in baseline c3372ad21: no new gain, 0 credit (census owner 2026-11-23)
+  import os
+  out=set()
+  if os.path.exists(ALREADY):
+    for l in gzip.open(ALREADY,'rt'):
+      r=json.loads(l)
+      if r[1] and r[1][2]: out.add(r[0])
+  return out
 def load():
   strict=set()
   for l in gzip.open(B+'comparison/pages.jsonl.gz','rt'):
     r=json.loads(l)
     if r[2][2] and not r[1][2]: strict.add(r[0])
-  return strict
+  return strict-already_passing()
 def main(ledger,out):
   strict=load()
   q01=[u for _,u,_ in json.load(open('/Users/xban1x/Library/Caches/lightningpanda/round7-queue/q01-named-access-pages.json')) if 'command-and-commandfor' not in u]
