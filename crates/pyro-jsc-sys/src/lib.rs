@@ -1404,6 +1404,11 @@ pub mod modules {
         /// 1 when `pyro_jsc_module_fetch_referrer` reports referrers (patch 0039);
         /// 0 on the system framework.
         pub fn pyro_jsc_module_fetch_referrer_available() -> c_int;
+        /// 1 when a script without a URL (an event handler's) resolves its
+        /// `import()` against the base URL the module loader install was given
+        /// (source-built JavaScriptCore); 0 on the system framework, where such
+        /// an `import()` fails ("Could not determine the base URL").
+        pub fn pyro_jsc_module_base_url_available() -> c_int;
         pub fn pyro_jsc_import_map_add(
             ctx: JSGlobalContextRef,
             src: *const c_char,

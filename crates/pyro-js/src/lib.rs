@@ -58,3 +58,11 @@ pub fn compile_strings_hooks_available() -> bool {
 pub fn module_fetch_referrers_available() -> bool {
     unsafe { pyro_jsc_sys::modules::pyro_jsc_module_fetch_referrer_available() == 1 }
 }
+
+/// Whether a script evaluated without a URL resolves its `import()` against the
+/// document base URL (the source-built JavaScriptCore's module base URL callback).
+/// Without it such an `import()` rejects, so code that must import from a
+/// URL-less script (an event handler) gives it the base URL as its source URL.
+pub fn url_less_scripts_can_import() -> bool {
+    unsafe { pyro_jsc_sys::modules::pyro_jsc_module_base_url_available() == 1 }
+}

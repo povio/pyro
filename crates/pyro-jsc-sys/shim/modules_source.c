@@ -165,6 +165,10 @@ int pyro_jsc_module_fetch_referrer_available(void) {
 #endif
 }
 
+// The module loader's base URL callback (JSGlobalContextSetModuleBaseURLCallback) is
+// in every source build: a script without a URL resolves its import() through it.
+int pyro_jsc_module_base_url_available(void) { return 1; }
+
 // `type` is 0 (JavaScript) or 1 (JSON).
 JSValueRef pyro_jsc_module_script_create(JSGlobalContextRef ctx, const char *src, size_t src_len, const char *url,
                                        size_t url_len, int type, JSStringRef *error) {
