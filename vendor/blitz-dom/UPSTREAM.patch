@@ -53462,7 +53462,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              #[cfg(feature = "tracing")]
              tracing::warn!("No DOM - not resolving");
              return;
-@@ -63,74 +156,187 @@
+@@ -63,74 +156,202 @@
              return;
          }
  
@@ -53567,12 +53567,27 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            self.forget_boxless_anchor_used();
 +            timer.record_time("layout");
 +            phase_profile::mark(4, &mut phase_t);
-+            if self.nodes.classic_scrollbars && self.layout_ran && !self.nodes.container_query_sizes.lock().unwrap().is_empty() {
-+                self.resolve_transforms(root_node_id, true, ContainingTransform::default());
-+                self.resolve_classic_scrollbars(root_node_id, !checked_query_scrollbars);
-+                checked_query_scrollbars = true;
-+            }
-+            let changed_containers = self.refresh_container_query_sizes();
++            let query_scrollbars = self.nodes.classic_scrollbars
++                && self.layout_ran
++                && !self.nodes.container_query_sizes.lock().unwrap().is_empty();
++            // pyro: a pass may lay out with container sizes that are stale (an earlier layout's,
++            // or this pass's before a container above changed size): its sizes are refreshed
++            // before its scrollbars are checked. A scrollbar shown for a stale size would outlive
++            // the size the refresh corrects, since only the first check removes (WPT
++            // css-conditional `container-queries/scrollbar-container-units-block`, `-inline`,
++            // `container-units-sharing-via-rule-node`): when a size changed, the next pass
++            // checks; else this one does, and samples the sizes its scrollbars leave.
++            let changed_containers = {
++                let changed = self.refresh_container_query_sizes();
++                if changed.is_empty() && query_scrollbars {
++                    self.resolve_transforms(root_node_id, true, ContainingTransform::default());
++                    self.resolve_classic_scrollbars(root_node_id, !checked_query_scrollbars);
++                    checked_query_scrollbars = true;
++                    self.refresh_container_query_sizes()
++                } else {
++                    changed
++                }
++            };
 +            let choices_changed = pass == 0 && self.refresh_anchored_query_choices();
 +            let container_sizes_changed = !changed_containers.is_empty();
 +            // pyro: `scroll-state(scrollable)` follows the scroll ranges of this layout.
@@ -53688,7 +53703,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          // Re-resolve the hover node from the pointer position against the fresh
          // layout. This must run *after* the damage/dirty flags are cleared
-@@ -144,219 +350,2065 @@
+@@ -144,220 +365,2066 @@
          let mut subdoc_is_animating = false;
          for &node_id in &self.sub_document_nodes {
              let node = &mut self.nodes[node_id];
@@ -54086,14 +54101,14 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                node.flags.remove(NodeFlags::CV_DETERMINED | NodeFlags::CV_FORCED);
 +                self.cv_auto.remove(&id);
 +                self.cv_forced.remove(&id);
++                continue;
++            }
++            // Inside skipped contents it is not laid out and keeps its state.
++            if in_skipped(&self.nodes, id, &mut skipped_memo) {
                  continue;
              }
 -            let child_rect_in_self = self.resolve_transforms(pseudo, resolve_all);
 -            overflow = overflow.union(child_rect_in_self);
-+            // Inside skipped contents it is not laid out and keeps its state.
-+            if in_skipped(&self.nodes, id, &mut skipped_memo) {
-+                continue;
-+            }
 +            let p = placement(&self.nodes, id, &mut placed);
 +            let l = *self.nodes[id].final_layout();
 +            // (What it may paint: its paint containment clips at its `overflow-clip-margin`, from
@@ -54254,13 +54269,13 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            let node = &mut self.nodes[id];
 +            if determined && node.flags.contains(NodeFlags::CV_SKIPPED) == skipped {
 +                continue;
-+            }
+             }
 +            node.flags.insert(NodeFlags::CV_DETERMINED);
 +            node.flags.set(NodeFlags::CV_SKIPPED, skipped);
 +            node.insert_damage(ALL_DAMAGE);
 +            if !skipped {
 +                self.unskip_contents(id);
-             }
++            }
 +        }
 +    }
  
@@ -54655,7 +54670,6 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
 -        // Deduplicate deferred tasks by node_id to avoid redundant work
 -        deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
--        deferred_construction_nodes.dedup_by_key(|task| task.node_id);
 +    /// pyro: the edges each queried scroll-state container can be scrolled towards at this
 +    /// layout (CSS Conditional 5 § 7.3.1: the directions its user-scrollable axes have room to
 +    /// scroll from the current position; none for an element that is not a scroll container,
@@ -55872,8 +55886,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +
 +        // Deduplicate deferred tasks by node_id to avoid redundant work
 +        deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
-+        deferred_construction_nodes.dedup_by_key(|task| task.node_id);
-+
+         deferred_construction_nodes.dedup_by_key(|task| task.node_id);
+ 
 +        // pyro: the first letter each root's first line has (`layout::first_letter`), found on
 +        // the tree construction left, with the nodes holding their styles made before the builds.
 +        for task in deferred_construction_nodes.iter_mut() {
@@ -55899,10 +55913,11 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                crate::layout::first_letter::build_initial_letter_box(self, task.node_id, split.style_node);
 +            }
 +        }
- 
++
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
-@@ -367,9 +2419,9 @@
+         #[cfg(not(feature = "parallel-construct"))]
+@@ -367,9 +2434,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -55915,7 +55930,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +2438,14 @@
+@@ -386,7 +2453,14 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -55931,7 +55946,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +2454,13 @@
+@@ -395,18 +2469,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -55951,7 +55966,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +2473,7 @@
+@@ -419,10 +2488,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -55963,7 +55978,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -430,39 +2481,1243 @@
+@@ -430,39 +2496,1243 @@
          self.deferred_construction_nodes.clear();
      }
  

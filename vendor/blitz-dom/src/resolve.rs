@@ -246,12 +246,27 @@ impl BaseDocument {
             self.forget_boxless_anchor_used();
             timer.record_time("layout");
             phase_profile::mark(4, &mut phase_t);
-            if self.nodes.classic_scrollbars && self.layout_ran && !self.nodes.container_query_sizes.lock().unwrap().is_empty() {
-                self.resolve_transforms(root_node_id, true, ContainingTransform::default());
-                self.resolve_classic_scrollbars(root_node_id, !checked_query_scrollbars);
-                checked_query_scrollbars = true;
-            }
-            let changed_containers = self.refresh_container_query_sizes();
+            let query_scrollbars = self.nodes.classic_scrollbars
+                && self.layout_ran
+                && !self.nodes.container_query_sizes.lock().unwrap().is_empty();
+            // pyro: a pass may lay out with container sizes that are stale (an earlier layout's,
+            // or this pass's before a container above changed size): its sizes are refreshed
+            // before its scrollbars are checked. A scrollbar shown for a stale size would outlive
+            // the size the refresh corrects, since only the first check removes (WPT
+            // css-conditional `container-queries/scrollbar-container-units-block`, `-inline`,
+            // `container-units-sharing-via-rule-node`): when a size changed, the next pass
+            // checks; else this one does, and samples the sizes its scrollbars leave.
+            let changed_containers = {
+                let changed = self.refresh_container_query_sizes();
+                if changed.is_empty() && query_scrollbars {
+                    self.resolve_transforms(root_node_id, true, ContainingTransform::default());
+                    self.resolve_classic_scrollbars(root_node_id, !checked_query_scrollbars);
+                    checked_query_scrollbars = true;
+                    self.refresh_container_query_sizes()
+                } else {
+                    changed
+                }
+            };
             let choices_changed = pass == 0 && self.refresh_anchored_query_choices();
             let container_sizes_changed = !changed_containers.is_empty();
             // pyro: `scroll-state(scrollable)` follows the scroll ranges of this layout.

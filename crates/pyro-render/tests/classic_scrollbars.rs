@@ -35,6 +35,64 @@ fn container_queries_see_auto_scrollbar_relayout() {
 }
 
 #[test]
+fn container_queries_keep_the_auto_scrollbar_across_later_layouts() {
+    use blitz_dom::{QualName, local_name, ns};
+    let style = QualName::new(None, ns!(), local_name!("style"));
+    let class = QualName::new(None, ns!(), local_name!("class"));
+    // A later layout for an unrelated change keeps the bar the query result needs.
+    let mut document = doc(
+        "<style>#s{width:100px;height:100px;overflow:auto}#q{container-type:inline-size}#t{height:101px}@container(max-width:99px){#t{height:50px}}</style><div id=s><div id=q><div id=t></div></div></div><div id=x></div>",
+        true,
+    );
+    assert_eq!(client(&document, "#t"), (85.0, 50.0));
+    let x = document.query_selector("#x").unwrap().unwrap();
+    for height in ["height:1px", "height:2px"] {
+        document.mutate().set_attribute(x, style.clone(), height);
+        document.resolve(0.0);
+        assert_eq!(client(&document, "#t"), (85.0, 50.0), "{height}");
+    }
+    // A change that first makes the content overflow: the bar shows and the query sees it.
+    let mut document = doc(
+        "<style>#s{width:100px;height:100px;overflow:auto}#q{container-type:inline-size}#t{height:10px}#t.tall{height:101px}@container(max-width:99px){#t.tall{height:50px}}</style><div id=s><div id=q><div id=t></div></div></div>",
+        true,
+    );
+    assert_eq!(client(&document, "#t"), (100.0, 10.0));
+    let t = document.query_selector("#t").unwrap().unwrap();
+    document.mutate().set_attribute(t, class, "tall");
+    document.resolve(0.0);
+    assert_eq!(client(&document, "#t"), (85.0, 50.0));
+}
+
+#[test]
+fn container_units_resized_keep_no_auto_scrollbar_from_the_old_size() {
+    // A size container shrinks (200px to 100px tall, `overflow-x: scroll`): the first layout of
+    // the change sees `100cqh` at the old size and overflows, but once the size is sampled again
+    // (85px, less the horizontal bar) nothing overflows and no vertical bar stays (Chrome; WPT
+    // css-conditional `container-queries/scrollbar-container-units-block`).
+    use blitz_dom::{QualName, local_name, ns};
+    let mut document = doc(
+        "<style>#s{width:100px;container-type:size;overflow-x:scroll}#s>div{width:200px;height:100cqh}</style><div id=s style='height:200px'><div></div></div>",
+        true,
+    );
+    assert_eq!(client(&document, "#s"), (100.0, 185.0));
+    let s = document.query_selector("#s").unwrap().unwrap();
+    document.mutate().set_attribute(s, QualName::new(None, ns!(), local_name!("style")), "height:100px");
+    document.resolve(0.0);
+    assert_eq!(client(&document, "#s"), (100.0, 85.0));
+    // One container deeper: the inner one's size changes only on a later pass of the layout,
+    // which sees its child at the old size first.
+    let mut document = doc(
+        "<style>#o{width:100px;container-type:size}#s{width:100px;height:100cqh;container-type:size;overflow-x:scroll}#s>div{width:200px;height:100cqh}</style><div id=o style='height:200px'><div id=s><div></div></div></div>",
+        true,
+    );
+    assert_eq!(client(&document, "#s"), (100.0, 185.0));
+    let o = document.query_selector("#o").unwrap().unwrap();
+    document.mutate().set_attribute(o, QualName::new(None, ns!(), local_name!("style")), "height:100px");
+    document.resolve(0.0);
+    assert_eq!(client(&document, "#s"), (100.0, 85.0));
+}
+
+#[test]
 fn projected_overflow_clips_and_bounds_the_visible_horizon() {
     let document = doc("<div id=panel style='overflow:auto;width:200px;height:200px'><div style='width:100px;height:400px;transform-origin:0 0;transform:perspective(100px) rotateX(45deg)'></div></div>", true);
     let panel = node(&document, "#panel");
