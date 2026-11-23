@@ -832,4 +832,4 @@ Commit: a7e2f883e (from 6ee8f1815) + 457992246 (from 8ae418767, merged with 91f2
 ## 8. Excluded or held (not counted)
 
 - Mixed content: 93cf2f04c, reverted by 0729192ae. Fetch-metadata, permissions-policy, SRI, COOP/COEP, security taint pages.
-- Policy decisions pending: document.domain (13 pages), cross-origin exotic WindowProxy/Location (JSC), real back-forward cache.
+- Held (coordinator 2026-11-23): R-HTML-DOCDOMAIN document.domain (13, user decision), PROTO-EXOTIC (4, needs a JSC patch beyond 0041), R-NAV-POPUP-REUSE (parked until the build). Real back-forward cache not in scope.
