@@ -57,7 +57,8 @@ for r in L:
         for u in pg:
             p = pages.setdefault(u, {"url": u, "dir": u.split("/")[0], "machine": mach(u),
                                      "variant": "worker" if W(u) else "window",
-                                     "roots": [], "commits": [], "confidence": "tentative"})
+                                     "roots": [], "commits": [],
+                                     "confidence": "worker-variant (not counted)" if W(u) else "tentative"})
             p["roots"].append(i)
             for c in shas(r.get("commit")):
                 if c not in p["commits"]:
