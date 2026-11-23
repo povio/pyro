@@ -113,7 +113,8 @@ mb_tent = sum(v for (d, c), v in S.items() if c == "tentative")
 print(json.dumps({"freeze": FREEZE, "pages": len(pages), "roots": len(roots),
                   "macbook_window_firm": mb_firm, "macbook_window_tentative": mb_tent,
                   "macbook_owner_reported_unlisted": unl,
-                  "macbook_counted_estimate": mb_firm + unl,
+                  "macbook_window_tentative_counted_by_ruling": sum(v for (d, c), v in S.items() if c == "tentative-counted"),
+                  "macbook_counted_estimate": mb_firm + unl + sum(v for (d, c), v in S.items() if c == "tentative-counted"),
                   "by_dir": {f"{d}/{c}": v for (d, c), v in sorted(S.items())},
                   "macbook_worker_variants": sum(1 for p in pages.values() if p["variant"] == "worker" and p["dir"] in MB)},
                  indent=1))
