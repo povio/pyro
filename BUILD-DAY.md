@@ -4,7 +4,7 @@ Documentation only. **Do not build until the user authorizes it** (standing ZERO
 
 - Batch branch: `origin/integration/round7-batch-1000` at `9317be985` (when this file was generated).
 - Ledger: `origin/ledger/round7-fix-queue` (`ledger.jsonl`, `estimates.json`).
-- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1225**; Studio **504**; MacBook worker variants (separate column) 220.
+- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1226**; Studio **504**; MacBook worker variants (separate column) 220.
 - Every figure is an estimate from source reading. Tentative pages are counted only where the owner gave a figure or the coordinator ruled.
 
 ## 1. JSC archive
@@ -160,6 +160,7 @@ Build the JSC archive through patch **0041**:
 - bb6043563: a dialog whose first focus candidate is a delegatesFocus shadow host now focuses inside the host (spec), not the dialog itself. Build-day: also check focus-after-close and top-layer-removal-invalidates-ua-styles (owner thinks already fixed; not credited).
 - e65964a0b (trusted mousedown/mouseup/click blocked at disabled form controls) must keep excluding fieldset/option/optgroup: d7a9963e6 (click() on disabled fieldset dispatches) and the native-click half of fieldset-event-propagation.tentative depend on it (…be6eb5a1).
 - Build-day cleanup (after the test run): drop the redundant in_unload() early return in nav.rs assign() added by 1c2853fef; 28b24967f already fixes the same root (integrator dedupe, coordinator 2026-11-23).
+- Build-day runtime probe: html/browsers/browsing-the-web/navigating-across-documents/initial-empty-document/window-open-204.html and window-open-nourl.html time out waiting for the opened window's "loaded" message; cause not found from source (…ad4efc0e).
 
 Additional watchlist notes:
 - 2026-11-22 coordinator: history navigation rate limit risk removed (cc806a11f adds an off switch used by the Playwright drop-in); R-HTML-25 now 7 (recorded on the row).
