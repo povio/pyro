@@ -2587,15 +2587,30 @@ impl Browser {
         let src_url = match info.src.as_deref() {
             Some(s) => {
                 // `<base href>` aware; the inline-script URL stays `base`.
-                let resolved = {
-                    let dom = element.dom.borrow();
-                    resolve_url(node_base_str(&dom, node).unwrap_or(&base), s)
-                };
+                // An SVG script with an empty `href` (its source since
+                // 99c9c0fb3; WPT execution-timing/137) is not fetched: the
+                // page itself would be fetched and run as script. (HTML
+                // prepare step 31.3 says the same of an HTML script's empty
+                // `src`. That one is still fetched: the parser creates a
+                // script with the parser's document as its node document
+                // even inside an element a script moved to another document,
+                // so step 15 does not see such a move, and the error event
+                // would fire where WPT moving-between-documents expects
+                // none.)
+                let svg_empty = s.is_empty()
+                    && element.dom.borrow().element(node).is_ok_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg");
+                let resolved = (!svg_empty)
+                    .then(|| {
+                        let dom = element.dom.borrow();
+                        resolve_url(node_base_str(&dom, node).unwrap_or(&base), s)
+                    })
+                    .flatten();
                 match resolved {
                     Some(u) => Some(u),
                     None => {
-                        // HTML prepare step 31.4: a URL that does not parse
-                        // gets `error` in a task (no insertion point then).
+                        // HTML prepare steps 31.3 and 31.4: an empty source (an
+                        // SVG script's, above) or a URL that does not parse gets
+                        // `error` in a task (no insertion point then).
                         let loader_id = self.frame_loader(page);
                         self.scheduler().post(TaskSource::DomManipulation, move |b| {
                             if b.frame_loader(page) == loader_id {
