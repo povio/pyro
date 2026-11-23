@@ -37,6 +37,7 @@ mod walk_summary;
 mod html_processing_instructions;
 mod xml;
 mod xml_navigation;
+mod xml_serialize;
 mod xml_template;
 mod xpath;
 

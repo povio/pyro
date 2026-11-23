@@ -82,6 +82,13 @@ fn xml_escape(out: &mut String, s: &str, attr: bool) {
     }
 }
 
+/// Whether a namespace declaration attribute is the default one (`xmlns`), not `xmlns:prefix`.
+/// The HTML parser gives an `xmlns` attribute of foreign content the empty prefix (html5ever's
+/// `adjust_foreign_attributes`), the XML parser and `setAttributeNS` none.
+fn unprefixed(name: &markup5ever::QualName) -> bool {
+    name.prefix.as_ref().is_none_or(|p| p.is_empty())
+}
+
 /// Namespace bindings in declaration order, shared by the iterative tree walk.
 /// Each element restores the parent's bindings on exit. The generated prefix
 /// counter belongs to the serialization as a whole, including sibling subtrees.
@@ -148,7 +155,7 @@ impl XmlNamespaces {
             if attr.name.ns != ns!(xmlns) || &*attr.value == &*ns!(xml) {
                 continue;
             }
-            if attr.name.prefix.is_none() {
+            if unprefixed(&attr.name) {
                 local_default = Some(attr.value.as_ref());
             } else {
                 self.bind(&attr.name.local, &attr.value);
@@ -193,7 +200,7 @@ impl XmlNamespaces {
             let prefix = if name.ns == ns!() {
                 String::new()
             } else if name.ns == ns!(xmlns) {
-                if &*attr.value == &*ns!(xml) || (name.prefix.is_none() && skip_default) {
+                if &*attr.value == &*ns!(xml) || (unprefixed(name) && skip_default) {
                     continue;
                 }
                 name.prefix.as_ref().map_or_else(String::new, ToString::to_string)
