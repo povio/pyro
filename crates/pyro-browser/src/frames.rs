@@ -1002,8 +1002,12 @@ impl FrameHost {
             let base = crate::loader::node_base_url(&dom, node).and_then(|url| url::Url::parse(&url).ok());
             url::Url::options().base_url(base.as_ref()).parse(raw).ok()
         }).unwrap_or_else(|| url::Url::parse("about:blank").expect("static URL"));
+        let blank = url.scheme() == "about" && url.cannot_be_a_base() && url.path() == "blank";
+        // The ancestor check (an iframe showing an ancestor's URL loads nothing) leaves about:blank
+        // alone, as Chrome does (`FrameLoader::IsURLAllowed`): an about:blank iframe in an
+        // about:blank document fires its `load` (WPT dom/nodes/Document-base-url-not-live.window.html).
         let mut ancestor = parent;
-        loop {
+        while !blank {
             let address = self.nav(ancestor).map(|nav| nav.url());
             if address.as_ref().is_some_and(|a| a.split('#').next() == url.as_str().split('#').next()) {
                 return InitialIframeLoad::Suppressed;
@@ -1012,7 +1016,7 @@ impl FrameHost {
             if next == ancestor { break; }
             ancestor = next;
         }
-        if url.scheme() == "about" && url.cannot_be_a_base() && url.path() == "blank" {
+        if blank {
             InitialIframeLoad::Blank { url, explicit: src.is_some() }
         } else {
             InitialIframeLoad::Navigate
