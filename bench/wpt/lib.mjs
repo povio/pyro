@@ -204,6 +204,12 @@ TESTHARNESS_SKIP.push(
 );
 
 // Every testharness page under `dirs` that our static server can run, one entry per variant.
+/** A testharness page that runs its test in a worker (`.any.worker.html`, `.any.sharedworker.html`,
+ *  `.any.serviceworker.html`, their `-module` forms, `.worker.html`): discovered with `--worker-globals` only. The gate
+ *  summary, the whole-suite summary and the status pages count these on a line of their own, so the window pages'
+ *  numbers stay comparable with runs (and censuses) that never ran a worker variant. */
+export const isWorkerVariant = (url) => /\.(worker|sharedworker|serviceworker)(-module)?\.html(\?|$)/.test(url);
+
 // `excluded` counts what was left out and why (identical for every binary).
 // `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
 // `wptserve`: the server is wptserve (run.mjs --server wptserve), so pages that need it are kept.

@@ -28,9 +28,13 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readBaselineAt } from './lib.mjs';
+import { isWorkerVariant, readBaselineAt } from './lib.mjs';
 
 export const KINDS = ['testharness', 'reftest', 'crashtest'];
+// The pages' kinds: a testharness page that runs in a worker (lib.mjs isWorkerVariant; the whole suite runs them with
+// --worker-globals) counts as `testharness-workers`, a line of its own, so the window pages' numbers (and their
+// denominator) stay comparable with runs and censuses without worker variants. The data keeps them under testharness.
+const viewKind = (kind, url) => (kind === 'testharness' && isWorkerVariant(url) ? 'testharness-workers' : kind);
 const BASELINE_FILES = { testharness: 'baseline.json', reftest: 'reftest-baseline.json', crashtest: 'crashtest-baseline.json' };
 const WPTFYI = 'https://wpt.fyi/api';
 
@@ -186,7 +190,8 @@ export function rollup(run, universe, chrome) {
       const ch = chrome?.tests?.[url];
       const [dir] = splitUrl(url);
       const parts = dir ? dir.split('/') : [];
-      for (let i = 0; i <= parts.length; i++) add(at(parts.slice(0, i).join('/'), kind), row, inU.has(url), ch);
+      const k = viewKind(kind, url);
+      for (let i = 0; i <= parts.length; i++) add(at(parts.slice(0, i).join('/'), k), row, inU.has(url), ch);
     }
   }
   return dirs;
@@ -308,7 +313,7 @@ export function siteData(runs, universes, chrome) {
       if (!list) tests.set(dir, (list = []));
       const row = rows[url];
       const c = ch?.tests?.[url];
-      const t = { n: name, k: kind, s: row ? row[0] : null };
+      const t = { n: name, k: viewKind(kind, url), s: row ? row[0] : null };
       if (row) { t.p = row[1]; t.t = row[2]; if (row[3]) t.f = row[3]; }
       if (c) t.c = chromePasses(c) ? 1 : 0;
       list.push(t);

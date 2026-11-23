@@ -30,9 +30,12 @@ type Page = {
   tests: Test[];
   history: [string, string, Partial<Record<Kind, [number, number, number, number]>>][];
 };
-type Kind = 'testharness' | 'reftest' | 'crashtest';
+type Kind = 'testharness' | 'testharness-workers' | 'reftest' | 'crashtest';
 const KINDS: { id: Kind; label: string }[] = [
   { id: 'testharness', label: 'Testharness' },
+  // Worker variants (.any.worker.html and the like) on a tab of their own: the window pages stay comparable with
+  // runs before the whole suite ran them (bench/wpt/status-export.mjs viewKind).
+  { id: 'testharness-workers', label: 'Testharness in workers' },
   { id: 'reftest', label: 'Reftests' },
   { id: 'crashtest', label: 'Crashtests' },
 ];
@@ -85,7 +88,9 @@ watch(kind, (k) => { if (page.value) history.replaceState(history.state, '', `#$
 
 const kinds = computed(() => KINDS.filter((k) => (page.value?.counts[k.id]?.[0] ?? 0) > 0));
 const counts = computed<Counts>(() => page.value?.counts[kind.value] ?? [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-const PASSING = { testharness: 'pages with every subtest passing', reftest: 'reftests passing', crashtest: 'crashtests passing' };
+const PASSING = { testharness: 'pages with every subtest passing', 'testharness-workers': 'worker pages with every subtest passing', reftest: 'reftests passing', crashtest: 'crashtests passing' };
+// Testharness pages, in a window or a worker, have subtests.
+const subtests = computed(() => kind.value === 'testharness' || kind.value === 'testharness-workers');
 const crumbs = computed(() => {
   const parts = props.value.path ? props.value.path.split('/') : [];
   return [{ name: 'wpt', path: '' }, ...parts.map((p, i) => ({ name: p, path: parts.slice(0, i + 1).join('/') }))];
@@ -151,7 +156,7 @@ const chart = computed(() => {
   if (!pts.length) return null;
   const W_ = W.value, H_ = H.value;
   const chromePct = counts.value[6] ? (100 * counts.value[5]) / counts.value[0] : null;
-  const subs = kind.value === 'testharness' ? pts.filter((p) => p.ys !== null) : [];
+  const subs = subtests.value ? pts.filter((p) => p.ys !== null) : [];
   const ys = pts.map((p) => p.y).concat(chromePct ?? [], subs.map((p) => p.ys!));
   let lo = Math.max(0, Math.floor(Math.min(...ys) / 10) * 10 - (Math.min(...ys) % 10 < 2 ? 10 : 0));
   let hi = Math.min(100, Math.ceil(Math.max(...ys) / 10) * 10);
@@ -203,7 +208,7 @@ const chart = computed(() => {
           <div class="big">{{ num(counts[0] - counts[1]) }}</div>
           <div class="label">not run yet ({{ pct(counts[0] - counts[1], counts[0]) }})</div>
         </div>
-        <div v-if="kind === 'testharness'" class="stat">
+        <div v-if="subtests" class="stat">
           <div class="big">{{ pct(counts[3], counts[4]) }}</div>
           <div class="label">subtests passing: {{ num(counts[3]) }} of {{ num(counts[4]) }}, in the {{ num(counts[1]) }} pages run</div>
         </div>
@@ -252,8 +257,8 @@ const chart = computed(() => {
             <thead>
               <tr>
                 <th>Area</th><th class="r">Passed / tests</th><th class="r">Test %</th><th class="r">Not run</th>
-                <th v-if="kind === 'testharness'" class="r">Subtests passed / total</th>
-                <th v-if="kind === 'testharness'" class="r">Subtest %</th>
+                <th v-if="subtests" class="r">Subtests passed / total</th>
+                <th v-if="subtests" class="r">Subtest %</th>
                 <th v-if="page.chrome" class="r">Chrome</th>
               </tr>
             </thead>
@@ -263,8 +268,8 @@ const chart = computed(() => {
                 <td class="r">{{ num(d.c[2]) }} / {{ num(d.c[0]) }}</td>
                 <td class="r bar-cell"><span class="bar" :style="{ width: d.c[0] ? `${(100 * d.c[2]) / d.c[0]}%` : '0' }" /><span class="v">{{ pct(d.c[2], d.c[0]) }}</span></td>
                 <td class="r" :class="{ muted: !(d.c[0] - d.c[1]) }">{{ num(d.c[0] - d.c[1]) }}</td>
-                <td v-if="kind === 'testharness'" class="r">{{ num(d.c[3]) }} / {{ num(d.c[4]) }}</td>
-                <td v-if="kind === 'testharness'" class="r">{{ pct(d.c[3], d.c[4]) }}</td>
+                <td v-if="subtests" class="r">{{ num(d.c[3]) }} / {{ num(d.c[4]) }}</td>
+                <td v-if="subtests" class="r">{{ pct(d.c[3], d.c[4]) }}</td>
                 <td v-if="page.chrome" class="r">{{ d.c[6] ? pct(d.c[5], d.c[0]) : '–' }}</td>
               </tr>
             </tbody>
@@ -281,7 +286,7 @@ const chart = computed(() => {
         <div class="scroll">
           <table class="tests">
             <thead>
-              <tr><th>Test</th><th>Result</th><th v-if="kind === 'testharness'" class="r">Subtests</th><th v-if="page.chrome">Chrome</th></tr>
+              <tr><th>Test</th><th>Result</th><th v-if="subtests" class="r">Subtests</th><th v-if="page.chrome">Chrome</th></tr>
             </thead>
             <tbody>
               <tr v-for="t in shownTests" :key="t.n">
@@ -293,7 +298,7 @@ const chart = computed(() => {
                   </details>
                 </td>
                 <td><span class="badge" :class="result(t).cls">{{ result(t).text }}</span></td>
-                <td v-if="kind === 'testharness'" class="r">{{ t.s === null ? '' : `${num(t.p!)} / ${num(t.t!)}` }}</td>
+                <td v-if="subtests" class="r">{{ t.s === null ? '' : `${num(t.p!)} / ${num(t.t!)}` }}</td>
                 <td v-if="page.chrome"><span v-if="t.c !== undefined" class="badge" :class="t.c ? 'pass' : 'fail'">{{ t.c ? 'pass' : 'fail' }}</span></td>
               </tr>
             </tbody>
