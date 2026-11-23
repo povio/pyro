@@ -160,9 +160,11 @@ fn cross_origin_frames_message_each_other_and_navigate_through_location() {
             "globalThis.replies = []; addEventListener('message', e => replies.push([e.source === f.contentWindow, e.origin, e.data].join(':')));
              const w = f.contentWindow; w.postMessage('hi', 'https://b.test'); w.postMessage('lost', 'https://a.test');
              const err = (fn) => { try { fn(); return 'ok'; } catch (e) { return e.name; } };
-             [typeof w.postMessage, err(() => w.document), err(() => w.location.href), w[0], w.length].join()",
+             [typeof w.postMessage, err(() => w.document), err(() => w.location.href), err(() => w[0]), w.length].join()",
         ),
-        "function,SecurityError,SecurityError,,0"
+        // An index past the child windows is no cross-origin property: SecurityError
+        // (HTML CrossOriginPropertyFallback, bf322c830).
+        "function,SecurityError,SecurityError,SecurityError,0"
     );
     settle(&mut t);
     assert_eq!(eval(&child, "got.join('|')"), "true:https://a.test:hi");
