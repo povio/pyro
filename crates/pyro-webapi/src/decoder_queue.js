@@ -34,9 +34,15 @@
   const byteGetters = proto => ['buffer', 'byteOffset', 'byteLength'].map(k => descriptor(proto, k).get);
   const typedView = byteGetters(typed), dataViewInfo = byteGetters(dataView);
   const bufferLength = descriptor(ArrayBuffer.prototype, 'byteLength').get;
-  const sharedLength = typeof SharedArrayBuffer === 'function' && descriptor(SharedArrayBuffer.prototype, 'byteLength').get;
+  // SharedArrayBuffer.prototype, also without the global (not cross-origin isolated): a shared
+  // WebAssembly.Memory still hands out shared buffers.
+  const sharedProto = typeof SharedArrayBuffer === 'function' ? SharedArrayBuffer.prototype : (() => {
+    try { return Object.getPrototypeOf(new WebAssembly.Memory({ initial: 0, maximum: 0, shared: true }).buffer); }
+    catch (_) { return undefined; }
+  })();
+  const sharedLength = sharedProto && descriptor(sharedProto, 'byteLength').get;
   const resizable = descriptor(ArrayBuffer.prototype, 'resizable')?.get;
-  const growable = typeof SharedArrayBuffer === 'function' && descriptor(SharedArrayBuffer.prototype, 'growable')?.get;
+  const growable = sharedProto && descriptor(sharedProto, 'growable')?.get;
 
   function descriptionView(source) {
     let buffer = source, offset = 0, length;

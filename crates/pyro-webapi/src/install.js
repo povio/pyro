@@ -252,8 +252,13 @@
   // bytes, anything else a USVString.
   const blobSize = getOwnPropertyDescriptor(Blob.prototype, 'size').get;
   const bufferLength = getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get;
-  const sharedLength = typeof SharedArrayBuffer === 'function'
-    ? getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'byteLength').get : undefined;
+  // SharedArrayBuffer.prototype, also where the global is not exposed (a context that is not
+  // cross-origin isolated): pages still get shared buffers from a shared WebAssembly.Memory.
+  const sharedProto = typeof SharedArrayBuffer === 'function' ? SharedArrayBuffer.prototype : (() => {
+    try { return getPrototypeOf(new WebAssembly.Memory({ initial: 0, maximum: 0, shared: true }).buffer); }
+    catch (_) { return undefined; }
+  })();
+  const sharedLength = sharedProto ? getOwnPropertyDescriptor(sharedProto, 'byteLength').get : undefined;
   const isView = ArrayBuffer.isView;
   const typedArrayProto = getPrototypeOf(Uint8Array_.prototype);
   const viewBuffer = getOwnPropertyDescriptor(typedArrayProto, 'buffer').get;
@@ -269,8 +274,7 @@
     return new Uint8Array_(apply(viewBuffer, value, []), apply(viewOffset, value, []), length);
   };
   const resizable = getOwnPropertyDescriptor(ArrayBuffer.prototype, 'resizable')?.get;
-  const growable = typeof SharedArrayBuffer === 'function'
-    ? getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'growable')?.get : undefined;
+  const growable = sharedProto ? getOwnPropertyDescriptor(sharedProto, 'growable')?.get : undefined;
   // Web IDL [AllowShared] Uint8Array, without [AllowResizable].
   const encodeIntoCapacity = view => {
     if (apply(viewName, view, []) !== 'Uint8Array') throw new TypeError_('Expected a Uint8Array');
