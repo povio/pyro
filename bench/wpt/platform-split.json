@@ -1,4 +1,5 @@
 {
  "css/css-transforms/3d-point-mapping-2-transforminterop.html": "Linux x64 fails the hit test of box12 in both bootstrap runs (run 44275075490); macOS arm64 passes all 12. Deterministic, at a box edge: floating point differs between the platforms (x86-64 glibc libm vs macOS arm64), not timing.",
- "css/css-transforms/3d-point-mapping-origins.html": "Linux x64 fails the hit test of bottom-right-medium-gray in both bootstrap runs (run 44275075490); macOS arm64 passes all 12. Same edge-of-box floating point difference as 3d-point-mapping-2-transforminterop.html."
+ "css/css-transforms/3d-point-mapping-origins.html": "Linux x64 fails the hit test of bottom-right-medium-gray in both bootstrap runs (run 44275075490); macOS arm64 passes all 12. Same edge-of-box floating point difference as 3d-point-mapping-2-transforminterop.html.",
+ "dom/nodes/insertion-removing-steps/insertion-removing-steps-iframe.window.html": "Not a platform difference: bench/wpt/baseline.json (macOS) is stale, ungated since baseline-linux.json exists, and records 3/4 from before main's 2460b131b. Both platforms score 1/4 on round 7 (macOS measured on c8d3ee02b), and main scores 0/4 on Linux. The 3 removal subtests fail because 2460b131b fires pagehide synchronously on removal; Chrome passes them; tracked as a follow-up."
 }
