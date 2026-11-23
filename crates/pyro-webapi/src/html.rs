@@ -5213,8 +5213,9 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
     }
     // HTML document open steps: a frame's document opened from another
     // document's script takes the entry document's URL, without its fragment
-    // (the frame's history entry is replaced, `PageHooks::document_reopened`).
-    if doc == page.document() && !page.is_disposed() {
+    // (the frame's history entry is replaced, `PageHooks::document_reopened`). Only a fully
+    // active one: a removed frame's document keeps its URL (WPT opening-the-input-stream/url).
+    if doc == page.document() && page.is_fully_active() {
         if let Some(url) = entry_document_url(page, doc) {
             page.dom.borrow_mut().set_document_url(doc, &url).js()?;
         }
