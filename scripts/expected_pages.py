@@ -51,7 +51,8 @@ for r in L:
         cut = 0
         if owner is not None and owner < len(pg):
             cut = max(0, (len(pg) - owner) - nvar)
-        named = set(r.get("tentative_pages") or [])  # owner-named tentative pages go first
+        tp = r.get("tentative_pages")  # owner-named tentative pages go first (some rows store a count instead)
+        named = set(tp) if isinstance(tp, list) else set()
         order = sorted(win, key=lambda u: (u not in named, ".tentative" not in u, win.index(u)))
         tent = order[:cut]
         firm = [u for u in win if u not in tent]
