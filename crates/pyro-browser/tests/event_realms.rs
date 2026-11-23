@@ -285,6 +285,9 @@ fn a_style_text_edit_reaches_the_timing_rules_within_the_same_task() {
 #[test]
 fn the_scrolling_elements_offsets_are_the_viewports() {
     let (mut t, root) = page_with_frames();
+    // The initial about:blank document is in quirks mode, where the scrolling element is the
+    // body (6efaefdaf); document.open() resets it to no-quirks, where it is the root element.
+    eval(&root, "document.open(); document.write('<!doctype html><body>'); document.close(); 0");
     assert_eq!(
         eval(
             &root,
