@@ -86,6 +86,8 @@ fn selection_methods_ignore_other_trees_and_replace_the_range() {
 
 #[test]
 fn a_selection_across_a_shadow_boundary_has_a_collapsed_range() {
+    // The legacy anchor and focus are the collapsed live range's: both at the focus
+    // (WPT selection/shadow-dom/tentative/Selection-isCollapsed.html, 305120731).
     let (_t, root) = page();
     assert_eq!(
         eval(
@@ -96,14 +98,14 @@ fn a_selection_across_a_shadow_boundary_has_a_collapsed_range() {
                const inner = shadow.firstChild.firstChild, outer = a.firstChild, sel = getSelection();
                sel.setBaseAndExtent(outer, 3, inner, 5);
                const range = sel.getRangeAt(0);
-               const out = [sel.anchorNode === outer, sel.anchorOffset, sel.focusNode === inner, sel.focusOffset,
+               const out = [sel.anchorNode === inner, sel.anchorOffset, sel.focusNode === inner, sel.focusOffset,
                             range.collapsed, range.startContainer === inner, range.startOffset];
                // The range spans nothing: extracting it removes nothing.
                const fragment = range.extractContents();
                out.push(fragment.childNodes.length, a.textContent, shadow.innerHTML);
                return out.join(); })()"
         ),
-        "true,3,true,5,true,true,5,0,one two,<span>InnerText</span>"
+        "true,5,true,5,true,true,5,0,one two,<span>InnerText</span>"
     );
 }
 
