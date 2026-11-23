@@ -244,9 +244,10 @@ fn json_and_css_module_scripts_load_with_import_attributes() {
         "not thenable true true",
         "typed 5 true 1 p { color: rgb(0, 128, 0); } rgb(0, 128, 0)",
         // Untyped JSON and CSS, a JSON request answered with text/plain or
-        // JavaScript, a CSS one answered with JSON, a 404 and the "text" type
-        // are TypeErrors; invalid JSON is a SyntaxError.
-        "outcomes TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,SyntaxError,ok",
+        // JavaScript, a CSS one answered with JSON and a 404 are TypeErrors; the
+        // "text" type loads (text modules, 83c44d5e8, as Chrome); invalid JSON is
+        // a SyntaxError.
+        "outcomes TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,ok,SyntaxError,ok",
         "same sheet true",
     ] {
         assert!(log.iter().any(|l| l == line), "missing {line:?} in {log:?}");
