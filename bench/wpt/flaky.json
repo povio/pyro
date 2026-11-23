@@ -11,6 +11,9 @@
   "webstorage/storage_session_window_reopen.window.html": {
    "reason": "Timing: failed in one of two full runs of one binary under load; passes alone with and without --reuse-context",
    "subtests": ["ensure that re-opening a named window doesn't copy sessionStorage"]
+  },
+  "html/semantics/embedded-content/the-iframe-element/iframe_sandbox_popups_escaping-3.html": {
+   "reason": "Timing: a sandboxed iframe's window.open() followed in the same task by popupWin.location.href = ... sometimes never navigates the popup (its document never runs, the test times out). Linux baseline (main e8176817c) recorded a timeout, gate run 45230604936 on 4a1c2750b a pass; main 4a1c2750b on macOS passed 2 of 10 runs alone (escaping-1/-2, which pass the URL to window.open, 10 of 10). Extra script work in the opener between the open and the location set makes it pass 8 of 8: a race between the queued script navigation and the popup's adoption by the CDP target layer, not found yet (2026-11-23)"
   }
  }
 }
