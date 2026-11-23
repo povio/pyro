@@ -751,6 +751,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         shared: start.shared.clone(),
         credentials: script_credentials(&start),
         origin: worker_origin,
+        outside_origin: start.origin.clone(),
         url: start.url.to_string(),
         sched: event_loop.scheduler(),
         in_flight: Rc::default(),
@@ -1019,7 +1020,12 @@ struct WorkerModuleFetcher {
     net: NetClient,
     shared: Arc<Shared>,
     credentials: Credentials,
+    /// The worker's origin (opaque for a data: URL worker): an `import()` fetches as it.
     origin: Option<String>,
+    /// Its creator's origin: the top-level graph's static imports fetch as it (HTML "fetch a
+    /// module worker script graph" uses the outside settings; WPT
+    /// workers/modules/dedicated-worker-import-data-url-cross-origin.html).
+    outside_origin: Option<String>,
     url: String,
     sched: Scheduler<WorkerLoop>,
     /// The fetches in flight by URL and module type, with the requests that
@@ -1122,16 +1128,17 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
         let blob =
             if url.starts_with("blob:") { self.page.upgrade().and_then(|page| page.blob_url(&url)) } else { None };
         let realm = realm.downgrade();
-        let (page, net, shared, origin, in_flight, credentials) = (
-            self.page.clone(),
-            self.net.clone(),
-            self.shared.clone(),
-            self.origin.clone(),
-            self.in_flight.clone(),
-            self.credentials,
-        );
         // What the request is is read now, as the engine makes it.
         let graph_request = self.graph.request();
+        // A static import of the top-level graph fetches as the creator; a dedicated worker's
+        // graph (`GraphRequest::Mixed`) cannot tell its static imports from the top level's
+        // `import()`s, which take the creator's origin too until the engine marks them.
+        let origin = match graph_request {
+            GraphRequest::Static | GraphRequest::Mixed => self.outside_origin.clone().or_else(|| self.origin.clone()),
+            GraphRequest::Dynamic => self.origin.clone(),
+        };
+        let (page, net, shared, in_flight, credentials) =
+            (self.page.clone(), self.net.clone(), self.shared.clone(), self.in_flight.clone(), self.credentials);
         let (csp, id, poster) = (self.csp.clone(), self.id, self.poster.clone());
         let request = RefCell::new(Some(request));
         self.sched.post(TaskSource::Networking, move |_| {
