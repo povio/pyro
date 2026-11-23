@@ -1333,6 +1333,19 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 page.space_target.set(Some(target));
                 set_active(page, doc, Some(target));
             }
+            // A focusgroup's arrow, Home and End keys move focus before the editing commands the
+            // key carries (`moveRight`, ...) are run: those only act in editable content, which
+            // keeps its keys (`is_directional_input_handler`).
+            if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta || k.modifiers.shift)
+                && focusgroup_key_action(page, target, &k.key)
+            {
+                return;
+            }
+            // So do the value-changing keys of form controls (radio buttons, range and number
+            // inputs, selects): those commands would move a caret instead.
+            if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta) && control_key_action(page, target, &k.key) {
+                return;
+            }
             if k.text.is_empty()
                 && !k.commands.is_empty()
                 && crate::edit_commands::run_commands(page, target, &k.commands)
@@ -1571,6 +1584,17 @@ fn focusgroup_key_action(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool 
         };
         let vertical = writing_mode.starts_with("vertical") || writing_mode.starts_with("sideways");
         let rtl = direction == "rtl";
+        // A focused scroll container keeps the arrows of the axes it scrolls in (Chrome's focusgroup
+        // treats it as a directional input handler there): overflow-x the left and right keys,
+        // overflow-y the up and down ones.
+        let scrolls = |property: &str| {
+            matches!(layout.style().computed_value(&dom, target, property).as_deref(), Some("scroll" | "auto"))
+        };
+        if (matches!(key, "ArrowLeft" | "ArrowRight") && scrolls("overflow-x"))
+            || (matches!(key, "ArrowUp" | "ArrowDown") && scrolls("overflow-y"))
+        {
+            return false;
+        }
         // (inline axis, forward) for each physical arrow.
         let (inline, forward) = match (key, vertical) {
             ("ArrowLeft" | "ArrowRight", false) => (true, (key == "ArrowRight") != rtl),
