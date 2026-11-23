@@ -1371,7 +1371,7 @@ impl ModuleFetcher for PageModuleFetcher {
         let worklet_credentials = self.worklet_credentials;
         // Recorded in the worklet's module map as being fetched from now on.
         let worklet_entry = self.worklet_modules.clone().map(|(modules, graph)| WorkletEntry::new(modules, &url, graph));
-        module_trace!("requested {url}");
+        module_trace!("requested {url} (referrer {referrer_key:?})");
         let request = RefCell::new(Some(request));
         let in_flight = InFlight::new(&self.fetches);
         self.sched.post(TaskSource::Networking, move |b| {
@@ -2654,12 +2654,6 @@ impl Browser {
         opts: ScriptFetch,
         done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
     ) {
-        // What the script hands the modules it imports (both kinds: a classic script's `import()`).
-        let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
-        let options = opts.module_options(bindings.as_deref());
-        if let Some(mut doc) = self.doc_mut(page) {
-            doc.preloads.set_module_options(url.clone(), options);
-        }
         let shared = kind == ResourceKind::ModuleScript
             && opts.integrity.is_none()
             && opts.referrer_policy.is_none()
@@ -2677,6 +2671,8 @@ impl Browser {
                     return;
                 }
             };
+            let options = self.script_fetch_options(page, &opts);
+            self.note_script_fetch_options(page, &url, options);
             let shared_opts = ScriptFetch { csp_checked: guard, ..ScriptFetch::default() };
             self.fetch_imported_module(page, url, shared_opts, Box::new(done));
         } else {
@@ -2716,6 +2712,21 @@ impl Browser {
         let nonce = taken.map_or_else(|| pyro_webapi::csp::element_nonce(&bindings, node), str::to_owned);
         if let Some(mut doc) = self.doc_mut(page) {
             doc.preloads.note_inline_nonce(&nonce);
+        }
+    }
+
+    /// The options a script element's fetch hands its imports (its nonce read from it now).
+    fn script_fetch_options(&self, page: FrameKey, opts: &ScriptFetch) -> crate::preload::ModuleFetchOptions {
+        let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+        opts.module_options(bindings.as_deref())
+    }
+
+    /// A script element's fetch of `url` passed CSP: what the script hands the modules it imports (HTML
+    /// "descendant script fetch options"), for both kinds: a classic script's `import()` too,
+    /// whether it blocks the parser, is async, deferred or written by `document.write`.
+    fn note_script_fetch_options(&mut self, page: FrameKey, url: &str, options: crate::preload::ModuleFetchOptions) {
+        if let Some(mut doc) = self.doc_mut(page) {
+            doc.preloads.set_module_options(url.to_owned(), options);
         }
     }
 
@@ -2761,6 +2772,9 @@ impl Browser {
         opts: ScriptFetch,
         done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
     ) {
+        // A script element's options, registered once its request passes CSP (a blocked one must
+        // not clear another element's nonce for the same URL).
+        let element_options = opts.element.is_some().then(|| self.script_fetch_options(page, &opts));
         let Some(loader) = self.loader_for(page) else {
             self.scheduler().post(TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
             return;
@@ -2826,6 +2840,9 @@ impl Browser {
                 }
             },
         };
+        if let Some(options) = element_options {
+            self.note_script_fetch_options(page, &url, options);
+        }
         let initiator = Some(pyro_webapi::resource_timing::Initiator::Script);
         let request_url = url.clone();
         let req = FetchRequest {
