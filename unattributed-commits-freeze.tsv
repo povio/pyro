@@ -1,0 +1,162 @@
+sha	category	ledger_rows_or_note	subject
+83e7fe8fe	row-without-expected-pages	Q03b:implemented-unbuilt	Render noscript and template as content-less elements; restyle a script's own attributes
+0729192ae	resolved-note-only	revert of 93cf2f04c mixed-content blocking (EXCL), 0 pages	Revert mixed-content blocking (EXCL area, 0 credit)
+23f5b7774	resolved-note-only	revert of 64660c26d (0 pages)	Revert "Reflect HTMLElement.autocorrect and autocapitalize with form inheritance"
+64660c26d	resolved-note-only	duplicate of fbb0185a7 by …5b822e93, reverted by 23f5b7774 (0 pages)	Reflect HTMLElement.autocorrect and autocapitalize with form inheritance
+d40b25d70	unattributed		fix(canvas): a failed updateElementGeometry leaves the element unhittable
+c6295b18e	row-without-expected-pages	R-WASM-ASYNC:implemented-unbuilt	fix(wasm): async WebAssembly promises settle in workers too
+8a51aa133	row-without-expected-pages	SC-CSP-style-src:implemented-unbuilt	CSP for inline <style> (style-src-elem) and style attributes (style-src-attr)
+942c26f23	row-without-expected-pages	SC-CSP-embedded-enforcement:implemented-unbuilt	feat(csp): CSP Embedded Enforcement for <iframe csp>, on the CSP core
+2fecb1f3e	row-without-expected-pages	SC-reporting-observer:implemented-unbuilt	feat(reporting): ReportingObserver, csp-violation reports to observers, webkit rAF deprecation reports
+efcb7144e	row-without-expected-pages	SC-CSP-prefetch:implemented-unbuilt	feat(csp): fetch <link rel=prefetch> under CSP (default-src or any fetch directive, as Chrome)
+8514c1841	row-without-expected-pages	SC-CSP-timer-strings:implemented-unbuilt	fix(csp): setTimeout/setInterval string handlers are checked when the timer is set
+3ddaa086c	row-without-expected-pages	SC-CSP-object-src-no-url:implemented-unbuilt	fix(csp): object-src checks an <object>/<embed> with a type and no URL
+8901cc5b4	row-without-expected-pages	SC-CSP-inheritance:implemented-unbuilt	feat(csp): local-scheme documents inherit their creator's policies
+dfbe98f94	row-without-expected-pages	SC-CSP-wasm-gate:implemented-unbuilt	feat(csp): WebAssembly compile gate ('wasm-unsafe-eval' / script-src) for windows and workers
+6d12c0e4b	row-without-expected-pages	SC-CSP-frame-ancestors:implemented-unbuilt	feat(csp): enforce frame-ancestors on child navigation responses
+1d7f94410	row-without-expected-pages	SC-CSP-reporting:implemented-unbuilt	feat(csp): deliver the CSP core's violation reports after its event
+61148b585	row-without-expected-pages	SC-CSP-reporting:implemented-unbuilt	feat(csp): serialize and deliver CSP violation reports (report-uri, report-to)
+0192ae1f2	resolved-note-only	…ad4efc0e (relative href fallback; 0 pages, supports c4d9a5064 for window-open-*	fix(location): a relative href resolves against the navigable's URL when the entry document has no base
+0f596a713	resolved-note-only	BUCKET-forms-landed FORMS-2 follow-up (…ae5abf41), 0 pages	fix(custom-elements): ElementInternals.labels is a live NodeList
+8c373d12f	resolved-note-only	UNCLAIMED at freeze: …ad4efc0e and …141f4e4e both say not theirs; 0 credit (ance	fix(location): ancestorOrigins masks every occurrence of the embedder's origin
+e65293504	resolved-note-only	R-HTML-SANDBOX-landed review fix for 7932deb17 (integrator …7ab26d54), 0 pages	fix(sandbox): window.open without allow-popups still navigates a named existing frame
+491b3a3eb	row-without-expected-pages	SC-CSP-audioworklet:implemented-unbuilt	feat(webaudio): BaseAudioContext.audioWorklet, CSP-checked as an audioworklet request
+e5c2cd131	resolved-note-only	wright-only (scrollIntoViewIfNeeded instant), 0 census pages	fix(wright): scrollIntoViewIfNeeded scrolls instantly
+ea7daf4c4	resolved-note-only	compile fix for 0206f4243 (integrator), 0 pages	fix(iframe): compute the attribute navigation's history handling before the call
+7a86b696e	resolved-note-only	R-FETCH-LATER-C review fix on 7c34591e9 (…5b822e93), 0 pages	Fall back to the minimal deferred-fetch quota when allow= does not enable it
+93cf2f04c	resolved-note-only	R-FETCH-MISC-excl (…06168c11, mixed content, EXCL — not credited, coordinator to	fix(net): an https document's fetch to an http URL is blocked as mixed content
+4c9151ea3	resolved-note-only	integrator review fix (…7ab26d54), 0 pages: fix(view-transitions): a skip only P	fix(view-transitions): a skip only Pyro makes leaves ready handled
+6b5540ca0	resolved-note-only	integrator review fix (…7ab26d54), 0 pages: fix(events): content attribute handl	fix(events): content attribute handlers scope by this and bind no name of their own
+fe4f3cd1f	resolved-note-only	integrator review fix (…7ab26d54), 0 pages: fix(transitions): getAnimations orde	fix(transitions): getAnimations orders transitions by the style change event that started them
+91f25aac4	row-without-expected-pages	SC-CSP-core-v4:implemented-unbuilt	fix(navigation): a javascript: URL into a new noopener window does not run
+8c117ae60	row-without-expected-pages	SC-smooth-scroll:implemented-unbuilt	feat(cssom-view): smooth scrolling on the rendering-frame clock
+9a244304e	resolved-note-only	integrator review fix (…7ab26d54), 0 pages: fix(wright): scrollIntoViewIfNeeded 	fix(wright): scrollIntoViewIfNeeded resolves to undefined
+f07bf214a	resolved-note-only	integrator review fix (…7ab26d54), 0 pages: fix(grid): a percentage track within	fix(grid): a percentage track within float noise of a layout unit snaps to it
+012d066bd	resolved-note-only	review fix for d4afe87e2/f630e4c3d screenshot lazy wait (…5b822e93), 0 pages	Screenshots wait only on the lazy loads they started
+fd8e172a4	resolved-note-only	R-HTML-9c follow-up	fix(canvas): a drawable canvas paints no inline content in place on any paint path
+62d68f95f	resolved-note-only	R-HTML-9f follow-up	fix(canvas): drawElementImage taints for a visited link around the element
+7bb67f14e	resolved-note-only	R-HTML-9i follow-up with d6178adf9 (…3a492bc9, drawn-transform scaling), 0 pages	Avoid moving a matched slice in set_drawn_transform
+c33183561	row-without-expected-pages	SC-anchor-interpolation:implemented-unbuilt	fix(anchor): anchor() and anchor-size() interpolate in CSS animations and transitions
+d6178adf9	resolved-note-only	R-HTML-9i follow-up	Store drawElementImage's element transform in the canvas box's CSS px
+eb60ce3b2	row-without-expected-pages	SC-CQ-anchored-fallback:implemented-unbuilt	feat(css): anchored(fallback ...) container queries with not/and/or, any and physical position-area matching
+c0d6f0006	row-without-expected-pages	SC-cv-auto-state:implemented-unbuilt	feat(css-contain): contentvisibilityautostatechange, and anchors keep content-visibility:auto relevant
+0206f4243	resolved-note-only	R-HTML-B-7 note (…68889b70), 2 tentative, 0 counted	fix(history): an iframe navigated from its document's load or pageshow handler replaces its entry
+7c34591e9	resolved-note-only	R-FETCH-LATER-C-excl correctness (…5b822e93)	Give a frame no deferred-fetch quota when allow= delegates it elsewhere
+bfe194f6c	row-without-expected-pages	SC-snap-events:implemented-unbuilt	fix(css-scroll-snap): an unsnapped mandatory snap container snaps after a style change
+7fb25f233	row-without-expected-pages	SC-snap-events:implemented-unbuilt	feat(css-scroll-snap): scrollsnapchanging and scrollsnapchange, and SnapEvent
+26fb4a8a6	resolved-note-only	R-FETCH-META excluded: correctness, 0 pages	fix(preload): <link rel=preload> as=font, as=track and as=fetch destinations
+a8c9d7350	row-without-expected-pages	SC-wasm-streaming:implemented-unbuilt;R-WASM-ASYNC:implemented-unbuilt	fix(wasm): async WebAssembly promises settle (JSC patch 0040, deferred work in our loop)
+c93acfc91	resolved-note-only	R-FETCH-META excluded: correctness, 0 pages	fix(fetch): a trailing-dot host is another site for Sec-Fetch-Site
+4a8d973cc	resolved-note-only	R-FETCH-META excluded: correctness, 0 pages	fix(fetch): worker, sharedworker and serviceworker request destinations
+193dc92e4	row-without-expected-pages	SC-scoped-VT:implemented-unbuilt	fix(view-transitions): element-scoped transitions mark their scope, hold its size and skip what Chrome skips (VT-3 scoped)
+57023b90c	row-without-expected-pages	SC-scroll-initial-target:implemented-unbuilt	feat(css): scroll-initial-target (none | nearest) scrolls the nearest scroll container to its target
+e2a672f65	row-without-expected-pages	S04:implemented-unbuilt	fix(css-sizing): an embedder's script reads a responsive iframe at its content size
+6f2c7a9ce	row-without-expected-pages	SC-CSP-paintworklet-eval:implemented-unbuilt	fix(paint-worklet): a module that throws synchronously, or threw before, fulfills addModule()
+ebe91c87e	row-without-expected-pages	SC-CSP-paintworklet-eval:implemented-unbuilt	fix(paint-worklet): addModule() rejects only when the graph fails to load or link; an evaluation error is reported
+d01495c1b	row-without-expected-pages	SC-wasm-streaming:implemented-unbuilt	WebAssembly.compileStreaming and instantiateStreaming for windows and workers
+02e010b51	row-without-expected-pages	SC-CQ-scroll-state:implemented-unbuilt	feat(css): scroll-state(scrollable) container queries
+1bdb367b5	row-without-expected-pages	SC-CQ-C123:implemented-unbuilt	fix(css): becoming a container or changing container-name restyles descendants
+877dfd082	row-without-expected-pages	SC-CQ-C123:implemented-unbuilt	fix(css): a table or internal table box is not a size query container
+bc1d28385	row-without-expected-pages	SC-CQ-C123:implemented-unbuilt	fix(css): a container query with an unknown feature selects no container
+f031dc059	row-without-expected-pages	S03:implemented-unbuilt	fix(layout): min/max `stretch` on grid items and on flex items in wrapping lines
+5f1a92a62	row-without-expected-pages	SC-SCROLL-BUTTON-CLICK:implemented-unbuilt	feat(scroll-markers): a click on a ::scroll-button() scrolls its element by a page
+a320eb224	row-without-expected-pages	SC-elementsFromPoint-order:implemented-unbuilt	fix(cssom-view): elementsFromPoint lists every box holding the point, as Chrome's list hit test
+20aed722f	row-without-expected-pages	SC-scroll-promises:implemented-unbuilt	fix(cssom-view): Element and Window scroll methods return promises of a ScrollResult
+6086ada32	row-without-expected-pages	SC-snap-directional:implemented-unbuilt	Snap scrollBy by its intended direction and honour scroll-snap-stop: always
+cbb4d1a73	row-without-expected-pages	SC-snap-directional:implemented-unbuilt	Respect smaller snap areas inside oversized scroll targets
+235c4d421	row-without-expected-pages	SC-snap-directional:implemented-unbuilt	Resolve logical scroll snap alignment and rank reachable signed offsets
+44120fbc2	resolved-note-only	R-HTML-9f integrator/stopgap fix (…7ab26d54), 0 pages	fix(canvas): drawElementImage leaves out or taints SVG images
+e22e68a34	row-without-expected-pages	SC-anchor-overflow-limit:implemented-unbuilt	fix(taffy): the default overflow limit of a position-area box includes its original containing block
+b84cec3ac	row-without-expected-pages	SC-overflow-zero-axis:implemented-unbuilt	fix(layout): a box empty in one axis still extends its scroller's scrollable overflow
+baf9d02be	row-without-expected-pages	SC-TOM-custom-prop-order:implemented-unbuilt	fix(webapi): computedStyleMap() orders custom property names by UTF-16 code unit
+0e9ee2c56	row-without-expected-pages	SC-VT-idl-skip:implemented-unbuilt	fix(view-transitions): skip/abort sequencing for unobserved, detached and dead-realm transitions (VT-2)
+b3f272201	row-without-expected-pages	SC-VT-idl-skip:implemented-unbuilt	fix(view-transitions): ViewTransition IDL accessors and a ViewTransitionTypeSet setlike (VT-1)
+4b98e6a34	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(focus): a focused text field matches :focus-visible however it was focused
+4c2782b4f	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(focus): a label click focuses its control as a mouse focus
+aefd14747	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(input): boundary events observe the new :hover state
+9b5cf3ec9	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(style): a quirks-mode document matches ID and class selectors case-insensitively
+12c292733	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(selectors): only the no-namespace class attribute gives an element classes
+23ca36d6d	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(selectors): :lang() matches no range against a tag with a subtag over 8 characters
+64ae9c927	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(selectors): comments and empty text nodes leave an element :empty
+c1ea139c5	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(selectors): :lang() and :dir() may follow ::part()
+128060bcd	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(input): any mouse button's press activates :active until its release
+ff3e834cd	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(focus): a press that focuses nothing clears the pointer focus modality
+88528da0b	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(focus): the rendering update blurs a focused element that is no longer rendered
+56915a791	row-without-expected-pages	SC-selectors-user-action:implemented-unbuilt	fix(selectors): :hover, :active and :focus-within stop at the innermost top-layer element
+194f06a78	resolved-note-only	R-HTML-9f integrator/stopgap fix (…7ab26d54), 0 pages	fix(canvas): drawElementImage taints for same-origin-URL images again
+1d63703f3	row-without-expected-pages	R-HTML-9g:implemented-unbuilt	Size drawElementImage from the border box and paint its text as screenshots do
+2c095884b	row-without-expected-pages	SC-transitions-cancel:implemented-unbuilt	fix(transitions): a reversed transition is shortened by how far the one it reverses got
+b71b671ed	row-without-expected-pages	SC-transitions-cancel:implemented-unbuilt	fix(transitions): only color transitions on a color change, and vertical-align keeps its name
+13625eebb	row-without-expected-pages	SC-transitions-cancel:implemented-unbuilt	fix(transitions): getAnimations lists simultaneous transitions by property name
+d4e377163	row-without-expected-pages	SC-transitions-cancel:implemented-unbuilt	fix(transitions): a later transition-property item decides, and stale running transitions cancel
+a7b148613	row-without-expected-pages	SC-transitions-cancel:implemented-unbuilt	fix(transitions): removing or moving an element cancels its running transitions
+43e7fcf45	row-without-expected-pages	SC-grid-track-sizing:implemented-unbuilt	fix(grid): a subgrid keeps the space its parent's content distribution puts between tracks
+5ce7623dd	row-without-expected-pages	SC-grid-track-sizing:implemented-unbuilt	fix(layout): a fixed box's offset parent is the ancestor that establishes its containing block
+c8288f15a	row-without-expected-pages	SC-grid-track-sizing:implemented-unbuilt	fix(grid): percentage track sizes resolve to whole layout units
+3f3af5dee	row-without-expected-pages	SC-grid-track-sizing:implemented-unbuilt	fix(style): grid-template on an untemplated grid container resolves to its used tracks
+47aa9f2f6	row-without-expected-pages	SC-grid-track-sizing:implemented-unbuilt	fix(style): an unrendered child of a grid or flex container resolves min-width/height auto to 0px
+c85ec64b1	row-without-expected-pages	SC-grid-track-sizing:implemented-unbuilt	fix(grid): a min-width/height larger than the max still sets the flex fraction
+f630e4c3d	resolved-note-only	R-HTML-10a capture follow-up (…5b822e93)	One poll thread for captures and prints waiting on lazy loads
+d4afe87e2	resolved-note-only	R-HTML-10a capture follow-up (…5b822e93)	Screenshots wait for the lazy content they start
+016c83b79	resolved-note-only	R-HTML-9e integrator/stopgap fix (…7ab26d54), 0 pages	fix(canvas): drawElementImage taints by b8b222900's flag, not always
+e12a5fef8	resolved-note-only	R-HTML-10d integrator/stopgap fix (…7ab26d54), 0 pages	fix(iframe): a lazy iframe's cancel marker is taken by the next attribute processing
+ec3524937	resolved-note-only	R-HTML-9c integrator/stopgap fix (…7ab26d54), 0 pages	fix(canvas): a drawable canvas's inline children are not painted in place
+b8b222900	resolved-note-only	R-HTML-9e security fix (…3a492bc9)	Taint the canvas when drawElementImage may show non-origin-clean content
+b14614c59	row-without-expected-pages	SC-Q14-overflow-clip-margin-discrete:implemented-unbuilt	fix(stylo): overflow-clip-margin animates discretely
+05525cb9d	row-without-expected-pages	SC-Q42-animation-duration-auto-resolved:implemented-unbuilt	fix(css): computed animation-duration keeps auto unless animation-timeline is the initial auto
+5b02727aa	resolved-note-only	R-HTML-JSURL review fix (…ad4efc0e)	fix(navigation): a javascript: URL opened in a new window without a prebuilt popup runs there
+b35d4961e	resolved-note-only	F02d review fix (…c83c4608)	fix(dom): DOMTokenList and focusGroupStart use the attribute in no namespace
+41920bbad	row-without-expected-pages	SC-CV-hidden-geometry:implemented-unbuilt	fix(contain): geometry queries lay out content-visibility: hidden contents
+50ab27bb1	resolved-note-only	F02 review fix (…c83c4608)	fix(focusgroup): Tab out of an arrow-key control stays within its own group
+ac293e917	resolved-note-only	F02 review fix (…c83c4608)	fix(focusgroup): Tab enters a segment at its focusgroupstart or first item in tree order
+cd4ef7dea	resolved-note-only	R-HTML-9e integrator/stopgap fix (…7ab26d54), 0 pages	fix(canvas): drawElementImage taints the canvas
+d5879729d	resolved-note-only	F02 review fix (…c83c4608)	fix(focusgroup): arrows follow the focused item's direction; Home/End on an edge item stay
+ec8fb83dc	resolved-note-only	R-HTML-9a review fix (…3a492bc9)	Gate the HTML-in-Canvas paint step on a drawable canvas and add onpaint
+1d39a1d93	resolved-note-only	F03p2 review follow-up (…0b9ae05a)	fix(select): a release whose mouseup is held back picks no picker option
+a799ad8bb	resolved-note-only	R-HTML-B-7 / R-HTML-27a review follow-up (…ad4efc0e)	fix(history): CDP history covers child frames' steps; an abandoned traversal restores the page's step; dialogs need a fully active document
+9259003cd	row-without-expected-pages	R-HTML-9d:implemented-unbuilt	Paint one element's subtree alone for HTML-in-Canvas drawElementImage
+93a1ffbc5	resolved-note-only	R-HTML-25 integrator fix (…be6eb5a1)	hidden=until-found stays display: none in the engine (R-HTML-25 follow-up)
+98515b699	resolved-note-only	R-HTML-B-11 review follow-up (…ad4efc0e)	fix(history): a traversal whose document does not commit leaves the entry as it was
+c88053bc8	resolved-note-only	R-HTML-10d review fix (…5b822e93)	Key a lazy iframe's own-navigation marker by frame
+2b99c5fcc	resolved-note-only	R-HTML-10a product fix (…5b822e93)	Check lazy images from the first layout; full-page captures load all
+b6ab86049	resolved-note-only	F08f review fix (…40961828)	Update the frame URL CDP reports when document.open() changes the document's URL
+cc806a11f	resolved-note-only	R-HTML-B-9 review follow-up (…ad4efc0e)	feat(serve): --navigation-rate-limit; the Playwright drop-in turns it off
+8eaeaf5c8	resolved-note-only	R-HTML-B-12 follow-up (…36cb35d4)	Reveal a document that requests no animation frame after its load
+acf404f96	resolved-note-only	R-HTML-10a product fix (…5b822e93)	Start lazy content before screenshots and prints
+b026fdc9d	resolved-note-only	R-HTML-31 integrator/stopgap fix (…7ab26d54), 0 pages	fix(media): selectDefaults queues change only at a TextTrackList that exists
+f8e7bb4eb	resolved-note-only	integrator integrator/stopgap fix (…7ab26d54), 0 pages	docs(page): image_complete's doc comment sits on image_complete again
+6a90a0811	resolved-note-only	R-HTML-B-3 review fix (…40961828)	Stop a load's deferred scripts at once when document.open() aborts it
+e6225cab3	resolved-note-only	integrator integrator/stopgap fix (…7ab26d54), 0 pages	fix(style): content under content-visibility: hidden is hidden to focus and checkVisibility
+9ff0bf71c	resolved-note-only	R-HTML-13 review fix (…141f4e4e)	fix(focus): a child frame's autofocus candidates request the top-level page's frame
+474605513	resolved-note-only	R-HTML-31 integrator/stopgap fix (…7ab26d54), 0 pages	fix(media): loaded and default-selected text tracks run time marches on
+b9f5a8e4b	row-without-expected-pages	R-HTML-B-18:implemented-unbuilt	fix(popup): a message the opener posts to its popup reports the opener as event.source
+44e600dbf	resolved-note-only	review fix of acfc8b0e0 (R-HTML-10c)	fix(media): a deferred lazy media element stops delaying the load event
+b8c33f8d3	resolved-note-only	review fix of 471824a27 (R-HTML-10b)	fix(iframe): loading=lazy defers only a src navigation, not srcdoc or about:blank
+e8365796f	resolved-note-only	review fix of 79617c94b (R-HTML-B-16)	fix(nav): a javascript: URL runs in a _top, _parent or named target only from the same origin
+ca6dcfa09	resolved-note-only	R-FETCH-9b test (…72613886)	test(cache): stale-while-revalidate window lookups
+d245955ac	resolved-note-only	review fix of d32849d4b (R-HTML-24)	perf(forms): wrap=hard walks a long line by index
+c143728b3	resolved-note-only	review fix of 5f47ecc62 (CS)	docs(net): decode_text's doc comment sits on decode_text again
+c835e19cb	resolved-note-only	review fix of 6334dbc3e (R-FETCH-1)	fix(request): new Request(streamRequest, {mode: 'no-cors'}) leaves the input's body unused
+294ba71d1	resolved-note-only	review fix of 23b16fefc (F03d)	fix(select): an insertion without an explicitly selected option skips the select's option walk
+ff740683f	row-without-expected-pages	R-HTML-B-7b:implemented-unbuilt	fix(navigation): a document a cross-document navigation leaves does not fire load
+6ce66d3a7	resolved-note-only	review fix of 96bd1dd68 (R-FETCH-1)	fix(fetch): fetchBuffered's settled fetch is a private native, not fetch()'s third argument
+fe55c103b	resolved-note-only	review fix of 56bb3e11b (R-FETCH-1)	fix(fetch): fetch() with a stream body refuses keepalive and no-cors
+b050d526a	resolved-note-only	review fix of f399664be (R-FETCH-10)	fix(cors): a Range value over 128 bytes is not CORS-safelisted
+2dbc12887	resolved-note-only	review fix of f61dc654c (R-FETCH-9b)	fix(cache): must-revalidate keeps a stale entry out of the stale-while-revalidate window
+46abfec47	row-without-expected-pages	R-HTML-10d:implemented-unbuilt	Cancel a lazy iframe's pending load when it is navigated otherwise
+49fe6769d	unattributed		fix(cors): a preflight allow list with a non-ASCII value line fails
+8a8efd245	unattributed		fix(fetch): only 301, 302, 303, 307 and 308 are redirects
+ec3d24446	unattributed		Drop stray backslashes from two streams.js comments
+147f68d86	row-without-expected-pages	F04h:implemented-unbuilt	fix(modules): import() in a module service worker rejects once its script has run
+1d432d2be	unattributed		Review fixes: BOM flag and doc placement
+0c7c960d4	row-without-expected-pages	OWN-mse-mp4:implemented-unbuilt	fix(mse): the attached-tone test drains the task loop between steps
+41ddc247c	row-without-expected-pages	F02f:implemented-unbuilt	Make grid no focusgroup and keep top-layer items out of focusgroups
+18c7e8ff2	row-without-expected-pages	F02f:implemented-unbuilt	Keep grid focusgroups from navigating linearly
+216b53f2d	row-without-expected-pages	F09b:implemented-unbuilt	fix(css): a parser-inserted link's @import sheets block the parser's scripts
+cd4abb412	row-without-expected-pages	F02d:implemented-unbuilt	Reflect focusGroup as a DOMTokenList and focusGroupStart as a boolean
+5222e5a26	row-without-expected-pages	Q09:implemented-unbuilt	feat(mathml): size <mspace> by its width, height and depth attributes
+51f9c8087	row-without-expected-pages	OWN-byob-tee-min:implemented-unbuilt	Tee readable byte streams using the active branch reader
+049a3e07f	row-without-expected-pages	E02:implemented-unbuilt	Enforce the TextEncoderStream receiver on its encoding getter
+c6ae4d6cc	row-without-expected-pages	OWN-mse-mp4:implemented-unbuilt	Implement Window MediaSource and buffered fMP4 playback
+3a92a7101	row-without-expected-pages	OWN-perfobserver-descriptors:implemented-unbuilt	Keep worker observer interfaces the page defined or deleted before the first read
+a9b2c0a78	row-without-expected-pages	OWN-perfobserver-descriptors:implemented-unbuilt	Give PerformanceObserver and PerformanceObserverEntryList Web IDL interface and operation shapes
