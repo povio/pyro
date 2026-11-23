@@ -1521,14 +1521,15 @@ fn apply_traversal(
     if nav.traversal_pending(current_doc) {
         return false;
     }
+    let mut intercepted = false;
     if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
         // Only a same-document traversal can be canceled or intercepted.
         let same = entry.doc == current_doc;
         let source = NavigateSource::default();
-        if nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key), &source) == NavigateDecision::Cancel
-            && same
-        {
-            return false;
+        match nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key), &source) {
+            NavigateDecision::Cancel if same => return false,
+            NavigateDecision::Intercept => intercepted = same,
+            _ => {}
         }
     }
     nav.persist_scroll();
@@ -1555,9 +1556,14 @@ fn apply_traversal(
         b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
         nav.navigation_committed("traverse");
         // HTML "update document for history step application": popstate fires, then the
-        // persisted scroll position is restored, then hashchange (queued) fires.
+        // persisted scroll position is restored, then hashchange (queued) fires. A traversal
+        // the Navigation API intercepted suppresses that restore: navigation.js restores after
+        // its handlers ("process scroll behavior", `scroll: "after-transition"`) or on
+        // `event.scroll()`.
         b.fire_popstate(page, entry.state.is_some(), &old_url, &entry.url);
-        nav.restore_scroll(&entry);
+        if !intercepted {
+            nav.restore_scroll(&entry);
+        }
     } else {
         let opts = NavigateOpts {
             post: None,
@@ -2554,6 +2560,25 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
                 "queued"
             }
         }))
+    });
+    // HTML "restore scroll position data" of the current entry (an intercepted traversal's
+    // scroll behavior), whatever its `history.scrollRestoration`.
+    native!("restoreScroll", |s, nav, _a| {
+        let entry = {
+            let st = nav.state.borrow();
+            st.entries.get(st.index).cloned()
+        };
+        if let Some(mut entry) = entry {
+            entry.scroll_manual = false;
+            nav.restore_scroll(&entry);
+        }
+        Ok(s.undefined())
+    });
+    // The viewport's scroll position as "x,y" (has the page scrolled since?).
+    native!("viewportScroll", |s, nav, _a| {
+        let page = nav.page_dom.borrow().upgrade();
+        let (x, y) = page.map(|p| pyro_webapi::layout_api::viewport_scroll(&p)).unwrap_or_default();
+        Ok(s.string(&format!("{x},{y}")))
     });
     native!("updateState", |s, nav, a| {
         let state = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;

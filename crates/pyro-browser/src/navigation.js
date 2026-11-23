@@ -172,6 +172,12 @@
 
   const eventData = new WeakMap();
   const NAVIGATION_TYPES = ['push', 'replace', 'reload', 'traverse'];
+  // HTML "process scroll behavior". Only a traversal's is done here (its restore was
+  // suppressed when it was intercepted); push, replace and reload keep the scroll of commit.
+  const processScroll = (d) => {
+    d.interception = 'scrolled';
+    if (d.navigationType === 'traverse') native.restoreScroll();
+  };
   class NavigateEvent extends EventC {
     constructor(type, init) {
       if (arguments.length < 2) {
@@ -205,6 +211,9 @@
         sourceElement: init.sourceElement ?? null,
         handlers: [],
         dispatching: false,
+        // HTML NavigateEvent "interception state" and "scroll behavior".
+        interception: 'none',
+        scrollBehavior: null,
       });
     }
     intercept(options) {
@@ -226,7 +235,16 @@
       if (handler !== undefined && typeof handler !== 'function') {
         throw new TypeErrorC("Failed to execute 'intercept' on 'NavigateEvent': Failed to read the 'handler' property from 'NavigationInterceptOptions': The provided value is not a function.");
       }
+      const scroll = options === undefined || options === null ? undefined : options.scroll;
+      if (scroll !== undefined) {
+        const value = String(scroll);
+        if (value !== 'after-transition' && value !== 'manual') {
+          throw new TypeErrorC("Failed to execute 'intercept' on 'NavigateEvent': Failed to read the 'scroll' property from 'NavigationInterceptOptions': The provided value '" + value + "' is not a valid enum value of type NavigationScrollBehavior.");
+        }
+        d.scrollBehavior = value;
+      }
       d.handlers.push(handler === undefined ? () => undefined : handler);
+      d.interception = 'intercepted';
     }
     scroll() {
       const d = eventData.get(this);
@@ -234,6 +252,14 @@
       if (d.handlers.length === 0) {
         throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': scroll() may only be called on an intercepted navigation.");
       }
+      // HTML "ensure the event is ok to process scroll behavior": only once, after commit.
+      if (d.interception !== 'committed') {
+        throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': scroll() may only be called after commit, and only once.");
+      }
+      if (!native.active()) {
+        throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': The document is not fully active.");
+      }
+      processScroll(d);
     }
   }
   for (const key of ['navigationType', 'destination', 'canIntercept', 'userInitiated', 'hashChange', 'signal', 'formData', 'downloadRequest', 'info', 'hasUAVisualTransition', 'sourceElement']) {
@@ -359,7 +385,7 @@
       info, cancelable, formData, sourceElement,
     });
     const d = eventData.get(event);
-    const o = { type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state };
+    const o = { type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state, event: d };
     ongoing = o;
     d.dispatching = true;
     try {
@@ -392,6 +418,10 @@
     }
     if (o === null) return;
     if (o.result !== null) o.result.committed.resolve(entry);
+    if (o.handlers.length > 0) {
+      o.event.interception = 'committed';
+      o.event.scrollAtCommit = native.viewportScroll();
+    }
     const runs = o.handlers.map((handler) => {
       try {
         return PromiseC.resolve(handler());
@@ -402,6 +432,17 @@
     PromiseC.all(runs).then(
       () => {
         if (ongoing !== o) return;
+        // HTML "potentially process scroll behavior": after the handlers, unless "manual" or
+        // `scroll()` already did.
+        // A traversal's restore is skipped when the page scrolled during the handlers.
+        if (o.handlers.length > 0 && o.event.interception === 'committed' && o.event.scrollBehavior !== 'manual'
+            && native.active()) {
+          if (o.event.navigationType === 'traverse' && native.viewportScroll() !== o.event.scrollAtCommit) {
+            o.event.interception = 'scrolled';
+          } else {
+            processScroll(o.event);
+          }
+        }
         ongoing = null;
         // HTML: `navigatesuccess` fires with `navigation.transition` still
         // set; then the method's and the transition's `finished` resolve and
