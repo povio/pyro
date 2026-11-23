@@ -6081,7 +6081,7 @@ diff --git a/packages/blitz-dom/src/dom_selection.rs b/packages/blitz-dom/src/do
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/dom_selection.rs
-@@ -0,0 +1,533 @@
+@@ -0,0 +1,535 @@
 +//! pyro: the page's selection, a DOM range the embedder keeps (pyro-webapi's document
 +//! selection), painted as highlighted text. The embedder sets it before a paint
 +//! ([`BaseDocument::set_dom_selection`]); blitz-paint reads it as the inline roots' selected byte
@@ -6259,9 +6259,11 @@ new file mode 100644
 +
 +    /// pyro: whether `node_id` is a visited link (`ElementData::flush_link_visited`).
 +    pub fn is_visited_link(&self, node_id: NodeId) -> bool {
-+        self.nodes
-+            .get(node_id)
-+            .is_some_and(|node| node.element_state().contains(style_dom::ElementState::VISITED))
++        // (Only an element has an element state: a text or comment node is no link.)
++        self.nodes.get(node_id).is_some_and(|node| {
++            matches!(node.data, crate::node::NodeData::Element(_))
++                && node.element_state().contains(style_dom::ElementState::VISITED)
++        })
 +    }
 +
 +    /// pyro: whether the author declaration of `longhand` that `style` uses is `currentcolor`

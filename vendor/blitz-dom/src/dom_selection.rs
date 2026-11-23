@@ -175,9 +175,11 @@ impl BaseDocument {
 
     /// pyro: whether `node_id` is a visited link (`ElementData::flush_link_visited`).
     pub fn is_visited_link(&self, node_id: NodeId) -> bool {
-        self.nodes
-            .get(node_id)
-            .is_some_and(|node| node.element_state().contains(style_dom::ElementState::VISITED))
+        // (Only an element has an element state: a text or comment node is no link.)
+        self.nodes.get(node_id).is_some_and(|node| {
+            matches!(node.data, crate::node::NodeData::Element(_))
+                && node.element_state().contains(style_dom::ElementState::VISITED)
+        })
     }
 
     /// pyro: whether the author declaration of `longhand` that `style` uses is `currentcolor`
