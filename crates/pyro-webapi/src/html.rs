@@ -2067,7 +2067,11 @@ simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
         |s, n| Ok(s.string(&n.page().dom.borrow().script_info(n.id).js()?.inline_text)),
         |s, n, v| {
             let arg0 = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement text", false)?;
-            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+            // Trusted Types: the script is trusted with this text ([[ScriptText]]), before
+            // the text change that may prepare it.
+            let mut dom = n.page().dom.borrow_mut();
+            dom.set_script_text(n.id, &arg0);
+            dom.set_text_content(n.id, &arg0).js()
         },
     );
     def.static_method("supports", 1, |s, a| {

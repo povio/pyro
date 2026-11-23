@@ -310,6 +310,43 @@ pub fn javascript_url_script(s: &Scope<'_>, page: &Rc<PageDom>, source: &str) ->
     }
 }
 
+/// Trusted Types "prepare the script text" (slot value verification) for the script element
+/// `el` whose child text content is `text`, as "prepare the script element" runs it: the text as
+/// it is while it is the script's [[ScriptText]] (`Dom::script_text`: what its parser or a
+/// trusted sink gave it) or the document does not require Trusted Types; else what the default
+/// policy makes of it at the "HTMLScriptElement text" or "SVGScriptElement text" sink. `None`
+/// (the script is not prepared) when that fails or the policy throws.
+pub fn script_source(s: &Scope<'_>, page: &Rc<PageDom>, el: pyro_dom::NodeId, text: &str) -> Option<String> {
+    let (doc, svg) = {
+        let dom = page.dom.borrow();
+        let doc = dom.node_document(el).unwrap_or_else(|_| page.document());
+        if !requires_for_script_in(page, doc) || dom.script_text(el) == text {
+            return Some(text.to_owned());
+        }
+        (doc, dom.element(el).is_ok_and(|e| !e.is_html()))
+    };
+    let sink = if svg { "SVGScriptElement text" } else { "HTMLScriptElement text" };
+    match compliant_string_in(s, page, doc, Kind::Script, s.string(text), sink, false) {
+        Ok(script) => Some(script),
+        Err(e) => {
+            // A policy that throws reports its exception; a missing one is a violation only.
+            if !matches!(e, JsError::Type(_)) {
+                s.report_exception(&e);
+            }
+            None
+        }
+    }
+}
+
+/// Whether the script element `el` needs [`script_source`] before it is prepared with `text`:
+/// its document requires Trusted Types and `text` is not its [[ScriptText]]. No JavaScript runs.
+pub fn script_source_unverified(page: &PageDom, el: pyro_dom::NodeId, text: &str) -> bool {
+    let dom = page.dom.borrow();
+    let doc = dom.node_document(el).unwrap_or_else(|_| page.document());
+    drop(dom);
+    requires_for_script_in(page, doc) && page.dom.borrow().script_text(el) != text
+}
+
 /// Whether `el` is an HTML `<script>` (its text and `src` are Trusted Types sinks).
 pub(crate) fn is_html_script(page: &PageDom, el: pyro_dom::NodeId) -> bool {
     page.dom.borrow().element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "script")

@@ -3235,7 +3235,7 @@ impl Browser {
             }
             info
         } else {
-            let mut d = dom.borrow_mut();
+            let d = dom.borrow();
             let Ok(info) = d.script_info(node) else { return };
             // Spec order: an already-started element, an inline element
             // without source text, a disconnected element, and an unknown
@@ -3249,6 +3249,29 @@ impl Browser {
             if info.kind == ScriptKind::Data {
                 return;
             }
+            drop(d);
+            // Trusted Types "prepare the script text" (see `prepare_inserted_script`): the
+            // policy may run script, after which the script is taken as it is then.
+            let mut info = info;
+            if pyro_webapi::trusted_types::script_source_unverified(&bindings, node, &info.inline_text) {
+                let Some(realm) = self.main_realm(page) else { return };
+                let Ok(scope) = realm.scope() else { return };
+                let checked = std::mem::take(&mut info.inline_text);
+                let Some(source) = pyro_webapi::trusted_types::script_source(&scope, &bindings, node, &checked) else {
+                    return;
+                };
+                let d = dom.borrow();
+                let Ok(fresh) = d.script_info(node) else { return };
+                if fresh.already_started || !d.is_connected(node).unwrap_or(false) || fresh.inline_text != checked {
+                    return;
+                }
+                if (fresh.src.is_none() && fresh.inline_text.is_empty()) || fresh.kind == ScriptKind::Data {
+                    return;
+                }
+                info = fresh;
+                info.inline_text = source;
+            }
+            let mut d = dom.borrow_mut();
             let _ = d.mark_script_started(node);
             info
         };
@@ -4271,16 +4294,50 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
         return;
     }
     let (Some(bindings), Some(realm)) = (frame.page_dom.clone(), frame.main_realm().cloned()) else { return };
-    let (text, line) = {
-        // Script never runs under a DOM borrow: a held one defers to the drain.
-        let Ok(mut dom) = bindings.dom.try_borrow_mut() else { return };
-        let Ok(info) = dom.script_info(node) else { return };
+    // What prepare does with the script, unless it returns first.
+    let eligible = |dom: &pyro_dom::Dom| -> Option<pyro_dom::script::ScriptInfo> {
+        let info = dom.script_info(node).ok()?;
         if info.already_started || info.parser_inserted || !dom.is_connected(node).unwrap_or(false) {
-            return;
+            return None;
         }
         if (info.src.is_none() && info.inline_text.is_empty()) || info.kind == ScriptKind::Data {
+            return None;
+        }
+        Some(info)
+    };
+    // Script never runs under a DOM borrow: a held one defers to the drain.
+    let Some(mut info) = bindings.dom.try_borrow().ok().and_then(|dom| eligible(&dom)) else { return };
+    // Trusted Types "prepare the script text": a source text that is not the script's
+    // [[ScriptText]] goes through the default policy, which may run script (no DOM borrow).
+    if pyro_webapi::trusted_types::script_source_unverified(&bindings, node, &info.inline_text) {
+        let checked = std::mem::take(&mut info.inline_text);
+        let source =
+            realm.scope().ok().and_then(|scope| pyro_webapi::trusted_types::script_source(&scope, &bindings, node, &checked));
+        let Ok(mut dom) = bindings.dom.try_borrow_mut() else { return };
+        // What the policy changed counts: the script is taken as it is now.
+        let Some(fresh) = eligible(&dom) else { return };
+        if fresh.inline_text != checked {
+            // Its text changed while the policy ran: that change prepares it again.
             return;
         }
+        match source {
+            Some(source) => {
+                info = fresh;
+                info.inline_text = source;
+            }
+            None => {
+                // Not prepared (nor started). The resource event its insertion queued finds it
+                // stashed as a data block, so `Browser::script_event` does not ask the policy
+                // (and report the violation) again.
+                let mut rejected = fresh;
+                rejected.kind = ScriptKind::Data;
+                let _ = dom.stash_prepared_script(node, rejected, bindings.document());
+                return;
+            }
+        }
+    }
+    let (text, line) = {
+        let Ok(mut dom) = bindings.dom.try_borrow_mut() else { return };
         let _ = dom.mark_script_started(node);
         if info.src.is_some() || info.kind != ScriptKind::Classic || info.nomodule {
             let document = bindings.document();

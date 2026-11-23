@@ -270,6 +270,9 @@ pub struct Dom {
     pub(crate) svg_lengths: rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<&'static str, std::rc::Weak<crate::svg_point_list::LengthLists>>>,
     pub(crate) svg_strings: rustc_hash::FxHashMap<(u32, crate::svg_string_list::StringListAttribute), Vec<String>>,
     pub(crate) svg_pans: rustc_hash::FxHashMap<u32, (f64, f64, f64)>,
+    /// Trusted Types' [[ScriptText]] of the `<script>` elements that have one (`Dom::script_text`),
+    /// by slot.
+    pub(crate) script_texts: rustc_hash::FxHashMap<u32, Box<str>>,
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
     /// scroll position (`set_frame_documents`, snapshot `srcdoc` + `data-pyro-frame-*`).
     pub(crate) frame_documents: rustc_hash::FxHashMap<u32, FrameDocument>,
@@ -412,6 +415,7 @@ impl Dom {
             svg_lengths: Default::default(),
             svg_strings: Default::default(),
             svg_pans: Default::default(),
+            script_texts: Default::default(),
             frame_documents: Default::default(),
             snapshot_nonces: Default::default(),
             sheet_policies: Default::default(),
@@ -4872,6 +4876,7 @@ impl Dom {
         let owner = self.n(i).owner_doc;
         if !self.svg_points.is_empty() { self.svg_points.remove(&i); }
         if !self.svg_numbers.is_empty() { self.svg_numbers.remove(&i); }
+        if !self.script_texts.is_empty() { self.script_texts.remove(&i); }
         if !self.svg_lengths.is_empty() { self.svg_lengths.remove(&i); }
         if !self.registry_associations.is_empty() { self.registry_associations.remove(&i); }
         if !self.custom_definition_owners.is_empty() { self.custom_definition_owners.remove(&i); }

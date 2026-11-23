@@ -1012,11 +1012,15 @@ pub(crate) fn inner_text<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>>
 }
 
 pub(crate) fn set_inner_text(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
-    let text = if crate::trusted_types::is_html_script(n.page(), n.id) {
-        crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement innerText", true)?
-    } else {
-        null_to_empty(v)?
-    };
+    if crate::trusted_types::is_html_script(n.page(), n.id) {
+        let text =
+            crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement innerText", true)?;
+        // Trusted Types: the script is trusted with this text ([[ScriptText]]).
+        let mut dom = n.page().dom.borrow_mut();
+        dom.set_script_text(n.id, &text);
+        return dom.set_inner_text(n.id, &text).js();
+    }
+    let text = null_to_empty(v)?;
     n.page().dom.borrow_mut().set_inner_text(n.id, &text).js()
 }
 

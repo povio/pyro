@@ -621,14 +621,39 @@ impl Dom {
     /// Parser hook: an element was closed (end tag / EOF). `<style>` content
     /// is complete at this point.
     pub(crate) fn resources_element_popped(&mut self, idx: u32) {
+        let mut script = false;
         if let Some(e) = self.n_mut(idx).element_mut() {
             e.flags &= !element_flags::STYLE_PARSING;
+            script = &*e.name.local == "script" && (e.is_html() || e.namespace() == &ns!(svg));
+        }
+        // Trusted Types: the parser trusts a script with the text it parsed into it.
+        if script {
+            let id = self.id_of(idx);
+            let text = self.child_text_content(id).into_owned();
+            self.set_script_text(id, &text);
         }
         if self.resources.enabled
             && self.resource_kind(idx) == Some(ResourceKind::StyleText)
             && self.connected_for_resources(idx)
         {
             self.push_resource(idx, ResourceKind::StyleText, ResourceReason::ChildrenChanged);
+        }
+    }
+
+    /// Trusted Types' [[ScriptText]] of the script element `script`: the source text a trusted
+    /// path gave it (its parser, a Trusted Types sink), "" when none did. Its source text runs as
+    /// it is only while it is the same (Trusted Types "prepare the script text").
+    pub fn script_text(&self, script: NodeId) -> &str {
+        self.check(script).ok().and_then(|i| self.script_texts.get(&i)).map_or("", |t| t)
+    }
+
+    /// Sets [`Dom::script_text`] of `script`.
+    pub fn set_script_text(&mut self, script: NodeId, text: &str) {
+        let Ok(i) = self.check(script) else { return };
+        if text.is_empty() {
+            self.script_texts.remove(&i);
+        } else {
+            self.script_texts.insert(i, text.into());
         }
     }
 
@@ -713,6 +738,10 @@ impl Dom {
         let i = self.check(script)?;
         let e = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
         e.flags |= element_flags::SCRIPT_ALREADY_STARTED;
+        // A started script is never prepared again: its [[ScriptText]] is not read any more.
+        if !self.script_texts.is_empty() {
+            self.script_texts.remove(&i);
+        }
         Ok(())
     }
 

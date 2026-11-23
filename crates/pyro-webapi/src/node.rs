@@ -470,9 +470,11 @@ impl JsClass for Node {
                 // GC can then free the old one.
                 let blur = || crate::input::blur_before_removal(n.page(), n.id, true);
                 let set = |text: &str| n.page().dom.borrow_mut().set_text_content(n.id, text).js();
-                // A `<script>`'s text is a Trusted Types sink when the document requires them.
-                if crate::trusted_types::requires_for_script(n.page()) && crate::trusted_types::is_html_script(n.page(), n.id) {
+                // A `<script>`'s text is a Trusted Types sink when the document requires them, and
+                // the script is trusted with it ([[ScriptText]]) whether or not they are.
+                if crate::trusted_types::is_html_script(n.page(), n.id) {
                     let text = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement textContent", true)?;
+                    n.page().dom.borrow_mut().set_script_text(n.id, &text);
                     return set(&text);
                 }
                 // A string (the usual value) needs no nullish test first.
