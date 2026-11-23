@@ -893,6 +893,7 @@ impl FrameHost {
                 required_csp: None,
                 committing_required_csp: None,
                 committing_csp_sandbox: None,
+                csp_sandbox: None,
                 enforce_required_csp: None,
                 in_order_scripts: Default::default(),
             },
@@ -2617,6 +2618,9 @@ impl Browser {
         // CSP: the result has the policies of the document it replaces (HTML "evaluate a
         // javascript: URL": that document's policy container), taken as its commit begins.
         self.csp_inherit_next = frame.page_dom.as_ref().map(|dom| (key, pyro_webapi::csp::InheritedCsp::of(dom)));
+        // With them the flags of their `sandbox` directive: a CSP-sandboxed document's result
+        // stays sandboxed, its origin opaque.
+        self.csp_sandbox_next = self.doc(key).and_then(|d| d.csp_sandbox).map(|flags| (key, flags));
         let loader = LoaderId(format!("{:032X}", self.next()));
         // HTML "evaluate a javascript: URL": the new document's referrer is the replaced
         // document's (not the navigation initiator's URL), kept as it is.
@@ -2675,6 +2679,7 @@ impl Browser {
         );
         // (Taken by that commit, unless it failed first.)
         self.csp_inherit_next = None;
+        self.csp_sandbox_next = None;
         begun?;
         Ok(loader)
     }

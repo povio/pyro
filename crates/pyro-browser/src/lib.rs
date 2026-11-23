@@ -617,6 +617,9 @@ pub struct DocumentState {
     /// so without `allow-same-origin` it is opaque and the initial about:blank Window is not
     /// reused.
     pub(crate) committing_csp_sandbox: Option<frames::Sandbox>,
+    /// The CSP `sandbox` flags of the active document's enforced policies (a `javascript:`
+    /// result that replaces it keeps them).
+    pub(crate) csp_sandbox: Option<frames::Sandbox>,
     /// The required policy the document about to commit accepted (a local scheme,
     /// `Allow-CSP-From`) and enforces besides its own, which `begin_document` takes as it starts
     /// and appends to the document's CSP list before its parser runs
@@ -852,6 +855,10 @@ pub struct Browser {
     /// The CSP the next document committed in this frame inherits instead of what its URL would
     /// give (a `javascript:` result: the document it replaces), taken by that commit.
     csp_inherit_next: Option<(FrameKey, pyro_webapi::csp::InheritedCsp)>,
+    /// The CSP `sandbox` flags the next document committed in this frame takes besides its
+    /// response's (a `javascript:` result: those of the document it replaces, whose policies it
+    /// has), taken by that commit.
+    csp_sandbox_next: Option<(FrameKey, frames::Sandbox)>,
 }
 
 impl LoopState for Browser {
@@ -1059,6 +1066,7 @@ impl BrowserThread {
             completions: std::collections::HashMap::new(),
             ready_responses: Default::default(),
             csp_inherit_next: None,
+            csp_sandbox_next: None,
         };
         // The VM's deferred work (WebAssembly.compile/instantiate settling, finished on a
         // compilation thread) runs in a task of this loop: JavaScriptCore would run it from a WTF
@@ -1659,6 +1667,7 @@ impl Browser {
                 required_csp: None,
                 committing_required_csp: None,
                 committing_csp_sandbox: None,
+                csp_sandbox: None,
                 enforce_required_csp: None,
             },
             session_storage,
@@ -2353,6 +2362,7 @@ impl Browser {
             p.preloads = Default::default();
             p.refresh = Default::default();
             p.required_csp = required_csp;
+            p.csp_sandbox = csp_sandbox;
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
             // What the commit replaces: nothing (a new frame's first
             // document) or the initial about:blank one as it was made; that

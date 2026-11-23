@@ -2162,11 +2162,18 @@ impl Browser {
         }
         // CSP `sandbox` of the response (enforced, unless the page bypasses CSP): part of the
         // sandboxing flags that decide the document's origin at commit.
+        // A `javascript:` result adds those of the document it replaces.
+        let inherited_sandbox =
+            self.csp_sandbox_next.take_if(|(k, _)| *k == page).map(|(_, flags)| flags);
         let csp_sandbox = resource
             .header_csp
             .as_deref()
             .filter(|_| !self.page(page.page).is_some_and(|p| p.bypass_csp))
             .and_then(|csp| crate::frames::Sandbox::from_csp(csp.split_once('\n').map_or(csp, |(enforce, _)| enforce)));
+        let csp_sandbox = match (csp_sandbox, inherited_sandbox) {
+            (Some(a), Some(b)) => Some(crate::frames::Sandbox::from_bits(a.to_bits() | b.to_bits())),
+            (a, b) => a.or(b),
+        };
         if let Some(mut state) = self.doc_mut(page) {
             state.committing_csp_sandbox = csp_sandbox;
         }
@@ -2215,34 +2222,35 @@ impl Browser {
             if !enforce.is_empty() {
                 let _ = dom.borrow_mut().set_header_csp(doc, true);
             }
-            // A `sandbox` directive adds its flags to the document's (CSP 3 § 6.3.2.1), before
-            // its parser starts (scripts). (Its origin is not made opaque here.)
-            if let Some(flags) = crate::frames::Sandbox::from_csp(enforce) {
-                if let Some(mut state) = self.doc_mut(page) {
-                    let sandbox = &mut state.main_frame.sandbox;
-                    sandbox.scripts_disabled |= flags.scripts_disabled;
-                    sandbox.automatic_features_blocked |= flags.automatic_features_blocked;
-                    sandbox.popups_blocked |= flags.popups_blocked;
-                    sandbox.navigation_blocked |= flags.navigation_blocked;
-                    sandbox.top_navigation_blocked |= flags.top_navigation_blocked;
-                    sandbox.top_navigation_needs_activation |= flags.top_navigation_needs_activation;
-                    sandbox.document_domain_blocked |= flags.document_domain_blocked;
-                    sandbox.forms_blocked |= flags.forms_blocked;
-                    sandbox.propagates_to_popups |= flags.propagates_to_popups;
-                    sandbox.downloads_blocked |= flags.downloads_blocked;
-                }
-                if flags.forms_blocked {
-                    page_dom.set_forms_sandboxed(true);
-                }
-                if flags.scripts_disabled {
-                    page_dom.set_scripting_disabled(true);
-                }
-                if flags.popups_blocked {
-                    page_dom.set_popups_sandboxed(true);
-                }
-                page_dom.set_document_domain_sandboxed(true);
-            }
             let _ = dom.borrow_mut().set_trusted_types_policies(doc, enforce, report_only);
+        }
+        // A `sandbox` directive adds its flags to the document's (CSP 3 § 6.3.2.1), before
+        // its parser starts (scripts); its opaque origin was decided at commit. (A `javascript:`
+        // result: the directive of the document it replaces.)
+        if let Some(flags) = csp_sandbox {
+            if let Some(mut state) = self.doc_mut(page) {
+                let sandbox = &mut state.main_frame.sandbox;
+                sandbox.scripts_disabled |= flags.scripts_disabled;
+                sandbox.automatic_features_blocked |= flags.automatic_features_blocked;
+                sandbox.popups_blocked |= flags.popups_blocked;
+                sandbox.navigation_blocked |= flags.navigation_blocked;
+                sandbox.top_navigation_blocked |= flags.top_navigation_blocked;
+                sandbox.top_navigation_needs_activation |= flags.top_navigation_needs_activation;
+                sandbox.document_domain_blocked |= flags.document_domain_blocked;
+                sandbox.forms_blocked |= flags.forms_blocked;
+                sandbox.propagates_to_popups |= flags.propagates_to_popups;
+                sandbox.downloads_blocked |= flags.downloads_blocked;
+            }
+            if flags.forms_blocked {
+                page_dom.set_forms_sandboxed(true);
+            }
+            if flags.scripts_disabled {
+                page_dom.set_scripting_disabled(true);
+            }
+            if flags.popups_blocked {
+                page_dom.set_popups_sandboxed(true);
+            }
+            page_dom.set_document_domain_sandboxed(true);
         }
         // CSP Embedded Enforcement: an accepted required policy joins the policies recorded above
         // (the response's own, or those a local-scheme document inherited), before the parser.

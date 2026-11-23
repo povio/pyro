@@ -391,6 +391,19 @@ fn a_csp_sandboxed_popup_does_not_reuse_the_initial_window() {
         "SecurityError,SecurityError,SecurityError"
     );
     assert_eq!(eval(&t, sandboxed, "typeof injected"), "undefined");
+    // Its `javascript:` string result has its policies, so its sandbox: still opaque, still
+    // out of the opener's reach.
+    eval(&t, sandboxed, "location = \"javascript:'<p>result</p>'\"");
+    settle(&mut t);
+    assert_eq!(
+        eval(&t, sandboxed, "[origin, document.body.textContent, typeof testProperty].join()"),
+        "null,result,undefined",
+        "the javascript: result"
+    );
+    assert_eq!(
+        eval(&t, a, &format!("{try_} [t(() => q.document), t(() => {{ q.injected = 1 }})].join()")),
+        "SecurityError,SecurityError"
+    );
     // Of two enforced policies, the one without `allow-same-origin` still makes it opaque.
     let loader = Rc::new(StaticLoader::default());
     loader.insert("http://app.test/two", "text/html", "<p>page</p>", Duration::ZERO);
