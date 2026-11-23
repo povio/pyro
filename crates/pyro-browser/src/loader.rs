@@ -2561,6 +2561,12 @@ impl Browser {
             info
         };
         if info.kind == ScriptKind::ImportMap {
+            // CSP: an inline import map is a script element's inline behaviour (HTML "prepare the
+            // script element", "Should element's inline behavior be blocked"): one `script-src-elem`
+            // blocks (no nonce, a wrong one, no listed hash) is not registered.
+            if info.src.is_none() && !self.inline_script_allowed(page, &info, nonce.as_deref()) {
+                return;
+            }
             let map_base = {
                 let d = dom.borrow();
                 d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
@@ -3276,6 +3282,11 @@ impl Browser {
             info
         };
         if info.kind == ScriptKind::ImportMap {
+            // CSP, as for the parser's import maps; one the parser did not insert is checked as
+            // such (`inserted_inline_script_allowed`).
+            if info.src.is_none() && !self.inserted_inline_script_allowed(page, &info) {
+                return;
+            }
             let map_base = {
                 let d = dom.borrow();
                 d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
