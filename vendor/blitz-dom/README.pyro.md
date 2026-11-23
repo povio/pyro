@@ -2999,3 +2999,18 @@ ordinary holds its children's inline layout. `assets/default.css` gets MathML Co
 spacing, `numalign`/`denomalign`/`bevelled`, `math-shift`, vertical or right-to-left math, the `math` root's own
 layout (display centring, `font-family: math`). Tests: `crates/pyro-render/tests/mathml_fraction.rs`, unit tests in
 `layout/math.rs`.
+
+## A scroll container's in-flow bounds take boxes empty in one axis
+
+`src/resolve.rs`, `padded_inflow_box` and its callers (`scrollport`): a scroll container's padded in-flow box of a child
+empty in a single axis is no longer dropped; it is united with the scrollport (where Chromium's in-flow bounds
+start) and counts when the union is empty in neither axis. `unite_overflow` still leaves such a child out of a box
+that does not scroll. As Chrome 153 measured: a 0x100 child of a 100x0 scroller gives scrollHeight 100, a 300x0 child
+of a 100x100 one scrollWidth 300, of a 0x0 scroller nothing, and a flex item shrunk to no width keeps its
+margin-inline-end. A self-collapsing block (`self_collapses`: no height, only self-collapsing children, no formatting context root, not
+floated or replaced) reaches to the end of the margins collapsed through it from where its block starts: after its
+border box, `collapse(prev, top, bottom) - collapse(prev, top)` (after a 300px block, `margin: 50px 0`,
+`margin: 0 0 50px` and `margin: 20px 0 50px` all give 350, as Chrome). WPT css-overflow `scrollable-overflow-zero-one-axis`,
+`scrollable-overflow-*with-flex-item-margin-inline-end*`; tests
+`a_box_empty_in_one_axis_still_extends_its_scrollers_overflow_like_chromium` and
+`only_a_scroll_containers_in_flow_bounds_take_boxes_empty_in_one_axis` (pyro-layout).

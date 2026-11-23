@@ -5272,3 +5272,67 @@ fn a_box_empty_in_one_axis_still_extends_its_scrollers_overflow_like_chromium() 
     // Not a scroll container: the margin does not extend it.
     assert_eq!(sw(&p, "clip"), 100.0);
 }
+
+#[test]
+fn only_a_scroll_containers_in_flow_bounds_take_boxes_empty_in_one_axis() {
+    // Measured in Chrome 153 (scrollWidth x scrollHeight): a scroll container's in-flow bounds
+    // start at its scrollport and take a child empty in one axis, and count when the union is
+    // empty in neither axis (d, g, h, and c's padding); a box that does not scroll leaves such a
+    // child out (f, i), and so does a scroller whose union stays empty (a, b, e). WPT cssom-view
+    // `scrollWidthHeight-contain-layout` is c and a.
+    let cases = [
+        ("a", "contain:layout;height:0;width:0;overflow:hidden", "height:2000px"),
+        ("b", "height:0;width:0;overflow:hidden", "height:2000px"),
+        ("c", "contain:layout;height:0;width:0;overflow:hidden;padding:2px", "height:2000px"),
+        ("d", "height:0;width:100px;overflow:scroll", "width:0;height:100px"),
+        ("e", "height:0;width:0;overflow:scroll", "width:0;height:100px"),
+        ("f", "height:0;width:0;overflow:visible;contain:layout", "height:2000px"),
+        ("g", "height:0;width:100px;overflow:hidden", "width:0;height:100px;margin-left:50px"),
+        ("h", "height:100px;width:100px;overflow:hidden", "width:300px;height:0"),
+    ];
+    let mut out = Vec::new();
+    for (id, outer, inner) in cases {
+        let p = page(&format!(r#"<!doctype html><body style="margin:0"><div id=t style="{outer}"><div style="{inner}"></div></div>"#));
+        out.push(format!("{id}:{}x{}", sw(&p, "t"), p.layout.scroll_height(&p.dom, p.id("t"))));
+    }
+    // (i, as f, in a box that does not scroll.) A self-collapsing last child adds no end margin
+    // after the margins collapsed through it, from where its block starts (j to x, a2, d2); u, b2 (text in its
+    // line), c2 (multi-column) are not self-collapsing.
+    let tall = r#"<div style="height:300px"></div>"#;
+    for (id, outer, inner) in [
+        ("i", "height:100px;width:100px;overflow:hidden", r#"<div><div style="width:300px;height:0"></div></div>"#.to_owned()),
+        ("j", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:50px 0"></div>"#)),
+        ("k", "height:100px;width:100px;overflow:hidden", format!("{tall}<p></p>")),
+        ("l", "height:100px;width:100px;overflow:hidden;padding:10px", format!(r#"{tall}<div style="margin:50px 0"></div>"#)),
+        ("m", "height:100px;width:100px;overflow:hidden", r#"<div style="height:300px;margin-bottom:20px"></div><div style="margin:50px 0"></div>"#.to_owned()),
+        ("r", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:0 0 50px"></div>"#)),
+        ("s", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:20px 0 50px"></div>"#)),
+        ("t", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:50px 0"><div></div></div>"#)),
+        ("v", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="clear:both;margin:50px 0"></div>"#)),
+        ("w", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="overflow:clip;margin:50px 0"></div>"#)),
+        ("x", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:50px 0"><span></span></div>"#)),
+        // Margins collapsed through several self-collapsing blocks in a row count once.
+        ("a2", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin-top:80px"></div><div style="margin-bottom:100px"></div>"#)),
+        ("d2", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="margin:50px 0"></div><div style="margin:30px 0"></div>"#)),
+        ("u", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="contain:layout;margin:50px 0"></div>"#)),
+        ("b2", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="height:0;margin:50px 0">text</div>"#)),
+        ("c2", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="columns:2;margin:50px 0"></div>"#)),
+        // Not self-collapsing: a formatting context root, a box holding one, a cleared box.
+        ("n", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="overflow:hidden;height:0;margin:50px 0"></div>"#)),
+        ("o", "height:100px;width:100px;overflow:hidden", format!(r#"{tall}<div style="height:0;margin:50px 0"><div style="height:100px"></div></div>"#)),
+        ("q", "height:100px;width:100px;overflow:hidden", r#"<div style="float:left;height:300px;width:10px"></div><div style="clear:both;margin-bottom:50px"></div>"#.to_owned()),
+    ] {
+        let p = page(&format!(r#"<!doctype html><body style="margin:0"><div id=t style="{outer}">{inner}</div>"#));
+        out.push(format!("{id}:{}x{}", sw(&p, "t"), p.layout.scroll_height(&p.dom, p.id("t"))));
+    }
+    // A block ::after is among the margins too: 300 + 16 + 10 + its 30px end margin.
+    let p = page(
+        r#"<!doctype html><style>#t::after{content:"";display:block;margin-bottom:30px}</style><body style="margin:0"><div id=t style="height:100px;width:100px;overflow:hidden"><div style="height:300px"></div><p style="margin:16px 0;height:10px"></p></div>"#,
+    );
+    out.push(format!("p2:{}x{}", sw(&p, "t"), p.layout.scroll_height(&p.dom, p.id("t"))));
+    assert_eq!(
+        out.join(" "),
+        "a:0x0 b:0x0 c:4x2004 d:100x100 e:0x0 f:0x0 g:100x100 h:300x100 i:100x100 j:100x350 k:100x316 l:120x370 m:100x350 \
+         r:100x350 s:100x350 t:100x350 v:100x350 w:100x350 x:100x350 a2:100x400 d2:100x350 u:100x400 b2:100x400 c2:100x400 n:100x400 o:100x450 q:100x350 p2:100x356"
+    );
+}

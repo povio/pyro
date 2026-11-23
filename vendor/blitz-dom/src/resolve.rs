@@ -1413,13 +1413,19 @@ impl BaseDocument {
             let g = bars.gutters;
             overflow.x0 += g.left as f64 * scale;
             overflow.y0 += g.top as f64 * scale;
-            // (Its padding stays in it when the gutters leave no room: Chrome's scrollHeight of a
-            // 4px `overflow: scroll` box with 2px padding is 4, WPT cssom-view
-            // `scrollWidthHeight-contain-layout`.)
+            // (Its padding stays in it when the gutters leave no room: Chrome's scrollHeight of an
+            // empty 4px `overflow: scroll` box with 2px padding is 4.)
             let p = layout.padding;
             overflow.x1 = (overflow.x1 - g.right as f64 * scale).max(overflow.x0 + (p.left + p.right) as f64 * scale);
             overflow.y1 = (overflow.y1 - g.bottom as f64 * scale).max(overflow.y0 + (p.top + p.bottom) as f64 * scale);
         }
+        // (The scrollport, which a scroll container's in-flow bounds start from: each child's padded
+        // in-flow box, even one empty in an axis, is united with it, and `unite_overflow` keeps the
+        // union when it is empty in neither axis. As Chromium: a 0x100 child of a 100x0 scroller makes
+        // its scrollHeight 100 (WPT css-overflow `scrollable-overflow-zero-one-axis`), of a 0x0 one
+        // nothing, and a 300x0 child of a 100x100 one makes its scrollWidth 300; a box that does not
+        // scroll leaves out a child empty in an axis.)
+        let scrollport = overflow;
         // pyro: a multi-column container's content lies in its strip: what it reaches is shown in
         // the columns (`layout::multicol`), added to the padding box below.
         let columns_base =
@@ -1536,9 +1542,12 @@ impl BaseDocument {
                 };
                 overflow = unite_overflow(overflow, child_rect_in_self);
                 if let Some(padding) = scroll_padding {
-                    let padded = self.padded_inflow_box(child_id, padding, scale);
-                    let padded = if in_columns { self.nodes[node_id].column_fragments().unwrap().map_child_rect(Some(child_id), padded, scale) } else { padded };
-                    overflow = unite_overflow(overflow, padded);
+                    let padded = self.padded_inflow_box(child_id, children, padding, scale);
+                    // (A child empty in both axes adds nothing, before it is mapped into a column.)
+                    if padded != Rect::ZERO {
+                        let padded = if in_columns { self.nodes[node_id].column_fragments().unwrap().map_child_rect(Some(child_id), padded, scale) } else { padded };
+                        overflow = unite_overflow(overflow, padded.union(scrollport));
+                    }
                 }
             }
         }
@@ -1572,9 +1581,14 @@ impl BaseDocument {
                 if in_columns { self.columns_rect(node_id, child_rect_in_self, scale) } else { child_rect_in_self };
             overflow = unite_overflow(overflow, child_rect_in_self);
             if let Some(padding) = scroll_padding {
-                let padded = self.padded_inflow_box(pseudo, padding, scale);
-                let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
-                overflow = unite_overflow(overflow, padded);
+                // (A block pseudo is among the layout children, still held here: the margins
+                // collapsed before it are read there.)
+                let siblings = layout_children.as_deref().unwrap_or(&[]);
+                let padded = self.padded_inflow_box(pseudo, siblings, padding, scale);
+                if padded != Rect::ZERO {
+                    let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
+                    overflow = unite_overflow(overflow, padded.union(scrollport));
+                }
             }
         }
 
@@ -1676,13 +1690,27 @@ impl BaseDocument {
     /// side by the container's `padding` and the child's margin there (not below zero), the
     /// child's part of the container's scrollable overflow with the end padding after it. Its
     /// transform is left out, as Blink and Taffy leave it out of the in-flow bounds.
-    fn padded_inflow_box(&self, child_id: NodeId, padding: taffy::Rect<f32>, scale: f64) -> Rect {
+    fn padded_inflow_box(&self, child_id: NodeId, siblings: &[NodeId], padding: taffy::Rect<f32>, scale: f64) -> Rect {
         let child = self.transform_pass_layout(child_id);
         // pyro: the bottom margin as it collapsed with those of the child's last in-flow
         // descendants it collapses through (Chrome: WPT css-overflow
         // `overflow-negative-margin-dynamic`, a -20px margin through a 10px one: -10px).
         let mut child = child;
         child.margin.bottom = self.collapsed_end_margin(child_id, child.margin.bottom, 0);
+        // pyro: a self-collapsing block reaches to the end of the margins collapsed through it,
+        // from where its block starts: its border box sits after `collapse(prev, top)` (the
+        // previous sibling's end margin and its own top one), so what follows it is
+        // `collapse(prev, top, bottom) - collapse(prev, top)`. Measured in Chrome 153, after a
+        // 300px block: `margin: 50px 0` gives scrollHeight 350, `margin: 0 0 50px` 350,
+        // `margin: 20px 0 50px` 350; one that is not self-collapsing keeps its whole end margin
+        // (`overflow: hidden`: 400).
+        if child.size.height == 0.0 && self.self_collapses(child_id, 0) {
+            // (`prev`: the margins collapsed before it, as its largest positive and most negative.)
+            let (pos, neg) = self.margins_collapsed_before(child_id, siblings);
+            let (top, bottom) = (child.margin.top, child.margin.bottom);
+            let at = pos.max(top).max(0.0) + neg.min(top).min(0.0);
+            child.margin.bottom = pos.max(top).max(bottom).max(0.0) + neg.min(top).min(bottom).min(0.0) - at;
+        }
         let pad = |padding: f32, margin: f32| (padding + margin).max(0.0) as f64;
         // pyro: at its place before its relative offset (Chrome's in-flow bounds: an item moved
         // 10px past its scroll container's content edge adds no padding after that; WPT
@@ -1702,7 +1730,11 @@ impl BaseDocument {
             .unwrap_or(taffy::Point { x: 0.0, y: 0.0 });
         let (x, y) = ((child.location.x - offset.x) as f64, (child.location.y - offset.y) as f64);
         let (w, h) = (child.size.width as f64, child.size.height as f64);
-        if !(w > 0.0 && h > 0.0) {
+        // (A child empty in one axis still extends it: its caller unites this with the scrollport,
+        // and keeps the union when it is empty in neither axis. A flex item shrunk to no width
+        // keeps its margin-inline-end; WPT css-overflow
+        // `scrollable-overflow-*with-flex-item-margin-inline-end*`.)
+        if !(w > 0.0 || h > 0.0) {
             return Rect::ZERO;
         }
         Rect::new(
@@ -1711,6 +1743,121 @@ impl BaseDocument {
             (x + w + pad(padding.right, child.margin.right)) * scale,
             (y + h + pad(padding.bottom, child.margin.bottom)) * scale,
         )
+    }
+
+    /// pyro: whether block `node_id` is self-collapsing (CSS 2 § 8.3.1) for its scroll
+    /// container's in-flow bounds: an in-flow, unfloated, non-replaced, horizontal block box with
+    /// no block size that is no formatting context root (`overflow` visible or clip, no layout or
+    /// paint containment, nor any other independent formatting context Taffy knows, nor a
+    /// multi-column container), with no text or line break in its lines, and whose in-flow children
+    /// are all self-collapsing, in a horizontal block container. (A clear with nothing to clear does
+    /// not prevent it; clearance moves the box itself, which its position carries. Its height is
+    /// checked by the caller at depth 0.)
+    fn self_collapses(&self, node_id: NodeId, depth: usize) -> bool {
+        use style::values::computed::Overflow;
+        use style::values::specified::box_::{Contain, DisplayInside, DisplayOutside};
+        let node = &self.nodes[node_id];
+        let Some(style) = node.primary_styles() else { return false };
+        if depth > 16 || (depth > 0 && node.unrounded_layout().size.height != 0.0) {
+            return false;
+        }
+        let display = style.clone_display();
+        let parent_flows = || {
+            let parent = node.layout_parent.get().or(node.parent);
+            parent.is_some_and(|p| {
+                let parent = &self.nodes[p];
+                parent.taffy_display() == taffy::Display::Block
+                    && parent.primary_styles().is_some_and(|s| !s.writing_mode.is_vertical())
+            })
+        };
+        let replaced = node.element_data().is_some_and(|e| {
+            matches!(
+                &*e.name.local,
+                "img" | "video" | "canvas" | "iframe" | "object" | "embed" | "svg" | "input" | "textarea" | "select"
+                    | "button"
+            )
+        });
+        let visible = |o: Overflow| matches!(o, Overflow::Visible | Overflow::Clip);
+        // (As Taffy's `establishes_new_bfc`: a non-`normal` `align-content`, a size container, a
+        // line clamp; and a multi-column container.)
+        let formatting_root = || {
+            use taffy::{BlockContainerStyle, CoreStyle};
+            let layout_style = node.layout_style();
+            layout_style.align_content().keyword != taffy::AlignContentKeyword::Normal
+                || layout_style.contain().establishes_independent_formatting_context()
+                || layout_style.establishes_independent_formatting_context()
+                || crate::layout::multicol::is_multicol_style(&style)
+        };
+        // (An inline root's lines are no layout children: one with text or a line break in them
+        // does not collapse through, as Blitz's inline layout says.)
+        let holds_text = || node.flags.is_inline_root() && self.holds_line_content(node_id, 0);
+        let own = !replaced
+            && !style.writing_mode.is_vertical()
+            && display.inside() == DisplayInside::Flow
+            && display.outside() == DisplayOutside::Block
+            && visible(style.clone_overflow_x())
+            && visible(style.clone_overflow_y())
+            && !style.get_box().used_containment().intersects(Contain::LAYOUT | Contain::PAINT)
+            && style.clone_float() == style::values::computed::Float::None
+            && !node.is_out_of_flow()
+            && (depth > 0 || parent_flows())
+            && !formatting_root()
+            && !holds_text();
+        own && node.layout_children.borrow().as_ref().is_none_or(|children| {
+            children.iter().all(|&c| {
+                let child = &self.nodes[c];
+                !child.is_element() || child.is_out_of_flow() || self.self_collapses(c, depth + 1)
+            })
+        })
+    }
+
+    /// pyro: the margins collapsed before self-collapsing block `node_id` among `siblings` (its
+    /// parent's layout children), as the
+    /// largest positive and the most negative: the top and bottom margins of the self-collapsing
+    /// blocks right before it, and the end margin of the block before those (0 at the start).
+    fn margins_collapsed_before(&self, node_id: NodeId, siblings: &[NodeId]) -> (f32, f32) {
+        let (mut pos, mut neg) = (0f32, 0f32);
+        let mut add = |m: f32| {
+            pos = pos.max(m);
+            neg = neg.min(m);
+        };
+        // (The parent's layout children, passed in: the overflow pass holds them taken out.)
+        let children = siblings;
+        let Some(at) = children.iter().position(|&c| c == node_id) else { return (0.0, 0.0) };
+        for &c in children[..at].iter().rev() {
+            let child = &self.nodes[c];
+            if !child.is_element()
+                || child.is_out_of_flow()
+                || child.primary_styles().is_none_or(|s| s.clone_float() != style::values::computed::Float::None)
+            {
+                continue;
+            }
+            // (The layout the transform pass reads, as `padded_inflow_box` does.)
+            let layout = self.transform_pass_layout(c);
+            if layout.size.height == 0.0 && self.self_collapses(c, 0) {
+                add(layout.margin.top);
+                add(layout.margin.bottom);
+                continue;
+            }
+            add(self.collapsed_end_margin(c, layout.margin.bottom, 0));
+            break;
+        }
+        (pos, neg)
+    }
+
+    /// pyro: whether inline root `node_id` holds line content: text other than collapsible white
+    /// space, or a line break, among its descendants.
+    fn holds_line_content(&self, node_id: NodeId, depth: usize) -> bool {
+        depth < 32
+            && self.nodes[node_id].children.iter().any(|&c| {
+                let child = &self.nodes[c];
+                match &child.data {
+                    crate::node::NodeData::Text(text) => text.content.chars().any(|ch| !matches!(ch, ' ' | '\t' | '\n' | '\r' | '\x0c')),
+                    crate::node::NodeData::Element(e) if e.name.local == markup5ever::local_name!("br") => true,
+                    crate::node::NodeData::Element(_) => self.holds_line_content(c, depth + 1),
+                    _ => false,
+                }
+            })
     }
 
     /// pyro: `margin` (`node_id`'s bottom margin) collapsed with the bottom margin of its last
