@@ -1437,9 +1437,11 @@ fn find_skips_nonrendered_duplicates_and_modal_focus_escapes_inherited_inertness
 #[test]
 fn computed_map_orders_custom_property_names_by_utf16_code_unit() {
     let (_t, root) = page();
+    // U+F900 is written as an escape: a literal one was NFC-normalized to U+8C48, which
+    // sorts before the surrogate pair by code point and by code unit alike.
     let actual = eval(&root, r#"
-        document.body.style.cssText = '--豈: 豈; --💩: 💩; --b: 1; --a: 2';
+        document.body.style.cssText = '--\uF900: 1; --\u{1F4A9}: 2; --b: 1; --a: 2';
         [...document.body.computedStyleMap().keys()].filter((k) => k.startsWith('--')).join(',')
     "#);
-    assert_eq!(actual, "--a,--b,--💩,--豈");
+    assert_eq!(actual, "--a,--b,--\u{1F4A9},--\u{F900}");
 }
