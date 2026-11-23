@@ -55,7 +55,11 @@ fn elements_resolve_by_id_and_name_behind_own_properties() {
         eval(&r, "!window.hasOwnProperty('foo') && !Object.keys(window).includes('foo') && (()=>{for(const k in window) if(k==='foo') return false; return true})()"),
         "true"
     );
-    assert_eq!(eval(&r, "Object.getPrototypeOf(Object.getPrototypeOf(window)) === Object.prototype && String(Object.getPrototypeOf(window))"), "[object WindowProperties]");
+    // window -> Window.prototype -> WindowProperties -> EventTarget.prototype, as in Chrome (f47805459).
+    assert_eq!(
+        eval(&r, "const p = Object.getPrototypeOf(window), named = Object.getPrototypeOf(p); [p === Window.prototype, String(named), Object.getPrototypeOf(named) === EventTarget.prototype].join()"),
+        "true,[object WindowProperties],true"
+    );
 }
 
 #[test]
