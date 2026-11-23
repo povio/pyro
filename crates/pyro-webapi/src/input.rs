@@ -1068,12 +1068,13 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         // or same-origin URL downloads instead of navigating (browsers ignore
         // the attribute cross-origin).
         if let Some(filename) = dom.get_attribute(el, "download").ok().flatten().map(str::to_owned) {
-            let doc_url = dom.document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
-            let same_origin = |a: &str, b: &str| match (::url::Url::parse(a), ::url::Url::parse(b)) {
-                (Ok(a), Ok(b)) => a.origin().is_tuple() && a.origin() == b.origin(),
-                _ => false,
+            // The document's origin, not its URL's: an `about:srcdoc` or `about:blank` document has
+            // its creator's (WPT iframe_sandbox_anchor_download_allow_downloads).
+            let same_origin = |a: &str| {
+                let origin = ::url::Url::parse(a).ok().map(|a| a.origin()).filter(::url::Origin::is_tuple);
+                origin.is_some_and(|o| Some(o.ascii_serialization()) == crate::storage::document_origin(page))
             };
-            if url.starts_with("blob:") || url.starts_with("data:") || same_origin(&url, &doc_url) {
+            if url.starts_with("blob:") || url.starts_with("data:") || same_origin(&url) {
                 // Bytes are captured now: pages revoke blob URLs right after click().
                 let data = if url.starts_with("blob:") {
                     match page.blob_url(&url) {
