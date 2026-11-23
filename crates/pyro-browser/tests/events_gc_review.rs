@@ -504,6 +504,8 @@ fn custom_element_reactions_survive_a_long_task_drain() {
 /// Chrome), and `defineProperty(cs, 'color', ..)` succeeds (Chrome throws).
 #[test]
 fn computed_style_shape_matches_chrome() {
+    // Besides Chrome 157's list, the engine's enabled longhands are properties too
+    // (c66c9e42d): 16 Chrome lacks, `line-clamp` among them, so `'lineClamp' in cs` holds.
     let (_t, _page, root) = page();
     assert_eq!(
         eval(
@@ -514,7 +516,7 @@ fn computed_style_shape_matches_chrome() {
                        'WebkitTransform' in cs, 'epubWritingMode' in cs, cs['background-color'] === cs.backgroundColor,
                        cs.cssFloat === cs.float, 'lineClamp' in cs].join(); })()"
         ),
-        "null,function,false,false,string,string,string,false,true,true,true,true,false"
+        "null,function,false,false,string,string,string,false,true,true,true,true,true"
     );
     // Writes and removals throw as in Chrome, in sloppy code too.
     assert_eq!(
@@ -539,7 +541,7 @@ fn computed_style_shape_matches_chrome() {
                        set.has('cssFloat'), set.has('cssText'), set.has('getPropertyValue'), set.has('removeProperty'),
                        names.some(n => n.includes('-') || /^(Webkit|epub|moz|Moz)/.test(n))].join(); })()"
         ),
-        "750,750,true,true,true,true,true,true,true,false"
+        "766,766,true,true,true,true,true,true,true,false"
     );
     // Own properties as in Chrome: camel-cased names (and `float`, `webkit*`)
     // listed and enumerable; dashed and `Webkit` names own but unlisted; the
