@@ -77,8 +77,11 @@ jobs:
         run: |
           export PYRO_JSC_DIR="$HOME/.cache/pyro/jsc/$JSC_DIR"
           start=$(date +%s)
-          cargo +stable test --locked --profile wptiter --workspace --no-run
+          # Libraries, binaries and tests only: some examples are macOS measuring tools (proc_pid_rusage, malloc zones).
+          targets=(--lib --bins --tests)
+          cargo +stable test --locked --profile wptiter --workspace "${targets[@]}" --no-run
           built=$(date +%s)
-          cargo +stable test --locked --profile wptiter --workspace --no-fail-fast
+          cargo +stable test --locked --profile wptiter --workspace "${targets[@]}" --no-fail-fast
+          cargo +stable test --locked --profile wptiter --workspace --doc --no-fail-fast
           echo "build $((built - start)) s, run $(( $(date +%s) - built )) s" | tee -a "$GITHUB_STEP_SUMMARY"
           sccache --show-stats || true
