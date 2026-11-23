@@ -134,6 +134,8 @@ jobs:
           codesign --force --sign - --entitlements scripts/macos/jit.entitlements "native/darwin-$ARCH/pyro"
           codesign --verify --strict "native/darwin-$ARCH/pyro"
           codesign -d --entitlements - "native/darwin-$ARCH/pyro" 2>/dev/null | grep -q com.apple.security.cs.allow-jit
+          # Every section's contents unchanged by strip and signing; the Intel copy cannot run here (no Rosetta 2).
+          python3 scripts/release/same-code.py "$binary" "native/darwin-$ARCH/pyro"
           if [ "$ARCH" = arm64 ]; then
             "native/darwin-$ARCH/pyro" eval -e 'console.log("npm-smoke-ok")' | grep -Fx npm-smoke-ok
           fi
@@ -213,6 +215,7 @@ jobs:
           codesign --force --sign - --entitlements scripts/macos/jit.entitlements native/darwin-arm64/pyro
           codesign --verify --strict native/darwin-arm64/pyro
           codesign -d --entitlements - native/darwin-arm64/pyro 2>/dev/null | grep -q com.apple.security.cs.allow-jit
+          python3 scripts/release/same-code.py target/release/pyro native/darwin-arm64/pyro
           native/darwin-arm64/pyro version | grep -q 'fork: true'
           native/darwin-arm64/pyro eval -e 'console.log("npm-smoke-ok")' | grep -Fx npm-smoke-ok
       - uses: actions/upload-artifact@v4
