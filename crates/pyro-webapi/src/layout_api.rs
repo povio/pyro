@@ -1213,7 +1213,7 @@ fn computed_property_names() -> &'static [&'static str] {
 }
 
 /// Whether `name` (lowercase) is one of Chrome's computed properties.
-fn chrome_computed_property(name: &str) -> bool {
+pub(crate) fn chrome_computed_property(name: &str) -> bool {
     crate::computed_properties::COMPUTED_PROPERTIES.binary_search(&name).is_ok()
 }
 

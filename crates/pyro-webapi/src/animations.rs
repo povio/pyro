@@ -197,11 +197,17 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     })?;
     natives.set_atom("schedule", schedule.value())?;
     // A keyframe member (`backgroundColor`) to the CSS property it names
-    // (`background-color`); null when the engine knows no such property.
+    // (`background-color`); null when the engine knows no such property. A
+    // longhand only the engine has (`font-width`, `hanging-punctuation`,
+    // `line-clamp`, ...) is no property here either, as it is none of
+    // getComputedStyle's: Chrome lacks it, so its member is never read, and
+    // feature detection by a keyframe's getter (web-animations' property tests)
+    // must not find it.
     let css_name = s.function("cssName", |s, _this, a| {
         let member = a.get(0).to_string()?;
         let name = crate::css::camel_to_css(&member);
-        Ok(if pyro_dom::stylo::is_property(&name) { s.string(&name) } else { s.null() })
+        let property = pyro_dom::stylo::is_property(&name) && crate::layout_api::chrome_computed_property(&name);
+        Ok(if property { s.string(&name) } else { s.null() })
     })?;
     natives.set_atom("cssName", css_name.value())?;
     let keyframe_value = s.function("keyframeValue", |s, _, args| {
