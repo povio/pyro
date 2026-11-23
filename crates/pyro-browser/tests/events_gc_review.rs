@@ -504,8 +504,6 @@ fn custom_element_reactions_survive_a_long_task_drain() {
 /// Chrome), and `defineProperty(cs, 'color', ..)` succeeds (Chrome throws).
 #[test]
 fn computed_style_shape_matches_chrome() {
-    // Besides Chrome 157's list, the engine's enabled longhands are properties too
-    // (c66c9e42d): 16 Chrome lacks, `line-clamp` among them, so `'lineClamp' in cs` holds.
     let (_t, _page, root) = page();
     assert_eq!(
         eval(
@@ -516,7 +514,23 @@ fn computed_style_shape_matches_chrome() {
                        'WebkitTransform' in cs, 'epubWritingMode' in cs, cs['background-color'] === cs.backgroundColor,
                        cs.cssFloat === cs.float, 'lineClamp' in cs].join(); })()"
         ),
-        "null,function,false,false,string,string,string,false,true,true,true,true,true"
+        "null,function,false,false,string,string,string,false,true,true,true,true,false"
+    );
+    // The engine's longhands Chrome lacks are no properties: not listed, no attribute, and
+    // getPropertyValue answers "" (the engine still computes them).
+    assert_eq!(
+        eval(
+            &root,
+            "(() => { const d = document.createElement('div'); d.style.cssText = 'white-space-trim: discard-before'; document.body.append(d);
+               const cs = getComputedStyle(d), listed = Array.from(cs);
+               return [JSON.stringify(cs.getPropertyValue('line-clamp')), JSON.stringify(cs.getPropertyValue('mask-border-mode')),
+                       JSON.stringify(cs.getPropertyValue('mask-border')), JSON.stringify(cs.getPropertyValue('Line-Clamp')),
+                       listed.includes('line-clamp'), listed.includes('font-width'), listed.includes('font-stretch'),
+                       'maskBorderMode' in cs, 'fontWidth' in cs, cs.fontStretch,
+                       listed.length > 300, listed.every((n) => n.startsWith('--') || cs[n] === cs.getPropertyValue(n)),
+                       String(d.computedStyleMap().get('white-space-trim')), JSON.stringify(cs.getPropertyValue('white-space-trim'))].join(); })()"
+        ),
+        r#""","","","",false,false,true,false,false,100%,true,true,discard-before,"""#
     );
     // Writes and removals throw as in Chrome, in sloppy code too.
     assert_eq!(
@@ -541,7 +555,7 @@ fn computed_style_shape_matches_chrome() {
                        set.has('cssFloat'), set.has('cssText'), set.has('getPropertyValue'), set.has('removeProperty'),
                        names.some(n => n.includes('-') || /^(Webkit|epub|moz|Moz)/.test(n))].join(); })()"
         ),
-        "766,766,true,true,true,true,true,true,true,false"
+        "750,750,true,true,true,true,true,true,true,false"
     );
     // Own properties as in Chrome: camel-cased names (and `float`, `webkit*`)
     // listed and enumerable; dashed and `Webkit` names own but unlisted; the

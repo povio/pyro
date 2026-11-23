@@ -1516,7 +1516,14 @@
       components: computedValue,
       // Computed values: for the properties whose getComputedStyle value is a resolved (used) one,
       // the style engine's computed value; getComputedStyle's for the rest.
-      get: (name) => (RESOLVED.test(name) ? computedValue(name) : null) ?? cs().getPropertyValue(name),
+      // A longhand only the engine has (no property of getComputedStyle's declaration, as in
+      // Chrome) reads its computed value from the engine too.
+      get: (name) => {
+        const resolved = RESOLVED.test(name) ? computedValue(name) : null;
+        if (resolved !== null) return resolved;
+        const s = cs();
+        return name.startsWith('--') || name in s ? s.getPropertyValue(name) : computedValue(name) ?? '';
+      },
       names: () => {
         const s = cs();
         const names = [];

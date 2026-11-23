@@ -32,29 +32,27 @@ fn page() -> (BrowserThread, PageId, Realm) {
 
 #[test]
 fn computed_style_own_names_through_every_internal_method() {
-    // 757 named properties: Chrome 157's 741 plus the 16 enabled engine longhands Chrome
-    // lacks (font-width, line-clamp, mask-border-*, ...), listed since c66c9e42d.
     let (_t, _p, root) = page();
     let checks: &[(&str, &str)] = &[
         // HasProperty paths still reach the prototype.
         ("const cs = getComputedStyle(a); ['color' in cs, 'background-color' in cs, 'foo' in cs, Reflect.has(cs, 'color')].join()", "true,true,false,true"),
         ("Function('cs', 'with (cs) { return typeof color + \",\" + typeof cssFloat + \",\" + typeof foo; }')(getComputedStyle(a))", "string,string,undefined"),
         // [[GetOwnProperty]] paths.
-        ("const d = Object.getOwnPropertyDescriptors(getComputedStyle(a)); [Object.keys(d).filter(k => isNaN(+k)).length, d.color.enumerable, d.color.value, 'background-color' in d, 'cssFloat' in d].join()", "757,true,rgb(1, 2, 3),false,false"),
-        ("const e = Object.entries(getComputedStyle(a)); [e.filter(x => isNaN(+x[0])).length, e.find(x => x[0] === 'color')[1]].join()", "757,rgb(1, 2, 3)"),
+        ("const d = Object.getOwnPropertyDescriptors(getComputedStyle(a)); [Object.keys(d).filter(k => isNaN(+k)).length, d.color.enumerable, d.color.value, 'background-color' in d, 'cssFloat' in d].join()", "741,true,rgb(1, 2, 3),false,false"),
+        ("const e = Object.entries(getComputedStyle(a)); [e.filter(x => isNaN(+x[0])).length, e.find(x => x[0] === 'color')[1]].join()", "741,rgb(1, 2, 3)"),
         ("['color', 'background-color', 'cssFloat', 'epubWritingMode', 'length'].map(k => Object.prototype.propertyIsEnumerable.call(getComputedStyle(a), k)).join()", "true,true,false,false,false"),
         ("['color', 'Color', 'background-color', '-webkit-transform', 'webkitTransform', 'WebkitTransform', 'float', 'cssFloat', 'cssText', 'length', 'getPropertyValue', 'epubCaptionSide', 'foo', ''].map(k => getComputedStyle(a).hasOwnProperty(k) ? 1 : 0).join('')", "10111110000000"),
         ("[Object.hasOwn(getComputedStyle(a), 'color'), getComputedStyle(a).hasOwnProperty(Symbol.iterator), getComputedStyle(a).hasOwnProperty(Symbol.toStringTag)].join()", "true,false,false"),
         ("JSON.stringify(getComputedStyle(a), ['color', 'float', 'cssFloat'])", r#"{"color":"rgb(1, 2, 3)","float":"left","cssFloat":"left"}"#),
         // Proxies forward to the target's internal methods.
-        ("const p = new Proxy(getComputedStyle(a), {}); [Object.prototype.hasOwnProperty.call(p, 'color'), Object.keys(p).filter(k => isNaN(+k)).length, 'color' in p, Object.getOwnPropertyDescriptor(p, 'color').value].join()", "true,757,true,rgb(1, 2, 3)"),
-        ("Object.keys(new Proxy(getComputedStyle(a), { ownKeys: t => Reflect.ownKeys(t) })).filter(k => isNaN(+k)).length", "757"),
+        ("const p = new Proxy(getComputedStyle(a), {}); [Object.prototype.hasOwnProperty.call(p, 'color'), Object.keys(p).filter(k => isNaN(+k)).length, 'color' in p, Object.getOwnPropertyDescriptor(p, 'color').value].join()", "true,741,true,rgb(1, 2, 3)"),
+        ("Object.keys(new Proxy(getComputedStyle(a), { ownKeys: t => Reflect.ownKeys(t) })).filter(k => isNaN(+k)).length", "741"),
         // Integrity levels throw (the indices are not writable), as in Chrome.
         ("const out = []; for (const f of [Object.freeze, Object.seal]) { try { f(getComputedStyle(a)); out.push('ok'); } catch (e) { out.push(e.name); } } out.push(Object.isFrozen(getComputedStyle(a)), Object.isSealed(getComputedStyle(a))); out.join()", "TypeError,TypeError,false,false"),
         ("(() => { try { structuredClone(getComputedStyle(a)); return 'cloned'; } catch (e) { return e.name; } })()", "DataCloneError"),
         // An accessor defined on the object wins, and is enumerable.
         ("const c = getComputedStyle(a); Object.defineProperty(c, 'color', { get() { return 'G'; }, configurable: true }); const d = Object.getOwnPropertyDescriptor(c, 'color'); [c.color, typeof d.get, d.enumerable].join()", "G,function,true"),
-        ("const out = []; for (const k in getComputedStyle(a)) out.push(k); const n = out.filter(k => isNaN(+k)); [n.length, n.includes('cssText'), n.indexOf('cssFloat') > n.indexOf('color')].join()", "766,true,true"),
+        ("const out = []; for (const k in getComputedStyle(a)) out.push(k); const n = out.filter(k => isNaN(+k)); [n.length, n.includes('cssText'), n.indexOf('cssFloat') > n.indexOf('color')].join()", "750,true,true"),
     ];
     for (src, want) in checks {
         let body = match src.rfind("; ") { Some(i) if src.starts_with("const ") => format!("{}; return {}", &src[..i], &src[i + 2..]), _ => format!("return {src}") };
@@ -89,7 +87,7 @@ fn computed_style_own_names_stay_right_in_compiled_loops() {
                        w.Object.prototype.hasOwnProperty.call(getComputedStyle(a), 'color'),
                        Object.getPrototypeOf(c) === CSSStyleDeclaration.prototype].join(); })()"
         ),
-        "true,757,true,false"
+        "true,741,true,false"
     );
 }
 

@@ -1179,15 +1179,37 @@ fn computed_string<'s>(s: &Scope<'s>, value: &str) -> Value<'s> {
 
 /// A computed style's CSS properties, one getter each: Chrome's names
 /// ([`crate::computed_properties`]), then its `epub*` aliases. Each entry is
-/// the property whose value the getter reads.
+/// the property whose value the getter reads. The engine's longhands Chrome
+/// lacks (`line-clamp`, `mask-border-*`, `font-width`, ...) are not among them:
+/// feature detection (`'lineClamp' in style`) must not find them.
 fn computed_property_names() -> &'static [&'static str] {
     static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
     NAMES.get_or_init(|| {
         let mut names = crate::computed_properties::COMPUTED_PROPERTIES.to_vec();
-        names.extend(pyro_dom::stylo::longhand_names());
+        names.extend(crate::computed_properties::EPUB_ALIASES.iter().map(|&(_, property)| property));
+        names
+    })
+}
+
+/// Whether `name` (lowercase) is one of Chrome's computed properties.
+fn chrome_computed_property(name: &str) -> bool {
+    crate::computed_properties::COMPUTED_PROPERTIES.binary_search(&name).is_ok()
+}
+
+/// The engine's longhands a computed style lists (its indexed properties): those
+/// Chrome has, under Chrome's name where the engine's is a newer one
+/// (`font-width` is `font-stretch`), so every listed name also reads by name.
+fn listed_longhands() -> &'static [&'static str] {
+    const CHROME_NAMES: [(&str, &str); 1] = [("font-width", "font-stretch")];
+    static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let mut names: Vec<&'static str> = pyro_dom::stylo::longhand_names()
+            .iter()
+            .map(|&name| CHROME_NAMES.iter().find(|&&(engine, _)| engine == name).map_or(name, |&(_, chrome)| chrome))
+            .filter(|name| chrome_computed_property(name))
+            .collect();
         names.sort_unstable();
         names.dedup();
-        names.extend(crate::computed_properties::EPUB_ALIASES.iter().map(|&(_, property)| property));
         names
     })
 }
@@ -1348,6 +1370,18 @@ impl JsClass for ComputedStyle {
         });
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
+            // A property only the engine has (`line-clamp`, `mask-border`) is no property here,
+            // as in Chrome: "".
+            if !name.starts_with("--") {
+                let lower = if name.bytes().any(|b| b.is_ascii_uppercase()) {
+                    std::borrow::Cow::Owned(name.to_ascii_lowercase())
+                } else {
+                    std::borrow::Cow::Borrowed(name.as_str())
+                };
+                if !chrome_computed_property(&lower) && pyro_dom::stylo::is_property(&lower) {
+                    return Ok(s.string(""));
+                }
+            }
             Ok(computed_string(s, &c.value(&name)))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
@@ -1405,7 +1439,7 @@ fn computed_names(c: &ComputedData) -> &'static [&'static str] {
     if page.layout().computed_style_value(&dom, c.el.id, "display").is_empty() {
         return &[];
     }
-    pyro_dom::stylo::longhand_names()
+    listed_longhands()
 }
 
 /// `window.getComputedStyle(el, pseudoElt)`.
