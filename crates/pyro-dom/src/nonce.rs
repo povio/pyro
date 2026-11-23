@@ -410,6 +410,8 @@ mod tests {
     #[test]
     fn a_meta_in_head_is_meta() {
         let dom: crate::parse::DomRef = Rc::new(RefCell::new(Dom::new()));
+        // A `<meta>`'s pragma runs with the insertion steps of a tracked DOM, as a page's is.
+        dom.borrow_mut().set_resource_tracking(true);
         let doc = crate::parse::parse_document(
             &dom,
             "https://a.test/",
