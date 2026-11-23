@@ -747,15 +747,18 @@ fn call_module<'s>(_s: &Scope<'s>, module: Object<'s>, name: &str, args: &[Value
     module.get(name)?.as_object().ok_or_else(unavailable)?.call(None, args)
 }
 
-/// Settles a `databases()` promise with the origin's database names and versions.
-fn resolve_databases(s: &Scope<'_>, promise: &pyro_js::Deferred, namespace: &Namespace, origin: &str) -> JsResult<()> {
+/// Settles a `databases()` promise with the database names and versions `snapshot` took.
+fn resolve_databases(
+    s: &Scope<'_>,
+    promise: &pyro_js::Deferred,
+    namespace: &Namespace,
+    snapshot: Vec<DatabaseInfo>,
+) -> JsResult<()> {
     if let Err(error) = namespace.check_live() {
         return promise.reject(s, error.to_value(s));
     }
     let mut rows = RootedVec::new();
-    // Snapshot native metadata before invoking JS setters or resolving
-    // promises; no namespace borrow crosses JS entry.
-    for info in namespace.databases(origin) {
+    for info in snapshot {
         let row = s.object();
         row.set_atom("name", s.string(&info.name))?;
         row.set_atom("version", s.number(info.version as f64))?;
@@ -778,12 +781,16 @@ impl JsClass for IdbFactory {
                     // The list comes from the in-parallel steps through a queued
                     // task, never at the microtask checkpoint after the calling
                     // script: the parser and tasks queued before go first.
+                    // The databases and versions are those at the call (HTML IndexedDB
+                    // "databases()": the in-parallel steps read the state when they start),
+                    // so a versionchange that commits before the task is not seen.
+                    let snapshot = data.namespace.databases(origin);
                     let page = data.page.upgrade().ok_or(JsError::ContextDestroyed)?;
-                    let (realm, namespace, origin) = (s.realm().downgrade(), data.namespace.clone(), origin.to_owned());
+                    let (realm, namespace) = (s.realm().downgrade(), data.namespace.clone());
                     page.post_task(Box::new(move || {
                         let Some(realm) = realm.upgrade() else { return };
                         let Ok(s) = realm.scope() else { return };
-                        if let Err(error) = resolve_databases(&s, &promise, &namespace, &origin) {
+                        if let Err(error) = resolve_databases(&s, &promise, &namespace, snapshot) {
                             s.report_exception(&error);
                         }
                     }));
