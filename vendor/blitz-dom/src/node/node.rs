@@ -205,6 +205,9 @@ bitflags! {
         /// pyro: the node is an ordinary MathML fraction whose numerator and denominator are its
         /// layout children (`layout::math`). Set by its construction.
         const IS_MATH_FRACTION = 1 << 42;
+        /// pyro: the node is a MathML row whose element children are its layout children, side by
+        /// side (`layout::math`). Set by its construction.
+        const IS_MATH_ROW = 1 << 43;
     }
 }
 
@@ -406,6 +409,7 @@ impl NodeFlags {
         self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
         self.remove(Self::IS_SPLIT_INLINE);
         self.remove(Self::IS_MATH_FRACTION);
+        self.remove(Self::IS_MATH_ROW);
     }
 }
 

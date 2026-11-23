@@ -2994,11 +2994,29 @@ Chromium's fallbacks without a MATH table (bar 0.05em, gaps one bar or three in 
 seven, shifts zero, axis half the x-height). `linethickness` is a length or a percentage of the default. The bar
 is recorded on the element (`ElementData::math_fraction_bar`) and painted by blitz-paint
 (`draw_math_fraction_bar`). Every `mfrac` is an atomic inline (`replaced::is_inline_box`): one that is not
-ordinary holds its children's inline layout. `assets/default.css` gets MathML Core's fraction rules
+ordinary is laid out as a row (below) or holds its children's inline layout. `assets/default.css` gets MathML Core's fraction rules
 (`math-style`, `padding-inline: 1px`, `math-depth: auto-add; font-size: math` on its children). Not done: operator
-spacing, `numalign`/`denomalign`/`bevelled`, `math-shift`, vertical or right-to-left math, the `math` root's own
-layout (display centring, `font-family: math`). Tests: `crates/pyro-render/tests/mathml_fraction.rs`, unit tests in
+spacing, `numalign`/`denomalign`/`bevelled`, `math-shift`, vertical or right-to-left math, the `math` root's
+`font-family: math`. Tests: `crates/pyro-render/tests/mathml_fraction.rs`, unit tests in
 `layout/math.rs`.
+
+MathML rows (`layout/math.rs`, `is_row_element`): `<math>`, `<mrow>`, the other "mrow-like" elements, table cells,
+`<semantics>`, the elements MathML Core does not define (`<mfenced>`: an mrow, as in Chromium) and those pyro has no
+layout of their own for (radicals, scripts, a fraction that is not ordinary: MathML Core lays an invalid one out as
+an mrow) are atomic inlines. One that is `display: inline` (before a float or absolute positioning blockified it: in
+a MathML parent a float does not apply), has no `::before`/`::after` and holds only MathML elements (white space and
+comments aside), none a block box or a plain inline box (token elements aside), is built with its element children
+as its layout children (`NodeFlags::IS_MATH_ROW`, `construct_row`) and laid out by
+`LayoutPassState::compute_math_row_layout` (Chromium's `MathMLRowLayoutAlgorithm`): in-flow children side by side at
+their max-content sizes, never wrapped, each on the row's baseline (a `vertical-align` length raises a child:
+`<mspace>` depth), the row as tall as their largest ascent and descent. The white space between them makes no space,
+`display: none` children have no box, and an out-of-flow child's static position is the content box's start. The
+row's own `width`, `height` and their minimums and maximums apply, its content at the start (`row_size`). A `<math
+display="block">` is a block (`assets/default.css`: `display: block`, as pyro has no `math` inside) laid out as a row,
+its content centred (`is_block_math_root`). Not done: stretchy operators, token elements sized by their ink
+(Chromium's `MathMLTokenLayoutAlgorithm`), spacing around embellished operators. WPT mathml `mrow/mrow-fallback-001`,
+`mpadded/mpadded-rendering-from-in-flow`, `scripts/scripts-rendering-from-in-flow`, `tables/table-cell-mrow-layout`,
+`mrow/legacy-mfenced-element-001`, `relations/css-styling/width-height-005`, `relations/css-styling/display-2`.
 
 ## A scroll container's in-flow bounds take boxes empty in one axis
 

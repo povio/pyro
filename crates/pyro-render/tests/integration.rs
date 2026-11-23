@@ -94,6 +94,7 @@ mod line_paint_order;
 mod margin_trim;
 mod marker_pseudo;
 mod mathml_operator_spacing;
+mod mathml_row;
 mod mirror;
 mod mix_blend_mode;
 mod multicol;

@@ -1652,8 +1652,9 @@ geolocation, install, usermedia, camera, microphone {
 /* pyro: MathML Core's user agent rules for fractions (MathML Core Appendix A; Chromium's
  * mathml.css): inline math is compact and display math normal, a fraction's children are a
  * script level deeper in compact math (their font 0.71 times smaller), and a fraction has 1px
- * of padding beside its bar. Its layout is `layout::math`. */
+ * of padding beside its bar. Its layout is `layout::math`. Display math is a block (`display:
+ * block math`; pyro has no `math` inside, and lays it out as a row: `layout::math`). */
 m|math { math-style: compact; }
-m|math[display="block" i] { math-style: normal; }
+m|math[display="block" i] { display: block; math-style: normal; }
 m|mfrac { padding-inline: 1px; }
 m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }
