@@ -500,6 +500,11 @@ pub struct PageDom {
     /// The document's frame's latest navigation ([`PageDom::navigation_started`]).
     navigation_started: Cell<u64>,
     planned_navigation_seq: Cell<u64>,
+    /// HTML "iframe load in progress" (the container's `load` for this document is being fired)
+    /// and "mute iframe load" (a `document.open()` during it: the container's next `load` for
+    /// this document is not fired, so a load listener that rewrites its frame does not loop).
+    iframe_load_in_progress: Cell<bool>,
+    mute_iframe_load: Cell<bool>,
     /// The last rejected-promise notification task queued (`event::schedule_rejection_notify`):
     /// its realm, [`PageDom::posted_tasks`] once it was queued, and the list entries it reports.
     pub(crate) rejection_batch: RefCell<Option<(pyro_js::RealmId, u64, Rc<RefCell<Vec<u64>>>)>>,
@@ -1185,6 +1190,8 @@ impl PageDom {
             planned_navigations: RefCell::new(Vec::new()),
             navigation_started: Cell::new(0),
             planned_navigation_seq: Cell::new(0),
+            iframe_load_in_progress: Cell::new(false),
+            mute_iframe_load: Cell::new(false),
             rejection_batch: RefCell::new(None),
             font_loads: Cell::new(0),
             load_layout_since: Cell::new(None),
@@ -1664,6 +1671,26 @@ impl PageDom {
     pub fn navigation_started(&self) -> u64 {
         self.navigation_started.get()
     }
+    /// HTML "iframe load event steps" for this (child) document: `fire` fires its container's
+    /// `load` with the "iframe load in progress" flag set, unless a `document.open()` during an
+    /// earlier one muted it.
+    pub fn run_iframe_load(&self, fire: impl FnOnce()) {
+        if self.mute_iframe_load.get() {
+            return;
+        }
+        let outer = self.iframe_load_in_progress.replace(true);
+        fire();
+        self.iframe_load_in_progress.set(outer);
+    }
+
+    /// HTML document open steps: an open while the container's `load` for this document is
+    /// being fired mutes the next one.
+    pub fn note_document_opened_for_iframe_load(&self) {
+        if self.iframe_load_in_progress.get() {
+            self.mute_iframe_load.set(true);
+        }
+    }
+
     /// Takes a new [`PageDom::navigation_started`] number: what was started
     /// before and has not begun is superseded.
     pub fn note_navigation_started(&self) -> u64 {

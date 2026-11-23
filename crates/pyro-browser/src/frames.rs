@@ -978,7 +978,7 @@ impl FrameHost {
                 self.emit(PageEvent::FrameLoaded { frame_id, loader_id: lid.clone(), timestamp });
                 nav.notify_timeline("navigation");
                 if let Some(parent_dom) = ancestor.page_dom {
-                    pyro_webapi::lifecycle::resource_loaded(&parent_dom, node, true);
+                    document.run_iframe_load(|| pyro_webapi::lifecycle::resource_loaded(&parent_dom, node, true));
                 }
                 self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| b.watch_network_idle(key, lid));
             } else {

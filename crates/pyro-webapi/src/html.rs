@@ -5211,6 +5211,9 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
         // the written markup's doctype (or its absence) says otherwise.
         dom.set_quirks_mode(doc, pyro_dom::QuirksMode::NoQuirks).js()?;
     }
+    if doc == page.document() {
+        page.note_document_opened_for_iframe_load();
+    }
     // HTML document open steps: a frame's document opened from another
     // document's script takes the entry document's URL, without its fragment
     // (the frame's history entry is replaced, `PageHooks::document_reopened`). Only a fully

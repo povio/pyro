@@ -3690,7 +3690,11 @@ impl Browser {
         if let Some(parent) = frame.parent.and_then(|id| host.key(&id)) {
             if let Some(owner) = frame.owner {
                 if let Some(dom) = host.frame(parent).and_then(|f| f.page_dom) {
-                    pyro_webapi::lifecycle::resource_loaded(&dom, owner, true);
+                    let fire = || pyro_webapi::lifecycle::resource_loaded(&dom, owner, true);
+                    match &frame.page_dom {
+                        Some(child) => child.run_iframe_load(fire),
+                        None => fire(),
+                    }
                 }
             }
             self.maybe_fire_load(parent);

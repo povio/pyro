@@ -437,6 +437,16 @@ impl PageHooks for Hooks {
                 nav.document_opened_url(&url);
             }
         }
+        // A child frame's opened document is loading again at once: its container's document
+        // does not fire `load` before it does (`Browser::maybe_fire_load` reads the child's
+        // flags; the task below resets the rest), as when a parent's script writes an external
+        // script into it (WPT document-write/iframe_005).
+        if let (Some(host), Some(id)) = (host.as_ref(), self.page.child) {
+            if let Some(child) = host.children.borrow_mut().get_mut(&id) {
+                child.main_frame.dom_content_loaded = false;
+                child.main_frame.loaded = false;
+            }
+        }
         let page = self.page;
         let loader = self.loader.clone();
         self.sched.post(TaskSource::DomManipulation, move |b| {
