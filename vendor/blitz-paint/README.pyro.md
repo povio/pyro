@@ -321,6 +321,11 @@ from the root of an upstream checkout at that commit) is the whole diff.
   - `src/kurbo_css/css_box.rs`: radii of the padding and content boxes that overflow their box are scaled to fit it
     (Blink's `FloatRoundedRect::AdjustRadii`), their centres in the inner box's corners: the padding curve of a box
     with one large corner (`border-radius: 100% 0 0 0`) left the box, and the border's inner edge with it.
+    Superseded for such boxes (round-7 reftest fixes): a box whose inner radii overflow keeps round `corner_curvature`, so
+    its inner edges are `ContouredRect`s parallel to the border, cut by their box, as Blink's `ContouredInnerBorder`
+    (`with_corner_curvature`; boxes derived with `contoured_like`, outlines, outer shadows, clip margins, stay plain
+    rounded rects); `CssBox::inset_contour` gives the same for the bleed-avoiding background box and a no-blur inset
+    shadow's hole (spread >= 0) of a contoured box, whose radii `CssBox::new` scaled before.
     `border.rs`: a uniform solid border is stroked as a `kurbo::RoundedRect` only when its radii fit one (kurbo
     clamps a radius to half the smaller side, which such a corner exceeds: it was drawn with a much smaller one).
   - `src/gradient.rs` (`to_peniko_gradient`), `src/render/background.rs` (`uniform_gradient_color`): a gradient's

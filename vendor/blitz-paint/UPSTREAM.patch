@@ -4498,9 +4498,9 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
 +    padding_radii_scale: f64,
 +    content_radii_scale: f64,
 +
-+    /// pyro: the corners' shapes (`corner-shape`), when one is not round: each corner's
-+    /// superellipse exponent ([`CssBox::with_corner_curvature`]). The box's edges are then
-+    /// [`ContouredRect`]s.
++    /// pyro: the corners' shapes (`corner-shape`), when one is not round, or round ones whose
++    /// inner radii overflow their box: each corner's superellipse exponent
++    /// ([`CssBox::with_corner_curvature`]). The box's edges are then [`ContouredRect`]s.
 +    pub corner_curvature: Option<CornerCurvature>,
 +    /// pyro: the border box (with its radii) this box's edges stay parallel to, when this box
 +    /// is one derived from an element's (an outline's, a shadow's, a line of a double border):
@@ -4553,7 +4553,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
          Self {
              padding_box,
              border_box,
-@@ -83,9 +134,108 @@
+@@ -83,9 +134,130 @@
              padding_width: padding,
              border_width: border,
              border_radii,
@@ -4568,7 +4568,12 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
 +    /// superellipse exponent (`2^k` for `superellipse(k)`). A corner without a radius stays
 +    /// round (Blink's `EffectiveCurvature`), and a box with a concave corner has its radii scaled
 +    /// so that the hulls of opposite corners do not overlap (`ComputeContouredBorderFromStyle`).
-+    /// A box whose corners are all round is left as it is.
++    /// A box whose corners are all round is left as it is, unless the radii of its padding or
++    /// content box overflow that box (`border-radius: 100% 0 0 0` and a border): its inner edges
++    /// are then contours too, their radii the border radii less the widths and their curves
++    /// parallel to the border's, cut by their box, as Blink's `ContouredInnerBorder` draws them
++    /// (WPT css-borders `corner-shape/render-corner-shape.html?corner-shape=1&
++    /// border-top-left-radius=100%&border-width=20`), not radii scaled to fit.
 +    pub fn with_corner_curvature(mut self, mut curvature: CornerCurvature) -> Self {
 +        let radii = self.border_radii;
 +        for (c, r) in [
@@ -4581,7 +4586,9 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
 +                *c = contoured::ROUND;
 +            }
 +        }
-+        if curvature.is_round() {
++        // (A scale a rounding error under 1, as `border-radius: 9999px` scaled to fit gives, fits.)
++        let fits = |scale: f64| scale >= 1.0 - 1e-9;
++        if curvature.is_round() && fits(self.padding_radii_scale) && fits(self.content_radii_scale) {
 +            self.corner_curvature = None;
 +            return self;
 +        }
@@ -4593,8 +4600,10 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
 +
 +    /// pyro: this box (an outline's, a shadow's) shaped as `element`'s corners are, its curves
 +    /// parallel to `element`'s border box's.
++    /// (Not round corners, contoured only for their inner edges: the boxes derived from them
++    /// keep the spread rule's rounded rects, as Blink's.)
 +    pub fn contoured_like(mut self, element: &CssBox) -> Self {
-+        if let Some(curvature) = element.corner_curvature {
++        if let Some(curvature) = element.corner_curvature.filter(|c| !c.is_round()) {
 +            self.corner_curvature = Some(curvature);
 +            self.contour_origin = Some(element.contour_origin());
 +        }
@@ -4611,7 +4620,6 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
 +    /// border radii less the widths between (each stopping at zero), and its curves stay
 +    /// parallel to the border's.
 +    pub fn contour(&self, kind: CssBoxKind) -> Option<ContouredRect> {
-+        let curvature = self.corner_curvature?;
 +        let (rect, insets) = match kind {
 +            CssBoxKind::OutlineBox => return None,
 +            CssBoxKind::BorderBox => (self.border_box, Insets::ZERO),
@@ -4621,6 +4629,20 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
 +                add_insets(self.border_width, self.padding_width),
 +            ),
 +        };
++        self.contour_within(rect, insets)
++    }
++
++    /// pyro: the border box inset by `insets` as a [`ContouredRect`], when the corners are
++    /// shaped: its radii the border radii less the insets (each stopping at zero) and its curves
++    /// parallel to the border's, as [`CssBox::contour`] gives the padding and content boxes (an
++    /// inset shadow's hole, a background cut to avoid bleeding under the border; Blink insets a
++    /// `ContouredRect` so, not scaling radii that overflow the smaller box).
++    pub fn inset_contour(&self, insets: Insets) -> Option<ContouredRect> {
++        self.contour_within(self.border_box - insets, insets)
++    }
++
++    fn contour_within(&self, rect: Rect, insets: Insets) -> Option<ContouredRect> {
++        let curvature = self.corner_curvature?;
 +        let shrink = |r: Vec2, corner: Corner| {
 +            let inset = get_corner_insets(insets, corner);
 +            Vec2::new(
@@ -4662,7 +4684,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
      /// Construct a BezPath representing one edge of a box's border.
      /// Takes into account border-radius and the possibility that the edges
      /// are different colors.
-@@ -98,6 +248,10 @@
+@@ -98,6 +270,10 @@
      pub fn border_edge_shape(&self, edge: Edge) -> BezPath {
          use {Corner::*, CssBoxKind::*, Direction::*, Edge::*};
  
@@ -4673,7 +4695,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
          let mut path = BezPath::new();
  
          let (c0, c1) = match edge {
-@@ -193,9 +347,13 @@
+@@ -193,9 +369,13 @@
              0.0,
              slice_radii,
          )
@@ -4687,7 +4709,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
      pub fn outline(&self) -> BezPath {
          let mut path = BezPath::new();
  
-@@ -205,12 +363,48 @@
+@@ -205,12 +385,48 @@
  
          self.shape(&mut path, CssBoxKind::BorderBox, Direction::Anticlockwise);
          path.move_to(self.corner(Corner::TopLeft, CssBoxKind::BorderBox));
@@ -4719,12 +4741,12 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
 +        let mut path = BezPath::new();
 +        self.shape(&mut path, CssBoxKind::BorderBox, Direction::Clockwise);
 +        path.close_path();
- 
++
 +        let mut hole = BezPath::new();
 +        self.shape(&mut hole, CssBoxKind::PaddingBox, Direction::Anticlockwise);
 +        hole.close_path();
 +        path.extend(&hole);
-+
+ 
          path
      }
  
@@ -4736,7 +4758,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
          let mut path = BezPath::new();
          self.shape(&mut path, CssBoxKind::BorderBox, Direction::Clockwise);
          path
-@@ -218,6 +412,9 @@
+@@ -218,6 +434,9 @@
  
      /// Construct a bezpath drawing the frame padding
      pub fn padding_box_path(&self) -> BezPath {
@@ -4746,7 +4768,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
          let mut path = BezPath::new();
          self.shape(&mut path, CssBoxKind::PaddingBox, Direction::Clockwise);
          path
-@@ -225,6 +422,9 @@
+@@ -225,6 +444,9 @@
  
      /// Construct a bezpath drawing the frame content
      pub fn content_box_path(&self) -> BezPath {
@@ -4756,7 +4778,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
          let mut path = BezPath::new();
          self.shape(&mut path, CssBoxKind::ContentBox, Direction::Clockwise);
          path
-@@ -252,6 +452,9 @@
+@@ -252,6 +474,9 @@
      /// path (see [`Self::is_uniform_corner_border`]); this catches the true ellipses
      /// (unequal axes) that a rounded rect can't represent.
      pub fn is_elliptical_border(&self) -> bool {
@@ -4766,7 +4788,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
          let (rx, ry) = (
              self.border_box.width() / 2.0,
              self.border_box.height() / 2.0,
-@@ -274,6 +477,9 @@
+@@ -274,6 +499,9 @@
      /// width/color and each radius to be 0 or ≥ the border width for the stroke to
      /// reproduce the CSS shape exactly.)
      pub fn is_uniform_corner_border(&self) -> bool {
@@ -4776,7 +4798,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
          let is_circular = |c: Vec2| (c.x - c.y).abs() < 0.01;
          let radii = &self.border_radii;
          is_circular(radii.top_left)
-@@ -301,6 +507,13 @@
+@@ -301,6 +529,13 @@
  
      /// Construct a bezpath drawing the frame
      pub fn shadow_clip(&self, shadow_rect: Rect) -> BezPath {
@@ -4790,7 +4812,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
          let mut path = BezPath::new();
          self.shadow_clip_shape(&mut path, shadow_rect);
          path
-@@ -583,7 +796,25 @@
+@@ -583,7 +818,25 @@
              ContentBox => {
                  corner_radii - get_corner_insets(add_insets(*border_width, *padding_width), corner)
              }
@@ -4816,7 +4838,7 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
  
          (border_box.origin() + center, radii)
      }
-@@ -594,6 +825,64 @@
+@@ -594,6 +847,64 @@
      }
  }
  
@@ -4881,6 +4903,42 @@ diff --git a/packages/blitz-paint/src/kurbo_css/css_box.rs b/packages/blitz-pain
  /// Makes it easier to insert objects into a bezpath without having to do checks
  /// Mostly because I consider the vello api slightly defficient
  trait BuildBezpath {
+@@ -777,7 +1088,35 @@
+         assert_solves(10.0, 40.0, Vec2 { x: 80.0, y: 40.0 });
+     }
+ 
++    /// pyro: a round corner whose padding radii overflow the padding box (200x100, border 20,
++    /// `border-top-left-radius: 100%`: 180x80 in 160x60) keeps its inner curve parallel to the
++    /// border's, as Blink's `ContouredInnerBorder` (WPT css-borders `render-corner-shape.html?
++    /// corner-shape=1&border-top-left-radius=100%&border-width=20`), not radii scaled to fit,
++    /// which reached 40px further in at y = 28.
+     #[test]
++    fn overflowing_round_padding_radii_stay_parallel() {
++        let radii = NonUniformRoundedRectRadii {
++            top_left: Vec2::new(200.0, 100.0),
++            top_right: Vec2::ZERO,
++            bottom_right: Vec2::ZERO,
++            bottom_left: Vec2::ZERO,
++        };
++        let b = CssBox::new(Rect::new(0.0, 0.0, 200.0, 100.0), Insets::uniform(20.0), Insets::ZERO, 0.0, radii)
++            .with_corner_curvature(CornerCurvature::ROUND);
++        assert!(b.corner_curvature.is_some());
++        let padding = b.padding_box_path();
++        assert!(!padding.contains(Point::new(100.0, 28.0)));
++        assert!(padding.contains(Point::new(150.0, 28.0)));
++        // The bleed-avoiding inset (half the border) is a contour too.
++        assert!(b.inset_contour(Insets::uniform(10.0)).is_some());
++        // Round radii that fit their boxes stay a plain rounded box.
++        let fits = NonUniformRoundedRectRadii { top_left: Vec2::new(40.0, 40.0), ..radii };
++        let b = CssBox::new(Rect::new(0.0, 0.0, 200.0, 100.0), Insets::uniform(20.0), Insets::ZERO, 0.0, fits)
++            .with_corner_curvature(CornerCurvature::ROUND);
++        assert!(b.corner_curvature.is_none());
++    }
++
++    #[test]
+     fn solves_a_range_of_elliptical_corners() {
+         for &(bt, br) in &[(1.0, 1.0), (1.0, 4.0), (4.0, 1.0), (3.0, 7.0)] {
+             for &(rx, ry) in &[(80.0, 30.0), (30.0, 80.0), (60.0, 60.0), (120.0, 20.0)] {
 diff --git a/packages/blitz-paint/src/kurbo_css/mod.rs b/packages/blitz-paint/src/kurbo_css/mod.rs
 --- a/packages/blitz-paint/src/kurbo_css/mod.rs
 +++ b/packages/blitz-paint/src/kurbo_css/mod.rs
@@ -11469,7 +11527,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  &mut draw_text_context,
 +                None,
 +                None,
-             );
++            );
 +            // pyro: its emphasis marks, as over the item's text.
 +            if let Some(item) = self.list_item.filter(|item| !item.annotations.is_empty()) {
 +                let text = match marker {
@@ -12300,7 +12358,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                &viewport,
 +                Some(crate::layers::backdrop_root_marker()),
 +                None,
-+            );
+             );
 +            self.with_inline_clip_path(scene, child_id, |scene| {
 +                self.draw_hoisted_children(scene, owned.iter(), parent_style_transform, clip_rect);
 +            });
@@ -13935,7 +13993,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7990,364 @@
+@@ -1457,12 +7990,365 @@
          }
      };
      let s_border = style.get_border();
@@ -14010,7 +14068,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        bottom_right: exponent(s_border.corner_bottom_right_shape.k),
 +        bottom_left: exponent(s_border.corner_bottom_left_shape.k),
 +    };
-+    if curvature.is_round() || !frame.has_border_radius() {
++    // (Round corners too: their inner edges are contours when their radii overflow their box.)
++    if !frame.has_border_radius() {
 +        frame
 +    } else {
 +        frame.with_corner_curvature(curvature)
@@ -14421,7 +14480,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              origin: (*get_cyclic(&svg_styles.mask_origin.0, idx)).into(),
              // There is no `mask-attachment` property
              attachment: StyloBackgroundAttachment::Scroll,
-@@ -128,66 +161,461 @@
+@@ -128,66 +161,468 @@
  }
  
  impl ElementCx<'_, '_> {
@@ -14748,7 +14807,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          if text_run {
 -            self.end_text_clip_group(scene);
 +            self.end_text_clip_group(scene, canvas, text_mask, run_border_area);
-         }
++        }
 +        self.context.layer_manager.maybe_pop_layer(scene, blend_group);
 +    }
 +
@@ -14825,6 +14884,13 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            widths.x1 * fraction,
 +            widths.y1 * fraction,
 +        );
++        // pyro: shaped corners shrink along their contour (radii not scaled to fit the smaller
++        // box): scaled, a concave corner's curve left the border's middle and the background
++        // showed past its outer edge (WPT css-borders `render-corner-shape.html?corner-shape=-1&
++        // border-top-left-radius=100%&border-width=20`).
++        if let Some(contour) = self.frame.inset_contour(insets) {
++            return Some(contour.path());
++        }
 +        let radii = self.frame.border_radii;
 +        let shrink = |r: Vec2, dx: f64, dy: f64| Vec2::new((r.x - dx).max(0.0), (r.y - dy).max(0.0));
 +        let radii = NonUniformRoundedRectRadii {
@@ -14853,7 +14919,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +        let scrolls = |overflow: Overflow| !matches!(overflow, Overflow::Visible | Overflow::Clip);
 +        if !(scrolls(box_style.overflow_x) || scrolls(box_style.overflow_y)) {
 +            return None;
-+        }
+         }
 +        let scale = self.scale;
 +        let padding_box = self.frame.padding_box;
 +        // The scrollable overflow, relative to the padding box's top left (CSS px), with the
@@ -14904,7 +14970,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              None,
              None,
          );
-@@ -195,18 +623,28 @@
+@@ -195,18 +630,28 @@
  
      /// Ends the group started by [`begin_text_clip_group`](Self::begin_text_clip_group):
      /// draws the text mask in a `DestIn` layer, then pops both layers.
@@ -14937,7 +15003,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          scene.pop_layer();
          scene.pop_layer();
      }
-@@ -217,6 +655,7 @@
+@@ -217,6 +662,7 @@
              BoxModelBox::BorderBox => self.frame.border_box_path(),
              BoxModelBox::PaddingBox => self.frame.padding_box_path(),
              BoxModelBox::ContentBox => self.frame.content_box_path(),
@@ -14945,7 +15011,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -226,20 +665,54 @@
+@@ -226,20 +672,54 @@
              BoxModelBox::BorderBox => self.frame.border_box,
              BoxModelBox::PaddingBox => self.frame.padding_box,
              BoxModelBox::ContentBox => self.frame.content_box,
@@ -15003,7 +15069,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
              GenericImage::LightDark(_) => {
                  #[cfg(feature = "tracing")]
-@@ -249,18 +722,182 @@
+@@ -249,18 +729,182 @@
                  #[cfg(feature = "tracing")]
                  warn!("Implement image layer drawing for Image::PaintWorklet")
              }
@@ -15196,7 +15262,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          }
      }
  
-@@ -275,7 +912,18 @@
+@@ -275,7 +919,18 @@
              return;
          };
  
@@ -15215,7 +15281,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              let node = self.context.dom.get_node(node_id)?;
              let style = node.primary_styles()?;
              let current_color = style.clone_color();
-@@ -308,11 +956,51 @@
+@@ -308,11 +963,51 @@
                  ]
              })
              .collect();
@@ -15268,7 +15334,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          let cell_rect = |cell_id: NodeId| -> Option<Rect> {
              let layout = self.context.dom.get_node(cell_id)?.final_layout();
-@@ -344,13 +1032,29 @@
+@@ -344,13 +1039,29 @@
          let after = gutter - before;
  
          for cell in &table.cells {
@@ -15299,7 +15365,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
                  continue;
              }
              let Some(mut rect) = cell_rect(cell.node_id) else {
-@@ -367,25 +1071,249 @@
+@@ -367,25 +1078,249 @@
              }
  
              let shape = rect.scale_from_origin(self.scale);
@@ -15315,7 +15381,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +                        sticky += Vec2::new(offset.x, offset.y);
 +                    }
 +                }
-             }
++            }
 +            let transform = self.transform
 +                * Affine::translate(Vec2::new((sticky.x * self.scale).round(), (sticky.y * self.scale).round()));
 +            // pyro: in the cell's `border-shape`, which the backgrounds of its table parts take as
@@ -15382,7 +15448,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
 +            }
 +            if cell_shape.is_some() {
 +                scene.pop_layer();
-+            }
+             }
          }
      }
  
@@ -15560,7 +15626,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
      /// Whether the layer is positioned against the viewport
      /// (`background-attachment: fixed`) rather than the element's origin box.
      /// `fixed` behaves as `scroll` on elements affected by a CSS transform
-@@ -410,43 +1338,68 @@
+@@ -410,43 +1345,68 @@
  
      /// Whether this element or any of its ancestors has a CSS transform
      ///
@@ -15641,7 +15707,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  
          // Size the SVG per the CSS default sizing algorithm
          // (https://drafts.csswg.org/css-images/#default-sizing). An SVG image
-@@ -461,7 +1414,7 @@
+@@ -461,7 +1421,7 @@
          }
          .filter(|r| r.is_finite() && *r > 0.0);
  
@@ -15650,7 +15716,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              layer,
              frame_w,
              frame_h,
-@@ -476,29 +1429,112 @@
+@@ -476,29 +1436,112 @@
              return;
          }
  
@@ -15776,7 +15842,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let Some(bg_image) = layer.image_data else {
              return;
          };
-@@ -509,95 +1545,212 @@
+@@ -509,95 +1552,212 @@
          let image_rendering = self.style.clone_image_rendering();
          let quality = to_image_quality(image_rendering);
  
@@ -16038,7 +16104,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let (bg_pos, bg_size) = compute_layer_position_and_size(
              layer,
              origin_rect.width() / self.scale,
-@@ -629,24 +1782,50 @@
+@@ -629,24 +1789,50 @@
              bg_size.height,
          );
  
@@ -16102,7 +16168,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          let transform = base_transform.then_translate(Vec2 {
              x: x.translate,
              y: y.translate,
-@@ -681,35 +1860,84 @@
+@@ -681,35 +1867,84 @@
  
      let bg_size = compute_layer_size(layer, container_w as f32, container_h as f32, size_mode);
  
@@ -16207,7 +16273,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  }
  
  #[inline]
-@@ -875,48 +2103,64 @@
+@@ -875,48 +2110,64 @@
      stride: f64,
  }
  
@@ -16301,7 +16367,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
          },
      }
  }
-@@ -958,11 +2202,24 @@
+@@ -958,11 +2209,24 @@
          }
          Space => {
              let (count, stride) = compute_space_count_and_stride(origin_len, tile_len);
@@ -16331,7 +16397,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
              }
          }
          NoRepeat => AxisTiling {
-@@ -986,6 +2243,16 @@
+@@ -986,6 +2250,16 @@
      (count, stride)
  }
  
@@ -16348,7 +16414,7 @@ diff --git a/packages/blitz-paint/src/render/background.rs b/packages/blitz-pain
  /// Whether drawing the layer is guaranteed to paint nothing, making its clip
  /// layer unnecessary
  fn layer_paints_nothing(layer: &ImageLayerStyles) -> bool {
-@@ -1009,3 +2276,63 @@
+@@ -1009,3 +2283,63 @@
          -extend_length
      }
  }
@@ -20361,7 +20427,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
  
          for shadow in box_shadow.iter().filter(|s| s.inset) {
              let shadow_color = shadow
-@@ -104,17 +548,40 @@
+@@ -104,17 +548,51 @@
                  .color
                  .resolve_to_absolute(&current_color)
                  .as_srgb_color();
@@ -20395,7 +20461,18 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
 +            // a clip to the padding box (no layers: the colour blends as a box's does).
 +            if blur == 0.0 {
 +                let mut path = padding_box.clone();
-+                if let Some(shape) = &hole_shape {
++                // pyro: shaped corners: the hole is the border box inset by the border and the
++                // spread along its contour, its radii not scaled to fit the hole (Blink). (A
++                // negative spread keeps the padding box's own corners.)
++                let b = self.frame.border_width;
++                let contour = (hole.width() > 0.0 && hole.height() > 0.0 && spread >= 0.0)
++                    .then(|| self.frame.inset_contour(Insets::new(b.x0 + spread, b.y0 + spread, b.x1 + spread, b.y1 + spread)))
++                    .flatten();
++                if let Some(contour) = contour {
++                    let mut hole_path = contour.path();
++                    hole_path.apply_affine(kurbo::Affine::translate(offset));
++                    path.extend(&hole_path);
++                } else if let Some(shape) = &hole_shape {
 +                    let mut hole_path = shape.border_box_path();
 +                    hole_path.apply_affine(kurbo::Affine::translate(offset));
 +                    path.extend(&hole_path);
@@ -20409,7 +20486,7 @@ diff --git a/packages/blitz-paint/src/render/box_shadow.rs b/packages/blitz-pain
              scene.push_layer(
                  Fill::NonZero,
                  Mix::Normal,
-@@ -141,19 +608,35 @@
+@@ -141,19 +619,35 @@
                  None,
                  None,
              );

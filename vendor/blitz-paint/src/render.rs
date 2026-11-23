@@ -8056,7 +8056,8 @@ fn create_css_rect_with_corners(style: &ComputedValues, layout: &Layout, scale: 
         bottom_right: exponent(s_border.corner_bottom_right_shape.k),
         bottom_left: exponent(s_border.corner_bottom_left_shape.k),
     };
-    if curvature.is_round() || !frame.has_border_radius() {
+    // (Round corners too: their inner edges are contours when their radii overflow their box.)
+    if !frame.has_border_radius() {
         frame
     } else {
         frame.with_corner_curvature(curvature)

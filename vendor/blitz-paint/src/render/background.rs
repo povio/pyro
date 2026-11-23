@@ -542,6 +542,13 @@ impl ElementCx<'_, '_> {
             widths.x1 * fraction,
             widths.y1 * fraction,
         );
+        // pyro: shaped corners shrink along their contour (radii not scaled to fit the smaller
+        // box): scaled, a concave corner's curve left the border's middle and the background
+        // showed past its outer edge (WPT css-borders `render-corner-shape.html?corner-shape=-1&
+        // border-top-left-radius=100%&border-width=20`).
+        if let Some(contour) = self.frame.inset_contour(insets) {
+            return Some(contour.path());
+        }
         let radii = self.frame.border_radii;
         let shrink = |r: Vec2, dx: f64, dy: f64| Vec2::new((r.x - dx).max(0.0), (r.y - dy).max(0.0));
         let radii = NonUniformRoundedRectRadii {

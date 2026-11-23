@@ -48,9 +48,9 @@ pub struct CssBox {
     padding_radii_scale: f64,
     content_radii_scale: f64,
 
-    /// pyro: the corners' shapes (`corner-shape`), when one is not round: each corner's
-    /// superellipse exponent ([`CssBox::with_corner_curvature`]). The box's edges are then
-    /// [`ContouredRect`]s.
+    /// pyro: the corners' shapes (`corner-shape`), when one is not round, or round ones whose
+    /// inner radii overflow their box: each corner's superellipse exponent
+    /// ([`CssBox::with_corner_curvature`]). The box's edges are then [`ContouredRect`]s.
     pub corner_curvature: Option<CornerCurvature>,
     /// pyro: the border box (with its radii) this box's edges stay parallel to, when this box
     /// is one derived from an element's (an outline's, a shadow's, a line of a double border):
@@ -145,7 +145,12 @@ impl CssBox {
     /// superellipse exponent (`2^k` for `superellipse(k)`). A corner without a radius stays
     /// round (Blink's `EffectiveCurvature`), and a box with a concave corner has its radii scaled
     /// so that the hulls of opposite corners do not overlap (`ComputeContouredBorderFromStyle`).
-    /// A box whose corners are all round is left as it is.
+    /// A box whose corners are all round is left as it is, unless the radii of its padding or
+    /// content box overflow that box (`border-radius: 100% 0 0 0` and a border): its inner edges
+    /// are then contours too, their radii the border radii less the widths and their curves
+    /// parallel to the border's, cut by their box, as Blink's `ContouredInnerBorder` draws them
+    /// (WPT css-borders `corner-shape/render-corner-shape.html?corner-shape=1&
+    /// border-top-left-radius=100%&border-width=20`), not radii scaled to fit.
     pub fn with_corner_curvature(mut self, mut curvature: CornerCurvature) -> Self {
         let radii = self.border_radii;
         for (c, r) in [
@@ -158,7 +163,9 @@ impl CssBox {
                 *c = contoured::ROUND;
             }
         }
-        if curvature.is_round() {
+        // (A scale a rounding error under 1, as `border-radius: 9999px` scaled to fit gives, fits.)
+        let fits = |scale: f64| scale >= 1.0 - 1e-9;
+        if curvature.is_round() && fits(self.padding_radii_scale) && fits(self.content_radii_scale) {
             self.corner_curvature = None;
             return self;
         }
@@ -170,8 +177,10 @@ impl CssBox {
 
     /// pyro: this box (an outline's, a shadow's) shaped as `element`'s corners are, its curves
     /// parallel to `element`'s border box's.
+    /// (Not round corners, contoured only for their inner edges: the boxes derived from them
+    /// keep the spread rule's rounded rects, as Blink's.)
     pub fn contoured_like(mut self, element: &CssBox) -> Self {
-        if let Some(curvature) = element.corner_curvature {
+        if let Some(curvature) = element.corner_curvature.filter(|c| !c.is_round()) {
             self.corner_curvature = Some(curvature);
             self.contour_origin = Some(element.contour_origin());
         }
@@ -188,7 +197,6 @@ impl CssBox {
     /// border radii less the widths between (each stopping at zero), and its curves stay
     /// parallel to the border's.
     pub fn contour(&self, kind: CssBoxKind) -> Option<ContouredRect> {
-        let curvature = self.corner_curvature?;
         let (rect, insets) = match kind {
             CssBoxKind::OutlineBox => return None,
             CssBoxKind::BorderBox => (self.border_box, Insets::ZERO),
@@ -198,6 +206,20 @@ impl CssBox {
                 add_insets(self.border_width, self.padding_width),
             ),
         };
+        self.contour_within(rect, insets)
+    }
+
+    /// pyro: the border box inset by `insets` as a [`ContouredRect`], when the corners are
+    /// shaped: its radii the border radii less the insets (each stopping at zero) and its curves
+    /// parallel to the border's, as [`CssBox::contour`] gives the padding and content boxes (an
+    /// inset shadow's hole, a background cut to avoid bleeding under the border; Blink insets a
+    /// `ContouredRect` so, not scaling radii that overflow the smaller box).
+    pub fn inset_contour(&self, insets: Insets) -> Option<ContouredRect> {
+        self.contour_within(self.border_box - insets, insets)
+    }
+
+    fn contour_within(&self, rect: Rect, insets: Insets) -> Option<ContouredRect> {
+        let curvature = self.corner_curvature?;
         let shrink = |r: Vec2, corner: Corner| {
             let inset = get_corner_insets(insets, corner);
             Vec2::new(
@@ -1064,6 +1086,34 @@ mod tests {
     fn handles_k_equal_two() {
         // k = radii.y / (w * radii.x) = 40 / ((10/40) * 80) = 2.0
         assert_solves(10.0, 40.0, Vec2 { x: 80.0, y: 40.0 });
+    }
+
+    /// pyro: a round corner whose padding radii overflow the padding box (200x100, border 20,
+    /// `border-top-left-radius: 100%`: 180x80 in 160x60) keeps its inner curve parallel to the
+    /// border's, as Blink's `ContouredInnerBorder` (WPT css-borders `render-corner-shape.html?
+    /// corner-shape=1&border-top-left-radius=100%&border-width=20`), not radii scaled to fit,
+    /// which reached 40px further in at y = 28.
+    #[test]
+    fn overflowing_round_padding_radii_stay_parallel() {
+        let radii = NonUniformRoundedRectRadii {
+            top_left: Vec2::new(200.0, 100.0),
+            top_right: Vec2::ZERO,
+            bottom_right: Vec2::ZERO,
+            bottom_left: Vec2::ZERO,
+        };
+        let b = CssBox::new(Rect::new(0.0, 0.0, 200.0, 100.0), Insets::uniform(20.0), Insets::ZERO, 0.0, radii)
+            .with_corner_curvature(CornerCurvature::ROUND);
+        assert!(b.corner_curvature.is_some());
+        let padding = b.padding_box_path();
+        assert!(!padding.contains(Point::new(100.0, 28.0)));
+        assert!(padding.contains(Point::new(150.0, 28.0)));
+        // The bleed-avoiding inset (half the border) is a contour too.
+        assert!(b.inset_contour(Insets::uniform(10.0)).is_some());
+        // Round radii that fit their boxes stay a plain rounded box.
+        let fits = NonUniformRoundedRectRadii { top_left: Vec2::new(40.0, 40.0), ..radii };
+        let b = CssBox::new(Rect::new(0.0, 0.0, 200.0, 100.0), Insets::uniform(20.0), Insets::ZERO, 0.0, fits)
+            .with_corner_curvature(CornerCurvature::ROUND);
+        assert!(b.corner_curvature.is_none());
     }
 
     #[test]
