@@ -915,6 +915,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // then autofocus candidates flush before the scroll steps.
     pyro_webapi::lifecycle::reveal(&w.target.page);
     pyro_webapi::lifecycle::flush_autofocus_candidates(&w.target.page);
+    // The resize steps: child frames resized since the last update (an autofocus listener may
+    // have resized one) fire `resize` before the animation frame callbacks.
+    pyro_webapi::PageDom::run_pending_frame_resizes();
     // pyro: running smooth scrolls advance a frame, queueing their scroll events for the
     // scroll steps that follow (CSSOM View § 4.1).
     pyro_webapi::smooth_scroll::step(&w.target.page);

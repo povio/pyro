@@ -13,6 +13,12 @@ use pyro_dom::{Dom, NodeId};
 use pyro_js::{IdentityKey, Persistent, RealmId, WeakRealm};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+thread_local! {
+    /// Child frames whose `resize` is queued, for the next rendering update's resize steps
+    /// ([`PageDom::run_pending_frame_resizes`]).
+    static PENDING_FRAME_RESIZES: RefCell<Vec<std::rc::Weak<PageDom>>> = const { RefCell::new(Vec::new()) };
+}
+
 static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
 
 /// The browser's origin-keyed agent clusters are partitioned by browsing context group.
@@ -2215,13 +2221,31 @@ impl PageDom {
         drop(layout);
         let resized = self.frame_sized.replace(true) && old != (viewport.width, viewport.height);
         if resized && !self.frame_resize_queued.replace(true) {
+            PENDING_FRAME_RESIZES.with(|p| p.borrow_mut().push(self.this.clone()));
             let page = self.this.clone();
             self.post_task(Box::new(move || {
+                // Off the resize steps' list: nothing keeps the page alive for them now.
+                PENDING_FRAME_RESIZES.with(|p| p.borrow_mut().retain(|w| !w.ptr_eq(&page)));
                 if let Some(page) = page.upgrade() {
-                    page.frame_resize_queued.set(false);
-                    page.fire_frame_resize();
+                    // The resize steps of a rendering update may have fired it already.
+                    if page.frame_resize_queued.replace(false) {
+                        page.fire_frame_resize();
+                    }
                 }
             }));
+        }
+    }
+
+    /// HTML "run the resize steps" of a rendering update for the child frames resized since the
+    /// last one: their `resize` fires now, before the update's animation frame callbacks, rather
+    /// than in the task queued for it (WPT webappapis/scripting/event-loops
+    /// update-the-rendering-resize-autofocus: an autofocus focus listener resizes an iframe).
+    pub fn run_pending_frame_resizes() {
+        let pending = PENDING_FRAME_RESIZES.with(|p| std::mem::take(&mut *p.borrow_mut()));
+        for page in pending.into_iter().filter_map(|p| p.upgrade()) {
+            if page.frame_resize_queued.replace(false) {
+                page.fire_frame_resize();
+            }
         }
     }
 
