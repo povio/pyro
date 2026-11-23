@@ -1440,9 +1440,12 @@ const CONNECT_MODULE: &str = "document.cookie = 'k=v; path=/'; globalThis.got = 
 /// shared workers): assignment shadows the attribute with an own writable,
 /// enumerable, configurable data property of that global only. Window
 /// `origin` and worker `name` are the global's own accessors ([Global]), so
-/// deleting the replacement leaves no property, as in Chrome; worker `origin`
-/// is inherited (WorkerGlobalScope), so deleting it shows the original
-/// again. The realm's origin (postMessage's origin,
+/// deleting the replacement leaves no property, as in Chrome. Worker `origin`
+/// is WorkerGlobalScope's, inherited in Chrome, but a worker global's chain has
+/// no interface prototype objects and the prototype it has (the named
+/// properties object) refuses new properties under JSC patch 0041, so it stays
+/// the global's own accessor (469bc73df) and deleting the replacement leaves
+/// none. The realm's origin (postMessage's origin,
 /// same-origin fetch) and the worker's name (SharedWorker matching) stay.
 #[test]
 fn origin_and_worker_name_are_replaceable_per_global() {
@@ -1494,9 +1497,9 @@ fn origin_and_worker_name_are_replaceable_per_global() {
     until(&mut thread, a, "got.one.length === 1");
     let expected = |name: &str| {
         format!(
-            "global-proto,self / {origin}|{name} / proto-accessor,own-accessor / \
+            "self,self / {origin}|{name} / own-accessor,own-accessor / \
              replaced-origin:true:true:true,42:true:true:true,number,own-data,own-data / again / \
-             true,true,true,true,proto-accessor,missing / from network / true"
+             true,true,true,true,missing,missing / from network / true"
         )
     };
     assert_eq!(eval(&thread, a, "got.one[0]"), expected("dw-one"));
