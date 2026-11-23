@@ -65,7 +65,7 @@ pub use layout::inline::effect_entry as inline_effect_entry;
 #[cfg(feature = "svg")]
 pub use layout::shape_outside::{SvgRasterizer, set_svg_rasterizer};
 mod mutator;
-/// pyro: the size of an `<mspace>`, as presentational hints.
+/// pyro: the size of an `<mspace>` and the width of an `<mpadded>`, as presentational hints.
 mod mathml_space;
 mod query_selector;
 mod resolve;

@@ -21260,7 +21260,7 @@ diff --git a/packages/blitz-dom/src/layout/math.rs b/packages/blitz-dom/src/layo
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/math.rs
-@@ -0,0 +1,785 @@
+@@ -0,0 +1,859 @@
 +//! pyro: MathML fractions (`<mfrac>`, MathML Core § 3.3.2), the ordinary kind only: an `mfrac`
 +//! of `display: inline` (its default) with exactly two element children, each in flow, holding
 +//! no block box, with no `::before` or `::after` and no text of its own beside them. Its two
@@ -21289,7 +21289,8 @@ new file mode 100644
 +//! layout MathML Core gives an invalid one (§ 3.4, "If the element does not have the right number
 +//! of children, lay it out as an mrow"). So are a table cell, `<semantics>` and the elements MathML
 +//! Core does not define (`<mfenced>`), as in Chromium. A `<math display="block">` is a block (the
-+//! user agent rule) laid out as a row, its content centred.
++//! user agent rule) laid out as a row, its content centred. An `<mpadded>`'s attributes set its box
++//! around its content ([`PaddedAttributes`]).
 +use markup5ever::{local_name, ns};
 +use style::values::specified::box_::{DisplayInside, DisplayOutside};
 +use taffy::{
@@ -21516,6 +21517,27 @@ new file mode 100644
 +/// a percentage of the default thickness; `None` when it is absent or not one (negative, or with
 +/// a unit CSS has not), when the default is used. `em` and `ex` are of the fraction's font.
 +pub(crate) fn parse_line_thickness(value: &str, default: f32, font_size: f32, x_height: f32) -> Option<f32> {
++    parse_length(value, Some(default), font_size, x_height).filter(|px| *px >= 0.0)
++}
++
++/// The attributes of an `<mpadded>` (MathML Core § 3.3.6.1) that its row layout reads, in CSS px:
++/// the ascent (`height`) and descent (`depth`) of its box when set, and how far its content moves
++/// right (`lspace`) and up (`voffset`). Each is a `<length>`, `em` and `ex` of the element's font;
++/// a percentage counts as absent (WPT `mpadded-percentage-002`), and a negative `height`, `depth`
++/// or `lspace` as zero, as in Chromium. Its `width` is a hint for its CSS `width`
++/// (`mathml_space`).
++#[derive(Clone, Copy, Debug, Default, PartialEq)]
++pub(crate) struct PaddedAttributes {
++    pub(crate) height: Option<f32>,
++    pub(crate) depth: Option<f32>,
++    pub(crate) lspace: f32,
++    pub(crate) voffset: f32,
++}
++
++/// `value` as a CSS `<length>` in px, or a `<length-percentage>` when `percent_of` is the basis of
++/// its percentages: a number (signed) and a unit, which only zero may lack; `None` when it is
++/// not one. `em` and `ex` are `font_size` and `x_height`.
++pub(crate) fn parse_length(value: &str, percent_of: Option<f32>, font_size: f32, x_height: f32) -> Option<f32> {
 +    let value = value.trim_matches(|c: char| c.is_ascii_whitespace());
 +    // The number: a sign, digits with a decimal point, and an exponent when digits follow its
 +    // `e` (`1e2px`; the `e` of `em` and `ex` is the unit's).
@@ -21528,7 +21550,8 @@ new file mode 100644
 +    };
 +    let mut split = if matches!(bytes.first(), Some(b'+' | b'-')) { 1 } else { 0 };
 +    split = digits_from(split);
-+    if bytes.get(split) == Some(&b'.') {
++    // A decimal point has digits after it (`7.em` is no length).
++    if bytes.get(split) == Some(&b'.') && bytes.get(split + 1).is_some_and(u8::is_ascii_digit) {
 +        split = digits_from(split + 1);
 +    }
 +    if matches!(bytes.get(split), Some(b'e' | b'E')) {
@@ -21539,14 +21562,14 @@ new file mode 100644
 +    }
 +    let (number, unit) = value.split_at(split);
 +    let number: f32 = number.parse().ok()?;
-+    if !number.is_finite() || number < 0.0 {
++    if !number.is_finite() {
 +        return None;
 +    }
 +    let unit = unit.to_ascii_lowercase();
 +    let px = match unit.as_str() {
 +        // Only zero is a length without a unit.
 +        "" if number == 0.0 => 0.0,
-+        "%" => number / 100.0 * default,
++        "%" => number / 100.0 * percent_of?,
 +        "px" => number,
 +        "em" => number * font_size,
 +        "ex" => number * x_height,
@@ -21757,8 +21780,9 @@ new file mode 100644
 +    ///
 +    /// Its own `width` and `height` (with their minimums and maximums) apply as to any box: the
 +    /// content then stays at the start of the content box, overflowing it or not (Chromium's
-+    /// `ComputeInlineSizeForFragment` and `ComputeBlockSizeForFragment`). A block math root centres
-+    /// its content.
++    /// `ComputeInlineSizeForFragment` and `ComputeBlockSizeForFragment`). An `<mpadded>` adjusts its
++    /// box around its content (MathML Core § 3.3.6, Chromium's `MathMLPaddedLayoutAlgorithm`): see
++    /// [`PaddedAttributes`].
 +    #[inline(never)]
 +    pub(crate) fn compute_math_row_layout(&mut self, node_id: taffy::NodeId, inputs: LayoutInput) -> LayoutOutput {
 +        struct InFlow {
@@ -21783,6 +21807,7 @@ new file mode 100644
 +            )
 +        };
 +        let inset = padding + border;
++        let padded = self.padded_attributes(dom_id);
 +
 +        // Each in-flow child at its max-content size, as an independent formatting context.
 +        let child_inputs = LayoutInput {
@@ -21819,13 +21844,19 @@ new file mode 100644
 +            pen = x + output.size.width + margin.right;
 +            in_flow.push(InFlow { order, child, margin, output, x, ascent: child_ascent, location: Point::ZERO });
 +        }
++        // An `<mpadded>`'s box: its content shifted by `lspace` and `voffset`, its own ascent and
++        // descent those of its `height` and `depth` (its `width` is its CSS `width`, a hint).
++        let (content_x, content_y) = (padded.lspace, padded.voffset);
++        let (content_ascent, content_descent) = (ascent, descent);
++        let ascent = padded.height.unwrap_or(ascent);
++        let descent = padded.depth.unwrap_or(descent);
 +        let size = self.row_size(dom_id, inputs, inset, Size { width: pen, height: ascent + descent });
 +        let baseline = inset.top + ascent;
 +        // A block math root centres its content (never shifting it before the start).
 +        let content_x = if is_block_math_root(&self.nodes[dom_id]) {
-+            ((size.width - inset.left - inset.right - pen) / 2.0).max(0.0)
++            content_x + ((size.width - inset.left - inset.right - pen) / 2.0).max(0.0)
 +        } else {
-+            0.0
++            content_x
 +        };
 +
 +        let mut candidates = OofCandidates::new();
@@ -21838,7 +21869,10 @@ new file mode 100644
 +                        style.border().resolve_or_zero(None, resolve_calc_value),
 +                    )
 +                };
-+                item.location = Point { x: inset.left + content_x + item.x, y: baseline - item.ascent + item.margin.top };
++                item.location = Point {
++                    x: inset.left + content_x + item.x,
++                    y: baseline - content_y - item.ascent + item.margin.top,
++                };
 +                let layout = taffy::Layout {
 +                    order: item.order,
 +                    location: item.location,
@@ -21879,13 +21913,15 @@ new file mode 100644
 +            width: (size.width - border.left - border.right).max(0.0),
 +            height: (size.height - border.top - border.bottom).max(0.0),
 +        };
-+        // The content may overflow a box its `width` or `height` made smaller.
++        // The content may overflow a box its `width`, `height` or `<mpadded>` attributes made
++        // smaller.
++        let content_top = baseline - content_y - content_ascent - border.top;
 +        let overflow = ScrollableOverflow::new(
 +            Rect {
 +                left: 0.0,
-+                top: 0.0,
++                top: content_top.min(0.0),
 +                right: padding_box.width.max(padding.left + content_x + pen + padding.right),
-+                bottom: padding_box.height.max(padding.top + ascent + descent + padding.bottom),
++                bottom: padding_box.height.max(content_top + content_ascent + content_descent + padding.bottom),
 +            },
 +            Point { x: false, y: false },
 +        );
@@ -21942,6 +21978,31 @@ new file mode 100644
 +                .unwrap_or(content.height + inset_sum.height)
 +                .maybe_clamp(min_size.height, max_size.height)
 +                .max(inset_sum.height),
++        }
++    }
++
++    /// The attributes of the `<mpadded>` `node` that adjust its box (all zero or absent for any
++    /// other element).
++    fn padded_attributes(&self, node: NodeId) -> PaddedAttributes {
++        let node = &self.nodes[node];
++        let Some(element) = node.element_data() else { return PaddedAttributes::default() };
++        if element.name.local != local_name!("mpadded") {
++            return PaddedAttributes::default();
++        }
++        let attr = |name: &str| element.attr(markup5ever::LocalName::from(name));
++        if ["height", "depth", "lspace", "voffset"].iter().all(|name| attr(name).is_none()) {
++            return PaddedAttributes::default();
++        }
++        let Some(style) = node.primary_styles() else { return PaddedAttributes::default() };
++        let font_size = style.slow_clone_font_size().used_size().px();
++        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: self.font_ctx.clone() };
++        let x_height = provider.math_parameters_for(style.get_font(), font_size).x_height.unwrap_or(font_size * 0.5);
++        let length = |name: &str| attr(name).and_then(|value| parse_length(value, None, font_size, x_height));
++        PaddedAttributes {
++            height: length("height").map(|v| v.max(0.0)),
++            depth: length("depth").map(|v| v.max(0.0)),
++            lspace: length("lspace").map_or(0.0, |v| v.max(0.0)),
++            voffset: length("voffset").unwrap_or(0.0),
 +        }
 +    }
 +
@@ -22011,6 +22072,19 @@ new file mode 100644
 +        assert_eq!(parse("thick"), None);
 +        assert_eq!(parse("medium"), None);
 +        assert_eq!(parse(""), None);
++        assert_eq!(parse("7.em"), None);
++    }
++
++    #[test]
++    fn padded_lengths() {
++        let parse = |v: &str| parse_length(v, None, 20.0, 10.0);
++        assert_eq!(parse("-9em"), Some(-180.0));
++        assert_eq!(parse("-.5em"), Some(-10.0));
++        assert_eq!(parse("+5px"), Some(5.0));
++        assert_eq!(parse("-0em"), Some(0.0));
++        assert_eq!(parse("50%"), None);
++        assert_eq!(parse("-7.em"), None);
++        assert_eq!(parse("7"), None);
 +    }
 +
 +    #[test]
@@ -41943,7 +42017,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
 +#[cfg(feature = "svg")]
 +pub use layout::shape_outside::{SvgRasterizer, set_svg_rasterizer};
  mod mutator;
-+/// pyro: the size of an `<mspace>`, as presentational hints.
++/// pyro: the size of an `<mspace>` and the width of an `<mpadded>`, as presentational hints.
 +mod mathml_space;
  mod query_selector;
  mod resolve;
@@ -43363,7 +43437,7 @@ diff --git a/packages/blitz-dom/src/mathml_space.rs b/packages/blitz-dom/src/mat
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/mathml_space.rs
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,101 @@
 +//! pyro: the size of an `<mspace>` (MathML Core 3.2.4), as presentational hints.
 +//!
 +//! pyro lays no MathML out (MathML content flows as inline boxes), so an `<mspace>` is an
@@ -43375,6 +43449,9 @@ new file mode 100644
 +//! percentage, no unitless number): an invalid, negative or percentage value counts as absent,
 +//! which gives the same 0 as MathML Core's clamp. Author styles (`display`, `width`, ...) override
 +//! the hints, as for every presentational hint.
++//!
++//! An `<mpadded>`'s `width` attribute sets its `width` too (MathML Core § 3.3.6.1, as Chromium maps
++//! it), under the same rules; its row layout reads its other attributes (`layout::math`).
 +
 +use markup5ever::{local_name, ns};
 +use style::properties::{PropertyDeclaration, PropertyId, SourcePropertyDeclaration, parse_one_declaration_into};
@@ -43383,12 +43460,19 @@ new file mode 100644
 +
 +use crate::node::ElementData;
 +
-+/// The declarations an `<mspace>`'s attributes map to, or none for any other element.
++/// The declarations an `<mspace>`'s or an `<mpadded>`'s attributes map to, or none for any other
++/// element.
 +pub(crate) fn hints(elem: &ElementData) -> Vec<PropertyDeclaration> {
-+    if elem.name.ns != ns!(mathml) || elem.name.local != local_name!("mspace") {
++    if elem.name.ns != ns!(mathml) {
 +        return Vec::new();
 +    }
 +    let length = |name: markup5ever::LocalName| elem.attr(name).map(str::trim).filter(|value| is_length(value));
++    if elem.name.local == local_name!("mpadded") {
++        return length(local_name!("width")).map(|width| parse("width", width)).unwrap_or_default();
++    }
++    if elem.name.local != local_name!("mspace") {
++        return Vec::new();
++    }
 +    let width = length(local_name!("width"));
 +    let height = length(local_name!("height"));
 +    let depth = length(local_name!("depth"));
@@ -60948,11 +61032,12 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1092,6 +2066,72 @@
+@@ -1092,6 +2066,73 @@
                  attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
              });
  
-+        // pyro: an `<mspace>`'s width, height and depth attributes (`mathml_space`).
++        // pyro: an `<mspace>`'s width, height and depth attributes, an `<mpadded>`'s width
++        // (`mathml_space`).
 +        for declaration in crate::mathml_space::hints(elem) {
 +            push_style(declaration);
 +        }
@@ -61021,7 +61106,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
          let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
          let mut lang = None;
-@@ -1100,6 +2140,40 @@
+@@ -1100,6 +2141,40 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -61062,7 +61147,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,12 +2199,42 @@
+@@ -1125,12 +2200,42 @@
                  }
              }
  
@@ -61105,7 +61190,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                      _ => None,
                  };
  
-@@ -1139,6 +2243,67 @@
+@@ -1139,6 +2244,67 @@
                  }
              }
  
@@ -61173,7 +61258,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `valign` on HTML table row groups, rows and cells maps to
              // `vertical-align`, matched ASCII case-insensitively. `vertical-align`
              // is a shorthand in Stylo, so push the three longhands each keyword
-@@ -1164,7 +2329,7 @@
+@@ -1164,7 +2330,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -61182,7 +61267,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2435,9 @@
+@@ -1270,7 +2436,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -61193,7 +61278,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1307,6 +2474,21 @@
+@@ -1307,6 +2475,21 @@
                  }
              }
  
@@ -61215,7 +61300,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `body` carries four legacy margin attributes, as pixel lengths:
              // marginwidth and marginheight set both sides of an axis, and
              // leftmargin and topmargin set one side each.
-@@ -1358,6 +2540,16 @@
+@@ -1358,6 +2541,16 @@
                  }
              }
  
@@ -61232,7 +61317,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1367,178 +2559,369 @@
+@@ -1367,178 +2560,369 @@
                  }
              }
  
@@ -61734,7 +61819,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2929,269 @@
+@@ -1546,14 +2930,269 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -62004,7 +62089,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +3235,12 @@
+@@ -1597,6 +3236,12 @@
      }
  }
  
@@ -62017,7 +62102,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +3313,41 @@
+@@ -1669,12 +3314,41 @@
                      .push(pe_node_id);
              }
          }
@@ -62059,7 +62144,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3362,46 @@
+@@ -1689,24 +3363,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -62114,7 +62199,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3432,842 @@
+@@ -1737,3 +3433,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

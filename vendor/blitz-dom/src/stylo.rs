@@ -2066,7 +2066,8 @@ impl Node {
                 attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
             });
 
-        // pyro: an `<mspace>`'s width, height and depth attributes (`mathml_space`).
+        // pyro: an `<mspace>`'s width, height and depth attributes, an `<mpadded>`'s width
+        // (`mathml_space`).
         for declaration in crate::mathml_space::hints(elem) {
             push_style(declaration);
         }

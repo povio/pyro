@@ -3024,6 +3024,12 @@ author's `display: math` shows them, as in Chromium). `<mspace>` is an inline-bl
 a hint (`mathml_space`), so that the rule hides it. WPT mathml `writing-mode/force-horizontal-tb`,
 `default-properties-on-semantics-and-maction`, `relations/css-styling/ignored-properties-001`.
 
+`<mpadded>` attributes (`layout/math.rs`, `PaddedAttributes`; `mathml_space`): `width` is a hint for its CSS `width`;
+`height` and `depth` set the ascent and descent of its box, `lspace` and `voffset` move its content right and up
+(Chromium's `MathMLPaddedLayoutAlgorithm`). Each is a length (`parse_length`, which `linethickness` shares: a decimal
+point needs digits after it); a percentage counts as absent, a negative `height`, `depth` or `lspace` as zero. WPT
+mathml `mpadded/mpadded-001` to `-003`, `relations/css-styling/lengths-2`.
+
 ## A scroll container's in-flow bounds take boxes empty in one axis
 
 `src/resolve.rs`, `padded_inflow_box` and its callers (`scrollport`): a scroll container's padded in-flow box of a child

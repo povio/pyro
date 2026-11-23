@@ -9,6 +9,9 @@
 //! percentage, no unitless number): an invalid, negative or percentage value counts as absent,
 //! which gives the same 0 as MathML Core's clamp. Author styles (`display`, `width`, ...) override
 //! the hints, as for every presentational hint.
+//!
+//! An `<mpadded>`'s `width` attribute sets its `width` too (MathML Core § 3.3.6.1, as Chromium maps
+//! it), under the same rules; its row layout reads its other attributes (`layout::math`).
 
 use markup5ever::{local_name, ns};
 use style::properties::{PropertyDeclaration, PropertyId, SourcePropertyDeclaration, parse_one_declaration_into};
@@ -17,12 +20,19 @@ use style_traits::ParsingMode;
 
 use crate::node::ElementData;
 
-/// The declarations an `<mspace>`'s attributes map to, or none for any other element.
+/// The declarations an `<mspace>`'s or an `<mpadded>`'s attributes map to, or none for any other
+/// element.
 pub(crate) fn hints(elem: &ElementData) -> Vec<PropertyDeclaration> {
-    if elem.name.ns != ns!(mathml) || elem.name.local != local_name!("mspace") {
+    if elem.name.ns != ns!(mathml) {
         return Vec::new();
     }
     let length = |name: markup5ever::LocalName| elem.attr(name).map(str::trim).filter(|value| is_length(value));
+    if elem.name.local == local_name!("mpadded") {
+        return length(local_name!("width")).map(|width| parse("width", width)).unwrap_or_default();
+    }
+    if elem.name.local != local_name!("mspace") {
+        return Vec::new();
+    }
     let width = length(local_name!("width"));
     let height = length(local_name!("height"));
     let depth = length(local_name!("depth"));

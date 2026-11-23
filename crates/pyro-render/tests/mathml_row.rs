@@ -164,3 +164,25 @@ fn maction_and_semantics_show_their_first_child_and_math_stays_horizontal() {
         rects(&format!("<div><math><mrow id=r style='writing-mode:vertical-rl'>{A}{B}</mrow></math></div>"), &["r"]);
     assert_eq!((r[0][2], r[0][3]), (30.0, 45.0), "{r:?}");
 }
+
+#[test]
+fn mpadded_attributes_set_its_box_around_its_content() {
+    let r = rects(
+        &format!(
+            "<div><math><mpadded id=p width='50px' height='10px' depth='5px' lspace='4px' voffset='3px'>{B}</mpadded>\
+             </math></div>"
+        ),
+        &["p", "b"],
+    );
+    assert_eq!((r[0][2], r[0][3]), (50.0, 15.0), "{r:?}");
+    // The content 4px right and 3px up: b's top is 30px above the baseline, which is 10px down.
+    assert_eq!((r[1][0] - r[0][0], r[1][1] - r[0][1]), (4.0, 10.0 - 3.0 - 30.0), "{r:?}");
+    // Percentages count as absent, a negative `lspace` as zero.
+    let r = rects(
+        &format!(
+            "<div><math><mpadded id=p width='50%' height='5%' depth='5%' lspace='-4px'>{B}</mpadded></math></div>"
+        ),
+        &["p", "b"],
+    );
+    assert_eq!((r[0][2], r[0][3], r[1][0]), (20.0, 40.0, r[0][0]), "{r:?}");
+}
