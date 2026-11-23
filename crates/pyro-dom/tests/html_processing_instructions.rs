@@ -90,9 +90,10 @@ fn noscript_text_is_raw_only_where_scripting_is_enabled() {
     pyro_dom::parse::set_inner_html(&mut d, div, "<noscript><p>x</p></noscript>").unwrap();
     assert!(d.query_selector(div, &parse_selectors("noscript > p").unwrap()).unwrap().is_none());
     assert_eq!(d.inner_html(div).unwrap(), "<noscript><p>x</p></noscript>");
-    // Template contents live in an inert document: parsed with the
-    // template's document's flag (text), serialized escaped.
+    // Template contents live in an inert document without a browsing context: a
+    // template's innerHTML parses with scripting disabled (markup), as Chromium does
+    // (it parses into the template's contents document).
     let template = d.query_selector(doc, &parse_selectors("template").unwrap()).unwrap().unwrap();
     pyro_dom::parse::set_inner_html(&mut d, template, "<noscript><div></div></noscript>").unwrap();
-    assert_eq!(d.inner_html(template).unwrap(), "<noscript>&lt;div&gt;&lt;/div&gt;</noscript>");
+    assert_eq!(d.inner_html(template).unwrap(), "<noscript><div></div></noscript>");
 }
