@@ -22,9 +22,12 @@ use std::ffi::CString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+// macOS QoS classes: elsewhere every caller runs at the default priority.
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn pthread_set_qos_class_self_np(class: u32, relative_priority: i32) -> i32;
 }
+#[cfg(target_os = "macos")]
 const QOS_CLASS_UTILITY: u32 = 0x11;
 
 unsafe extern "C" fn keep_running(_: JSContextRef, _: *mut core::ffi::c_void) -> bool {
@@ -47,6 +50,7 @@ fn watchdog_timers_of_many_vms_survive_a_stalled_caller() {
         .map(|n| {
             std::thread::spawn(move || unsafe {
                 // Most callers run at a QoS that loses the CPU to the timer thread.
+                #[cfg(target_os = "macos")]
                 if n % 8 != 0 {
                     pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
                 }
