@@ -228,6 +228,15 @@ pub fn inline_allowed_in_at(
     !outcome.blocked
 }
 
+/// [`inline_allowed`] for an inline `<script>` a script inserted ([`PolicyList::inserted_script_inline_check`]:
+/// `'strict-dynamic'` trusts it).
+pub fn inserted_script_allowed(page: &Rc<PageDom>, nonce: &str, source: &str, target: NodeId) -> bool {
+    let Some(list) = policy_list(page) else { return true };
+    let outcome = list.inserted_script_inline_check(nonce, source);
+    report(page, outcome.violations, Some(target));
+    !outcome.blocked
+}
+
 /// Runs the inline style checks waiting in `page`'s document (pyro-dom records them: a `style`
 /// attribute set, a `<style>` updated, in a document with policies), each reporting its
 /// violations at its element. Nothing to do (one `RefCell` check) without them; nothing either

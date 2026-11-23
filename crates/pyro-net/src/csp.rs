@@ -546,10 +546,24 @@ impl PolicyList {
     /// style (`nonce`: the element's, empty for attributes and navigations; `source`: the text
     /// the hashes are of).
     pub fn inline_check(&self, kind: InlineKind, nonce: &str, source: &str) -> CheckOutcome {
+        self.inline_check_with(kind, nonce, source, false)
+    }
+
+    /// [`PolicyList::inline_check`] for an inline `<script>` a script inserted (not the
+    /// parser): a policy with `'strict-dynamic'` trusts it, as it trusts the fetches of
+    /// non-parser-inserted scripts (Chrome; WPT script-src-strict_dynamic_non_parser_inserted).
+    pub fn inserted_script_inline_check(&self, nonce: &str, source: &str) -> CheckOutcome {
+        self.inline_check_with(InlineKind::Script, nonce, source, true)
+    }
+
+    fn inline_check_with(&self, kind: InlineKind, nonce: &str, source: &str, script_inserted: bool) -> CheckOutcome {
         let mut outcome = CheckOutcome::default();
         let effective = kind.effective_directive();
         for policy in &self.policies {
             let Some(directive) = policy.directive_for(effective) else { continue };
+            if script_inserted && has_keyword(&directive.value, "'strict-dynamic'") {
+                continue;
+            }
             if element_matches_source_list(&directive.value, kind, nonce, source) {
                 continue;
             }
@@ -1234,6 +1248,17 @@ mod tests {
         assert!(!outcome.blocked);
         assert_eq!(outcome.violations.len(), 1);
         assert_eq!(outcome.violations[0].disposition, Disposition::Report);
+    }
+
+    #[test]
+    fn strict_dynamic_trusts_script_inserted_inline_scripts() {
+        let strict = list("script-src 'strict-dynamic' 'nonce-abc'", "https://a.test/");
+        assert!(strict.inline_check(InlineKind::Script, "", "x()").blocked);
+        assert!(!strict.inserted_script_inline_check("", "x()").blocked);
+        assert!(!strict.inserted_script_inline_check("wrong", "x()").blocked);
+        let plain = list("script-src 'nonce-abc'", "https://a.test/");
+        assert!(plain.inserted_script_inline_check("", "x()").blocked);
+        assert!(!plain.inserted_script_inline_check("abc", "x()").blocked);
     }
 
     #[test]

@@ -2945,6 +2945,14 @@ impl Browser {
         pyro_webapi::csp::inline_allowed(&bindings, kind, &nonce, &info.inline_text, Some(info.node))
     }
 
+    /// [`Browser::inline_script_allowed`] for an inline script the parser did not insert
+    /// (`pyro_webapi::csp::inserted_script_allowed`: `'strict-dynamic'` trusts it).
+    fn inserted_inline_script_allowed(&self, page: FrameKey, info: &pyro_dom::script::ScriptInfo) -> bool {
+        let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return true };
+        let nonce = pyro_webapi::csp::element_nonce(&bindings, info.node);
+        pyro_webapi::csp::inserted_script_allowed(&bindings, &nonce, &info.inline_text, info.node)
+    }
+
     fn fetch_deferred(
         &mut self,
         page: FrameKey,
@@ -3242,7 +3250,8 @@ impl Browser {
                 }
             }
         };
-        if src_url.is_none() && !self.inline_script_allowed(page, &info, None) {
+        // A script the parser did not insert: 'strict-dynamic' trusts it (prepare_inserted_script).
+        if src_url.is_none() && !self.inserted_inline_script_allowed(page, &info) {
             return;
         }
         match (ty, src_url) {
@@ -4241,6 +4250,13 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
         }
         (info.inline_text, i32::try_from(info.start_line).unwrap_or(i32::MAX))
     };
+    // CSP `script-src-elem` (its nonce, a hash of its text, 'unsafe-inline'; 'strict-dynamic'
+    // trusts a script-inserted script): blocked, it does not run (no event; the violation at the
+    // element).
+    let nonce = pyro_webapi::csp::element_nonce(&bindings, node);
+    if !pyro_webapi::csp::inserted_script_allowed(&bindings, &nonce, &text, node) {
+        return;
+    }
     let Ok(scope) = realm.scope() else { return };
     let outer = bindings.current_script();
     bindings.set_executing_classic_script(node);
