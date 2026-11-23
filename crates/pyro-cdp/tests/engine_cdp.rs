@@ -4649,25 +4649,39 @@ fn mouse_presses_over_empty_viewport_space_target_the_root_element() {
     // mouseup and click at <html>. The engine rejected presses and releases
     // there ("no element at point"), e.g. a drag released where content had
     // been removed under the pointer.
+    // The harness page is about:blank, in quirks mode (6efaefdaf, as in Chrome): there the body
+    // fills the viewport (the "body fills the html" quirk), so the press is at <body>, as in
+    // Chrome. A doctype document written over it (document.open) is in no-quirks mode, and its
+    // layout follows: the space below the paragraph is the root's.
     let mut h = Harness::new();
+    let press = |h: &mut Harness| {
+        eval_value(
+            h,
+            "(() => { globalThis.log = []; for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) \
+              document.addEventListener(t, e => log.push(`${t}@${e.target.id || e.target.nodeName}`), true); })()",
+        );
+        let at = json!([200.0, 400.0]);
+        for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+            let r = h.page(
+                "Input.dispatchMouseEvent",
+                json!({"type":kind,"x":at[0],"y":at[1],"button":"left","buttons":buttons,"clickCount":1}),
+            );
+            assert!(r.get("error").is_none(), "{kind}: {r}");
+        }
+        eval_value(h, "log.join(',')")
+    };
     eval_value(
         &mut h,
-        "(() => { document.body.style.margin = '0'; document.body.innerHTML = '<p id=p style=\"margin:0;font-size:20px;line-height:30px\">abc</p>'; \
-          globalThis.log = []; for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) \
-          document.addEventListener(t, e => log.push(`${t}@${e.target.id || e.target.nodeName}`), true); })()",
+        "(() => { document.body.style.margin = '0'; document.body.innerHTML = '<p id=p style=\"margin:0;font-size:20px;line-height:30px\">abc</p>'; })()",
     );
-    let at = json!([200.0, 400.0]);
-    for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
-        let r = h.page(
-            "Input.dispatchMouseEvent",
-            json!({"type":kind,"x":at[0],"y":at[1],"button":"left","buttons":buttons,"clickCount":1}),
-        );
-        assert!(r.get("error").is_none(), "{kind}: {r}");
-    }
-    assert_eq!(
-        eval_value(&mut h, "log.join(',')"),
-        json!("pointerdown@HTML,mousedown@HTML,pointerup@HTML,mouseup@HTML,click@HTML")
+    assert_eq!(eval_value(&mut h, "document.compatMode"), json!("BackCompat"));
+    assert_eq!(press(&mut h), json!("pointerdown@BODY,mousedown@BODY,pointerup@BODY,mouseup@BODY,click@BODY"));
+    eval_value(
+        &mut h,
+        "document.open(); document.write('<!doctype html><body style=margin:0><p id=p style=\"margin:0;font-size:20px;line-height:30px\">abc</p>'); document.close(); 1",
     );
+    assert_eq!(eval_value(&mut h, "[document.compatMode, document.body.offsetHeight].join()"), json!("CSS1Compat,30"));
+    assert_eq!(press(&mut h), json!("pointerdown@HTML,mousedown@HTML,pointerup@HTML,mouseup@HTML,click@HTML"));
 }
 
 /// Like `drag_select`, but reports the Range text instead of Selection's.

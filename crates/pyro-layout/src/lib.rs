@@ -159,6 +159,7 @@ pub fn install_with(fetchers: FetcherFactory) {
             scroll_stale: Default::default(),
             base_url: RefCell::new(BaseUrl::new(BLANK)),
             snapshot_base: RefCell::new(Default::default()),
+            snapshot_quirks: Default::default(),
             fetcher: RefCell::new(fetchers(None)),
             loader: RefCell::new(None),
             fetchers: fetchers.clone(),
@@ -239,6 +240,10 @@ pub struct BlitzGeometry {
     /// pyro: the base URL the last whole snapshot resolved against ([`Self::document_base`]); a
     /// delta resolves against it too, so a changed base takes a whole snapshot.
     snapshot_base: RefCell<(String, String)>,
+    /// pyro: the quirks and limited-quirks modes of the last whole snapshot's document; a delta
+    /// carries neither, so a changed mode (`document.open()` then a written doctype) takes a whole
+    /// snapshot, which rebuilds the renderer's document in that mode.
+    snapshot_quirks: std::cell::Cell<(bool, bool)>,
     /// Loads the document's sub-resources: made by `fetchers` from `loader`.
     fetcher: RefCell<Arc<dyn Fetcher>>,
     /// The document's network (`None` until the embedder gives it one).
@@ -462,6 +467,7 @@ impl BlitzGeometry {
         let base = self.document_base(dom, style.document());
         let location = dom.document_url_parsed(style.document()).ok().flatten().map_or("", url::Url::as_str);
         *self.snapshot_base.borrow_mut() = (base.text.clone(), location.to_owned());
+        self.snapshot_quirks.set((dom.is_quirks_mode(style.document()), dom.is_limited_quirks_mode(style.document())));
         let sheets = RefCell::new(HashMap::new());
         let tree = {
             let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), Some(&sheets));
@@ -617,7 +623,9 @@ impl BlitzGeometry {
             };
             let base = self.document_base(dom, style.document());
             let location = dom.document_url_parsed(style.document()).ok().flatten().map_or("", url::Url::as_str);
-            let same_base = { let previous = self.snapshot_base.borrow(); previous.0 == base.text && previous.1 == location };
+            let same_base = { let previous = self.snapshot_base.borrow(); previous.0 == base.text && previous.1 == location }
+                && self.snapshot_quirks.get()
+                    == (dom.is_quirks_mode(style.document()), dom.is_limited_quirks_mode(style.document()));
             if let (Some(restyled), true) = (restyled, vp == viewport && same_base) {
                 let profiling = pyro_render::profiling::on();
                 let t = profiling.then(Instant::now);
@@ -1466,6 +1474,7 @@ mod tests {
             scroll_stale: Default::default(),
             base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
             snapshot_base: RefCell::new(Default::default()),
+            snapshot_quirks: Default::default(),
             fetcher: RefCell::new(std::sync::Arc::new(NoFetch)),
             loader: RefCell::new(None),
             fetchers: Rc::new(|_| std::sync::Arc::new(NoFetch)),
