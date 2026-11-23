@@ -2261,10 +2261,28 @@ export class Page extends Scope {
   }
   async addScriptTag(o: { url?: string; path?: string; content?: string; type?: string }): Promise<null> {
     const content = o.content ?? (o.path ? readFileSync(o.path, 'utf8') : undefined);
+    if (o.url || content === undefined) {
+      await this._call(
+        'page.addScriptTag',
+        `({ url, content, type }) => new Promise((resolve, reject) => { const s = document.createElement('script'); if (type) s.type = type; if (url) { s.src = url; s.onload = () => resolve(null); s.onerror = () => reject(new Error('Failed to load script ' + url)); } else { s.textContent = content; } document.head.appendChild(s); if (!url) resolve(null); })`,
+        { arg: { url: o.url, content, type: o.type } },
+      );
+      return null;
+    }
+    // Inline content the page's CSP blocks rejects, as Playwright does on Chromium. The violation
+    // event (at the script, in a task queued while it was inserted) has run by the second call,
+    // which reads and removes what the first one's listener saw (no page timer: a paused
+    // page.clock must not hold it).
+    const id = `${Date.now()}-${Math.random()}`;
     await this._call(
       'page.addScriptTag',
-      `({ url, content, type }) => new Promise((resolve, reject) => { const s = document.createElement('script'); if (type) s.type = type; if (url) { s.src = url; s.onload = () => resolve(null); s.onerror = () => reject(new Error('Failed to load script ' + url)); } else { s.textContent = content; } document.head.appendChild(s); if (!url) resolve(null); })`,
-      { arg: { url: o.url, content, type: o.type } },
+      `({ id, content, type }) => { const store = (globalThis[Symbol.for('pyro.addScriptTag')] ??= new Map()); const s = document.createElement('script'); if (type) s.type = type; const entry = { violation: null }; entry.listener = (e) => { if (e.target === s) entry.violation = e.violatedDirective; }; document.addEventListener('securitypolicyviolation', entry.listener, true); try { s.textContent = content; document.head.appendChild(s); } catch (e) { document.removeEventListener('securitypolicyviolation', entry.listener, true); throw e; } store.set(id, entry); return null; }`,
+      { arg: { id, content, type: o.type } },
+    );
+    await this._call(
+      'page.addScriptTag',
+      `(id) => { const store = globalThis[Symbol.for('pyro.addScriptTag')]; const entry = store?.get(id); if (!entry) return null; store.delete(id); document.removeEventListener('securitypolicyviolation', entry.listener, true); if (entry.violation) throw new Error('Refused to execute inline script because it violates the following Content Security Policy directive: "' + entry.violation + '"'); return null; }`,
+      { arg: id },
     );
     return null;
   }
