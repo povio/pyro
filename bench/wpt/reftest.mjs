@@ -120,6 +120,11 @@ export const reftestEnv = (wpt) => ({
   PYRO_AUTOPLAY_POLICY: 'no-user-gesture-required',
   ...ahemEnv(wpt),
 });
+/** The browser's environment for testharness pages: Ahem and classic scrollbars (`ahemEnv`), and the autoplay policy
+ *  wptrunner gives Chrome for every test (`--autoplay-policy=no-user-gesture-required`), so a media page that plays
+ *  without a user gesture runs as in Chrome. Runner-only: the browser's own default (play needs a user activation)
+ *  does not change. */
+export const testharnessEnv = (wpt) => ({ PYRO_AUTOPLAY_POLICY: 'no-user-gesture-required', ...ahemEnv(wpt) });
 /** Ahem, for every kind of page (wptrunner installs it for every test; geometry pages measure its boxes), and classic
  *  scrollbars: wpt.fyi runs Chrome on Linux, whose scrollbars take 15px of their box and whose `scrollbar-gutter`
  *  reserves that (pyro's `--scrollbars classic`; overlay scrollbars, pyro's default, take none; an A/B run can set
