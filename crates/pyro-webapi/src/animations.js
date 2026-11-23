@@ -1102,7 +1102,9 @@
     let tries = 0;
     const attempt = () => {
       if (a.pendingGen !== gen || a.pending !== kind) return;
-      if (a.cssOwner && a.css === CSS_ANIMATION) {
+      // A CSS run's pending task first takes the engine's state: a style change event may have
+      // canceled it (a transition then goes idle with `ready` rejected, not resolved here).
+      if (a.cssOwner) {
         native.flushPlayback();
         if (a.pendingGen !== gen || a.pending !== kind) return;
       }
