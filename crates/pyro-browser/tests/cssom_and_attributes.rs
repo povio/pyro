@@ -155,6 +155,8 @@ fn img_srcset_and_sizes_select_the_current_source() {
 
 #[test]
 fn hidden_until_found_and_writing_suggestions_reflect() {
+    // Only a missing writingsuggestions attribute inherits; "true", "" and an invalid value
+    // are the true state, as in Chromium (WPT writingsuggestions.html, 50bd6c198).
     let (_t, root) = page();
     assert_eq!(
         eval(
@@ -171,7 +173,7 @@ fn hidden_until_found_and_writing_suggestions_reflect() {
                inner.setAttribute('writingsuggestions', ''); out.push(inner.writingSuggestions);
                return out.join(); })()"
         ),
-        "false,true,true,until-found,until-found,true,,false,false,false,true,true,false,true"
+        "false,true,true,until-found,until-found,true,,false,false,false,true,true,true,true"
     );
 }
 
