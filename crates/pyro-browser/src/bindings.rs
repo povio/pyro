@@ -1169,7 +1169,8 @@ fn run_navigation(b: &mut Browser, task: NavigationTask, stops: Option<u64>, mut
             if request.replace { crate::HistoryHandling::Replace } else { crate::HistoryHandling::Push },
         )
         .map(|loader| {
-            if planned && named.is_none() {
+            // `_top`/`_parent` of a top-level page, or the frame's own name, is this frame too.
+            if planned && named.is_none_or(|n| n == page) {
                 if let Some(mut state) = b.doc_mut(page) {
                     state.pending_planned = Some(loader);
                 }

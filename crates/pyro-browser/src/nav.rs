@@ -801,9 +801,16 @@ impl PageNav {
             }) {
                 // Dropped by `document.open()` (not superseded by a later script navigation, which
                 // owns the mark): the document's next navigation fires `beforeunload` itself.
-                let own = b
-                    .doc(page)
-                    .filter(|p| p.nav.state.borrow().doc_seq == document && p.nav.script_navigation.get() == sequence);
+                // Superseded by a newer navigation (`navigation_started`), the mark is that one's;
+                // stopped (`document.open()` also takes a number), it is nobody's.
+                let own = b.doc(page).filter(|p| {
+                    let st = p.nav.state.borrow();
+                    st.doc_seq == document
+                        && p.nav.script_navigation.get() == sequence
+                        && (st.stops != stops
+                            || started
+                                .is_none_or(|n| p.main_frame.page_dom.as_ref().is_none_or(|d| d.navigation_started() == n)))
+                });
                 if let Some(dom) = own.and_then(|p| p.main_frame.page_dom.clone()) {
                     dom.take_before_unload_fired();
                 }
@@ -976,19 +983,30 @@ impl PageNav {
             if members.iter().any(|m| m.traversal_pending(m.state.borrow().doc_seq)) {
                 return;
             }
+            let changes: Vec<_> = members
+                .into_iter()
+                .filter_map(|nav| {
+                    let change = {
+                        let st = nav.state.borrow();
+                        st.entries
+                            .iter()
+                            .rposition(|e| e.step <= target)
+                            .filter(|i| *i != st.index)
+                            .map(|i| (i, st.entries[i].clone(), st.doc_seq))
+                    };
+                    change.map(|change| (nav, change))
+                })
+                .collect();
+            // A traversal that takes a frame to another document does not take the place of
+            // that frame's planned form navigation that has begun: the joint step stays.
+            if changes.iter().any(|(nav, (_, entry, current_doc))| {
+                entry.doc != *current_doc && planned_navigation_begun(b, nav.page, &nav.frame_id)
+            }) {
+                return;
+            }
             joint.current.set(target);
-            for nav in members {
-                let change = {
-                    let st = nav.state.borrow();
-                    st.entries
-                        .iter()
-                        .rposition(|e| e.step <= target)
-                        .filter(|i| *i != st.index)
-                        .map(|i| (i, st.entries[i].clone(), st.doc_seq))
-                };
-                if let Some((index, entry, current_doc)) = change {
-                    apply_traversal(b, nav.page, &nav.frame_id, index, entry, current_doc, from);
-                }
+            for (nav, (index, entry, current_doc)) in changes {
+                apply_traversal(b, nav.page, &nav.frame_id, index, entry, current_doc, from);
             }
         });
     }
@@ -1451,6 +1469,16 @@ impl Browser {
     }
 }
 
+/// Whether the frame's planned form navigation has begun and is still its loading navigation.
+fn planned_navigation_begun_at(b: &Browser, page: crate::frames::FrameKey) -> bool {
+    b.doc(page).is_some_and(|p| p.pending_planned.is_some() && p.pending_planned.as_ref() == p.pending_loader())
+}
+
+/// [`planned_navigation_begun_at`] for a frame named by its page and id.
+fn planned_navigation_begun(b: &Browser, page: PageId, frame_id: &FrameId) -> bool {
+    b.page(page).and_then(|p| p.frames.key(frame_id)).is_some_and(|key| planned_navigation_begun_at(b, key))
+}
+
 /// Makes entry `index` (`entry`) of the frame `frame_id` of `page` its
 /// current one, as the traversal task of document `current_doc` asked:
 /// same-document at once (`popstate`), otherwise by loading it. False when
@@ -1469,9 +1497,7 @@ fn apply_traversal(
     let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return false };
     // A traversal to another document does not take the place of
     // the frame's planned form navigation that has begun.
-    if entry.doc != current_doc
-        && b.doc(page).is_some_and(|p| p.pending_planned.is_some() && p.pending_planned.as_ref() == p.pending_loader())
-    {
+    if entry.doc != current_doc && planned_navigation_begun_at(b, page) {
         return false;
     }
     // While a traversal to another document is under way, later traversals
