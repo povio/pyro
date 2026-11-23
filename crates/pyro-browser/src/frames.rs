@@ -1049,11 +1049,14 @@ impl FrameHost {
         if let Some(owner) = owner {
             nav.snapshot_container_policy(crate::loader::element_referrer_policy(&self.dom.borrow(), owner));
         }
+        // A `document.open()` on the frame's document from now on stops the navigation the
+        // attributes start (a javascript: src).
+        let stops = nav.stop_count();
         self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
             if let Some(mut doc) = b.doc_mut(key) {
                 doc.pending_frame_attributes -= 1;
             }
-            b.process_iframe_attributes(key, &loader);
+            b.process_iframe_attributes(key, &loader, stops);
             b.maybe_fire_load(parent);
         });
     }
@@ -2194,7 +2197,7 @@ impl Browser {
         );
         self.maybe_fire_load(key);
     }
-    pub(crate) fn process_iframe_attributes(&mut self, key: FrameKey, loader: &LoaderId) {
+    pub(crate) fn process_iframe_attributes(&mut self, key: FrameKey, loader: &LoaderId, stops: u64) {
         let Some(host) = self.page(key.page).map(|p| p.frames.clone()) else { return };
         // The cancel marker belongs to this queued processing: taken before any early return, so
         // a stale one cannot swallow a later lazy navigation of the frame.
@@ -2263,9 +2266,15 @@ impl Browser {
                 if let Some(mut doc) = self.doc_mut(key) {
                     doc.pending_frame_attributes += 1;
                 }
+                // `document.open()` on the frame's document since the attributes were queued stops
+                // loading: the javascript: URL is dropped (WPT
+                // document-open-cancels-javascript-url-navigation). One before then does not.
                 self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
                     if let Some(mut doc) = b.doc_mut(key) {
                         doc.pending_frame_attributes = doc.pending_frame_attributes.saturating_sub(1);
+                    }
+                    if b.doc(key).is_some_and(|d| d.nav.stop_count() != stops) {
+                        return;
                     }
                     let connected = |b: &Browser| {
                         b.page(key.page).is_some_and(|p| p.frames.dom.borrow().is_connected(owner).unwrap_or(false))
