@@ -300,10 +300,10 @@ fn install_listener_connected_hook(page: &Rc<PageDom>) {
     }
     let mut dom = page.dom.borrow_mut();
     if new || !dom.has_listener_connected_hook() {
-        dom.set_listener_connected_hook(Some(Rc::new(move |idx, all, callbacks| {
+        dom.set_listener_connected_hook(Some(Rc::new(move |id, all, callbacks| {
             let Ok(list) = pages.try_borrow() else { return };
             for page in list.iter().filter_map(std::rc::Weak::upgrade) {
-                page.keep_connected_listener_node(idx, all, callbacks);
+                page.keep_connected_listener_node(id, all, callbacks);
             }
         })));
     }
