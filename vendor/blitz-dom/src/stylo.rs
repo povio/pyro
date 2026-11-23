@@ -2071,6 +2071,25 @@ impl Node {
             push_style(declaration);
         }
 
+        // pyro: MathML Core § 2.1.3: `displaystyle="true"` or `"false"` (ASCII case-insensitive)
+        // on any MathML element sets its `math-style` to `normal` or `compact`, a presentational
+        // hint as in Chromium (over every UA rule, `math[display=block]` and `mfrac > *`
+        // included); any other value is ignored.
+        if elem.name.ns == ns!(mathml)
+            && let Some(value) = elem.attr(local_name!("displaystyle"))
+        {
+            let math_style = if value.eq_ignore_ascii_case("true") {
+                Some("normal")
+            } else if value.eq_ignore_ascii_case("false") {
+                Some("compact")
+            } else {
+                None
+            };
+            for declaration in math_style.map(|v| parse_css_declaration("math-style", v)).unwrap_or_default() {
+                push_style(declaration);
+            }
+        }
+
         // pyro: HTML § 15.4.1 "maps to the aspect-ratio property (using dimension rules)": an
         // img, video or image input whose width and height both parse as dimension values that
         // are not percentages has `aspect-ratio: auto w / h`, a ratio its natural one replaces
