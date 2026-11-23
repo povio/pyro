@@ -1578,7 +1578,12 @@ impl LayoutPassState<'_> {
                                 resolve_calc_value,
                                 |_known_size, _available_space| natural,
                             );
-                            if let Some(min) = keyword_min_width.filter(|_| inputs.known_dimensions.width.is_none()) {
+                            // (Also over a known width: the leaf layout clamps one by `max-width`, and inline
+                            // layout hands an atomic inline with a keyword minimum its bounded width as one.
+                            // Not over one an aspect ratio gave: block layout resolves the keyword against
+                            // that ratio, CSS Sizing 4 § 5.1.)
+                            let known_from_ratio = inputs.known_dimensions.width.is_some() && style.aspect_ratio().is_some();
+                            if let Some(min) = keyword_min_width.filter(|_| !known_from_ratio) {
                                 out.size.width = out.size.width.max(min);
                             }
                             return ChildLayout::Done(out);

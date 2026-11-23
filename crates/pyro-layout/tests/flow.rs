@@ -1224,6 +1224,16 @@ fn flow_parity_shrink_to_fit_min_content_floor() {
 }
 
 #[test]
+fn range_min_content_minimum_beats_a_percentage_maximum_inline() {
+    // `min-width: min-content` floors the range at its natural 129px over `max-width: 50%`, also
+    // when inline layout hands the box a width bounded by its keywords (WPT css-sizing
+    // `range-percent-intrinsic-size-1`, Chromium).
+    let html = "<!doctype html><div style='width:30px'><div style='display:inline-block'>\
+                <input id=r type=range style='margin:2px;max-width:50%;min-width:min-content'></div></div>";
+    assert_eq!(page(html).metrics("r")[2], 129.0);
+}
+
+#[test]
 fn flex_compressible_mixed_percentage_keeps_length() {
     for (direction, writing_mode, metric) in [("row", "horizontal-tb", 2), ("column", "vertical-lr", 3)] {
         for kind in ["text", "range"] {
