@@ -2460,7 +2460,12 @@ impl Dom {
             _ if self.is_face_idx(i) => return Ok(self.face_will_validate_idx(i)),
             _ => false,
         };
-        if !listed || self.is_disabled_idx(i) || self.readonly_applies_and_set_idx(i) {
+        // HTML "barred from constraint validation": an input with a readonly attribute is barred whatever its
+        // type, even where readonly does not otherwise apply (color, file, submit; the WPT willValidate page); so is a readonly
+        // textarea. A readonly button or select stays a candidate.
+        let readonly_bars = matches!(&**local, "input" | "textarea")
+            && self.n(i).element().is_some_and(|e| e.attr_local(&local_name!("readonly")).is_some());
+        if !listed || self.is_disabled_idx(i) || readonly_bars {
             return Ok(false);
         }
         // Not inside a <datalist>.
