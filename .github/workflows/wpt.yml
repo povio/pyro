@@ -94,7 +94,8 @@ jobs:
       browser-cached: ${{ steps.keys.outputs.browser-cached }}
       reftest-runner: ${{ steps.reftest.outputs.runner }}
       reftest-shards: ${{ steps.reftest.outputs.shards }}
-      linux-jsc-key: ${{ steps.keys.outputs.linux-jsc-key }}
+      linux-check: ${{ steps.plan.outputs.linux-check }}
+      pgo-check: ${{ steps.plan.outputs.pgo-check }}
       linux-browser-key: ${{ steps.keys.outputs.linux-browser-key }}
       linux-browser-cached: ${{ steps.keys.outputs.linux-browser-cached }}
       linux-baseline: ${{ steps.keys.outputs.linux-baseline }}
@@ -105,7 +106,24 @@ jobs:
             crates/pyro-jsc-sys/webkit
             scripts/jsc
             scripts/linux
+            scripts/ci
             bench/wpt
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - name: Build plan
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = 0000000000000000000000000000000000000000 ]; then
+            git fetch --no-tags --depth=2 origin "$GITHUB_SHA"
+            BASE_SHA=$(git rev-parse HEAD^1)
+          else
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          bun test --timeout 30000 scripts/ci/plan.test.mjs
+          bun scripts/ci/plan.mjs "$BASE_SHA"
       - name: Cache keys
         id: keys
         env:
@@ -127,27 +145,22 @@ jobs:
           }
           {
             echo "jsc-dir=$jsc_dir"
-            echo "jsc-cached=$(cached "patched-jsc-static-macos-arm64-$jsc_dir")"
+            echo "jsc-cached=$(cached "patched-jsc-static-macos-arm64-v2-$jsc_dir")"
             echo "browser-key=$browser_key"
             echo "browser-cached=$(cached "$browser_key")"
           } | tee -a "$GITHUB_OUTPUT"
-          # The Linux x64 browser for the testharness pages (jsc.yml's linux job keys its JavaScriptCore the same way).
+          # The Linux x64 browser for testharness pages (jsc-linux.yml uses the same JSC cache key).
           linux_jsc_key="patched-jsc-static-linux-x64-$jsc_dir-$(sha256sum scripts/linux/setup.sh | cut -c1-8)"
           linux_browser_key="wpt-browser-linux-x64-$(printf '%s\n' "$inputs" "${toolchain%% *}" "$linux_jsc_key" ubuntu-24.04 | sha256sum | cut -c1-16)"
           # Once bench/wpt/baseline-linux.json is committed, the testharness gate runs on Linux only (see `wpt-linux`).
           linux_baseline=false
           if [ -f bench/wpt/baseline-linux.json ]; then linux_baseline=true; fi
           {
-            echo "linux-jsc-key=$linux_jsc_key"
             echo "linux-browser-key=$linux_browser_key"
             echo "linux-browser-cached=$(cached "$linux_browser_key")"
             echo "linux-baseline=$linux_baseline"
           } | tee -a "$GITHUB_OUTPUT"
-      # The reftest shards run on the self-hosted runner (lp-m1), as every other macOS job: two shards, one per lp-m1
-      # machine (worker-2-air, worker-3-m1), balanced by the baseline's durations as the testharness shards are. A
-      # manual run can pick GitHub's macos-15 runners (four shards side by side; billed as macOS minutes); their
-      # results matched lp-m1's but for one animation page's timing (bench/wpt/README.md, "Reftests"). None for
-      # `suites: testharness`.
+      # Four balanced shards use the expanded macOS pool; hosted runners remain an explicit manual option.
       - name: Reftest shards
         id: reftest
         env:
@@ -157,8 +170,7 @@ jobs:
           runner="${RUNNER:-default}"
           if [ "$runner" = default ]; then runner=lp-m1; fi
           if [ "$SUITES" = testharness ] || [ "$SUITES" = crashtest ]; then shards='[]'
-          elif [ "$runner" = macos-15 ]; then shards='[0, 1, 2, 3]'
-          else shards='[0, 1]'; fi
+          else shards='[0, 1, 2, 3]'; fi
           { echo "runner=$runner"; echo "shards=$shards"; } | tee -a "$GITHUB_OUTPUT"
 
   # The patched JavaScriptCore, built (about 7 minutes) only when neither it nor the browser is cached.
@@ -196,41 +208,55 @@ jobs:
           PATH: /usr/bin:/bin:/usr/sbin:/sbin
         if: needs.jsc.result != 'success'
         with:
-          path: ~/Library/Caches/pyro/jsc/${{ needs.prepare.outputs.jsc-dir }}
-          key: patched-jsc-static-macos-arm64-${{ needs.prepare.outputs.jsc-dir }}
+          path: jsc/${{ needs.prepare.outputs.jsc-dir }}
+          key: patched-jsc-static-macos-arm64-v2-${{ needs.prepare.outputs.jsc-dir }}
           fail-on-cache-miss: true
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --no-self-update
-      # Dependencies only (workspace crates always rebuild). Only main saves: pull requests restore main's cache, and
-      # their own entries would evict it from the repository's cache budget.
+      # Registry/git downloads only: target archives took minutes to save and do not retain workspace/path crates.
+      # sccache below covers compiler objects, including vendored path dependencies.
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: wpt-wptiter
+          shared-key: wpt-registry-macos-arm64
+          cache-targets: false
           # Its post step deletes binaries it does not know from ~/.cargo/bin, rustup among them, which
           # broke the Rust install of the self-hosted runner (lp-m1).
           cache-bin: false
           # Also the integration pull requests (integration/*), whose runs rebuild most often.
           save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.head_ref, 'integration/') }}
+      - name: Isolate the compiler-cache server
+        # Separate sockets keep concurrent registrations on one Mac in their own job/token scopes.
+        run: |
+          socket_dir=$(mktemp -d "$RUNNER_TEMP/sccache.XXXXXX")
+          echo "SCCACHE_SERVER_UDS=$socket_dir/sock" >> "$GITHUB_ENV"
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        id: sccache
+        with:
+          # Stats and cleanup run below, before the post phase; do not restart a stopped server there.
+          disable_annotations: 'true'
       # wptiter: release-fast (Cargo.toml) without LTO and with 16 codegen units, defined here so Cargo.toml and the
       # release workflows keep their profiles. Same reftest results as release-fast (2026-11-18, at 1363c0eb9: the 792
       # css-backgrounds and compositing reftests, 774 pass and 18 fail with either binary) and a much faster build,
       # since every workspace and vendored crate rebuilds each run.
       - name: Build the browser against the patched JavaScriptCore
         env:
+          SCCACHE_GHA_ENABLED: 'true'
+          RUSTC_WRAPPER: sccache
+          CARGO_PROFILE_WPTITER_DEBUG: 'false'
           CARGO_PROFILE_WPTITER_INHERITS: release-fast
           CARGO_PROFILE_WPTITER_LTO: 'false'
           CARGO_PROFILE_WPTITER_CODEGEN_UNITS: '16'
           CARGO_PROFILE_WPTITER_INCREMENTAL: 'false'
         run: |
-          export PYRO_JSC_DIR="$HOME/Library/Caches/pyro/jsc/$JSC_DIR"
-          if [ -d patched-jsc ]; then
-            mkdir -p "$(dirname "$PYRO_JSC_DIR")"
-            # The runner keeps its home between jobs, and another job may have left this build there: replace it
-            # (mv would move the artifact inside it, or fail once it is there), as publish-npm.yml does.
-            rm -rf "$PYRO_JSC_DIR"
-            mv patched-jsc "$PYRO_JSC_DIR"
-          fi
+          export PYRO_JSC_DIR="$GITHUB_WORKSPACE/jsc/$JSC_DIR"
+          # Artifact consumers use their workspace: multiple runner registrations can share one Mac's home.
+          if [ -d patched-jsc ]; then export PYRO_JSC_DIR="$GITHUB_WORKSPACE/patched-jsc"; fi
           cargo +stable build --locked --profile wptiter --package pyro
+      - name: Compiler-cache stats and shutdown
+        if: always() && steps.sccache.outcome == 'success'
+        run: |
+          sccache --show-stats || true
+          sccache --stop-server || true
       - name: Stage and check the browser
         run: |
           mkdir browser
@@ -282,18 +308,8 @@ jobs:
         working-directory: bench
         run: bun install --frozen-lockfile
       # The pinned WPT revision, only the directories bench/wpt/wpt-paths.txt lists (about 290 MB).
-      - uses: actions/cache@v4
-        env:
-          PATH: /usr/bin:/bin:/usr/sbin:/sbin
-        id: wpt-cache
-        with:
-          path: wpt
-          key: wpt-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
-      # --venv: the reftest and crashtest jobs share this cache key and serve their pages with wptserve, whose Python
-      # venv lives in the checkout (wpt/.git/pyro-venv): whichever job saves the entry saves the venv with it.
-      - name: Fetch WPT and wptserve's venv
-        if: steps.wpt-cache.outputs.cache-hit != 'true'
-        run: bench/wpt/fetch-wpt.sh --venv wpt
+      - name: Prepare local WPT checkout
+        run: bench/wpt/prepare-ci-wpt.sh subset
       # The browser: this run's build, or the cached one when its inputs did not change.
       - uses: actions/download-artifact@v4
         if: needs.build.result == 'success'
@@ -324,7 +340,7 @@ jobs:
           full=()
           if [ "$FULL" = true ]; then full=(--full); fi
           # Earlier arguments win, so runner-args can override the defaults after them.
-          bun bench/wpt/gate.mjs run "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$JOBS" \
+          bun bench/wpt/gate.mjs run "${extra[@]}" --wpt "$WPT_DIR" --bin browser/pyro --jobs "$JOBS" \
             --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -463,16 +479,67 @@ jobs:
           retention-days: 30
           overwrite: true
 
-  # ---------- The testharness pages on GitHub's Linux runners (x64), off the two lp-m1 Macs ----------
+  # ---------- The testharness pages on GitHub's Linux runners (x64) ----------
   # Testharness compares no pixels, so its gate does not need macOS. bench/wpt/baseline-linux.json is the Linux
   # baseline, bootstrapped from this job's CI output (the `wpt-linux-baseline` artifact), never edited by hand. Until it
   # is committed, these jobs only report (gate.mjs bootstrap: every page twice) and the macOS `wpt`/`gate` jobs keep
   # gating; once it is committed, prepare's `linux-baseline` turns the macOS testharness jobs off. Pages whose results
   # differ between the platforms are listed, with the reason, in bench/wpt/README.md ("Linux and macOS").
-  build-linux:
+  jsc-linux-x64:
     needs: prepare
-    if: ${{ !cancelled() && needs.prepare.outputs.linux-browser-cached != 'true' && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
-    # Ubuntu 24.04, as jsc.yml's linux job and linux-build.yml: the cached JavaScriptCore archive was compiled against
+    if: needs.prepare.outputs.linux-check == 'true' || (needs.prepare.outputs.linux-browser-cached != 'true' && inputs.suites != 'reftest' && inputs.suites != 'crashtest')
+    concurrency:
+      group: wpt-jsc-linux-x64-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/jsc-linux.yml
+    with:
+      arch: x64
+
+  jsc-linux-arm64:
+    needs: prepare
+    if: needs.prepare.outputs.linux-check == 'true'
+    concurrency:
+      group: wpt-jsc-linux-arm64-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/jsc-linux.yml
+    with:
+      arch: arm64
+
+  linux-x64:
+    needs: [prepare, jsc-linux-x64]
+    if: needs.prepare.outputs.linux-check == 'true'
+    concurrency:
+      group: wpt-linux-native-x64-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      arch: x64
+      jsc-dir: ${{ needs.jsc-linux-x64.outputs.dir }}
+      pgo: ${{ needs.prepare.outputs.pgo-check == 'true' }}
+
+  linux-arm64:
+    needs: [prepare, jsc-linux-arm64]
+    if: needs.prepare.outputs.linux-check == 'true'
+    concurrency:
+      group: wpt-linux-native-arm64-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      arch: arm64
+      jsc-dir: ${{ needs.jsc-linux-arm64.outputs.dir }}
+      pgo: ${{ needs.prepare.outputs.pgo-check == 'true' }}
+
+  pgo:
+    needs: prepare
+    if: needs.prepare.outputs.pgo-check == 'true'
+    uses: ./.github/workflows/pgo.yml
+    with:
+      linux: false
+
+  build-linux:
+    needs: [prepare, jsc-linux-x64]
+    if: ${{ !cancelled() && !failure() && needs.jsc-linux-x64.result == 'success' && needs.prepare.outputs.linux-browser-cached != 'true' && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    # Ubuntu 24.04, as jsc-linux.yml and linux-build.yml: the cached JavaScriptCore archive was compiled against
     # that release's ICU 74 (symbols u_tolower_74, ...), and ubuntu-latest's newer image has ICU 78, so linking there
     # fails. The browser then carries ICU 74 beside it (bundle-icu-linux.sh).
     runs-on: ubuntu-24.04
@@ -495,27 +562,22 @@ jobs:
           df -h . /mnt 2>/dev/null || df -h .
       - name: Install build dependencies
         run: scripts/linux/setup.sh
-      # The patched JavaScriptCore (jsc.yml's linux job saves it on main); built here only on a miss (~28 minutes).
-      - uses: actions/cache/restore@v4
-        id: jsc-cache
+      # Shared with the Linux release-profile/PGO check in this run.
+      - uses: actions/download-artifact@v4
         with:
-          path: ~/.cache/pyro/jsc/${{ needs.prepare.outputs.jsc-dir }}
-          key: ${{ needs.prepare.outputs.linux-jsc-key }}
-      - name: Build patched JavaScriptCore
-        if: steps.jsc-cache.outputs.cache-hit != 'true'
-        env:
-          JOBS: '4'
-        run: scripts/jsc/build.sh
-      - uses: actions/cache/save@v4
-        if: steps.jsc-cache.outputs.cache-hit != 'true'
-        with:
-          path: ~/.cache/pyro/jsc/${{ needs.prepare.outputs.jsc-dir }}
-          key: ${{ needs.prepare.outputs.linux-jsc-key }}
+          name: patched-jsc-linux-x64
+          path: patched-jsc
+      - name: Install patched JavaScriptCore
+        run: |
+          mkdir -p "$HOME/.cache/pyro/jsc"
+          mv patched-jsc "$HOME/.cache/pyro/jsc/$JSC_DIR"
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: wpt-linux-x64-wptiter
+          shared-key: wpt-registry-linux-x64
+          cache-targets: false
+          cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.head_ref, 'integration/') }}
       # sccache on the Actions cache: the vendored crates are path dependencies, which rust-cache does not keep.
       - uses: mozilla-actions/sccache-action@v0.0.9
@@ -745,19 +807,23 @@ jobs:
       - name: Install the runner's dependencies
         working-directory: bench
         run: bun install --frozen-lockfile
-      # A PATH without zstd on every cache step: the first lp-m1 machine has none, so its cache entries are gzip, and a
-      # machine with zstd (the second lp-m1 runner, GitHub's macOS images) would look for another cache version and miss them.
+      - name: Prepare local WPT checkout
+        if: runner.environment == 'self-hosted'
+        run: bench/wpt/prepare-ci-wpt.sh subset
       - uses: actions/cache@v4
+        if: runner.environment == 'github-hosted'
         id: wpt-cache
         env:
           PATH: /usr/bin:/bin:/usr/sbin:/sbin
         with:
           path: wpt
           key: wpt-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
-      # Every run, cached or not: the reftests and crashtests are served by wptserve (README "wptserve"), which needs
-      # the Python venv in the checkout. With the checkout cached this only checks the venv (made again if it was
-      # made from other requirements or does not run here, e.g. a cache another machine saved).
+      # Every run on a GitHub-hosted runner, cached or not: the reftests are served by wptserve (README "wptserve"),
+      # which needs the Python venv in the checkout. With the checkout cached this only checks the venv (made again if
+      # it was made from other requirements or does not run here). A self-hosted runner's checkout has it already
+      # (prepare-ci-wpt.sh).
       - name: Fetch WPT and wptserve's venv
+        if: runner.environment == 'github-hosted'
         run: bench/wpt/fetch-wpt.sh --venv wpt
       - uses: actions/download-artifact@v4
         if: needs.build.result == 'success'
@@ -790,7 +856,7 @@ jobs:
           # machines (runs 44292757214, 44295604936, 44298843277): --jobs 8 130 s per shard, 30% of 8 CPUs; 12 101-111 s,
           # 40%, same results; 16 88-89 s, 47%, same results but one first-run timeout that its reruns passed; no
           # swap growth, no thermal limit, Low Power Mode off. Earlier arguments win, so reftest-args can override.
-          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
+          bun bench/wpt/gate.mjs run --kind reftest "${extra[@]}" --wpt "${WPT_DIR:-wpt}" --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
             --shard "$SHARD" "${full[@]}" --out "$OUT" --no-check
           # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
           bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;
@@ -911,18 +977,8 @@ jobs:
       - name: Install the runner's dependencies
         working-directory: bench
         run: bun install --frozen-lockfile
-      - uses: actions/cache@v4
-        id: wpt-cache
-        env:
-          PATH: /usr/bin:/bin:/usr/sbin:/sbin
-        with:
-          path: wpt
-          key: wpt-${{ hashFiles('bench/wpt/wpt-revision.txt', 'bench/wpt/wpt-paths.txt', 'bench/wpt/fetch-wpt.sh') }}
-      # Every run, cached or not: the reftests and crashtests are served by wptserve (README "wptserve"), which needs
-      # the Python venv in the checkout. With the checkout cached this only checks the venv (made again if it was
-      # made from other requirements or does not run here, e.g. a cache another machine saved).
-      - name: Fetch WPT and wptserve's venv
-        run: bench/wpt/fetch-wpt.sh --venv wpt
+      - name: Prepare local WPT checkout
+        run: bench/wpt/prepare-ci-wpt.sh subset
       - uses: actions/download-artifact@v4
         if: needs.build.result == 'success'
         with:
@@ -941,7 +997,6 @@ jobs:
       # checkout, venv and browser.
       - name: Discovery and runner tests
         env:
-          WPT_DIR: ${{ github.workspace }}/wpt
           PYRO_BIN: ${{ github.workspace }}/browser/pyro
         run: bun test bench/wpt/crashtest.test.mjs bench/wpt/server.test.mjs bench/wpt/wptserve.test.mjs
       - name: Machine diagnostics (before)
@@ -958,7 +1013,7 @@ jobs:
           # A runner can cap its share with PYRO_CI_CPUS in its .env (the Mac Studio runner uses 4).
           # 44307460716): --jobs 8 21.0 s, 36% of 8 CPUs; --jobs 16 15.5 s, 59%; all 1,979 pages pass in both, no reruns,
           # no swap growth, no thermal limit. Earlier arguments win, so crashtest-args can override.
-          bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt wpt --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
+          bun bench/wpt/gate.mjs run --kind crashtest "${extra[@]}" --wpt "$WPT_DIR" --bin browser/pyro --jobs "$(( ${PYRO_CI_CPUS:-$(sysctl -n hw.ncpu)} * 2 ))" \
             "${full[@]}" --out wpt-crashtest-shard-0.json --no-check
           # CPU share of the machine: (browser + runner CPU) / (wall x CPUs); event loop lag of the runner.
           bun -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1])); const n = require("os").cpus().length;

@@ -421,7 +421,7 @@ impl Browser {
         let Some(bindings) = &p.main_frame.page_dom else { return false };
         let dom = bindings.dom.borrow();
         p.stylesheets.entries.values().any(|sheet| {
-            sheet.pending && sheet.parser_inserted && {
+            (sheet.pending || p.stylesheets.style_imports.get(&sheet.node.node).is_some_and(|imports| imports.link)) && sheet.parser_inserted && {
                 let media = dom.get_attribute(sheet.node.node, "media").ok().flatten().unwrap_or("");
                 media.is_empty() || pyro_dom::media::matches(media, &bindings.viewport())
             }
@@ -749,7 +749,7 @@ impl Browser {
         let (Some(finished), Some(bindings)) = (finished, bindings) else { return false };
         bindings.unblock_rendering(node);
         self.queue_style_event(page, loader.clone(), &bindings, node, !finished.failed);
-        finished.script_blocking
+        finished.script_blocking || finished.link
     }
 
     /// Fires `load` (`ok`) or `error` at a processed `<style>` in a later

@@ -55,6 +55,10 @@ features:
     linkText: Install
 ---
 
+The RC.5 standalone macOS arm64 browser fully passed **15,277 of 30,179 eligible non-CSS test pages** across 320 shards on two Macs. [RC.6 release details, standalone census and editing results →](/reference/round-seven)
+
+[Round six compatibility progress: 749 more CSS test pages pass in full →](/reference/round-six)
+
 ## Measured on a real app suite
 
 | Test style | Per test | Against |

@@ -118,7 +118,7 @@ const shownTests = computed(() => tests.value.slice(0, SHOWN));
 const kindTests = computed(() => (page.value?.tests ?? []).filter((t) => t.k === kind.value).length);
 
 const result = (t: Test) => {
-  if (t.s === null) return { text: 'not run', cls: 'notrun' };
+  if (t.s === null) return { text: 'no CI result', cls: 'notrun' };
   if (passes(t)) return { text: 'pass', cls: 'pass' };
   if (t.s !== 'complete') return { text: t.s, cls: 'fail' };
   return { text: 'fail', cls: 'fail' };
@@ -185,6 +185,11 @@ const chart = computed(() => {
       </template>
     </nav>
 
+    <p v-if="!props.path" class="round-progress">
+      <a :href="withBase('/reference/round-six.html')">Round six compatibility progress →</a>
+      <span>749 more CSS test pages pass in full on the 8,082-page comparison.</span>
+    </p>
+
     <p v-if="error" class="error">{{ error }}</p>
     <p v-else-if="!page" class="muted">Loading…</p>
     <template v-else>
@@ -194,6 +199,20 @@ const chart = computed(() => {
         </button>
       </div>
 
+      <p class="meta">
+        Main CI recorded results for {{ num(counts[1]) }} of {{ num(counts[0]) }} pages at
+        <code>{{ page.sha.slice(0, 10) }}</code>. A missing result leaves the outcome unknown for this snapshot.
+        Separate release-candidate measurements appear in the
+        <a :href="withBase('/reference/round-seven.html')">round seven report</a>.
+      </p>
+      <details v-if="!props.path && kind === 'testharness'">
+        <summary>Why 6,507 URLs had no CI result at fc180f6c5</summary>
+        <p>Of the 6,507 missing baseline rows, separate measurements covered 5,648 non-CSS URLs and 489 CSS URLs.
+          Earlier runs covered another 249. The inspected archives contained no observation for the remaining 121.</p>
+        <p>Within those same 6,507 URLs, 4,318 were worker variants and 2,021 appeared on the earlier dashboard
+          before a baseline run lost shard 0. These counts overlap the categories above.
+          <a href="https://github.com/povio/pyro/tree/166a2be8c4d1e0b9ec4762d2a2b37df194e1cfbd/evidence/wpt-status-fc180f6c5">Per-URL audit and baseline history</a></p>
+      </details>
       <div class="stats">
         <div class="stat">
           <div class="big">{{ pct(counts[2], counts[0]) }}</div>
@@ -201,7 +220,7 @@ const chart = computed(() => {
         </div>
         <div class="stat">
           <div class="big">{{ num(counts[0] - counts[1]) }}</div>
-          <div class="label">not run yet ({{ pct(counts[0] - counts[1], counts[0]) }})</div>
+          <div class="label">without a CI result ({{ pct(counts[0] - counts[1], counts[0]) }})</div>
         </div>
         <div v-if="kind === 'testharness'" class="stat">
           <div class="big">{{ pct(counts[3], counts[4]) }}</div>
@@ -241,7 +260,7 @@ const chart = computed(() => {
       </section>
 
       <p class="meta">
-        Data from commit <code>{{ page.sha.slice(0, 10) }}</code> ({{ page.date.slice(0, 10) }}) · WPT <code>{{ page.wpt.slice(0, 10) }}</code>
+        Main CI snapshot at commit <code>{{ page.sha.slice(0, 10) }}</code> ({{ page.date.slice(0, 10) }}) · WPT <code>{{ page.wpt.slice(0, 10) }}</code>
         <template v-if="page.chrome"> · Chrome {{ page.chrome.version }} on wpt.fyi at WPT <code>{{ page.chrome.revision.slice(0, 10) }}</code></template>
       </p>
 
@@ -251,7 +270,7 @@ const chart = computed(() => {
           <table>
             <thead>
               <tr>
-                <th>Area</th><th class="r">Passed / tests</th><th class="r">Test %</th><th class="r">Not run</th>
+                <th>Area</th><th class="r">Passed / tests</th><th class="r">Test %</th><th class="r">No CI result</th>
                 <th v-if="kind === 'testharness'" class="r">Subtests passed / total</th>
                 <th v-if="kind === 'testharness'" class="r">Subtest %</th>
                 <th v-if="page.chrome" class="r">Chrome</th>
@@ -275,7 +294,7 @@ const chart = computed(() => {
       <section v-if="kindTests">
         <h2>Tests in this directory</h2>
         <div class="filters">
-          <button v-for="f in (['all', 'fail', 'pass', 'notrun'] as const)" :key="f" :class="{ on: filter === f }" @click="filter = f">{{ { all: 'All', fail: 'Failing', pass: 'Passing', notrun: 'Not run' }[f] }}</button>
+          <button v-for="f in (['all', 'fail', 'pass', 'notrun'] as const)" :key="f" :class="{ on: filter === f }" @click="filter = f">{{ { all: 'All', fail: 'Failing', pass: 'Passing', notrun: 'No CI result' }[f] }}</button>
           <input v-model="query" type="search" placeholder="Filter by name" aria-label="Filter tests by name" />
         </div>
         <div class="scroll">
@@ -312,6 +331,9 @@ const chart = computed(() => {
 .crumbs { font-size: 1.5rem; font-weight: 600; margin: 0 0 1rem; word-break: break-word; }
 .crumbs a { color: var(--vp-c-brand-1); text-decoration: none; }
 .crumbs .sep { color: var(--vp-c-text-3); margin: 0 0.35em; }
+.round-progress { display: flex; flex-wrap: wrap; gap: .25em 1em; border-left: 3px solid var(--vp-c-brand-1); padding: .45em .85em; }
+.round-progress a { font-weight: 600; }
+.round-progress span { color: var(--vp-c-text-2); }
 .tabs, .ranges, .filters { display: flex; flex-wrap: wrap; gap: 6px; }
 .tabs { margin-bottom: 1rem; }
 button { border: 1px solid var(--vp-c-divider); border-radius: 6px; padding: 4px 10px; font-size: 0.875rem; color: var(--vp-c-text-2); background: var(--vp-c-bg); }

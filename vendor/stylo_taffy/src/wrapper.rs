@@ -21,7 +21,7 @@ bitflags! {
     /// Flags for style information that Taffy needs but which is not part of the
     /// stylo [`ComputedValues`]
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-    pub struct StyleFlags: u16 {
+    pub struct StyleFlags: u32 {
         /// Whether the node is a replaced element (e.g. an image or form control)
         const IS_REPLACED = 1 << 0;
         /// Whether an inline span laid out by the node (an inline root) is a containing block
@@ -66,6 +66,7 @@ bitflags! {
         /// pyro: the node's document lays out classic scrollbars (`crate::scrollbars`); without
         /// it scrollbars are overlay scrollbars, which take no space.
         const CLASSIC_SCROLLBARS = 1 << 15;
+        const IS_AUDIO_CONTROL = 1 << 16;
     }
 }
 
@@ -412,6 +413,9 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
 
     #[inline]
     fn aspect_ratio(&self) -> Option<f32> {
+        if self.flags.contains(StyleFlags::IS_AUDIO_CONTROL) {
+            return None;
+        }
         let aspect_ratio = self.style.get_position().aspect_ratio;
         // pyro: `aspect-ratio` does not apply to internal table boxes (css-sizing-4 §2; WPT
         // css-sizing `aspect-ratio/table-element-001`).

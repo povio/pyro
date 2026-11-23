@@ -314,270 +314,18 @@ impl PageHooks for Hooks {
         });
     }
 
-    fn navigate(&self, mut request: NavigationRequest) {
-        let page = self.page;
-        let loader = self.loader.clone();
-        // A link or GET form targeting the name of a popup this document opened, and no frame of
-        // the page: that popup navigates (as `window.open` with the name does), instead of a new
-        // window opening.
-        if let (Some(name), Some(host)) = (request.target.as_deref(), self.frames.upgrade()) {
-            let named = !matches!(name.to_ascii_lowercase().as_str(), "" | "_blank" | "_self" | "_top" | "_parent");
-            if named
-                && request.method == "GET"
-                && request.body.is_none()
-                && !request.url.starts_with("javascript:")
-                && host.matches(page, &loader)
-                && host.named_frame(page, name).is_none()
-            {
-                if let Some(dom) = host.page_dom(page) {
-                    if pyro_webapi::navigate_named_popup(&dom, name, &request.url) {
-                        return;
-                    }
-                }
-            }
-        }
-        // `window.open` of a new browsing context: HTML creates its initial
-        // about:blank document now, so the opener can script it before the
-        // embedder makes the page (`Browser::create_page_with`).
-        if let (Some(ticket), Some(host)) = (request.popup.as_ref(), self.frames.upgrade()) {
-            let new_context = request.method == "GET"
-                && host.matches(page, &loader)
-                && request.target.as_deref().is_some_and(|t| {
-                    !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent")
-                        && host.named_frame(page, t).is_none()
-                })
-                && host.frame(page).is_some_and(|f| !f.sandbox.popups_blocked);
-            if new_context {
-                match host.prebuild_popup(page, ticket.session_storage(), ticket.name().to_owned(), request.window_features) {
-                    Ok(prebuilt) => {
-                        if let Some(dom) = &prebuilt.frame.page_dom {
-                            ticket.attach_page(dom);
-                        }
-                        ticket.set_prebuilt(Box::new(prebuilt));
-                    }
-                    Err(e) => eprintln!("pyro: cannot make the popup's initial document: {e:?}"),
-                }
-            }
-        }
-        let user_gesture = self.frames.upgrade().and_then(|host| host.page_dom(page)).is_some_and(|dom| dom.window_open_user_gesture());
-        // CSP: a `javascript:` URL is checked against the policies of the document that made
-        // the request (the link's, the form's, `window.open`'s caller's), snapshotted now.
-        let initiator = request
-            .url
-            .get(..11)
-            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("javascript:"))
-            .then(|| self.frames.upgrade().and_then(|host| host.page_dom(page)))
-            .flatten()
-            .map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom));
-        // HTML "navigate": a GET of the document's own URL with a fragment is
-        // a fragment navigation, done at once (the URL has changed when the
-        // link's `click()` returns) and never a reload.
-        let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
-        // The frame the navigation is for: this one, or a frame of this page
-        // the target names (`<a target>`, `<form target>`). Its `navigate`
-        // event fires and its fragment navigations stay in its document, as
-        // HTML "navigate" runs on the target navigable.
-        // HTML "the rules for choosing a navigable" look the name up whatever noopener says
-        // (noopener only keeps the opener unset and window.open's result null); a newly
-        // created top-level traversable still gets the requested target name.
-        let lookup_target = request.target.as_deref();
-        let mut cross_origin_target = false;
-        let nav = self.frames.upgrade().filter(|host| host.matches(page, &loader)).and_then(|host| {
-            let key = if own_frame {
-                Some(page)
-            } else {
-                request.target.as_deref().and_then(|t| match host.ancestor_target(page, t, user_gesture) {
-                    Some(ancestor) => ancestor,
-                    None => lookup_target.and_then(|t| host.named_frame(page, t)),
-                })
-            };
-            cross_origin_target = key.is_some_and(|key| !host.same_origin(page, key));
-            key.and_then(|key| host.nav(key))
-        });
-        let get = request.method == "GET" && request.body.is_none();
-        // What the `navigate` event says of where the navigation is from.
-        let source = crate::nav::NavigateSource {
-            element: request
-                .source
-                .filter(|_| !cross_origin_target)
-                .and_then(|el| Some((self.frames.upgrade()?.frame(page)?.page_dom.clone()?, el))),
-            form_entries: request.form_entries.take(),
-            replace: request.replace,
-            cross_origin: cross_origin_target,
-        };
-        if get && nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment_from(&request.url, &source)) {
-            return;
-        }
-        {
-            // Navigation API: the document's `navigate` event may cancel
-            // or intercept the load. A cross-document navigation a
-            // cross-origin document starts fires none (HTML "navigate").
-            if let Some(nav) =
-                nav.as_ref().filter(|_| !request.url.starts_with("javascript:") && !cross_origin_target)
-            {
-                // HTML "navigate" with history handling "auto": a navigation
-                // to the document's own URL replaces its entry.
-                let kind = if request.replace || request.url == nav.url() { "replace" } else { "push" };
-                match nav.navigate_event_from(kind, &request.url, &source) {
-                    crate::nav::NavigateDecision::Cancel => return,
-                    crate::nav::NavigateDecision::Intercept => return nav.commit_intercepted(&request.url, kind),
-                    crate::nav::NavigateDecision::Proceed => {}
-                }
-            }
-        }
-        // `document.open()` before the task runs drops it (stop loading).
-        let stops = nav.filter(|_| own_frame).map(|nav| nav.stop_count());
-        self.sched.post(TaskSource::Navigation, move |b| {
-            if !b.doc(page).is_some_and(|p| {
-                p.main_frame.loader_id == loader && stops.is_none_or(|stops| p.nav.stop_count() == stops)
-            }) {
-                return;
-            }
-            // `_parent` and `_top` choose an ancestor (noopener or not), unless sandboxing forbids it.
-            let ancestor =
-                request.target.as_deref().and_then(|t| b.page(page.page)?.frames.ancestor_target(page, t, user_gesture));
-            if ancestor == Some(None) {
-                return;
-            }
-            let named = match ancestor {
-                Some(target) => target,
-                None => request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t)),
-            };
-            let opens_context = named.is_none()
-                && request
-                    .target
-                    .as_deref()
-                    .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
-            // `window.open("javascript:...")`: the popup opens on its initial
-            // about:blank document, and the script runs there (HTML navigates
-            // the new browsing context to the javascript: URL), not in the
-            // opener.
-            let mut popup_script = None;
-            if opens_context && request.method == "GET" {
-                if let Some(source) = javascript_url_source(&request.url) {
-                    // A blocked script does not run; the popup still opens, on about:blank.
-                    let allowed = initiator.as_ref().is_none_or(|i| i.allows_javascript_url(&request.url));
-                    let realm = request.popup.as_ref().and_then(|ticket| {
-                        let prebuilt = ticket.take_prebuilt()?;
-                        let realm = prebuilt.downcast_ref::<crate::frames::PrebuiltPopup>().and_then(|p| {
-                            let root = p.host.root.borrow();
-                            let realm = root.main_realm().cloned();
-                            realm
-                        });
-                        ticket.set_prebuilt(prebuilt);
-                        realm
-                    });
-                    // Without a popup made ahead (noopener), the new window's
-                    // initial about:blank document has an opaque origin of its
-                    // own: HTML "navigate" ignores a javascript: URL whose
-                    // initiator is not same origin-domain with it, so the
-                    // window opens on about:blank and the script never runs.
-                    // One the initiator's CSP blocks runs nowhere either: the
-                    // popup opens on about:blank.
-                    popup_script = realm.filter(|_| allowed).map(|realm| (realm, source));
-                    request.url = "about:blank".into();
-                }
-            }
-            // HTML "navigate to a javascript: URL": the script runs in the
-            // target document; a string result replaces that document.
-            if let Some(source) = javascript_url_source(&request.url).filter(|_| !opens_context) {
-                // Only for a target same origin(-domain) with the initiator: a cross-origin
-                // iframe's `_top`/`_parent` or named target runs no script in that document.
-                if named.is_some_and(|t| !b.page(page.page).is_some_and(|p| p.frames.same_origin(page, t))) {
-                    return;
-                }
-                // CSP `script-src-elem` of the initiator: blocked, nothing runs.
-                if initiator.as_ref().is_some_and(|i| !i.allows_javascript_url(&request.url)) {
-                    return;
-                }
-                let target = named.unwrap_or(page);
-                let realm = b.doc(target).and_then(|p| p.main_frame.main_realm().cloned());
-                let result = realm
-                    .as_ref()
-                    .and_then(|realm| realm.scope().ok())
-                    .and_then(|scope| crate::frames::javascript_url_result(&scope, &source));
-                if let Some(html) = result {
-                    let _ = b.begin_javascript_result(target, html);
-                }
-                return;
-            }
-            let new_context = named.is_none()
-                && request
-                    .target
-                    .as_deref()
-                    .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
-            // `_blank` (and any name that is not a frame of this page) opens a
-            // popup page; the embedder creates and navigates it.
-            if new_context && request.method == "GET" {
-                let frame = b.doc(page).map(|p| (p.main_frame.id.clone(), p.main_frame.sandbox.popups_blocked));
-                // HTML "popup sandboxing flag set": the popup takes the sandbox of the document
-                // that opened it unless that allows popups to escape it.
-                let sandbox = b.doc(page).map(|p| p.main_frame.sandbox).filter(|s| s.propagates_to_popups);
-                if let (Some(ticket), Some(sandbox)) = (request.popup.as_ref(), sandbox) {
-                    ticket.set_sandbox_bits(sandbox.to_bits());
-                }
-                // The popup's `opener` is this frame's window, a child frame's too.
-                if let Some(ticket) = request.popup.as_ref() {
-                    ticket.set_opener_child(page.child);
-                }
-                if let Some((frame_id, false)) = frame {
-                    b.emit(
-                        page.page,
-                        crate::PageEvent::PopupRequested {
-                            frame_id,
-                            url: request.url,
-                            opener: request.opener,
-                            ticket: request.popup,
-                            window_features: request.window_features,
-                            window_name: request.target.unwrap_or_default(),
-                            user_gesture,
-                            referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
-                            referrer_policy: request.referrer_policy.or_else(|| b.doc(page)?.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
-                        },
-                    );
-                    if let Some((realm, source)) = popup_script {
-                        if let Ok(scope) = realm.scope() {
-                            let _ = crate::frames::javascript_url_result(&scope, &source);
-                        }
-                    }
-                }
-                return;
-            }
-            let result = if new_context {
-                Err(JsError::Unsupported(&"form POST to a new window"))
-            } else {
-                b.navigate_frame_with_handling(
-                    named.unwrap_or(page),
-                    NavigateOpts {
-                        post: request.body.map(|body| (body, request.content_type.unwrap_or_default())),
-                        url: request.url,
-                        reason: if request.method == "POST" {
-                            NavigationReason::FormPost
-                        } else {
-                            NavigationReason::Anchor
-                        },
-                        cdp_request_id: None,
-                        referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
-                        // The link's own policy, else that of the document that navigates
-                        // (not of the frame a `target` names).
-                        referrer_policy: request.referrer_policy.or_else(|| {
-                            b.doc(page).and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.referrer_policy()))
-                        }),
-                    },
-                    if request.replace { crate::HistoryHandling::Replace } else { crate::HistoryHandling::Push },
-                )
-                .map(|_| ())
-            };
-            if let Err(e) = result {
-                if let Some(realm) = b.doc(page).and_then(|p| p.main_frame.main_realm().cloned()) {
-                    if let Ok(scope) = realm.scope() {
-                        scope.report_exception(&e);
-                    }
-                }
-            }
-        });
+    fn navigate(&self, request: NavigationRequest) {
+        self.start_navigation(request, None);
     }
 
+    fn navigate_planned(
+        &self,
+        request: NavigationRequest,
+        proceed: std::rc::Rc<dyn Fn() -> bool>,
+    ) -> Option<NavigationRequest> {
+        self.start_navigation(request, Some(proceed));
+        None
+    }
     fn popup_command(&self, popup: std::rc::Rc<pyro_webapi::PopupState>, command: pyro_webapi::PopupCommand) {
         let page = self.page;
         // The queue `navigate` uses, so this follows the popup's request.
@@ -1108,6 +856,335 @@ impl Browser {
         }
     }
 }
+impl Hooks {
+    /// `PageHooks::navigate`, or `navigate_planned` with `proceed`: then the
+    /// one task queued here asks `proceed` and fires the `navigate` event
+    /// itself, so a planned submission keeps its place among the frame's
+    /// navigations and traversals (it begins before a response to an earlier
+    /// one can commit).
+    fn start_navigation(&self, mut request: NavigationRequest, proceed: Option<std::rc::Rc<dyn Fn() -> bool>>) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        // A link or GET form targeting the name of a popup this document opened, and no frame of
+        // the page: that popup navigates (as `window.open` with the name does), instead of a new
+        // window opening.
+        if let (Some(name), Some(host)) = (request.target.as_deref(), self.frames.upgrade()) {
+            let named = !matches!(name.to_ascii_lowercase().as_str(), "" | "_blank" | "_self" | "_top" | "_parent");
+            if named
+                && request.method == "GET"
+                && request.body.is_none()
+                && !request.url.starts_with("javascript:")
+                && host.matches(page, &loader)
+                && host.named_frame(page, name).is_none()
+            {
+                if let Some(dom) = host.page_dom(page) {
+                    if pyro_webapi::navigate_named_popup(&dom, name, &request.url) {
+                        return;
+                    }
+                }
+            }
+        }
+        // A navigation of the document's own frame is its latest one
+        // (`PageDom::navigate` took the number): one started before its task
+        // runs, also from its `navigate` event, supersedes it.
+        let started = self
+            .frames
+            .upgrade()
+            .and_then(|host| host.frame(page)?.page_dom.clone())
+            .filter(|d| d.starts_document_navigation(&request))
+            .map(|d| d.navigation_started());
+        // `window.open` of a new browsing context: HTML creates its initial
+        // about:blank document now, so the opener can script it before the
+        // embedder makes the page (`Browser::create_page_with`).
+        if let (Some(ticket), Some(host)) = (request.popup.as_ref(), self.frames.upgrade()) {
+            let new_context = request.method == "GET"
+                && host.matches(page, &loader)
+                && request.target.as_deref().is_some_and(|t| {
+                    !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent")
+                        && host.named_frame(page, t).is_none()
+                })
+                && host.frame(page).is_some_and(|f| !f.sandbox.popups_blocked);
+            if new_context {
+                match host.prebuild_popup(page, ticket.session_storage(), ticket.name().to_owned(), request.window_features) {
+                    Ok(prebuilt) => {
+                        if let Some(dom) = &prebuilt.frame.page_dom {
+                            ticket.attach_page(dom);
+                        }
+                        ticket.set_prebuilt(Box::new(prebuilt));
+                    }
+                    Err(e) => eprintln!("pyro: cannot make the popup's initial document: {e:?}"),
+                }
+            }
+        }
+        let user_gesture = self.frames.upgrade().and_then(|host| host.page_dom(page)).is_some_and(|dom| dom.window_open_user_gesture());
+        // CSP: a `javascript:` URL is checked against the policies of the document that made
+        // the request (the link's, the form's, `window.open`'s caller's), snapshotted now.
+        let initiator = request
+            .url
+            .get(..11)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("javascript:"))
+            .then(|| self.frames.upgrade().and_then(|host| host.page_dom(page)))
+            .flatten()
+            .map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom));
+        let frames = self.frames.clone();
+        let task = NavigationTask { page, loader: loader.clone(), started, user_gesture, initiator };
+        match proceed {
+            None => {
+                let Some(stops) = before_navigation(&frames, page, &loader, user_gesture, &mut request) else { return };
+                self.sched.post(TaskSource::Navigation, move |b| run_navigation(b, task, stops, request, false));
+            }
+            Some(proceed) => self.sched.post(TaskSource::Navigation, move |b| {
+                if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) || !proceed() {
+                    return;
+                }
+                let Some(stops) = before_navigation(&frames, page, &loader, user_gesture, &mut request) else { return };
+                run_navigation(b, task, stops, request, true);
+            }),
+        }
+    }
+}
+
+/// What the task of a navigation the document asked for carries from when it was asked for.
+struct NavigationTask {
+    page: FrameKey,
+    loader: LoaderId,
+    /// The document's navigation number then (`PageDom::navigation_started`), for its own frame.
+    started: Option<u64>,
+    user_gesture: bool,
+    /// The requesting document's CSP, for a `javascript:` URL.
+    initiator: Option<pyro_webapi::csp::NavigationInitiator>,
+}
+
+/// What a navigation the document asked for does before its task: a fragment
+/// navigation happens at once, and the target's `navigate` event may cancel
+/// or intercept it (`None`: nothing is left to do). Otherwise the frame's
+/// stop count for the task to compare (`document.open()` drops it).
+fn before_navigation(
+    frames: &std::rc::Weak<crate::frames::FrameHost>,
+    page: FrameKey,
+    loader: &LoaderId,
+    user_gesture: bool,
+    request: &mut NavigationRequest,
+) -> Option<Option<u64>> {
+    // HTML "navigate": a GET of the document's own URL with a fragment is
+    // a fragment navigation, done at once (the URL has changed when the
+    // link's `click()` returns) and never a reload.
+    let own_frame = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"));
+    // The frame the navigation is for: this one, or a frame of this page
+    // the target names (`<a target>`, `<form target>`). Its `navigate`
+    // event fires and its fragment navigations stay in its document, as
+    // HTML "navigate" runs on the target navigable.
+    // HTML "the rules for choosing a navigable" look the name up whatever noopener says
+    // (noopener only keeps the opener unset and window.open's result null); a newly
+    // created top-level traversable still gets the requested target name.
+    let lookup_target = request.target.as_deref();
+    let mut cross_origin_target = false;
+    let nav = frames.upgrade().filter(|host| host.matches(page, loader)).and_then(|host| {
+        let key = if own_frame {
+            Some(page)
+        } else {
+            request.target.as_deref().and_then(|t| match host.ancestor_target(page, t, user_gesture) {
+                Some(ancestor) => ancestor,
+                None => lookup_target.and_then(|t| host.named_frame(page, t)),
+            })
+        };
+        cross_origin_target = key.is_some_and(|key| !host.same_origin(page, key));
+        key.and_then(|key| host.nav(key))
+    });
+    let get = request.method == "GET" && request.body.is_none();
+    // What the `navigate` event says of where the navigation is from.
+    let source = crate::nav::NavigateSource {
+        element: request
+            .source
+            .filter(|_| !cross_origin_target)
+            .and_then(|el| Some((frames.upgrade()?.frame(page)?.page_dom.clone()?, el))),
+        form_entries: request.form_entries.take(),
+        replace: request.replace,
+        cross_origin: cross_origin_target,
+    };
+    if get && nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment_from(&request.url, &source)) {
+        return None;
+    }
+    {
+        // Navigation API: the document's `navigate` event may cancel
+        // or intercept the load. A cross-document navigation a
+        // cross-origin document starts fires none (HTML "navigate").
+        if let Some(nav) =
+            nav.as_ref().filter(|_| !request.url.starts_with("javascript:") && !cross_origin_target)
+        {
+            // HTML "navigate" with history handling "auto": a navigation
+            // to the document's own URL replaces its entry.
+            let kind = if request.replace || request.url == nav.url() { "replace" } else { "push" };
+            match nav.navigate_event_from(kind, &request.url, &source) {
+                crate::nav::NavigateDecision::Cancel => return None,
+                crate::nav::NavigateDecision::Intercept => {
+                    nav.commit_intercepted(&request.url, kind);
+                    return None;
+                }
+                crate::nav::NavigateDecision::Proceed => {}
+            }
+        }
+    }
+    // `document.open()` before the task runs drops it (stop loading).
+    Some(nav.filter(|_| own_frame).map(|nav| nav.stop_count()))
+}
+
+/// The task of a navigation the document asked for: nothing if the document
+/// was replaced, opened or has started another navigation since.
+fn run_navigation(b: &mut Browser, task: NavigationTask, stops: Option<u64>, mut request: NavigationRequest, planned: bool) {
+    let NavigationTask { page, loader, started, user_gesture, initiator } = task;
+    if !b.doc(page).is_some_and(|p| {
+        p.main_frame.loader_id == loader
+            && stops.is_none_or(|stops| p.nav.stop_count() == stops)
+            && started.is_none_or(|n| p.main_frame.page_dom.as_ref().is_none_or(|d| d.navigation_started() == n))
+    }) {
+        return;
+    }
+    // `_parent` and `_top` choose an ancestor (noopener or not), unless sandboxing forbids it.
+    let ancestor = request.target.as_deref().and_then(|t| b.page(page.page)?.frames.ancestor_target(page, t, user_gesture));
+    if ancestor == Some(None) {
+        return;
+    }
+    let named = match ancestor {
+        Some(target) => target,
+        None => request.target.as_deref().and_then(|t| b.page(page.page)?.frames.named_frame(page, t)),
+    };
+    let opens_context = named.is_none()
+        && request
+            .target
+            .as_deref()
+            .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
+    // `window.open("javascript:...")`: the popup opens on its initial
+    // about:blank document, and the script runs there (HTML navigates
+    // the new browsing context to the javascript: URL), not in the
+    // opener.
+    let mut popup_script = None;
+    if opens_context && request.method == "GET" {
+        if let Some(source) = javascript_url_source(&request.url) {
+            // A blocked script does not run; the popup still opens, on about:blank.
+            let allowed = initiator.as_ref().is_none_or(|i| i.allows_javascript_url(&request.url));
+            let realm = request.popup.as_ref().and_then(|ticket| {
+                let prebuilt = ticket.take_prebuilt()?;
+                let realm = prebuilt.downcast_ref::<crate::frames::PrebuiltPopup>().and_then(|p| {
+                    let root = p.host.root.borrow();
+                    let realm = root.main_realm().cloned();
+                    realm
+                });
+                ticket.set_prebuilt(prebuilt);
+                realm
+            });
+            // Without a popup made ahead (noopener), the new window's
+            // initial about:blank document has an opaque origin of its
+            // own: HTML "navigate" ignores a javascript: URL whose
+            // initiator is not same origin-domain with it, so the
+            // window opens on about:blank and the script never runs.
+            // One the initiator's CSP blocks runs nowhere either: the
+            // popup opens on about:blank.
+            popup_script = realm.filter(|_| allowed).map(|realm| (realm, source));
+            request.url = "about:blank".into();
+        }
+    }
+    // HTML "navigate to a javascript: URL": the script runs in the
+    // target document; a string result replaces that document.
+    if let Some(source) = javascript_url_source(&request.url).filter(|_| !opens_context) {
+        // Only for a target same origin(-domain) with the initiator: a cross-origin
+        // iframe's `_top`/`_parent` or named target runs no script in that document.
+        if named.is_some_and(|t| !b.page(page.page).is_some_and(|p| p.frames.same_origin(page, t))) {
+            return;
+        }
+        // CSP `script-src-elem` of the initiator: blocked, nothing runs.
+        if initiator.as_ref().is_some_and(|i| !i.allows_javascript_url(&request.url)) {
+            return;
+        }
+        let target = named.unwrap_or(page);
+        let realm = b.doc(target).and_then(|p| p.main_frame.main_realm().cloned());
+        let result = realm
+            .as_ref()
+            .and_then(|realm| realm.scope().ok())
+            .and_then(|scope| crate::frames::javascript_url_result(&scope, &source));
+        if let Some(html) = result {
+            let _ = b.begin_javascript_result(target, html);
+        }
+        return;
+    }
+    let new_context = opens_context;
+    // `_blank` (and any name that is not a frame of this page) opens a
+    // popup page; the embedder creates and navigates it.
+    if new_context && request.method == "GET" {
+        let frame = b.doc(page).map(|p| (p.main_frame.id.clone(), p.main_frame.sandbox.popups_blocked));
+        // HTML "popup sandboxing flag set": the popup takes the sandbox of the document
+        // that opened it unless that allows popups to escape it.
+        let sandbox = b.doc(page).map(|p| p.main_frame.sandbox).filter(|s| s.propagates_to_popups);
+        if let (Some(ticket), Some(sandbox)) = (request.popup.as_ref(), sandbox) {
+            ticket.set_sandbox_bits(sandbox.to_bits());
+        }
+        // The popup's `opener` is this frame's window, a child frame's too.
+        if let Some(ticket) = request.popup.as_ref() {
+            ticket.set_opener_child(page.child);
+        }
+        if let Some((frame_id, false)) = frame {
+            b.emit(
+                page.page,
+                crate::PageEvent::PopupRequested {
+                    frame_id,
+                    url: request.url,
+                    opener: request.opener,
+                    ticket: request.popup,
+                    window_features: request.window_features,
+                    window_name: request.target.unwrap_or_default(),
+                    user_gesture,
+                    referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
+                    referrer_policy: request.referrer_policy.or_else(|| b.doc(page)?.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
+                },
+            );
+            if let Some((realm, source)) = popup_script {
+                if let Ok(scope) = realm.scope() {
+                    let _ = crate::frames::javascript_url_result(&scope, &source);
+                }
+            }
+        }
+        return;
+    }
+    let result = if new_context {
+        Err(JsError::Unsupported(&"form POST to a new window"))
+    } else {
+        b.navigate_frame_with_handling(
+            named.unwrap_or(page),
+            NavigateOpts {
+                post: request.body.map(|body| (body, request.content_type.unwrap_or_default())),
+                url: request.url,
+                reason: if request.method == "POST" {
+                    NavigationReason::FormPost
+                } else {
+                    NavigationReason::Anchor
+                },
+                cdp_request_id: None,
+                referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
+                // The link's own policy, else that of the document that navigates
+                // (not of the frame a `target` names).
+                referrer_policy: request.referrer_policy.or_else(|| {
+                    b.doc(page).and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.referrer_policy()))
+                }),
+            },
+            if request.replace { crate::HistoryHandling::Replace } else { crate::HistoryHandling::Push },
+        )
+        .map(|loader| {
+            if planned && named.is_none() {
+                if let Some(mut state) = b.doc_mut(page) {
+                    state.pending_planned = Some(loader);
+                }
+            }
+        })
+    };
+    if let Err(e) = result {
+        if let Some(realm) = b.doc(page).and_then(|p| p.main_frame.main_realm().cloned()) {
+            if let Ok(scope) = realm.scope() {
+                scope.report_exception(&e);
+            }
+        }
+    }
+}
+
 
 /// The script of a `javascript:` URL (HTML "evaluate a javascript: URL": the
 /// percent-decoded rest of the URL), or `None` for any other URL.

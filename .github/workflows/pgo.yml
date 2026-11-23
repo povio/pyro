@@ -8,35 +8,25 @@ name: PGO build
 # the instrumented JavaScriptCore to the cache release tags restore.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/linux-build.yml
-      - .github/actions/pgo-build/**
-      - .github/workflows/pgo.yml
-      - crates/pyro-cdp/src/pgo_training.rs
-      - crates/pyro-jsc-sys/webkit/**
-      - scripts/jsc/**
-      - scripts/macos/linker/**
-      - scripts/pgo/**
-  pull_request:
-    paths:
-      - .github/workflows/linux-build.yml
-      - .github/actions/pgo-build/**
-      - .github/workflows/pgo.yml
-      - crates/pyro-cdp/src/pgo_training.rs
-      - crates/pyro-jsc-sys/webkit/**
-      - scripts/jsc/**
-      - scripts/macos/linker/**
-      - scripts/pgo/**
   workflow_dispatch:
+    inputs:
+      linux:
+        description: Include Linux x64 and arm64 builds
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      linux:
+        description: Include Linux builds (WPT supplies its own shared Linux builds)
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
   group: pgo-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   pgo:
@@ -68,12 +58,13 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  jsc:
-    uses: ./.github/workflows/jsc.yml
-
   linux:
-    needs: jsc
-    uses: ./.github/workflows/linux-build.yml
+    if: inputs.linux
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    uses: ./.github/workflows/linux-platform.yml
     with:
-      jsc-dir: ${{ needs.jsc.outputs.dir }}
+      arch: ${{ matrix.arch }}
       pgo: true

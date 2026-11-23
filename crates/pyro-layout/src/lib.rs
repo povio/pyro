@@ -1071,6 +1071,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_fragments(self.page, key))
     }
 
+    fn overflowing_text_hits(&self, key: u64, border: [f64; 4]) -> Vec<[f64; 4]> {
+        RENDERER.with(|renderer| renderer.try_borrow().ok()?.as_ref().map(|r| r.overflowing_text_hits(self.page, key, border))).unwrap_or_default()
+    }
+
     fn has_fragmented_boxes(&self) -> bool {
         RENDERER.with(|r| {
             r.try_borrow().ok().is_some_and(|r| r.as_ref().is_some_and(|r| r.has_fragmented_boxes(self.page)))

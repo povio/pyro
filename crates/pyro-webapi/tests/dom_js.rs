@@ -2564,6 +2564,18 @@ fn intersection_observer_clips_ancestors_and_tracks_scroll_styles() {
 }
 
 #[test]
+fn intersection_observer_clipped_root_uses_client_area() {
+    let e = env("<!doctype html><div id=root style='overflow:scroll;width:170px;height:100px;padding:10px;border:5px solid'><div id=t></div></div>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(&e.main, "var bounds; new IntersectionObserver(([entry])=>bounds=entry.rootBounds,{root}).observe(t)");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "bounds.x===root.getBoundingClientRect().x+5 && bounds.width===root.clientWidth && bounds.height===root.clientHeight"), "true");
+    e.page.dispose();
+}
+
+#[test]
 fn intersection_observer_explicit_root_margin_zero_area_and_edge_contact() {
     let e=env("<body><div id=root style='width:100px;height:100px'><div id=t style='width:10px;height:10px'></div></div><div id=other></div></body>");
     let tasks = Rc::new(ObserverTasks::default());

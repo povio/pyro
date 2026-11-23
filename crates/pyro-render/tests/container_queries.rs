@@ -27,6 +27,17 @@ fn size(doc: &HtmlDocument, selector: &str) -> (f32, f32) {
 }
 
 #[test]
+fn entering_size_containment_restyles_existing_descendants() {
+    let mut doc = HtmlDocument::from_html("<style>#outer {width:200px;contain:strict} #inner{width:15px} @container shell (min-width:100px){#inner{width:50px}}</style><section id=outer><div id=inner></div></section>", DocumentConfig::default());
+    doc.resolve(0.0);
+    let outer = doc.query_selector("#outer").unwrap().unwrap();
+    assert_eq!(size(&doc, "#inner").0, 15.0);
+    doc.set_style_property(outer, "container", "shell / size");
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#inner").0, 50.0);
+}
+
+#[test]
 fn renderer_container_queries_restyle_after_layout_resize_and_hidden_restore() {
     let mut doc = HtmlDocument::from_html(SOURCE, DocumentConfig::default());
     doc.viewport_mut().window_size = (800, 600);

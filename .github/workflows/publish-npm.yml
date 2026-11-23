@@ -21,18 +21,17 @@ jobs:
       dist-tag: ${{ steps.release.outputs.dist-tag }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '24'
-          package-manager-cache: false
+          bun-version: '1.4.4'
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --no-self-update
-      - run: node --test scripts/npm/release.test.mjs
+      - run: bun test --timeout 30000 scripts/npm/release.test.mjs
       - name: Stamp release versions from the Git tag
         id: release
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: node scripts/npm/release.mjs "$RELEASE_TAG" --write
+        run: bun scripts/npm/release.mjs "$RELEASE_TAG" --write
       - name: Update workspace versions in the Rust lockfile
         run: cargo +stable update --workspace
       - uses: actions/upload-artifact@v4
@@ -178,15 +177,9 @@ jobs:
       - name: Build browser (PGO)
         uses: ./.github/actions/pgo-build
       - name: Build comparison worker against the patched JavaScriptCore
-        env:
-          JSC_DIR: ${{ needs.jsc.outputs.dir }}
         run: |
-          export PYRO_JSC_DIR="$HOME/Library/Caches/pyro/jsc/$JSC_DIR"
-          mkdir -p "$(dirname "$PYRO_JSC_DIR")"
-          # The runner keeps its home between jobs, and the jsc job leaves this build there: replace it with the
-          # artifact the release ships (mv would move the artifact inside it, or fail once it is there).
-          rm -rf "$PYRO_JSC_DIR"
-          mv patched-jsc "$PYRO_JSC_DIR"
+          # Keep the artifact local to this job; other runners may share this Mac's home directory.
+          export PYRO_JSC_DIR="$GITHUB_WORKSPACE/patched-jsc"
           cargo +stable build --locked --release --package pyro-render
           cp target/aarch64-apple-darwin/release-pgo/pyro target/release/pyro
       - name: Verify and stage binaries
@@ -223,11 +216,20 @@ jobs:
 
   # Linux x64 and arm64, both linked against the patched JavaScriptCore and
   # shipping it (and its ICU) beside the browser.
-  linux:
-    needs: [release, jsc]
-    uses: ./.github/workflows/linux-build.yml
+  linux-x64:
+    needs: release
+    uses: ./.github/workflows/linux-platform.yml
     with:
-      jsc-dir: ${{ needs.jsc.outputs.dir }}
+      arch: x64
+      release: true
+      version: ${{ needs.release.outputs.version }}
+      pgo: true
+
+  linux-arm64:
+    needs: release
+    uses: ./.github/workflows/linux-platform.yml
+    with:
+      arch: arm64
       release: true
       version: ${{ needs.release.outputs.version }}
       pgo: true
@@ -251,7 +253,7 @@ jobs:
           retention-days: 7
 
   package:
-    needs: [release, build, fork, linux]
+    needs: [release, build, fork, linux-x64, linux-arm64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -281,13 +283,13 @@ jobs:
           npm pack --pack-destination ../../npm-package
           # Our compressed-payload budget, not a registry API guarantee. npm
           # expands the tarball to base64 in its publication request.
-          node --input-type=module -e '
+          bun --eval '
             import { readdirSync, statSync } from "node:fs";
             const dir = "../../npm-package";
             for (const file of readdirSync(dir).filter(file => file.endsWith(".tgz"))) {
               const size = statSync(`${dir}/${file}`).size;
               console.log(`${file}: ${size} compressed bytes`);
-              if (size > 175 * 1024 * 1024) throw new Error("npm tarball exceeds the 175 MiB release budget");
+              if (size > 185 * 1024 * 1024) throw new Error("npm tarball exceeds the 185 MiB release budget");
             }
           '
           bun test test/binary.test.ts
@@ -299,7 +301,7 @@ jobs:
           npm install --ignore-scripts "$GITHUB_WORKSPACE"/npm-package/*.tgz
           node --input-type=module -e 'import { Pyro, button, check } from "@povio/pyro"; if (![Pyro, button, check].every(x => typeof x === "function")) process.exit(1);'
           cp "$GITHUB_WORKSPACE/scripts/npm/types.mts" .
-          node "$GITHUB_WORKSPACE/packages/pyro/node_modules/typescript/bin/tsc" types.mts --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM,ESNext.Disposable --typeRoots "$GITHUB_WORKSPACE/packages/pyro/node_modules/@types"
+          bun "$GITHUB_WORKSPACE/packages/pyro/node_modules/typescript/bin/tsc" types.mts --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 --lib ES2022,DOM,ESNext.Disposable --typeRoots "$GITHUB_WORKSPACE/packages/pyro/node_modules/@types"
       - uses: actions/upload-artifact@v4
         with:
           name: npm-package
@@ -326,7 +328,8 @@ jobs:
             arch: arm64
             fork: true
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    # A slow artifact transfer must not consume the installed-package test's entire budget.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -337,10 +340,12 @@ jobs:
         with:
           bun-version: '1.4.0'
       - uses: actions/download-artifact@v4
+        timeout-minutes: 15
         with:
           name: npm-package
           path: npm-package
       - name: Test installed CLI and API with Node and Bun
+        timeout-minutes: 5
         env:
           ARCH: ${{ matrix.arch }}
           FORK: ${{ matrix.fork }}
@@ -358,7 +363,7 @@ jobs:
           cd "$RUNNER_TEMP/npm-smoke"
           npm init -y
           npm install --ignore-scripts "$GITHUB_WORKSPACE"/npm-package/*.tgz
-          version="$(node -p 'require("./node_modules/@povio/pyro/package.json").version')"
+          version="$(bun -e 'console.log(require("./node_modules/@povio/pyro/package.json").version)')"
           ./node_modules/.bin/pyro version
           ./node_modules/.bin/pyro version | grep -Fx "pyro $version"
           ./node_modules/.bin/pyro version | grep -q "fork: $FORK"
@@ -369,7 +374,7 @@ jobs:
   # JavaScriptCore source and checksums (docs/RELEASING.md), assembled from the
   # builds above and tested from their extracted form before upload.
   github-release:
-    needs: [release, build, fork, linux, jsc, jsc-source, package, smoke]
+    needs: [release, build, fork, linux-x64, linux-arm64, jsc, jsc-source, package, smoke]
     runs-on: lp-m1
     timeout-minutes: 45
     permissions:

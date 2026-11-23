@@ -52,6 +52,7 @@ enum ClipEscape {
 /// handlers can mutate the DOM before the next pointer event.
 #[derive(Default)]
 struct HitTestGeometry {
+    text_hits: FxHashMap<NodeId, Rc<[Rect]>>,
     rects: FxHashMap<NodeId, Rect>,
     scroll_offsets: FxHashMap<NodeId, (f64, f64)>,
     has_element_scroll: bool,
@@ -1716,6 +1717,34 @@ impl Layout {
         Some(q)
     }
 
+    pub fn observer_root_rect(&self, dom: &Dom, root: NodeId) -> Rect {
+        let axes = self.style.overflow_clip_axes(dom, root);
+        let table = self.style.stylo_style(dom, root).is_some_and(|style| {
+            style.slow_clone_display().inside() == style::values::specified::box_::DisplayInside::Table
+        });
+        if (axes.x || axes.y) && !table {
+            if let (Some(bounds), Some(quad)) = (self.layout_box(dom, root), self.box_quads(dom, root)) {
+                if quad.width > 0.0 && quad.height > 0.0 {
+                    let left = bounds.border[LEFT] / quad.width;
+                    let top = bounds.border[TOP] / quad.height;
+                    let right = left + bounds.client_width / quad.width;
+                    let bottom = top + bounds.client_height / quad.height;
+                    let span = |axis: usize| {
+                        let origin = quad.border[axis];
+                        let dx = quad.border[2 + axis] - origin;
+                        let dy = quad.border[6 + axis] - origin;
+                        (origin + (dx * left).min(dx * right) + (dy * top).min(dy * bottom),
+                         (dx * (right - left)).abs() + (dy * (bottom - top)).abs())
+                    };
+                    let (x, width) = span(0);
+                    let (y, height) = span(1);
+                    return Rect { x, y, width, height };
+                }
+            }
+        }
+        self.bounding_client_rect(dom, root)
+    }
+
     /// `getClientRects`: none when not rendered; an inline box over several
     /// lines has one border box per line (the engine's fragments), any other
     /// element one rect.
@@ -2551,6 +2580,12 @@ impl Layout {
             }
             els.push(el);
             rects.push(r);
+            if r.width == 0.0 || r.height == 0.0 {
+                for &text in &*self.overflowing_text_hits(el, result.boxes[&el].rect, r, &mut geometry) {
+                    els.push(el);
+                    rects.push(text);
+                }
+            }
         }
         let grid = HitGrid::new(&rects);
         HitIndex { result, geometry: RefCell::new(geometry), els, rects, grid }
@@ -2684,6 +2719,17 @@ impl Layout {
         self.hit_select(dom, &result, boxes.into_iter(), x, y, ignore_x, &mut geometry, all)
     }
 
+    fn overflowing_text_hits(&self, el: NodeId, border: Rect, client: Rect, geometry: &mut HitTestGeometry) -> Rc<[Rect]> {
+        geometry.text_hits.entry(el).or_insert_with(|| {
+            let pieces = self.external.as_ref().map(|source| source.overflowing_text_hits(
+                crate::snapshot::render_key(el), [border.x, border.y, border.width, border.height],
+            )).unwrap_or_default();
+            pieces.into_iter().map(|[x, y, width, height]| Rect {
+                x: x + (client.x - border.x), y: y + (client.y - border.y), width, height,
+            }).collect()
+        }).clone()
+    }
+
     /// `document.elementFromPoint(x, y)` answered from every box of the
     /// document instead of the engine's candidates: the reference the
     /// descent is checked against (tests).
@@ -2727,7 +2773,9 @@ impl Layout {
             }
             let r = self.hit_test_client_rect(dom, result, el, geometry);
             // (Nor is a box a line clamp discarded: `ExternalBox::hidden`.)
-            if b.hidden || !inside(&r) || !self.is_visible(dom, el) {
+            let hit = inside(&r) || ((r.width == 0.0 || r.height == 0.0)
+                && self.overflowing_text_hits(el, b.rect, r, geometry).iter().any(inside));
+            if b.hidden || !hit || !self.is_visible(dom, el) {
                 continue;
             }
             let svg_viewport = !ignore_x && dom.element(el).is_ok_and(|e| {
@@ -4057,6 +4105,9 @@ impl Layout {
         }
         for key in source.mandatory_snap_containers() {
             let Some(el) = crate::geometry::node_of(dom, key) else { continue };
+            if Some(el) == dom.document_element(self.document()).ok().flatten() {
+                continue;
+            }
             // (An offset of zero is no scroll: a script read or a reveal that found nothing to do.)
             if self.element_scroll.get(&el).is_some_and(|&o| o != (0, 0)) || !self.initially_snapped.insert(el) {
                 continue;
@@ -4802,6 +4853,7 @@ impl Layout {
         // `scrollIntoView-should-treat-slot-as-scroll-container`).
         let flat_parent = |node: NodeId| flat_parent_element(dom, node);
         let mut cur = flat_parent(el);
+        let mut target_owns_snap_area = script;
         while let Some(node) = cur {
             if self.is_root_container(dom, node) {
                 break;
@@ -4833,7 +4885,8 @@ impl Layout {
                 // pyro: a snap area of a snapping container is scrolled to its snap position (its
                 // `scroll-snap-align` in place of the alignment asked for), as Chromium does (CSS
                 // Scroll Snap 1 § 4; WPT css-overflow `targeted-column-scroll-marker-selection-001`).
-                let (offset_x, offset_y) = if script { self.snap_aligned_offsets(dom, node, el, offset_x, offset_y) } else { (offset_x, offset_y) };
+                let (offset_x, offset_y) = if target_owns_snap_area { self.snap_aligned_offsets(dom, node, el, offset_x, offset_y) } else { (offset_x, offset_y) };
+                target_owns_snap_area = false;
                 let (port_width, port_height) = (self.client_width(dom, node), self.client_height(dom, node));
                 let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, Some(node), port_width, port_height);
                 let left = (axes.x || explicit)

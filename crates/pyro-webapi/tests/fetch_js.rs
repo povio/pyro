@@ -315,6 +315,22 @@ fn fetch_completed_unread_body_released_after_gc() {
 }
 
 #[test]
+fn fetch_default_accepts_a_burst_larger_than_the_network_concurrency() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(r#"globalThis.result='pending';
+        Promise.all(Array.from({length: 65}, (_, index) =>
+            fetch('/json?request=' + index, {cache: 'no-store'}).then(response => response.json())
+        )).then(values => result=values.every(value => value.answer===42) ? 'ok' : 'wrong body',
+            error => result='ERROR '+error);"#);
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "ok");
+    env.finish_network_tasks();
+    assert_eq!(env.page.fetch_usage(), (0, 0));
+    assert_eq!(server.requests.lock().unwrap().len(), 65);
+}
+
+#[test]
 fn fetch_pending_limit_and_conversion_failures_do_not_start_requests() {
     let server = Server::new();
     let env = Env::new(&server.url);

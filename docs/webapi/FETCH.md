@@ -22,8 +22,11 @@ Before fetching, the embedder must provide:
 - Normal `page.after_task()` checkpoints and native finalizer draining.
 
 `PageDom::set_fetch_limits(FetchLimits)` returns false while any job or response
-body remains. Defaults are 64 pending jobs, 16 MiB decoded bytes per response,
-64 MiB retained logical body bytes per PageDom, and 8192 chunks per response.
+body remains. Pages start with a limit of 1024 pending fetch jobs; HTTP transport
+still queues requests under its per-origin concurrency limit. The shared
+`FetchLimits::default()` used for explicit configuration (and by XHR) allows
+64 pending jobs. Both configurations limit decoded responses to 16 MiB,
+retained logical body bytes per PageDom to 64 MiB, and chunks per response to 8192.
 Clones share one retained buffer and count those bytes once; consuming the last
 clone or collecting all unread wrappers releases it. Each materialized JS body
 result is a separate allocation. These limits do not bound JS heap usage,

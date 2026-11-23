@@ -181,6 +181,7 @@ impl BaseDocument {
         // Container conditions consume content-box sizes from layout. Re-match
         // only when an actually queried size changes; bound cyclic feedback.
         self.container_float_floors.clear();
+        let mut checked_query_scrollbars = false;
         for pass in 0..32 {
             // we need to resolve stylist first since it will need to drive our layout bits
             self.resolve_stylist(current_time_for_animations);
@@ -245,6 +246,11 @@ impl BaseDocument {
             self.forget_boxless_anchor_used();
             timer.record_time("layout");
             phase_profile::mark(4, &mut phase_t);
+            if self.nodes.classic_scrollbars && self.layout_ran && !self.nodes.container_query_sizes.lock().unwrap().is_empty() {
+                self.resolve_transforms(root_node_id, true, ContainingTransform::default());
+                self.resolve_classic_scrollbars(root_node_id, !checked_query_scrollbars);
+                checked_query_scrollbars = true;
+            }
             let changed_containers = self.refresh_container_query_sizes();
             let choices_changed = pass == 0 && self.refresh_anchored_query_choices();
             let container_sizes_changed = !changed_containers.is_empty();
@@ -296,20 +302,7 @@ impl BaseDocument {
         if self.nodes.classic_scrollbars
             && std::mem::take(&mut self.layout_ran)
         {
-            for pass in 0..3 {
-                let may_remove = pass == 0;
-                let boxes_changed = self.update_auto_scrollbars(may_remove);
-                let viewport_changed = self.update_viewport_scrollbars(may_remove);
-                if !boxes_changed && !viewport_changed {
-                    break;
-                }
-                self.last_layout_space = None;
-                self.resolve_layout_in_flush();
-                self.resolve_transforms(root_node_id, false, ContainingTransform::default());
-                for fo in self.foreign_object_roots() {
-                    self.resolve_transforms(fo, false, ContainingTransform::default());
-                }
-            }
+            self.resolve_classic_scrollbars(root_node_id, !checked_query_scrollbars);
             self.layout_ran = false;
         }
         // pyro: `content-visibility: auto` relevance with the transforms this pass placed (the
@@ -2524,6 +2517,23 @@ impl BaseDocument {
         self.resolve_layout_in_flush();
         // pyro: a layout outside `resolve` (which bumps once after all its passes) changes geometry.
         self.nodes.bump_geometry_generation();
+    }
+
+    fn resolve_classic_scrollbars(&mut self, root: NodeId, allow_removal: bool) {
+        for pass in 0..3 {
+            let may_remove = allow_removal && pass == 0;
+            let boxes_changed = self.update_auto_scrollbars(may_remove);
+            let viewport_changed = self.update_viewport_scrollbars(may_remove);
+            if !boxes_changed && !viewport_changed {
+                break;
+            }
+            self.last_layout_space = None;
+            self.resolve_layout_in_flush();
+            self.resolve_transforms(root, false, ContainingTransform::default());
+            for fo in self.foreign_object_roots() {
+                self.resolve_transforms(fo, false, ContainingTransform::default());
+            }
+        }
     }
 
     fn resolve_layout_in_flush(&mut self) {

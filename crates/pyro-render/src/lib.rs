@@ -2617,14 +2617,21 @@ impl Renderer {
         self.geometry.get(&page)?.element_quads(&m.doc, m.node(key)?)
     }
 
+    pub fn overflowing_text_hits(&self, page: u64, key: u64, border: [f64; 4]) -> Vec<[f64; 4]> {
+        let Some(mirror) = self.mirrors.get(&page) else { return Vec::new() };
+        let (Some(geometry), Some(id)) = (self.geometry.get(&page), mirror.node(key)) else { return Vec::new() };
+        let [left, top, width, height] = border;
+        geometry.overflowing_text_hits(&mirror.doc, id, kurbo::Rect::new(left, top, left + width, top + height))
+            .into_iter().map(|rect| [rect.x0, rect.y0, rect.width(), rect.height()]).collect()
+    }
+
     /// Hit regions of a fragmented box in document CSS pixels. Unlike CSSOM border rects,
     /// these only include the part reachable through the owning fragment's hit traversal.
     pub fn element_fragments(&self, page: u64, key: u64) -> Option<Vec<[f64; 4]>> {
         let m = self.mirrors.get(&page)?;
         let (g, id) = (self.geometry.get(&page)?, m.node(key)?);
-        // pyro (lane H2): a box in a plane drawn through a perspective is reported whole, where
-        // paint draws it (`Geometry::laid_out`).
-        if !g.in_layout_tree(&m.doc, id) || g.projective(&m.doc, id).is_some() {
+        let node = m.doc.get_node(id)?;
+        if !g.in_layout_tree(&m.doc, id) || (!node.plane_3d().is_some_and(geometry::is_projective_plane) && g.projective(&m.doc, id).is_some()) {
             return None;
         }
         let pieces = g.column_rects(&m.doc, id, true)?;

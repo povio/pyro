@@ -72,6 +72,39 @@ impl Page {
     }
 }
 
+fn nested_grid_with_long_value(track: &str, minimum: &str) -> Page {
+    let mut document = page(&format!(
+        "<!doctype html><html id=root><style>\
+         main,article {{ display:grid; gap:12px }}\
+         main {{ grid-template-columns:minmax(0,1fr) }}\
+         article {{ grid-template-columns:1fr; border:1px solid; padding:12px }}\
+         dl {{ display:grid; grid-auto-columns:{track}; gap:8px; margin:0 }}\
+         dl div {{ display:contents }}\
+         dd {{ min-width:{minimum}; margin:0; overflow-wrap:break-word }}\
+         @media (min-width:761px) {{ dl {{ grid-template-columns:minmax(10rem,auto) 1fr }} }}\
+         </style><main><article><dl><div><dt>Value</dt><dd id=value>{}</dd></div></dl></article></main>",
+        "SyntheticLongValue".repeat(6),
+    ));
+    document.layout.set_viewport(Viewport::new(390, 800));
+    document
+}
+
+#[test]
+fn nested_grid_with_display_contents_wraps_long_value_at_mobile_width() {
+    let document = nested_grid_with_long_value("auto", "0");
+    assert_eq!(document.metrics("root")[6], 390.0);
+    let value = document.metrics("value");
+    assert!(value[6] <= value[4]);
+}
+
+#[test]
+fn nested_grid_preserves_min_content_track_and_automatic_item_minimum() {
+    for (track, minimum) in [("min-content", "0"), ("auto", "auto")] {
+        let document = nested_grid_with_long_value(track, minimum);
+        assert!(document.metrics("root")[6] > 390.0, "{track} track, {minimum} item minimum");
+    }
+}
+
 fn check(name: &str, html: &str, scroll_y: i32, expected: &[(&str, [f64; 8])], doc: [f64; 2]) {
     let mut p = page(html);
     if scroll_y != 0 {
@@ -2742,6 +2775,36 @@ fn inline_custom_properties_resolve_through_var() {
 }
 
 #[test]
+fn audio_controls_have_independent_intrinsic_dimensions() {
+    let page = page("<!doctype html><style>audio{aspect-ratio:1}</style><audio id=a controls></audio><audio id=b controls style='width:120px'></audio><audio id=c></audio><audio id=d controls style='height:100px'></audio>");
+    for (id, expected) in [("a", (300.0, 54.0)), ("b", (120.0, 54.0)), ("c", (0.0, 0.0)), ("d", (300.0, 100.0))] {
+        let rect = page.layout.bounding_client_rect(&page.dom, page.id(id));
+        assert_eq!((rect.width, rect.height), expected);
+    }
+}
+
+#[test]
+fn initial_root_snap_scrolls_only_the_viewport() {
+    let mut page = page("<!doctype html><style>html{overflow:scroll;scroll-snap-type:x mandatory}body{margin:0;width:3000px}#target{margin-left:200px;scroll-snap-align:start}</style><div id=target>snap</div>");
+    let target = page.id("target");
+    let root = page.dom.document_element(page.layout.document()).unwrap().unwrap();
+    page.layout.bounding_client_rect(&page.dom, target);
+    page.layout.snap_initial_positions(&page.dom);
+    assert_eq!(page.layout.scroll_left(root), 0);
+    assert_eq!(page.layout.bounding_client_rect(&page.dom, target).x, 0.0);
+}
+
+#[test]
+fn nested_scroll_into_view_only_snaps_target_in_nearest_container() {
+    use pyro_dom::layout::ScrollAlign;
+    let mut page = page("<!doctype html><style>.scroll{height:100px;width:200px;overflow:scroll;scroll-snap-type:y mandatory}#inner{margin-top:300px}#target{margin-top:200px;height:20px;scroll-snap-align:end}.space{height:500px}</style><div class=scroll id=outer><div class=scroll id=inner><div id=target></div><div class=space></div></div><div class=space></div></div>");
+    let (target, outer, inner) = (page.id("target"), page.id("outer"), page.id("inner"));
+    page.layout.scroll_into_view_aligned_script_targets(&page.dom, target, ScrollAlign::Start, ScrollAlign::Start);
+    assert_eq!(page.layout.scroll_top(inner), 120);
+    assert_eq!(page.layout.scroll_top(outer), 380);
+}
+
+#[test]
 fn scroll_into_view_if_needed_centers_only_when_needed_like_chromium() {
     // CDP DOM.scrollIntoViewIfNeeded, measured in Chromium (800x600, body
     // margin 0): a fully visible box, or one covering the scrollport, does not
@@ -4968,6 +5031,19 @@ fn review_misc2_deep_nesting_of_each_algorithm_on_a_browser_thread_stack() {
         .unwrap()
         .join()
         .expect("no stack overflow");
+}
+
+#[test]
+fn visible_text_overflow_hits_its_owner_without_widening_the_border_box() {
+    for (overflow, hits_text) in [("visible", true), ("hidden", false)] {
+        let document = page(&format!("<body style='margin:0'><div id=leaf style='width:0;white-space:nowrap;overflow:{overflow}'>deep</div>"));
+        let leaf = document.id("leaf");
+        assert_eq!(document.layout.bounding_client_rect(&document.dom, leaf).width, 0.0);
+        for hit in [Layout::element_from_point, Layout::element_from_point_scan, Layout::element_from_point_indexed] {
+            assert_eq!(hit(&document.layout, &document.dom, 5.0, 8.0) == Some(leaf), hits_text, "{overflow}");
+            assert_ne!(hit(&document.layout, &document.dom, 40.0, 8.0), Some(leaf));
+        }
+    }
 }
 
 #[test]

@@ -1697,6 +1697,7 @@ impl Browser {
         let pending = state.pending_loader.take();
         let cancel = state.pending_cancel.take();
         state.pending_script = None;
+        state.pending_planned = None;
         drop(state);
         drop(cancel);
         if let Some(loader) = pending {

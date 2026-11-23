@@ -35,6 +35,14 @@ fn run_until(thread: &mut BrowserThread, root: &Realm, done: &str) {
 }
 
 #[test]
+fn initially_active_view_trigger_applies_first_keyframe() {
+    let (mut thread, root) = page();
+    eval(&root, "document.head.appendChild(document.createElement('style')).textContent = '@keyframes grow { from,to {width:200px} } #target{width:10px;animation:grow 10s linear;animation-trigger:--go play-forwards} #source{height:50px;timeline-trigger:--go view() contain}'; document.body.innerHTML='<div id=target></div><div style=\"height:100px;overflow:scroll\"><div id=source></div><div style=\"height:200px\"></div></div>'; requestAnimationFrame(()=>requestAnimationFrame(()=>globalThis.sample=getComputedStyle(target).width)); 0");
+    run_until(&mut thread, &root, "globalThis.sample !== undefined");
+    assert_eq!(eval(&root, "sample"), "200px");
+}
+
+#[test]
 fn the_interfaces_are_made_on_first_use() {
     let (_t, root) = page();
     // getAnimations() answers without making the module.

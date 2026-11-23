@@ -2323,6 +2323,8 @@ impl Node {
                 flags |= stylo_taffy::StyleFlags::IS_REPLACED;
                 if crate::layout::replaced::is_content_image(el) {
                     flags |= stylo_taffy::StyleFlags::IS_CONTENT_REPLACED;
+                } else if el.name.local == local_name!("audio") && el.attr(local_name!("controls")).is_some() {
+                    flags |= stylo_taffy::StyleFlags::IS_AUDIO_CONTROL;
                 }
                 // pyro
                 if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el)

@@ -23,7 +23,9 @@ impl Margin {
     }
 }
 pub(super) fn expand(rect: Rect, margin: &[Margin; 4]) -> Rect {
-    let [top, right, bottom, left] = margin.map(|m| m.pixels(rect.width));
+    let [top, right, bottom, left] = *margin;
+    let (top, bottom) = (top.pixels(rect.height), bottom.pixels(rect.height));
+    let (left, right) = (left.pixels(rect.width), right.pixels(rect.width));
     Rect { x: rect.x - left, y: rect.y - top, width: rect.width + left + right, height: rect.height + top + bottom }
 }
 fn margins(text: &str) -> JsResult<([Margin; 4], String)> {

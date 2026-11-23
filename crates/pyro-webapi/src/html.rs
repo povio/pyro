@@ -3031,6 +3031,15 @@ simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
     });
     def.method("requestSubmit", 0, |s, n, a| {
         let submitter = crate::node::opt_node_arg(s, a.get(0), "requestSubmit")?;
+        if let Some(id) = submitter {
+            let dom = n.page().dom.borrow();
+            if !crate::form_data::is_submit_button(&dom, id) {
+                return Err(JsError::Type("The specified element is not a submit button.".into()));
+            }
+            if dom.form_owner(id).js()? != Some(n.id) {
+                return Err(JsError::dom("NotFoundError", "The submit button is not owned by this form."));
+            }
+        }
         crate::input::submit_form(n.page(), n.id, submitter, true);
         Ok(s.undefined())
     });
@@ -5095,6 +5104,11 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
     }
     if let Some(mut old) = page.script_parser.borrow_mut().take() {
         old.end();
+    }
+    // "Stop loading": a navigation of the frame that was started and has not
+    // begun (a planned form submission) is dropped.
+    if doc == page.document() {
+        page.note_navigation_started();
     }
     page.written_scripts.borrow_mut().clear();
     page.written_pending.set(None);

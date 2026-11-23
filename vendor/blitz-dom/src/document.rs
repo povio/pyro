@@ -870,6 +870,13 @@ pub const SHEET_POLICY_ATTRIBUTE: &str = "data-pyro-sheet-referrer-policy";
 impl BaseDocument {
     /// Create a new (empty) [`BaseDocument`] with the specified configuration
     pub fn new(config: DocumentConfig) -> Self {
+        // pyro: on a grown stack: in a debug build this frame (the document and its Stylist built by
+        // value) is about 256 KB, more than a small thread has (a 256 KB layout thread overflowed).
+        crate::util::ensure_stack(|| Self::new_inner(config))
+    }
+
+    #[inline(never)]
+    fn new_inner(config: DocumentConfig) -> Self {
         init_stylo_prefs();
 
         static ID_GENERATOR: AtomicUsize = AtomicUsize::new(1);

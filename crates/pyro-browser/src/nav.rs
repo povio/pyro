@@ -760,6 +760,7 @@ impl PageNav {
     /// `None`: the navigated frame's own document.
     fn navigate_from(&self, url: String, history: HistoryHandling, source_referrer: Option<String>) {
         let current = self.page_dom.borrow().upgrade();
+        let mut started = None;
         if let Some(page) = &current {
             // HTML "navigate": a navigable whose document's unload counter is above 0 (its
             // `beforeunload`, `pagehide` or `unload` listeners run) does not navigate; the
@@ -768,6 +769,10 @@ impl PageNav {
                 return;
             }
             page.note_navigation_request();
+            // The frame's latest navigation from now on: it supersedes those
+            // started before it (a planned form submission too), and a later
+            // one supersedes it (`PageDom::navigation_started`).
+            started = Some(page.navigation_started());
             // "Checking if unloading is canceled" runs synchronously, before `assign()` (or the
             // `href` setter) returns; the navigation task does not fire it again.
             pyro_webapi::lifecycle::before_unload(page);
@@ -789,7 +794,10 @@ impl PageNav {
             // Another document, or this one was opened since (stop loading).
             if !b.doc(page).is_some_and(|p| {
                 let st = p.nav.state.borrow();
-                st.doc_seq == document && st.stops == stops && p.nav.script_navigation.get() == sequence
+                st.doc_seq == document
+                    && st.stops == stops
+                    && p.nav.script_navigation.get() == sequence
+                    && started.is_none_or(|n| p.main_frame.page_dom.as_ref().is_none_or(|d| d.navigation_started() == n))
             }) {
                 // Dropped by `document.open()` (not superseded by a later script navigation, which
                 // owns the mark): the document's next navigation fires `beforeunload` itself.
@@ -1459,6 +1467,13 @@ fn apply_traversal(
 ) -> bool {
     let Some(page) = b.page(page).and_then(|p| p.frames.key(frame_id)) else { return false };
     let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return false };
+    // A traversal to another document does not take the place of
+    // the frame's planned form navigation that has begun.
+    if entry.doc != current_doc
+        && b.doc(page).is_some_and(|p| p.pending_planned.is_some() && p.pending_planned.as_ref() == p.pending_loader())
+    {
+        return false;
+    }
     // While a traversal to another document is under way, later traversals
     // are ignored, as in Chrome (the active entry already belongs to the next
     // document).

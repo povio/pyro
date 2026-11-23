@@ -13,6 +13,7 @@ pub(crate) fn is_replaced_element(tag_name: &LocalName) -> bool {
         || *tag_name == local_name!("svg")
         || *tag_name == local_name!("canvas")
         || *tag_name == local_name!("video")
+        || *tag_name == local_name!("audio")
         || *tag_name == local_name!("embed")
         || *tag_name == local_name!("iframe")
 }

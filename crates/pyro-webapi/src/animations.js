@@ -1962,6 +1962,7 @@
     track(a);
     updateFinished(a, true, false);
     triggered.add(a);
+    evaluateTriggers();
     if (!triggerListening) {
       triggerListening = true;
       apply(addListener, globalThis, ['scroll', () => {
@@ -1970,7 +1971,7 @@
       }, { capture: true, passive: true }]);
     }
     // (At the next frame: its timeline has the layout then.)
-    if (requestFrame !== null) apply(requestFrame, globalThis, [() => schedule(0, evaluateTriggers)]); else schedule(16, evaluateTriggers);
+    if (requestFrame !== null) apply(requestFrame, globalThis, [evaluateTriggers]); else schedule(16, evaluateTriggers);
   }
   function evaluateTriggers() {
     pushScroll();
@@ -1986,6 +1987,7 @@
         return now >= r[0] && now <= r[1];
       };
       if (tr.state !== 'active' && within(spec.range)) {
+        if (tr.state === 'idle' && a.holdTime === -1e-6) a.holdTime = 0;
         tr.state = 'active';
         runTriggerAction(a, tr.enter);
       } else if (tr.state === 'active' && !within(spec.exitRange)) {

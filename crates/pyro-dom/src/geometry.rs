@@ -738,6 +738,7 @@ pub trait GeometrySource {
     fn element_image(&self, _key: u64, _scale: f64) -> Option<ElementImage> {
         None
     }
+    fn overflowing_text_hits(&self, _key: u64, _border: [f64; 4]) -> Vec<[f64; 4]> { Vec::new() }
     fn anchor_scroll_shift(&self, _key: u64, _scroll: &dyn Fn(Option<u64>) -> (f64, f64), _sticky: &dyn Fn(u64) -> (f64, f64)) -> (f64, f64) { (0.0, 0.0) }
     /// The engine's resolved value of one element's `property` as of the last sync (`None`: the engine
     /// has none, and the document's own cascade answers). Asked for what only layout knows: a subgrid's

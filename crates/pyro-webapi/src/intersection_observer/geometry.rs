@@ -36,8 +36,13 @@ fn clip_by_ancestors(dom: &pyro_dom::Dom, layout: &pyro_dom::layout::Layout, nod
     intersection
 }
 
-fn viewport(layout: &pyro_dom::layout::Layout) -> Rect {
-    Rect { x: 0.0, y: 0.0, width: layout.inner_width() as f64, height: layout.inner_height() as f64 }
+fn viewport(dom: &pyro_dom::Dom, layout: &pyro_dom::layout::Layout) -> Rect {
+    let gutters = layout.synced_geometry_source(dom).and_then(|source| source.viewport_gutters()).unwrap_or_default();
+    scrollport(layout.inner_width(), layout.inner_height(), gutters)
+}
+
+fn scrollport(width: u32, height: u32, [left, top, right, bottom]: [f64; 4]) -> Rect {
+    Rect { x: left, y: top, width: (width as f64 - left - right).max(0.0), height: (height as f64 - top - bottom).max(0.0) }
 }
 
 fn geometry(bounds: Rect, target_rect: Rect, intersection: Option<Rect>) -> Geometry {
@@ -75,12 +80,12 @@ pub(super) fn measure(page: &PageDom, options: &options::Options, target_page: &
         // A Document root is its viewport.
         let root_is_document = dom.node_type(root).ok() == Some(pyro_dom::NodeType::Document);
         let root_rect = match (same_document, root_is_document) {
-            (true, true) => viewport(&layout),
-            (true, false) => layout.bounding_client_rect(&dom, root),
-            (false, true) => viewport(&page.layout()),
+            (true, true) => viewport(&dom, &layout),
+            (true, false) => layout.observer_root_rect(&dom, root),
+            (false, true) => viewport(&page.dom.borrow(), &page.layout()),
             (false, false) => {
                 let pdom = page.dom.borrow();
-                page.layout().bounding_client_rect(&pdom, root)
+                page.layout().observer_root_rect(&pdom, root)
             }
         };
         let bounds = options::expand(root_rect, &options.margin);
@@ -103,7 +108,7 @@ pub(super) fn measure(page: &PageDom, options: &options::Options, target_page: &
     // Up through the frames, in the coordinates of each document in turn.
     let (mut dx, mut dy) = (0.0, 0.0);
     let mut container = target_page.container();
-    let mut current_viewport = viewport(&layout);
+    let mut current_viewport = viewport(&dom, &layout);
     drop(layout);
     drop(dom);
     let mut holds: Vec<Rc<PageDom>> = Vec::new();
@@ -136,7 +141,7 @@ pub(super) fn measure(page: &PageDom, options: &options::Options, target_page: &
                 if !playout.is_visible(&pdom, owner) || !pdom.is_connected(owner).unwrap_or(false) {
                     intersection = None;
                 }
-                current_viewport = viewport(&playout);
+                current_viewport = viewport(&pdom, &playout);
                 drop(playout);
                 drop(pdom);
                 container = parent.container();
@@ -152,6 +157,12 @@ pub(super) fn measure(page: &PageDom, options: &options::Options, target_page: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observer_scrollport_excludes_reserved_gutters() {
+        let rect = scrollport(800, 600, [15.0, 0.0, 15.0, 15.0]);
+        assert_eq!((rect.left(), rect.top(), rect.right(), rect.bottom()), (15.0, 0.0, 785.0, 585.0));
+    }
 
     #[test]
     fn translated_fractional_full_containment_keeps_exact_dimensions() {

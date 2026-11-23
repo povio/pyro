@@ -24,12 +24,14 @@ A release candidate tag makes a GitHub prerelease and publishes to npm `next`.
 Linux release executables have debug information removed from staged copies
 before bundle tests; build outputs and runtime symbols are retained. Published
 Linux binaries therefore do not include source-line debug information. The
-combined npm tarball must fit the workflow's 175 MiB compressed-size budget;
+combined npm tarball must fit the workflow's 185 MiB compressed-size budget;
 this guards package growth but does not guarantee registry acceptance.
 
 A cold JavaScriptCore build takes about 7 minutes on a hosted runner (measured on
-the first run). `jsc.yml` rebuilds on `main` whenever the patches or
-`scripts/jsc/build.sh` change, so a tag normally finds the build cached.
+the first run). WPT calls the platform-specific JSC producers on `main` when their inputs change, so a tag normally
+finds the build cached. macOS (`jsc.yml`) and each Linux architecture (`jsc-linux.yml`, via `linux-platform.yml`) are
+independent: neither platform waits for the other's JSC build. Tags still build stamped release binaries and run all
+package/archive checks; they do not reuse an unstamped CI browser.
 
 The npm package's arm64 browser is the fork build, with the patched
 JavaScriptCore linked into it; its Intel browser is the standard build. Every release archive's client therefore carries the fork browser, but

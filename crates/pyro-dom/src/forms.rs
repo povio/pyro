@@ -216,14 +216,20 @@ impl Dom {
     pub fn reset_control(&mut self, id: NodeId) -> DomResult<()> {
         let i = self.check(id)?;
         if self.control_state(id)?.is_none() { return Ok(()) }
-        // A text input whose value the reset changes has its cursor moved to
-        // the end of the new value (HTML "set the value" steps, as Chrome).
-        let text_input = self.is_input(i) && self.input_type_idx(i).is_textual();
+        // A text control whose value the reset changes has its cursor moved to
+        // the end of the new value (HTML "set the value" steps, as Chrome); one
+        // whose value stays keeps its selection.
+        let text_input = (self.is_input(i) && self.input_type_idx(i).is_textual())
+            || self.html_local(i) == Some(&local_name!("textarea"));
         let before = (text_input || self.value_ranges.contains_key(&i)).then(|| self.value(id)).transpose()?;
         let state = self.control_state_mut(id)?;
-        let validity = state.custom_validity.take();
-        *state = Default::default();
-        state.custom_validity = validity;
+        *state = crate::node::ControlState {
+            custom_validity: state.custom_validity.take(),
+            selection: state.selection,
+            selection_set: state.selection_set,
+            selection_direction: state.selection_direction,
+            ..Default::default()
+        };
         if let Some(before) = before {
             let after = self.value(id)?;
             if after != before {
@@ -233,6 +239,7 @@ impl Dom {
                     let c = self.control_state_mut(id)?;
                     c.selection = (end, end);
                     c.selection_set = true;
+                    c.selection_direction = None;
                 }
             }
         }
