@@ -1060,6 +1060,7 @@ struct RootClasses {
     base: sys::JSClassRef,
     closure: sys::JSClassRef,
     member: sys::JSClassRef,
+    immutable_proto: sys::JSClassRef,
 }
 
 // SAFETY: JSC classes, which any thread may use.
@@ -1087,7 +1088,13 @@ fn root_classes() -> &'static RootClasses {
         mdef.callAsFunction = Some(member_call);
         mdef.finalize = Some(member_finalize);
         let member = unsafe { sys::JSClassCreate(&mdef) };
-        RootClasses { base, closure, member }
+        let mut idef = sys::JSClassDefinition::EMPTY;
+        idef.className = c"Object".as_ptr();
+        idef.attributes = sys::kJSClassAttributeNoAutomaticPrototype
+            | sys::kJSClassAttributeImmortal
+            | sys::kJSClassAttributeImmutablePrototype;
+        let immutable_proto = unsafe { sys::JSClassCreate(&idef) };
+        RootClasses { base, closure, member, immutable_proto }
     })
 }
 
@@ -1106,6 +1113,9 @@ pub(crate) struct ClassRegistry {
     /// callable objects whose private data is a `MemberCall`. Not a `base`
     /// subclass: their private pointer is not a `Header`.
     pub member: sys::JSClassRef,
+    /// Ordinary objects (no callbacks, so cacheable) whose prototype script cannot change
+    /// (patch 0043): the interface prototype objects of a [Global] interface's chain.
+    pub immutable_proto: sys::JSClassRef,
     /// `classes` as the table `installInterfaces` takes (helpers.js),
     /// appended to as each registers, so every realm creation passes it as
     /// is: the names, newline-separated (no class name contains one), and
@@ -1126,7 +1136,7 @@ pub(crate) const SPEC_STRIDE: usize = 3;
 
 impl ClassRegistry {
     pub fn new() -> ClassRegistry {
-        let &RootClasses { base, closure, member } = root_classes();
+        let &RootClasses { base, closure, member, immutable_proto } = root_classes();
         ClassRegistry {
             classes: Vec::new(),
             by_type: rustc_hash::FxHashMap::default(),
@@ -1134,6 +1144,7 @@ impl ClassRegistry {
             base,
             closure,
             member,
+            immutable_proto,
             spec_names: String::new(),
             spec_data: Vec::new(),
         }

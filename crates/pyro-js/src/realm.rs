@@ -3156,6 +3156,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         .flat_map(|id| reg.classes[*id as usize].def.global_accessors.iter().copied())
         .collect();
     let member_class = reg.member;
+    let immutable_proto_class = reg.immutable_proto;
     // The pure getters of the global's classes, root-first (see below).
     let global_pure: Vec<(ClassId, &'static str, u16, bool)> = global_chain
         .iter()
@@ -3178,6 +3179,27 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         // every member from it cost each realm two definitions per member.
         // Without the proxy's target, the members are copied from the
         // populated prototype as before.
+        // WebIDL (interface prototype object): the prototype objects of a [Global] interface and of
+        // every interface it inherits from are immutable prototype exotic objects
+        // (Object.setPrototypeOf(EventTarget.prototype, {}) throws in a window). Patch 0043 gives
+        // that to objects of a class: these are made as such, ahead of `materialize`, which then
+        // uses them. Without the patch they stay ordinary objects.
+        // (Patch 0041 too: it builds the window's chain without setting these prototypes'.)
+        let spi = sys::spi::get();
+        if spi.set_global_proxy_refuses_prevent_extensions.is_some() && spi.set_named_properties_chain.is_some() {
+            let helpers = realm.helpers.borrow().as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
+            let class_protos =
+                helpers.as_object().expect("helpers").get("classProtos")?.as_object().expect("classProtos array");
+            let mut parent = object_proto;
+            for &c in &chain {
+                // SAFETY: a live immortal class; the realm's live context and an object of it.
+                let raw = unsafe { sys::JSObjectMake(scope.ctx, immutable_proto_class, ptr::null_mut()) };
+                unsafe { sys::JSObjectSetPrototype(scope.ctx, raw, parent.raw) };
+                let proto = unsafe { Value::from_raw(scope.ctx, raw as sys::JSValueRef) };
+                class_protos.set_index(c, proto)?;
+                parent = proto;
+            }
+        }
         let on_instance = !target.is_null();
         if on_instance {
             if let Some(&parent) = chain.iter().rev().nth(1) {
