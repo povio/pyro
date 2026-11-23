@@ -2545,12 +2545,11 @@ impl Browser {
                     let dom = element.dom.borrow();
                     resolve_url(node_base_str(&dom, node).unwrap_or(&base), s)
                 };
-                match resolved.filter(|_| !s.is_empty()) {
+                match resolved {
                     Some(u) => Some(u),
                     None => {
-                        // HTML prepare step 31.4: an empty `src` or a URL that
-                        // does not parse gets `error` in a task (no insertion
-                        // point then).
+                        // HTML prepare step 31.4: a URL that does not parse
+                        // gets `error` in a task (no insertion point then).
                         let loader_id = self.frame_loader(page);
                         self.scheduler().post(TaskSource::DomManipulation, move |b| {
                             if b.frame_loader(page) == loader_id {
