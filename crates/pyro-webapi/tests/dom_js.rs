@@ -6934,8 +6934,8 @@ fn page_rules_have_descriptors_and_margin_rules() {
              out.join('|')"
         ),
         "[object CSSPageDescriptors]|1in|1|CSSMarginRule|top-left|9|true|true|\"a\"|\
-         @page :first { margin: 2px 1in 1in; @top-left { content: 'a'; color: red; } }|\
-         @top-left { content: 'a'; color: red; }|"
+         @page :first { margin: 2px 1in 1in; @top-left { content: \"a\"; color: red; } }|\
+         @top-left { content: \"a\"; color: red; }|"
     );
     e.page.dispose();
 }
