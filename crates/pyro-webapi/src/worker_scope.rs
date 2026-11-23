@@ -1933,11 +1933,13 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     // the global's own: assignment shadows it ([Replaceable]) and deleting
     // the shadow shows it again. The global's chain lacks the interface
     // prototype objects, so the copy moves to the global's own prototype
-    // (one per realm) instead.
+    // (one per realm) instead. That prototype is the realm's named properties
+    // object, which refuses new properties under JSC patch 0041: `origin` then
+    // stays the global's own (it was before; the worker still starts).
     s.eval(
         "(() => { const p = Object.getPrototypeOf(self), d = Object.getOwnPropertyDescriptor(self, 'origin');
            if (d && p && p !== Object.prototype && !Object.hasOwn(p, 'origin')) {
-             Object.defineProperty(p, 'origin', d);
+             try { Object.defineProperty(p, 'origin', d); } catch { return; }
              delete self.origin;
            } })()",
         Some("pyro://internal/worker-scope.js"),
