@@ -9,6 +9,9 @@
 //! fails, as does a frame that needs a dictionary, a checksum mismatch, bytes
 //! that are not a frame, and a body that ends inside a frame. An empty body
 //! decodes to nothing.
+//!
+//! `dcz` (RFC 9842) frames use a raw-content dictionary their header does
+//! not name: [`Zstd::with_dict`] decodes every frame with it.
 
 use std::io;
 
@@ -40,13 +43,40 @@ pub(crate) struct Zstd {
     /// Received input not decoded yet: less than one header or block.
     pending: Vec<u8>,
     out: Vec<u8>,
+    /// The id of the dictionary every frame uses (`dcz`).
+    dict: Option<u32>,
 }
+
+/// A formatted zstd dictionary (`zstd --train`) whose entropy tables ruzstd
+/// needs to build a [`ruzstd::decoding::Dictionary`]; a raw-content
+/// dictionary keeps them but replaces the content. Frames made with a
+/// raw-content dictionary start without entropy tables (libzstd's encoder
+/// never repeats a table it has not sent), so these are never used.
+const DICT_TABLES: &[u8] = include_bytes!("zstd_dict_tables.bin");
 
 impl Zstd {
     pub(crate) fn new() -> Self {
         let mut dec = FrameDecoder::new();
         dec.set_max_window_size(MAX_WINDOW);
-        Zstd { dec, state: State::Header, pending: Vec::new(), out: Vec::new() }
+        Zstd { dec, state: State::Header, pending: Vec::new(), out: Vec::new(), dict: None }
+    }
+
+    /// A decoder whose frames use `content` as a raw-content dictionary
+    /// (zstd's repeat offsets 1, 4, 8 to start with).
+    pub(crate) fn with_dict(content: &[u8]) -> io::Result<Self> {
+        let mut z = Zstd::new();
+        let mut dict = ruzstd::decoding::Dictionary::decode_dict(DICT_TABLES)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        dict.dict_content = content.to_vec();
+        dict.offset_hist = [1, 4, 8];
+        let id = dict.id;
+        // RFC 9842: a `dcz` window may reach 1.25 times the dictionary's size when that
+        // is above 8 MiB, up to 128 MiB.
+        let window = (content.len() as u64).saturating_mul(5) / 4;
+        z.dec.set_max_window_size(window.clamp(MAX_WINDOW, 128 << 20));
+        z.dec.add_dict(dict).map_err(decode_error)?;
+        z.dict = Some(id);
+        Ok(z)
     }
 
     /// The decoded output so far, which the caller may empty.
@@ -96,6 +126,9 @@ impl Zstd {
                     }
                     let mut src = &rest[..len];
                     self.dec.reset(&mut src).map_err(decode_error)?;
+                    if let Some(id) = self.dict {
+                        self.dec.force_dict(id).map_err(decode_error)?;
+                    }
                     pos += len;
                     self.state = State::Blocks { checksum: descriptor & 0x04 != 0 };
                 }

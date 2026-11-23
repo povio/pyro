@@ -3,6 +3,7 @@
 
 mod auth;
 mod cache;
+mod dictionary;
 pub mod client;
 pub mod cookies;
 pub mod cors;

@@ -2948,6 +2948,7 @@ dependencies = [
  "hyper-util",
  "percent-encoding",
  "pyro-psl",
+ "regex",
  "rustc-hash 2.1.3",
  "rustls",
  "ruzstd",
@@ -2958,6 +2959,7 @@ dependencies = [
  "tower-service",
  "twox-hash",
  "url",
+ "urlpattern",
  "webpki-roots",
  "zlib-rs",
 ]

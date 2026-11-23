@@ -262,6 +262,19 @@ impl HttpCache {
         self.bytes = 0;
     }
 
+    /// Removes the responses of `url`'s origin (`Clear-Site-Data: "cache"`).
+    pub fn clear_origin(&mut self, url: &Url) {
+        let origin = url.origin();
+        let bytes = &mut self.bytes;
+        self.entries.retain(|key, variants| {
+            let keep = Url::parse(key).map_or(true, |k| k.origin() != origin);
+            if !keep {
+                *bytes -= variants.iter().map(|e| e.size).sum::<usize>();
+            }
+            keep
+        });
+    }
+
     /// `credentialed`: the request carries credentials ([`Entry::credentialed`]).
     pub fn lookup(&mut self, url: &Url, request: &HeaderMap, credentialed: bool, mode: CacheMode, now: f64) -> Lookup {
         if matches!(mode, CacheMode::NoStore | CacheMode::Reload) || !self.enabled() {
@@ -577,13 +590,20 @@ fn key(url: &Url) -> &str {
     &s[..s.find('#').unwrap_or(s.len())]
 }
 
-/// `Vary` field names, `None` for `Vary: *`.
+/// `Vary` field names, `None` for `Vary: *`. `Accept-Encoding` and
+/// `Available-Dictionary` do not count: entries keep decoded bodies, the
+/// same whatever coding carried them, and a dictionary registered by a
+/// response would otherwise keep that very response from being reused (as
+/// Chromium, WPT fetch/compression-dictionary's registration test).
 fn vary_names(headers: &HeaderMap) -> Option<Vec<HeaderName>> {
     let mut out = Vec::new();
     for v in headers.get_all(header::VARY) {
         for name in v.to_str().unwrap_or("*").split(',').map(str::trim).filter(|n| !n.is_empty()) {
             if name == "*" {
                 return None;
+            }
+            if name.eq_ignore_ascii_case("accept-encoding") || name.eq_ignore_ascii_case("available-dictionary") {
+                continue;
             }
             if let Ok(n) = HeaderName::from_bytes(name.to_ascii_lowercase().as_bytes()) {
                 if !out.contains(&n) {

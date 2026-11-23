@@ -31,6 +31,10 @@ webpki-roots = "1"
 pyro-psl.workspace = true
 percent-encoding = "2.3.2"
 rustc-hash = "2.1.3"
+# Compression dictionary `match` patterns (src/dictionary.rs); regex is the
+# engine urlpattern compiles them for.
+regex = "1.13.2"
+urlpattern = "0.6.0"
 # `Content-Encoding: zstd` (src/zstd.rs): a pure-Rust decoder, no C build.
 ruzstd = "0.9.1"
 # Sec-WebSocket-Accept.

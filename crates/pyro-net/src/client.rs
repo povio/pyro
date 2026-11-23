@@ -406,6 +406,8 @@ struct Shared {
     observers: Subscriptions,
     interceptor: Mutex<Option<Arc<dyn Interceptor>>>,
     cache: Mutex<crate::cache::HttpCache>,
+    /// Compression dictionaries (RFC 9842) responses registered.
+    dictionaries: Mutex<crate::dictionary::Dictionaries>,
     epoch: Instant,
     /// `Security.setIgnoreCertificateErrors`: HTTPS requests skip certificate
     /// verification (handshake signatures are still checked).
@@ -518,7 +520,37 @@ impl Shared {
             }
         }
         // Fetch: a ranged request asks for the bytes as stored.
-        let encodings = if req.headers.contains_key(header::RANGE) { "identity" } else { "gzip, deflate, br, zstd" };
+        let ranged = req.headers.contains_key(header::RANGE);
+        // RFC 9842: a same-origin or CORS request to a potentially
+        // trustworthy URL offers its best dictionary.
+        h.remove(crate::dictionary::AVAILABLE_DICTIONARY);
+        h.remove(crate::dictionary::DICTIONARY_ID);
+        let mut offered = false;
+        if !ranged && (same_origin || cors_cross) && crate::cookies::is_trustworthy(&req.url) {
+            // `match-dest` names Fetch destinations: "" for none, and a dictionary's own.
+            let dest = match (req.destination, crate::referrer::fetch_dest(req.destination)) {
+                (Destination::CompressionDictionary, _) => "compression-dictionary",
+                (_, "empty") => "",
+                (_, dest) => dest,
+            };
+            let dictionaries = self.dictionaries.lock().unwrap();
+            if let Some((dict, id)) = dictionaries.best(req.top_level_site.as_deref(), &req.url, dest, wall_time()) {
+                if let Ok(v) = HeaderValue::from_str(&crate::dictionary::hash_header(&dict.hash)) {
+                    h.insert(crate::dictionary::AVAILABLE_DICTIONARY, v);
+                    offered = true;
+                    if let Some(v) = id.and_then(crate::dictionary::id_header) {
+                        h.insert(crate::dictionary::DICTIONARY_ID, v);
+                    }
+                }
+            }
+        }
+        let encodings = if ranged {
+            "identity"
+        } else if offered {
+            "gzip, deflate, br, zstd, dcb, dcz"
+        } else {
+            "gzip, deflate, br, zstd"
+        };
         h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static(encodings));
         if let Some(origin) = &req.origin {
             if cors_cross || !matches!(req.method, Method::GET | Method::HEAD) {
@@ -757,6 +789,7 @@ impl NetClient {
             observers: Subscriptions::default(),
             interceptor: Mutex::new(None),
             cache: Mutex::new(cache),
+            dictionaries: Mutex::default(),
             epoch: Instant::now(),
             ignore_certificate_errors: std::sync::atomic::AtomicBool::new(false),
             proxy,
@@ -1669,6 +1702,66 @@ enum Stage {
     Sniff(Vec<u8>, Vec<u8>),
     Brotli(Box<brotli_decompressor::DecompressorWriter<Vec<u8>>>),
     Zstd(Box<Zstd>),
+    /// `dcb` / `dcz` (RFC 9842).
+    Dict(Box<DictStage>),
+}
+
+/// A dictionary-compressed body: a header naming the dictionary by its
+/// SHA-256 (`\xffDCB` and the hash for `dcb`, a zstd skippable frame of it
+/// for `dcz`), then a brotli or zstd stream that uses the dictionary.
+struct DictStage {
+    zstd: bool,
+    /// The dictionary the request advertised; none fails the response.
+    dict: Option<Arc<crate::dictionary::Dictionary>>,
+    head: Vec<u8>,
+    inner: Option<Stage>,
+    empty: Vec<u8>,
+}
+
+impl DictStage {
+    const DCB_MAGIC: &'static [u8] = b"\xffDCB";
+    const DCZ_MAGIC: &'static [u8] = &[0x5e, 0x2a, 0x4d, 0x18, 0x20, 0x00, 0x00, 0x00];
+
+    fn magic(&self) -> &'static [u8] {
+        if self.zstd {
+            Self::DCZ_MAGIC
+        } else {
+            Self::DCB_MAGIC
+        }
+    }
+
+    fn write_all(&mut self, chunk: &[u8]) -> std::io::Result<()> {
+        if let Some(inner) = self.inner.as_mut() {
+            return inner.write_all(chunk);
+        }
+        self.head.extend_from_slice(chunk);
+        let need = self.magic().len() + 32;
+        if self.head.len() < need {
+            return Ok(());
+        }
+        let bad = |what: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, what.to_owned());
+        let dict = self.dict.as_ref().ok_or_else(|| bad("no dictionary was advertised"))?;
+        let (magic, rest) = self.head.split_at(self.magic().len());
+        if magic != self.magic() {
+            return Err(bad("not a dictionary-compressed stream"));
+        }
+        if rest[..32] != dict.hash {
+            return Err(bad("dictionary hash mismatch"));
+        }
+        let mut inner = if self.zstd {
+            Stage::Zstd(Box::new(Zstd::with_dict(&dict.bytes)?))
+        } else {
+            Stage::Brotli(Box::new(brotli_decompressor::DecompressorWriter::new_with_custom_dictionary(
+                Vec::new(),
+                4096,
+                dict.bytes.clone().into(),
+            )))
+        };
+        let head = std::mem::take(&mut self.head);
+        inner.write_all(&head[need..])?;
+        self.inner = Some(inner);
+        Ok(())
+    }
 }
 
 /// A zlib stream header (RFC 1950): method 8 with a window of at most
@@ -1683,6 +1776,7 @@ impl Stage {
             Stage::Inflate(d) => d.write_all(chunk),
             Stage::Brotli(d) => d.write_all(chunk),
             Stage::Zstd(d) => d.write_all(chunk),
+            Stage::Dict(d) => d.write_all(chunk),
             Stage::Sniff(head, _) => {
                 head.extend_from_slice(chunk);
                 if head.len() < 2 {
@@ -1705,6 +1799,10 @@ impl Stage {
             Stage::Inflate(d) => d.out(),
             Stage::Brotli(d) => d.get_mut(),
             Stage::Zstd(d) => d.out(),
+            Stage::Dict(d) => match d.inner.as_mut() {
+                Some(inner) => inner.out(),
+                None => &mut d.empty,
+            },
             Stage::Sniff(_, out) => out,
         }
     }
@@ -1715,6 +1813,10 @@ impl Stage {
             Stage::Inflate(d) => d.finish().map_err(err),
             Stage::Brotli(d) => d.into_inner().map_err(|_| NetError::Decode("truncated brotli stream".into())),
             Stage::Zstd(d) => d.finish().map_err(err),
+            Stage::Dict(d) => match d.inner {
+                Some(inner) => inner.finish(),
+                None => Err(NetError::Decode("truncated dictionary-compressed stream".into())),
+            },
             Stage::Sniff(head, _) if head.is_empty() => Ok(Vec::new()),
             // A one-byte body: no zlib stream, so raw deflate decides.
             Stage::Sniff(head, _) => {
@@ -1738,8 +1840,9 @@ impl Decoder {
     /// The decoder for a `Content-Encoding` value (its header lines joined
     /// by commas). Like Chromium, a list decodes in reverse order, and a
     /// list naming `identity` or a coding not supported passes the body
-    /// through undecoded instead of failing the request.
-    fn for_encoding(enc: Option<&str>) -> Self {
+    /// through undecoded instead of failing the request. `dict` is the
+    /// dictionary the request advertised, for `dcb` and `dcz`.
+    fn for_encoding(enc: Option<&str>, dict: Option<&Arc<crate::dictionary::Dictionary>>) -> Self {
         let Some(enc) = enc else { return Decoder::IDENTITY };
         let mut stages = Vec::new();
         for token in enc.split(',').map(str::trim).filter(|t| !t.is_empty()) {
@@ -1751,6 +1854,14 @@ impl Decoder {
                 Stage::Brotli(Box::new(brotli_decompressor::DecompressorWriter::new(Vec::new(), 4096)))
             } else if token.eq_ignore_ascii_case("zstd") {
                 Stage::Zstd(Box::new(Zstd::new()))
+            } else if token.eq_ignore_ascii_case("dcb") || token.eq_ignore_ascii_case("dcz") {
+                Stage::Dict(Box::new(DictStage {
+                    zstd: token.eq_ignore_ascii_case("dcz"),
+                    dict: dict.cloned(),
+                    head: Vec::new(),
+                    inner: None,
+                    empty: Vec::new(),
+                }))
             } else {
                 return Decoder::IDENTITY;
             };
@@ -2199,6 +2310,10 @@ impl Io {
                 && pause_response.is_none();
             let request_time = wall_time();
             let sent = if cacheable { Some(headers.clone()) } else { None };
+            // The dictionary this hop offered, which `dcb` and `dcz` decode with.
+            let offered = headers
+                .get(crate::dictionary::AVAILABLE_DICTIONARY)
+                .and_then(|v| self.shared.dictionaries.lock().unwrap().by_header(v));
             // pyro: whether this hop carries credentials (as the cookie decision above): the cache
             // serves a response only to a request of the same kind (`HttpCache::lookup`).
             let credentialed =
@@ -2631,9 +2746,35 @@ impl Io {
                 ResponseKind::Basic
             };
             let encoding = content_encoding(&resp_headers);
+            // RFC 9842: Clear-Site-Data drops dictionaries; a same-origin or CORS
+            // 200 to a GET without a range, from a potentially trustworthy URL,
+            // with Use-As-Dictionary registers its whole decoded body as one.
+            let clear = crate::dictionary::clear_site_data(&resp_headers);
+            if clear.cache || clear.cookies {
+                self.shared.dictionaries.lock().unwrap().clear_origin(&url);
+            }
+            // Clear-Site-Data "cache": the origin's responses in the HTTP cache go too.
+            if clear.cache {
+                self.shared.cache.lock().unwrap().clear_origin(&url);
+            }
+            let registration = (!matches!(kind, ResponseKind::Opaque)
+                && status == StatusCode::OK
+                && method == Method::GET
+                && !req.headers.contains_key(header::RANGE)
+                && crate::cookies::is_trustworthy(&url))
+            .then(|| crate::dictionary::parse_use_as_dictionary(&resp_headers, &url))
+            .flatten()
+            .and_then(|reg| {
+                crate::dictionary::usable_until(&resp_headers, request_time, response_time).map(|until| (reg, until))
+            });
             if let (Some(request), Some(interceptor)) = (pause_response.take(), interceptor.as_ref()) {
-                let body = read_whole_body(resp, encoding.as_deref(), max_body).await?;
+                let body = read_whole_body(resp, encoding.as_deref(), offered.as_ref(), max_body).await?;
                 drop(permit);
+                // The network's response registers, whatever the interceptor answers.
+                if let Some((reg, until)) = registration.filter(|_| body.len() <= crate::dictionary::MAX_BYTES) {
+                    let top = req.top_level_site.clone();
+                    self.shared.dictionaries.lock().unwrap().register(top, &url, reg, body.to_vec(), until);
+                }
                 let (tx, rx) = oneshot::channel();
                 let paused = PausedResponse {
                     id,
@@ -2662,7 +2803,8 @@ impl Io {
                 return self.deliver_body(id, &req, sink, head, body);
             }
             // Before the head takes the headers: the coding borrows them.
-            let mut decoder = Decoder::for_encoding(encoding.as_deref());
+            let mut decoder = Decoder::for_encoding(encoding.as_deref(), offered.as_ref());
+            let mut dictionary_body: Option<Vec<u8>> = registration.as_ref().map(|_| Vec::new());
             let (store, mut max_entry) = {
                 let cache = self.shared.cache.lock().unwrap();
                 let store = sent.as_ref().is_some_and(|s| cache.storable(status, &resp_headers, s, cache_mode));
@@ -2719,6 +2861,12 @@ impl Io {
                     if let Some(s) = stored.as_mut() {
                         s.push(out.clone());
                     }
+                    if let Some(d) = dictionary_body.as_mut() {
+                        d.extend_from_slice(&out);
+                        if d.len() > crate::dictionary::MAX_BYTES {
+                            dictionary_body = None;
+                        }
+                    }
                     deliver(sink, ResponseEvent::Data(out));
                 }
             }
@@ -2737,9 +2885,19 @@ impl Io {
                 if let Some(s) = stored.as_mut() {
                     s.push(tail.clone());
                 }
+                if let Some(d) = dictionary_body.as_mut() {
+                    d.extend_from_slice(&tail);
+                    if d.len() > crate::dictionary::MAX_BYTES {
+                        dictionary_body = None;
+                    }
+                }
                 deliver(sink, ResponseEvent::Data(tail));
             }
             drop(permit);
+            if let (Some((reg, until)), Some(body)) = (registration, dictionary_body) {
+                let top = req.top_level_site.clone();
+                self.shared.dictionaries.lock().unwrap().register(top, &url, reg, body, until);
+            }
             if let (Some(chunks), Some(sent)) = (stored, sent.as_ref()) {
                 let body =
                     if chunks.len() == 1 { chunks.into_iter().next().unwrap() } else { Bytes::from(chunks.concat()) };
@@ -2823,7 +2981,12 @@ impl Io {
                 };
                 let Some(max_entry) = max_entry else { return };
                 let encoding = content_encoding(&resp_headers).map(Cow::into_owned);
-                let Ok(body) = read_whole_body(resp, encoding.as_deref(), max_entry).await else { return };
+                // It went with the original request's headers: a `dcb`/`dcz` answer
+                // decodes with the dictionary they offered.
+                let offered = sent
+                    .get(crate::dictionary::AVAILABLE_DICTIONARY)
+                    .and_then(|v| io.shared.dictionaries.lock().unwrap().by_header(v));
+                let Ok(body) = read_whole_body(resp, encoding.as_deref(), offered.as_ref(), max_entry).await else { return };
                 let mut cache = io.shared.cache.lock().unwrap();
                 cache.insert(
                     &url,
@@ -3145,9 +3308,10 @@ fn corp_blocked() -> NetError {
 async fn read_whole_body(
     resp: http::Response<hyper::body::Incoming>,
     encoding: Option<&str>,
+    dict: Option<&Arc<crate::dictionary::Dictionary>>,
     max_body: usize,
 ) -> Result<Bytes, NetError> {
-    let mut decoder = Decoder::for_encoding(encoding);
+    let mut decoder = Decoder::for_encoding(encoding, dict);
     let mut body = resp.into_body();
     let mut out = Vec::new();
     while let Some(frame) = body.frame().await {
@@ -3355,14 +3519,14 @@ mod decoder_tests {
     fn decoded_output_does_not_share_the_chunk() {
         let read_buffer = Bytes::from(vec![7u8; 4096]);
         let chunk = read_buffer.slice(100..200);
-        let out = Decoder::for_encoding(None).push(&chunk).unwrap();
+        let out = Decoder::for_encoding(None, None).push(&chunk).unwrap();
         assert_eq!(out, chunk);
         assert!(!read_buffer.as_ptr_range().contains(&out.as_ptr()));
 
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         gz.write_all(&[b'a'; 100_000]).unwrap();
         let encoded = gz.finish().unwrap();
-        let mut decoder = Decoder::for_encoding(Some("gzip"));
+        let mut decoder = Decoder::for_encoding(Some("gzip"), None);
         let mut decoded = Vec::new();
         for part in encoded.chunks(1000) {
             decoded.extend_from_slice(&decoder.push(part).unwrap());
@@ -3391,7 +3555,7 @@ mod decoder_tests {
     }
 
     fn decode(enc: &str, body: &[u8], chunk: usize) -> Result<Vec<u8>, NetError> {
-        let mut decoder = Decoder::for_encoding(Some(enc));
+        let mut decoder = Decoder::for_encoding(Some(enc), None);
         let mut out = Vec::new();
         for part in body.chunks(chunk.max(1)) {
             decoder.push_into(part, &mut out)?;
@@ -3461,6 +3625,42 @@ mod decoder_tests {
     }
 
     /// `zstd` decodes (WPT's `foo.text.zst`, also under gzip), and a body
+    /// `dcb` and `dcz` bodies (WPT fetch/compression-dictionary's
+    /// compressed-data.py) decode in any chunking with the dictionary whose
+    /// hash they name, and fail without it or with another one.
+    #[test]
+    fn dictionary_codings_decode_with_the_offered_dictionary() {
+        use sha2::Digest;
+        let dict = |bytes: &[u8]| {
+            Arc::new(crate::dictionary::Dictionary { hash: sha2::Sha256::digest(bytes).into(), bytes: bytes.to_vec() })
+        };
+        let good = dict(b"This is a test dictionary.\n");
+        let other = dict(b"other");
+        let dcb: &[u8] = b"\xff\x44\x43\x42\x53\x96\x9b\xcf\x5e\x96\x0e\x0e\xdb\xf0\xa4\xbd\xde\x6b\x0b\x3e\x93\x81\xe1\x56\xde\x7f\x5b\x91\xce\x83\x91\x62\x42\x70\xf4\x16\xa1\x98\x01\x80\x62\xa4\x4c\x1d\xdf\x12\x84\x8c\xae\xc2\xca\x60\x22\x07\x6e\x81\x05\x14\xc9\xb7\xc3\x44\x8e\xbc\x16\xe0\x15\x0e\xec\xc1\xee\x34\x33\x3e\x0d";
+        let dcz: &[u8] = b"\x5e\x2a\x4d\x18\x20\x00\x00\x00\x53\x96\x9b\xcf\x5e\x96\x0e\x0e\xdb\xf0\xa4\xbd\xde\x6b\x0b\x3e\x93\x81\xe1\x56\xde\x7f\x5b\x91\xce\x83\x91\x62\x42\x70\xf4\x16\x28\xb5\x2f\xfd\x24\x34\xf5\x00\x00\x98\x63\x6f\x6d\x70\x72\x65\x73\x73\x65\x64\x61\x74\x61\x20\x75\x73\x69\x6e\x67\x03\x00\x59\xf9\x73\x54\x46\x27\x26\x10\x9e\x99\xf2\xbc";
+        let decode = |enc: &str, body: &[u8], chunk: usize, d: Option<&Arc<crate::dictionary::Dictionary>>| {
+            let mut decoder = Decoder::for_encoding(Some(enc), d);
+            let mut out = Vec::new();
+            for part in body.chunks(chunk) {
+                decoder.push_into(part, &mut out)?;
+            }
+            out.extend(decoder.finish()?);
+            Ok::<_, NetError>(out)
+        };
+        for (enc, body) in [("dcb", dcb), ("dcz", dcz)] {
+            for chunk in [1, 7, 40, body.len()] {
+                assert_eq!(
+                    decode(enc, body, chunk, Some(&good)).unwrap(),
+                    b"This is compressed test data using a test dictionary",
+                    "{enc} in chunks of {chunk}"
+                );
+            }
+            assert!(decode(enc, body, 64, None).is_err());
+            assert!(decode(enc, body, 64, Some(&other)).is_err());
+            assert!(decode(enc, &body[..20], 64, Some(&good)).is_err());
+        }
+    }
+
     /// that is not zstd fails as Chromium's does (a network error on read).
     #[test]
     fn zstd_decodes_and_bad_zstd_fails() {
