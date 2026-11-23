@@ -1989,7 +1989,9 @@ fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_ele
             "pointerover@live<static pointerenter@#document<static pointerenter@HTML<static pointerenter@BODY<static pointerenter@cell<static pointerenter@live<static mouseover@live<static mouseenter@#document<static mouseenter@HTML<static mouseenter@BODY<static mouseenter@cell<static mouseenter@live<static"
         )
     );
-    assert_eq!(eval_value(&mut h, "document.getElementById('live').matches(':hover')"), json!(true));
+    // (`#live:hover`, not a bare `:hover`: about:blank is in quirks mode since 6efaefdaf, as in
+    // Chrome, and there a bare `:hover` matches links only.)
+    assert_eq!(eval_value(&mut h, "document.getElementById('live').matches('#live:hover')"), json!(true));
 }
 
 #[test]
