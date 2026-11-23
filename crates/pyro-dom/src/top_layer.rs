@@ -492,6 +492,8 @@ impl Dom {
         {
             return;
         }
+        // The popovers this removal hides: those whose invokers they hold are hidden with them.
+        let mut hidden: Vec<NodeId> = Vec::new();
         for i in self.shadow_including_subtree(node) {
             let id = self.id_of(i);
             // Fullscreen "removing steps": a removed element is no longer fullscreen (its
@@ -518,37 +520,44 @@ impl Dom {
                         for el in above.into_iter().rev() {
                             self.top_layer.popovers.remove(&el);
                             self.top_layer.leave(el);
+                            hidden.push(el);
                         }
                     }
                 }
             }
             let was_showing = self.top_layer.popovers.remove(&id);
+            if was_showing {
+                hidden.push(id);
+            }
             if was_modal || was_showing {
                 self.top_layer.leave(id);
                 self.bump();
             }
         }
-        // Popovers invoked from inside the removed subtree (a hint whose invoker was in a removed
-        // auto popover) are hidden with it, and those invoked from them.
-        loop {
+        // Popovers invoked from inside a popover this removal hid (a hint whose invoker was in a
+        // removed auto popover) are hidden with it, and those invoked from them. Removing only an
+        // invoker closes nothing (WPT popovers/popover-target-element-disabled).
+        while !hidden.is_empty() {
+            let holders: Vec<u32> = hidden.iter().filter_map(|&h| self.check(h).ok()).collect();
             let invoked: Vec<NodeId> = self
                 .top_layer
                 .invokers
                 .iter()
                 .filter(|(_, invoker)| {
-                    self.check(**invoker).is_ok_and(|inv| self.shadow_including_inclusive_ancestor(node, inv))
+                    self.check(**invoker)
+                        .is_ok_and(|inv| holders.iter().any(|&h| self.shadow_including_inclusive_ancestor(h, inv)))
                 })
                 .map(|(popover, _)| *popover)
                 .filter(|popover| self.top_layer.popovers.contains(popover))
                 .collect();
-            if invoked.is_empty() {
-                break;
-            }
-            for el in invoked {
+            for &el in &invoked {
                 self.top_layer.popovers.remove(&el);
                 self.top_layer.leave(el);
             }
-            self.bump();
+            if !invoked.is_empty() {
+                self.bump();
+            }
+            hidden = invoked;
         }
     }
 }
