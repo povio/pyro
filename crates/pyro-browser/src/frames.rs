@@ -2308,13 +2308,32 @@ impl Browser {
                 Ok(())
             } else if host.nav(key).is_some_and(|nav| {
                 // The container's document initiates: one of another origin than the frame's
-                // document does not make the frame's own URL a replace.
+                // document does not make the frame's own URL a replace (it cannot see it).
                 let source =
                     crate::nav::NavigateSource { cross_origin: parent.origin != frame.origin, ..Default::default() };
                 nav.navigate_to_fragment_from(&url, &source)
             }) {
                 // HTML "navigate an iframe or frame": the document's own URL with another fragment
                 // is a fragment navigation of it (`src="about:blank#1"` on an initial about:blank).
+                // For a container of another origin Chrome also fires the container's load, as if
+                // the frame had loaded (crbug.com/1248444: the embedder must not learn that the
+                // frame stayed on that document).
+                if parent.origin != frame.origin {
+                    if let Some(parent_dom) = parent.page_dom.clone() {
+                        let loader = loader.clone();
+                        self.sched.post(pyro_runtime::TaskSource::DomManipulation, move |b| {
+                            // Not for a container removed since, or whose frame has begun
+                            // another navigation (that one fires the load).
+                            let current = b.page(key.page).is_some_and(|p| {
+                                p.frames.frame(key).is_some_and(|f| f.loader_id == loader)
+                                    && p.frames.dom.borrow().is_connected(owner).unwrap_or(false)
+                            }) && b.doc(key).is_some_and(|d| d.pending_loader.is_none());
+                            if current {
+                                pyro_webapi::lifecycle::resource_loaded(&parent_dom, owner, true);
+                            }
+                        });
+                    }
+                }
                 Ok(())
             } else if url == "about:blank" && frame.url == "about:blank" && !frame.dom_content_loaded {
                 // A script that opened the initial document since (append,
