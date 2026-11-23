@@ -652,7 +652,9 @@ impl PageNav {
         // HTML "navigate": a navigation of the initial about:blank document replaces, a fragment
         // navigation included; that leaves the document initial (the next navigation replaces it
         // too).
-        let kind = if kind == SameDocumentKind::Fragment && self.state.borrow().initial {
+        // pushState too (HTML "URL and history update steps": the initial about:blank document
+        // makes the history handling "replace").
+        let kind = if kind != SameDocumentKind::Replace && self.state.borrow().initial {
             SameDocumentKind::Replace
         } else {
             kind
