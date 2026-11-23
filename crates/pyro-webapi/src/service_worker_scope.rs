@@ -481,7 +481,13 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
         credentials: credentials_name(request.credentials),
         cache: cache_name(request.cache),
         redirect: redirect_name(request.redirect),
-        referrer: request.referrer.as_ref().map_or_else(|| "no-referrer".to_owned(), |u| u.to_string()),
+        // Fetch "main fetch" sets the request's referrer to the one its policy determines before a
+        // service worker sees it (an `origin` policy: the origin only; `no-referrer`: none).
+        referrer: request
+            .referrer
+            .as_ref()
+            .and_then(|r| pyro_net::referrer::referrer_for(r, &request.url, request.referrer_policy))
+            .unwrap_or_else(|| "no-referrer".to_owned()),
         referrer_policy: request.referrer_policy.as_str().to_owned(),
         integrity: String::new(),
         keepalive: false,
