@@ -7,7 +7,11 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const TEXT: &str = "\nTP-3973 original attachment bytes München\n<script>globalThis.plainExecuted=true</script>&amp;<pre>literal</pre>\n";
-const SNIFF_TEXT: &str = "<meta charset=windows-1252>München &lt;literal&gt;";
+// UTF-8 bytes served as charset-less text/plain over http: Chrome (en-US) decodes them as
+// windows-1252 without UTF-8 sniffing (5f542bc48, encoding/sniffing.html), and the literal
+// <meta> names UTF-8 so that honouring it would show.
+const SNIFF_TEXT: &str = "<meta charset=utf-8>München &lt;literal&gt;";
+const SNIFF_DECODED: &str = "<meta charset=utf-8>MÃ¼nchen &lt;literal&gt;";
 
 struct Server {
     origin: String,
@@ -155,6 +159,6 @@ fn plaintext_decoding_honors_transport_charset_but_not_literal_meta_markup() {
     assert_eq!(eval(&thread, page, "document.body.textContent"), "café <b>literal</b>");
     assert_eq!(eval(&thread, page, "document.characterSet"), "windows-1252");
     navigate(&mut thread, page, &format!("{}/sniff", server.origin));
-    assert_eq!(eval(&thread, page, "document.body.textContent"), SNIFF_TEXT);
-    assert_eq!(eval(&thread, page, "document.characterSet"), "UTF-8");
+    assert_eq!(eval(&thread, page, "document.body.textContent"), SNIFF_DECODED);
+    assert_eq!(eval(&thread, page, "document.characterSet"), "windows-1252");
 }
