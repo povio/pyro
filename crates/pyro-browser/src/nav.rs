@@ -972,6 +972,7 @@ impl PageNav {
             })
         };
         let Some(target) = target else { return };
+        let source = (self.page, self.frame_id.clone());
         self.sched.post(TaskSource::Navigation, move |b| {
             // A traversal (or push) applied since this one was asked for
             // wins, as does one still loading another document: of
@@ -997,6 +998,20 @@ impl PageNav {
                     change.map(|change| (nav, change))
                 })
                 .collect();
+            // HTML "apply the traverse history step": an initiator not allowed by sandboxing to
+            // navigate a frame the traversal changes aborts it (a sandboxed iframe's
+            // `history.back()` cannot traverse its parent: WPT the-iframe-element/
+            // iframe_sandbox_navigate_history_go_back, _go_forward).
+            if let Some(host) = b.page(source.0).map(|p| p.frames.clone()) {
+                if let Some(from_key) = host.key(&source.1) {
+                    let disallowed = changes.iter().any(|(nav, _)| {
+                        host.key(&nav.frame_id).is_some_and(|to| !host.allowed_by_sandboxing(from_key, to, false))
+                    });
+                    if disallowed {
+                        return;
+                    }
+                }
+            }
             // A traversal that takes a frame to another document does not take the place of
             // that frame's planned form navigation that has begun: the joint step stays.
             if changes.iter().any(|(nav, (_, entry, current_doc))| {
