@@ -365,7 +365,10 @@ pub struct PageDom {
     image_bytes_refused: Cell<usize>,
     /// Bitmaps of canvas elements with a 2D context (`canvas.rs`), for
     /// painting them.
-    pub(crate) canvas_surfaces: RefCell<Vec<(NodeId, std::rc::Weak<RefCell<pyro_canvas::Surface>>)>>,
+    /// With the color space each bitmap is in, and its last conversion to sRGB (source rows, held
+    /// weakly, and converted rows) for one that is not.
+    #[allow(clippy::type_complexity)]
+    pub(crate) canvas_surfaces: RefCell<Vec<(NodeId, std::rc::Weak<RefCell<pyro_canvas::Surface>>, pyro_dom::canvas_color::Space, RefCell<Option<(std::sync::Weak<Vec<u8>>, std::sync::Arc<Vec<u8>>)>>)>>,
     /// Canvas elements whose control went to an `OffscreenCanvas`
     /// (`transferControlToOffscreen`), with the frame it shows there.
     pub(crate) canvas_placeholders: RefCell<Vec<(NodeId, std::sync::Arc<crate::canvas::Placeholder>)>>,

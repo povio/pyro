@@ -603,6 +603,26 @@ fn canvas_bitmaps_are_lazy_and_reported_for_rendering() {
     assert!(e.page.canvas_bitmaps().is_empty());
 }
 
+/// A display-p3 canvas holds P3 values and is painted in sRGB: its bitmap for rendering is
+/// converted back (WPT css/filter-effects `fecolormatrix-display-p3`: an sRGB image drawn on it
+/// shows the colors it has).
+#[test]
+fn a_display_p3_canvas_is_painted_in_srgb() {
+    let e = env(CANVAS);
+    let r = &e.main;
+    eval(r, "var c = document.getElementById('c'), x = c.getContext('2d', { colorSpace: 'display-p3' }); x.fillStyle = 'rgb(255, 255, 138)'; x.fillRect(0, 0, 1, 1);");
+    // The bitmap's P3 value of that sRGB yellow has more blue.
+    let blue: u32 = eval(r, "x.getImageData(0, 0, 1, 1).data[2]").parse().unwrap();
+    assert!(blue > 145, "{blue}");
+    let bitmaps = e.page.canvas_bitmaps();
+    let (_, _, _, rgba) = &bitmaps[0];
+    assert!(rgba[..4].iter().zip([255u8, 255, 138, 255]).all(|(a, b)| a.abs_diff(b) <= 1), "{:?}", &rgba[..4]);
+    // Converted once while nothing is drawn: the same rows for the renderer to keep.
+    assert!(std::sync::Arc::ptr_eq(&e.page.canvas_bitmaps()[0].3, rgba));
+    eval(r, "x.fillRect(1, 0, 1, 1);");
+    assert!(!std::sync::Arc::ptr_eq(&e.page.canvas_bitmaps()[0].3, rgba));
+}
+
 #[test]
 fn video_frame_draw_orientation_follows_destination_canvas_style() {
     let e = env("<!doctype html><div id=wrap><canvas id=c width=4 height=4></canvas></div>");

@@ -658,7 +658,7 @@ fn new_context<'s>(
     };
     match target {
         Target::Element(canvas) => {
-            page.register_canvas(canvas, Rc::downgrade(&data.surface));
+            page.register_canvas(canvas, Rc::downgrade(&data.surface), data.pixel_space(Space::Srgb));
             s.wrap::<CanvasRenderingContext2D>(data, None)
         }
         Target::Offscreen => s.wrap::<OffscreenCanvasRenderingContext2D>(data, None),
@@ -3024,26 +3024,49 @@ pub(crate) fn make_canvas_object<'s>(s: &Scope<'s>, object: &CanvasObject) -> Js
 pub type CanvasBitmap = (NodeId, u32, u32, Arc<Vec<u8>>);
 
 impl PageDom {
-    pub(crate) fn register_canvas(&self, canvas: NodeId, surface: Weak<RefCell<Surface>>) {
+    /// `space`: the color space the bitmap's values are in ([`ContextData::pixel_space`] of sRGB:
+    /// the context's, none for a float16 canvas, which keeps the values it is given).
+    pub(crate) fn register_canvas(&self, canvas: NodeId, surface: Weak<RefCell<Surface>>, space: Space) {
         let mut list = self.canvas_surfaces.borrow_mut();
-        list.retain(|(_, s)| s.strong_count() > 0);
-        list.push((canvas, surface));
+        list.retain(|(_, s, _, _)| s.strong_count() > 0);
+        list.push((canvas, surface, space, RefCell::new(None)));
     }
 
     /// The bitmaps of this document's canvases that were drawn on, for
-    /// painting them (a screenshot). Empty, at the cost of a borrow, on a
-    /// page that never made a 2D context.
+    /// painting them (a screenshot), in sRGB: a canvas of another color space
+    /// (`colorSpace: "display-p3"`) shows its values converted, as Chromium
+    /// does (WPT css/filter-effects `fecolormatrix-display-p3`). Empty, at the
+    /// cost of a borrow, on a page that never made a 2D context.
     pub fn canvas_bitmaps(&self) -> Vec<CanvasBitmap> {
         let list = self.canvas_surfaces.borrow();
         let mut out = Vec::new();
-        for (canvas, surface) in list.iter() {
-            let Some(surface) = surface.upgrade() else { continue };
+        for (canvas, surface, space, converted) in list.iter() {
+            let Some(surface) = surface.upgrade() else {
+                converted.borrow_mut().take();
+                continue;
+            };
             let mut surface = surface.borrow_mut();
             let (w, h) = canvas_size(self, *canvas);
             if (surface.width(), surface.height()) != (w, h) || !surface.is_allocated() {
                 continue;
             }
-            if let Some(rgba) = surface.straight_rgba() {
+            if let Some(mut rgba) = surface.straight_rgba() {
+                if *space != Space::Srgb {
+                    // (Converted once per drawn bitmap: the same rows, the same `Arc`, which the
+                    // renderer keeps its image for. The source is held weakly: its pixels go
+                    // when the surface draws again, its allocation keeps its address unique.)
+                    let mut converted = converted.borrow_mut();
+                    rgba = match &*converted {
+                        Some((source, srgb)) if std::ptr::eq(source.as_ptr(), Arc::as_ptr(&rgba)) => srgb.clone(),
+                        _ => {
+                            let mut srgb = rgba.as_ref().clone();
+                            pyro_dom::canvas_color::convert_pixels(&mut srgb, *space, Space::Srgb);
+                            let srgb = Arc::new(srgb);
+                            *converted = Some((Arc::downgrade(&rgba), srgb.clone()));
+                            srgb
+                        }
+                    };
+                }
                 out.push((*canvas, w, h, rgba));
             }
         }
