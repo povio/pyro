@@ -440,7 +440,7 @@ const INTERNAL_URLS: [&str; 2] = ["pyro://", "lightpanda://"];
 
 /// `(url, line, column)` of the innermost frame of page script on the stack of `s`, as the
 /// engine reports it (unstripped).
-pub(crate) fn running_script_location(s: &Scope<'_>) -> Option<(String, u32, u32)> {
+pub fn running_script_location(s: &Scope<'_>) -> Option<(String, u32, u32)> {
     let stack = s.current_stack().ok()?;
     stack.lines().find_map(parse_stack_frame)
 }

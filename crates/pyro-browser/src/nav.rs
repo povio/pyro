@@ -1680,6 +1680,37 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 /// Location assignment: fragment-only changes are same-document; a `javascript:` URL runs
 /// its script in this document.
 /// `s`: the calling realm, whose document is the navigation's initiator.
+/// The document of HTML's incumbent settings object for a call into a Location member, as far as
+/// JavaScriptCore lets it be told: the entry realm (`pyro_js::entry_realm`, the script that led to
+/// the call), unless the innermost page script on the stack belongs to the Location's own document
+/// and not to the entry's: then a function of that document, called from the entry realm, is the
+/// caller (a parent calling its child frame's `go()`, which sets `location.href`: WPT
+/// navigate-child-function). Scripts are told apart by their URL, the document's for an inline
+/// script; when both documents have that URL, or the Location's is an `about:` document
+/// (about:srcdoc, about:blank: its scripts' URL tells nothing, and its referrer would be its
+/// container's anyway), the entry realm stays.
+fn incumbent_page(s: &Scope<'_>) -> Option<Rc<pyro_webapi::PageDom>> {
+    let own = pyro_webapi::target::page_of(s).ok();
+    let entry = pyro_js::entry_realm()
+        .and_then(|realm| realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()));
+    let (Some(own), Some(entry)) = (own.clone(), entry.clone()) else { return entry.or(own) };
+    if Rc::ptr_eq(&own, &entry) {
+        return Some(entry);
+    }
+    let document_url = |page: &pyro_webapi::PageDom| {
+        let dom = page.dom.borrow();
+        dom.document_data(page.document()).ok().map(|d| d.url.split('#').next().unwrap_or_default().to_owned())
+    };
+    let script = pyro_webapi::csp::running_script_location(s).map(|(url, ..)| url);
+    let script = script.as_deref().map(|url| url.split('#').next().unwrap_or_default());
+    let is_own = script.is_some_and(|url| {
+        !url.starts_with("about:")
+            && document_url(&own).as_deref() == Some(url)
+            && document_url(&entry).as_deref() != Some(url)
+    });
+    Some(if is_own { own } else { entry })
+}
+
 fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
     // HTML: a Location whose relevant Document is gone (its browsing context removed) does
     // nothing, before the URL is even parsed.
@@ -1704,16 +1735,12 @@ fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsRe
     // loaded, with no user gesture, replaces its entry.
     let loading = nav.page_dom.borrow().upgrade().is_some_and(|page| page.navigates_by_replacing());
     // HTML "Location-object navigate": the source document is the incumbent's (the calling
-    // script's document, `pyro_js::entry_realm` as for the URL), whose URL is the request's
-    // referrer: a parent navigating its child frame sends the parent's URL, not the child's
-    // (initial about:blank) one.
-    let source_referrer = pyro_js::entry_realm()
-        .and_then(|realm| realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()))
-        .or_else(|| pyro_webapi::target::page_of(s).ok())
-        .and_then(|page| {
-            let dom = page.dom.borrow();
-            dom.document_data(page.document()).ok().map(|d| d.url.to_string())
-        });
+    // script's document), whose URL is the request's referrer: a parent navigating its child
+    // frame sends the parent's URL, not the child's (initial about:blank) one.
+    let source_referrer = incumbent_page(s).and_then(|page| {
+        let dom = page.dom.borrow();
+        dom.document_data(page.document()).ok().map(|d| d.url.to_string())
+    });
     if nav.rate_limit_allows() {
         navigate_to_from(nav, target, replace || loading, source_referrer);
     }
