@@ -1,12 +1,14 @@
 diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/default.css
 --- a/packages/blitz-dom/assets/default.css
 +++ b/packages/blitz-dom/assets/default.css
-@@ -5,6 +5,34 @@
+@@ -5,6 +5,36 @@
  @namespace url(http://www.w3.org/1999/xhtml);
  /* set default namespace to HTML */
  @namespace xul url(http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul);
 +/* pyro: for the `svg|svg` rule below. */
 +@namespace svg url(http://www.w3.org/2000/svg);
++/* pyro: for the MathML fraction rules at the end. */
++@namespace m url(http://www.w3.org/1998/Math/MathML);
 +
 +*|*:root { view-transition-name: root; }
 +/* pyro: the scope of an active element-scoped view transition (css-view-transitions-2, as in
@@ -36,7 +38,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  
  @font-face {
      font-family: -moz-bullet-font;
-@@ -13,24 +41,29 @@
+@@ -13,24 +43,29 @@
  
  /* bidi
   *
@@ -76,7 +78,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  [dir="auto" i] {
      unicode-bidi: isolate;
  }
-@@ -41,15 +74,35 @@
+@@ -41,15 +76,35 @@
  
  /* https://html.spec.whatwg.org/#phrasing-content-3: only links are styled */
  a[href] {
@@ -116,7 +118,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  input {
      display: inline-block;
  }
-@@ -59,25 +112,115 @@
+@@ -59,25 +114,115 @@
      display: none !important;
  }
  
@@ -240,7 +242,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  input,
-@@ -86,10 +229,86 @@
+@@ -86,10 +231,86 @@
      font-family: system-ui, sans-serif;
  }
  
@@ -327,7 +329,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -108,6 +327,34 @@
+@@ -108,6 +329,34 @@
      text-shadow: initial;
  }
  
@@ -362,7 +364,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#the-select-element-2
     (select only has native appearance here) */
  select {
-@@ -121,17 +368,38 @@
+@@ -121,17 +370,38 @@
      outline: 2px solid #4D90FE;
  }
  
@@ -406,7 +408,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* Button-flavored inputs clip their contents to the border box and never
-@@ -150,6 +418,42 @@
+@@ -150,6 +420,42 @@
      background-color: transparent;
  }
  
@@ -449,7 +451,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,12 +473,56 @@
+@@ -169,12 +475,56 @@
      padding-inline-end: 2px;
  }
  
@@ -509,7 +511,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* To ensure http://www.w3.org/TR/REC-html40/struct/dirlang.html#style-bidi:
-@@ -186,13 +534,15 @@
+@@ -186,13 +536,15 @@
   * inherited value) to the transformed element."
   *
   * and the rules in http://dev.w3.org/html5/spec/rendering.html#rendering
@@ -526,7 +528,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  caption,
  center,
  col,
-@@ -202,7 +552,6 @@
+@@ -202,7 +554,6 @@
  div,
  dl,
  dt,
@@ -534,7 +536,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  figcaption,
  figure,
  footer,
-@@ -216,7 +565,6 @@
+@@ -216,7 +567,6 @@
  header,
  hgroup,
  hr,
@@ -542,7 +544,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  legend,
  li,
  listing,
-@@ -249,15 +597,17 @@
+@@ -249,15 +599,17 @@
      unicode-bidi: isolate;
  }
  
@@ -565,7 +567,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -287,9 +637,20 @@
+@@ -287,9 +639,20 @@
      margin: 8px;
  }
  
@@ -588,7 +590,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      display: block;
      margin-block-start: 1em;
      margin-block-end: 1em;
-@@ -569,6 +930,19 @@
+@@ -569,6 +932,19 @@
      text-align: center;
  }
  
@@ -608,7 +610,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -762,6 +1136,14 @@
+@@ -762,6 +1138,14 @@
      text-align: match-parent;
  }
  
@@ -623,7 +625,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* nested lists have no top/bottom margins */
  :is(ul, ol, dir, menu, dl) ul,
  :is(ul, ol, dir, menu, dl) ol,
-@@ -832,16 +1214,49 @@
+@@ -832,16 +1216,49 @@
      position: static ! important;
      float: none ! important;
      border: none ! important;
@@ -673,7 +675,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1266,34 @@
+@@ -851,8 +1268,34 @@
      user-select: none;
  }
  
@@ -708,7 +710,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1327,15 @@
+@@ -886,14 +1329,15 @@
      display: none;
  }
  
@@ -727,7 +729,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1364,11 @@
+@@ -922,6 +1366,11 @@
      display: none !important;
  }
  
@@ -739,7 +741,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -992,12 +1439,23 @@
+@@ -992,12 +1441,23 @@
      height: -moz-fit-content;
  }
  
@@ -764,7 +766,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      position: fixed;
      overflow: auto;
      visibility: visible;
-@@ -1017,6 +1475,8 @@
+@@ -1017,6 +1477,8 @@
      display: inline-block;
      vertical-align: text-bottom;
      text-align: start;
@@ -773,7 +775,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  marquee:is([direction="up"], [direction="down"]) {
-@@ -1082,9 +1542,9 @@
+@@ -1082,9 +1544,9 @@
      font-size: unset;
  }
  
@@ -785,7 +787,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  rtc {
      unicode-bidi: isolate;
  }
-@@ -1128,37 +1588,68 @@
+@@ -1128,37 +1590,77 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -856,7 +858,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    inset: 0;
 +    pointer-events: none !important;
 +    background-color: transparent;
-+}
+ }
 +
 +/* pyro: preformatted and code text gets no automatic spacing between ideographs and letters
 + * (HTML § 15.3.4, as Gecko; WPT css-text `text-autospace-preformatted-001`). */
@@ -882,7 +884,16 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    container-name: none !important;
 +    contain-intrinsic-size: none !important;
 +    corner-shape: round !important;
- }
++}
++
++/* pyro: MathML Core's user agent rules for fractions (MathML Core Appendix A; Chromium's
++ * mathml.css): inline math is compact and display math normal, a fraction's children are a
++ * script level deeper in compact math (their font 0.71 times smaller), and a fraction has 1px
++ * of padding beside its bar. Its layout is `layout::math`. */
++m|math { math-style: compact; }
++m|math[display="block" i] { math-style: normal; }
++m|mfrac { padding-inline: 1px; }
++m|mfrac > * { math-depth: auto-add; math-style: compact; font-size: math; }
 diff --git a/packages/blitz-dom/src/animation.rs b/packages/blitz-dom/src/animation.rs
 new file mode 100644
 --- /dev/null
@@ -6639,7 +6650,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
  impl core::fmt::Debug for BlitzFontMetricsProvider {
      fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
          write!(f, "BlitzFontMetricsProvider")
-@@ -48,12 +53,198 @@
+@@ -48,12 +53,242 @@
  }
  
  impl FontMetricsProvider for BlitzFontMetricsProvider {
@@ -6791,6 +6802,50 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
 +        Some(((metrics.ascent, -metrics.descent, metrics.leading, cap_height), adjusted))
 +    }
 +
++    /// pyro: the math parameters (MathML Core § 3.1.3) of the first available font of
++    /// `font_styles` (the first of its list that has U+0020, as `query_font_metrics`) at
++    /// `font_size`: its OpenType MATH constants, when it has a MATH table, and its x-height.
++    pub(crate) fn math_parameters_for(&self, font_styles: &FontStyles, font_size: f32) -> crate::layout::math::MathFontParameters {
++        use crate::layout::math::{MathFontParameters, read_math_constants};
++        use parley::fontique::{QueryFont, QueryStatus};
++        use skrifa::instance::{LocationRef, Size};
++        use skrifa::metrics::Metrics;
++
++        let mut font_ctx = self.font_ctx.lock().unwrap();
++        let font_ctx = &mut *font_ctx;
++        let mut query = query_for_font_styles(font_ctx, font_styles);
++        let variations = stylo_to_parley::font_variations(font_styles, font_size);
++        let mut found = None;
++        query.matches_with(|q_font: &QueryFont| {
++            if !q_font.unicode_range.contains(' '.into()) {
++                return QueryStatus::Continue;
++            }
++            let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index) else {
++                return QueryStatus::Continue;
++            };
++            if font_ref.charmap().map(' ').is_none() {
++                return QueryStatus::Continue;
++            }
++            found = Some(q_font.clone());
++            QueryStatus::Stop
++        });
++        let Some(font) = found else { return MathFontParameters::default() };
++        let Ok(font_ref) = skrifa::FontRef::from_index(font.blob.as_ref(), font.index) else {
++            return MathFontParameters::default();
++        };
++        let location = font_ref
++            .axes()
++            .location(variations.iter().map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)));
++        let metrics = Metrics::new(&font_ref, Size::new(font_size), LocationRef::from(&location));
++        let upem = f32::from(metrics.units_per_em);
++        let constants = font_ref
++            .table_data(skrifa::Tag::new(b"MATH"))
++            .and_then(|data| read_math_constants(data.as_bytes()))
++            .filter(|_| upem > 0.0)
++            .map(|values| values.map(|value| f32::from(value) * font_size / upem));
++        MathFontParameters { constants, x_height: metrics.x_height.filter(|x| *x > 0.0) }
++    }
++
 +    /// pyro: the metrics of the first font of `font_styles`' list that draws `text_char` (in its
 +    /// `unicode-range` and character map): `' '` is CSS's first available font, a letter the
 +    /// font a run of Latin text is drawn in (`font-size-adjust` scales by that one).
@@ -6839,7 +6894,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
      ) -> FontMetrics {
          use parley::fontique::{Query, QueryFont, QueryStatus};
          use skrifa::instance::{LocationRef, Size};
-@@ -70,6 +261,9 @@
+@@ -70,6 +305,9 @@
          // query.set_fallbacks(fontique::FallbackKey::new(fb_script, fb_language.as_ref()));
  
          let variations = stylo_to_parley::font_variations(font_styles, font_size.px());
@@ -6849,7 +6904,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
          // let features = self.rcx.features(style.font_features).unwrap_or(&[]);
  
          // fn name_of(font_ref: &skrifa::FontRef) -> String {
-@@ -87,6 +281,10 @@
+@@ -87,6 +325,10 @@
              query.matches_with(|q_font: &QueryFont| {
                  use skrifa::MetadataProvider;
  
@@ -6860,7 +6915,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index)
                  else {
                      return QueryStatus::Continue;
-@@ -111,8 +309,11 @@
+@@ -111,8 +353,11 @@
              ch: char,
              font_size: f32,
              variations: &[FontVariation],
@@ -6872,7 +6927,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -134,10 +335,14 @@
+@@ -134,10 +379,14 @@
          fn metrics_of(
              query: &mut Query,
              ch: char,
@@ -6888,7 +6943,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -145,14 +350,61 @@
+@@ -145,14 +394,61 @@
                      .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
              );
              let location_ref = LocationRef::from(&location);
@@ -6955,7 +7010,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  .unwrap_or((0.0, None, None));
  
          FontMetrics {
-@@ -165,15 +417,4 @@
+@@ -165,15 +461,4 @@
              script_script_percent_scale_down: None,
          }
      }
@@ -9214,7 +9269,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  }
  
  fn collect_layout_children_with_wrap(
-@@ -410,31 +821,115 @@
+@@ -410,31 +821,121 @@
          *doc.nodes[container_node_id].display_constructed_as_mut() = display;
      }
  
@@ -9267,6 +9322,12 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +                style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
 +            })));
 +    if skips_contents {
++        return;
++    }
++
++    // pyro: an ordinary MathML fraction: its numerator and denominator are its layout children
++    // (`layout::math`).
++    if super::math::construct_fraction(doc, container_node_id, &mut out.children) {
 +        return;
 +    }
 +
@@ -9338,7 +9399,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              ) {
                  create_text_editor(doc, container_node_id, false);
                  return;
-@@ -444,17 +939,100 @@
+@@ -444,17 +945,100 @@
              }
          }
  
@@ -9406,9 +9467,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              });
 +            return;
 +        }
- 
--            match crate::util::parse_svg_image(outer_html.as_bytes()) {
--                Ok(svg) => {
++
 +        #[cfg(feature = "svg")]
 +        if matches!(tag_name, "svg") {
 +            // pyro: noting whether the source depends on the root's laid-out size
@@ -9418,7 +9477,9 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +            let outer_html = doc.with_svg_sprites(source);
 +            // pyro: with the resources it references in the page's other `<svg>`s.
 +            let outer_html = doc.with_cross_svg_references(outer_html);
-+
+ 
+-            match crate::util::parse_svg_image(outer_html.as_bytes()) {
+-                Ok(svg) => {
 +            // Remove contruction damage from subtree
 +            // pyro: but for the content of its `<foreignObject>`s, which are boxes of their own:
 +            // each is a root, built by `resolve_layout_children` after the `<svg>`
@@ -9445,7 +9506,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                      doc.get_node_mut(container_node_id)
                          .unwrap()
                          .element_data_mut()
-@@ -488,13 +1066,43 @@
+@@ -488,13 +1072,43 @@
          } else {
              (0, false)
          };
@@ -9491,7 +9552,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              return;
          }
      }
-@@ -530,7 +1138,9 @@
+@@ -530,7 +1144,9 @@
                  .any(|child| {
                      let display = child.display_style().unwrap_or(Display::inline());
                      let node_kind = child.data.kind();
@@ -9502,7 +9563,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  });
  
              if !has_text_node_or_contents {
-@@ -553,9 +1163,9 @@
+@@ -553,9 +1169,9 @@
          }
  
          DisplayInside::Table => {
@@ -9514,7 +9575,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              doc.nodes[container_node_id]
                  .flags
                  .insert(NodeFlags::IS_TABLE_ROOT);
-@@ -564,13 +1174,10 @@
+@@ -564,13 +1180,10 @@
                  .downcast_element_mut()
                  .unwrap()
                  .special_data = data;
@@ -9532,7 +9593,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          }
  
          // Flow, FlowRoot and TableCell, plus internal table displays (row,
-@@ -581,9 +1188,34 @@
+@@ -581,9 +1194,34 @@
          // layout children (text nodes carry no style and cannot be laid out
          // as block/flex/grid items).
          _ => {
@@ -9567,7 +9628,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // Inline box whose in-flow content is block-level only: it is laid out as block
              // boxes, so paint must not draw its own box over them.
              if doc.nodes[container_node_id]
-@@ -597,7 +1229,10 @@
+@@ -597,7 +1235,10 @@
                      .insert(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
              }
  
@@ -9579,7 +9640,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  // Contents-transparent: a display:contents child may be
                  // holding the out-of-flow elements (otherwise the contents
                  // node itself would be pushed as a layout box).
-@@ -609,18 +1244,44 @@
+@@ -609,18 +1250,44 @@
              }
  
              // TODO: fix display:contents
@@ -9636,7 +9697,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  doc.nodes[container_node_id]
                      .flags
                      .insert(NodeFlags::IS_INLINE_ROOT);
-@@ -629,6 +1290,14 @@
+@@ -629,6 +1296,14 @@
                  return;
              }
  
@@ -9651,7 +9712,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
              // If the children are either all inline or all block then simply return the regular children
              // as the layout children
              if classification.all_block & !classification.has_contents {
-@@ -651,29 +1320,234 @@
+@@ -651,29 +1326,234 @@
      }
  }
  
@@ -9706,9 +9767,8 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +            } else if !whitespace(id) {
 +                start = first;
 +                break;
-             }
--            has_string.then_some(text)
-         }
++            }
++        }
 +        let mut end = last;
 +        for index in last + 1..sequence.len() {
 +            let id = sequence[index].0;
@@ -9716,8 +9776,9 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
 +                end = index;
 +            } else if !whitespace(id) {
 +                break;
-+            }
-+        }
+             }
+-            has_string.then_some(text)
+         }
 +        for entry in &mut sequence[start..=end] {
 +            entry.1 = true;
 +        }
@@ -9903,7 +9964,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let (before_style, after_style, before_node_id, after_node_id) = {
          let node = &doc.nodes[node_id];
  
-@@ -689,8 +1563,27 @@
+@@ -689,8 +1569,27 @@
              .as_ref()
              .and_then(|d| d.styles.pseudos.as_array()[0].clone());
  
@@ -9931,7 +9992,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
      // Sync pseudo element
      // TODO: Make incremental
-@@ -719,11 +1612,11 @@
+@@ -719,11 +1618,11 @@
                      .insert(NodeFlags::IS_IN_DOCUMENT);
              }
  
@@ -9948,7 +10009,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              doc.nodes[new_node_id].record_out_of_flow(pe_style);
              let mut element_data = StyloElementData::default();
-@@ -733,6 +1626,11 @@
+@@ -733,6 +1632,11 @@
              *doc.nodes[new_node_id]
                  .stylo_element_data_mut()
                  .ensure_init_mut() = element_data;
@@ -9960,7 +10021,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
              let node = &mut doc.nodes[node_id];
              node.set_pe_by_index(idx, Some(new_node_id));
-@@ -750,53 +1648,110 @@
+@@ -750,53 +1654,110 @@
              // the style-pointer comparison below, as the pseudo-element's style may
              // already have been updated by `sync_pseudo_element_styles` during the
              // style traversal without the text having been updated.
@@ -10109,7 +10170,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  /// Handles the cases where there are text nodes or inline nodes that need to be wrapped in an anonymous block node
  fn collect_complex_layout_children(
      doc: &mut BaseDocument,
-@@ -805,9 +1760,102 @@
+@@ -805,9 +1766,102 @@
      hide_whitespace: bool,
      needs_wrap: fn(NodeKind, DisplayOutside) -> bool,
  ) {
@@ -10214,7 +10275,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  
          // Get Display style. Default to inline because nodes without styles are probably text nodes
          let contains_block = doc.nodes[child_id].is_or_contains_block();
-@@ -821,15 +1869,33 @@
+@@ -821,15 +1875,33 @@
              child_display.outside()
          };
  
@@ -10250,7 +10311,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
          // Recurse into `Display::Contents` nodes, wrapping hoisted text and
          // inline children as if they were direct children of this container
          else if display_inside == DisplayInside::Contents {
-@@ -844,23 +1910,95 @@
+@@ -844,23 +1916,95 @@
          else if needs_wrap(child_node_kind, display_outside) {
              out.push_wrapped(container_node_id, child_id, doc);
          }
@@ -10350,7 +10411,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let alignment = node
          .primary_styles()
          .map(|s| stylo_to_parley::text_align(s.clone_text_align()))
-@@ -875,6 +2013,22 @@
+@@ -875,6 +2019,22 @@
      } else {
          node.attr(local_name!("value")).unwrap_or("").to_string()
      };
@@ -10373,7 +10434,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let is_focussed = node.is_focussed();
      let element = &mut node.data.downcast_element_mut().unwrap();
      if !matches!(element.special_data, SpecialElementData::TextInput(_)) {
-@@ -894,6 +2048,9 @@
+@@ -894,6 +2054,9 @@
          unreachable!();
      };
  
@@ -10383,7 +10444,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      let editor = &mut text_input_data.editor;
      editor.set_scale(doc.viewport.scale_f64() as f32);
      editor.set_width(None);
-@@ -923,6 +2080,69 @@
+@@ -923,6 +2086,69 @@
      editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
  }
  
@@ -10453,7 +10514,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
  fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {
      let node = &mut doc.nodes[input_element_id];
  
-@@ -944,6 +2164,25 @@
+@@ -944,6 +2170,25 @@
  ) {
      flush_inline_pseudos_recursive(doc, inline_context_root_node_id);
  
@@ -10479,7 +10540,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      iter_children_and_pseudos!(doc.nodes[inline_context_root_node_id], |child_id| {
          find_inline_layout_embedded_boxes_recursive(
              &mut doc.nodes,
-@@ -953,10 +2192,41 @@
+@@ -953,10 +2198,41 @@
          );
      });
  
@@ -10522,7 +10583,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
                  .display_style()
                  .unwrap_or(Display::inline());
              let do_recurse = match (display.outside(), display.inside()) {
-@@ -965,16 +2235,33 @@
+@@ -965,16 +2241,33 @@
                  (_, _) => false,
              };
              if do_recurse {
@@ -10557,7 +10618,7 @@ diff --git a/packages/blitz-dom/src/layout/construct.rs b/packages/blitz-dom/src
      ) {
          let node = &mut nodes[node_id];
  
-@@ -992,50 +2279,98 @@
+@@ -992,50 +2285,98 @@
  
                  let display = node.display_style().unwrap_or(Display::inline());
  
@@ -15803,7 +15864,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +                                    let mut id = Some(node_id);
 +                                    while let Some(ancestor) = id.map(|id| &nodes[id]) {
 +                                        let Some(s) = ancestor.primary_styles() else { break };
-+                                        if s.clone_display() != style::values::computed::Display::Inline {
++                                        if s.clone_display().without_ruby() != style::values::computed::Display::Inline {
 +                                            break;
 +                                        }
 +                                        if s.get_text().wrap_inside == style::values::computed::WrapInside::Avoid {
@@ -21178,6 +21239,457 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          assert_eq!(result_1, Some(Marker::String("A. ".to_string())));
          assert_eq!(result_2, Some(Marker::String("B. ".to_string())));
          assert_eq!(result_extended_1, Some(Marker::String("AA. ".to_string())));
+diff --git a/packages/blitz-dom/src/layout/math.rs b/packages/blitz-dom/src/layout/math.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/layout/math.rs
+@@ -0,0 +1,446 @@
++//! pyro: MathML fractions (`<mfrac>`, MathML Core § 3.3.2), the ordinary kind only: an `mfrac`
++//! of `display: inline` (its default) with exactly two element children, each in flow, holding
++//! no block box, with no `::before` or `::after` and no text of its own beside them. Its two
++//! children are its layout children, stacked: the first (the numerator) above the fraction bar,
++//! the second (the denominator) below it, each centred in the fraction's content box, the bar on
++//! the math axis (Chromium's `MathMLFractionLayoutAlgorithm`). Any other `mfrac` is laid out as
++//! it was, as an atomic inline (`replaced::is_inline_box`) holding its children's inline layout.
++//!
++//! The parameters (gaps, shifts, the bar's default thickness, the axis height) are the primary
++//! font's OpenType MATH constants, or Chromium's fallbacks for a font without a MATH table: the
++//! bar 0.05em, the gaps one bar (three in display style), the shifts zero, the axis half the
++//! x-height. Not done: the `numalign`/`denomalign` and `bevelled` legacy attributes, `math-shift`,
++//! vertical writing modes, right-to-left math, and stretchy operators or spacing in the children.
++use markup5ever::{local_name, ns};
++use style::values::specified::box_::{DisplayInside, DisplayOutside};
++use taffy::{
++    AvailableSpace, CoreStyle as _, LayoutInput, LayoutOutput, LayoutPartialTree as _, Point, Rect, RequestedAxis,
++    ResolveOrZero as _, RunMode, ScrollableOverflow, Size, SizingMode,
++};
++
++use super::{LayoutPassState, resolve_calc_value};
++use crate::node::{NodeData, NodeFlags};
++use crate::{BaseDocument, Node, NodeId, dom_node_id, taffy_node_id};
++
++/// The MATH table's `MathConstants` records the fraction reads (OpenType § MATH, the index of
++/// each `MathValueRecord` after the table's four leading 16-bit fields).
++#[derive(Clone, Copy)]
++pub(crate) enum MathConstant {
++    AxisHeight = 1,
++    StackTopShiftUp = 18,
++    StackTopDisplayStyleShiftUp = 19,
++    StackBottomShiftDown = 20,
++    StackBottomDisplayStyleShiftDown = 21,
++    StackGapMin = 22,
++    StackDisplayStyleGapMin = 23,
++    FractionNumeratorShiftUp = 28,
++    FractionNumeratorDisplayStyleShiftUp = 29,
++    FractionDenominatorShiftDown = 30,
++    FractionDenominatorDisplayStyleShiftDown = 31,
++    FractionNumeratorGapMin = 32,
++    FractionNumDisplayStyleGapMin = 33,
++    FractionRuleThickness = 34,
++    FractionDenominatorGapMin = 35,
++    FractionDenomDisplayStyleGapMin = 36,
++}
++
++/// The highest record index [`MathConstant`] names, plus one.
++pub(crate) const MATH_CONSTANT_COUNT: usize = 37;
++
++/// The math parameters of a font at a size (CSS px): its MATH constants, when it has a MATH
++/// table, and its x-height.
++#[derive(Clone, Debug, Default)]
++pub(crate) struct MathFontParameters {
++    pub(crate) constants: Option<[f32; MATH_CONSTANT_COUNT]>,
++    pub(crate) x_height: Option<f32>,
++}
++
++impl MathFontParameters {
++    pub(crate) fn constant(&self, constant: MathConstant) -> Option<f32> {
++        self.constants.map(|values| values[constant as usize])
++    }
++}
++
++/// Reads the `MathConstants` records of a MATH table (`data`), in font units.
++pub(crate) fn read_math_constants(data: &[u8]) -> Option<[i16; MATH_CONSTANT_COUNT]> {
++    let u16_at = |offset: usize| data.get(offset..offset + 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
++    // MATH header: majorVersion, minorVersion, mathConstantsOffset (from the table's start).
++    if u16_at(0)? != 1 {
++        return None;
++    }
++    let constants = u16_at(4)? as usize;
++    if constants == 0 {
++        return None;
++    }
++    let mut values = [0i16; MATH_CONSTANT_COUNT];
++    for (index, value) in values.iter_mut().enumerate() {
++        // Four 16-bit fields, then the 4-byte records (a value and a device table offset).
++        *value = u16_at(constants + 8 + 4 * index)? as i16;
++    }
++    Some(values)
++}
++
++/// Whether `node` is an ordinary MathML fraction (see the module's documentation), from its
++/// style, children and pseudo-elements as they are now.
++pub(crate) fn is_ordinary_fraction(doc: &BaseDocument, node: &Node) -> bool {
++    let Some(element) = node.element_data() else { return false };
++    if element.name.ns != ns!(mathml) || element.name.local != local_name!("mfrac") {
++        return false;
++    }
++    let Some(display) = node.display_style() else { return false };
++    if display.outside() != DisplayOutside::Inline || display.inside() != DisplayInside::Flow {
++        return false;
++    }
++    if node.before().is_some() || node.after().is_some() {
++        return false;
++    }
++    fraction_children(doc, node).is_some()
++}
++
++/// The numerator and denominator of the fraction `node`: its two element children, when it has
++/// exactly two, each laid out in flow and holding no block box, and no other content (white
++/// space and comments aside).
++pub(crate) fn fraction_children(doc: &BaseDocument, node: &Node) -> Option<[NodeId; 2]> {
++    let mut found = [NodeId::default(); 2];
++    let mut count = 0;
++    for &child_id in node.children.iter() {
++        let child = &doc.nodes[child_id];
++        match &child.data {
++            NodeData::Comment { .. } => {}
++            NodeData::Text(text) => {
++                if !text.content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')) {
++                    return None;
++                }
++            }
++            NodeData::Element(_) => {
++                let display = child.display_style()?;
++                if display.is_none() || display.is_contents() || child.is_or_contains_block() {
++                    return None;
++                }
++                let out_of_flow =
++                    child.primary_styles().is_none_or(|style| style.get_box().position.is_absolutely_positioned());
++                if out_of_flow || count == 2 {
++                    return None;
++                }
++                found[count] = child_id;
++                count += 1;
++            }
++            _ => return None,
++        }
++    }
++    (count == 2).then_some(found)
++}
++
++/// The `linethickness` attribute of a fraction (MathML Core § 3.3.2.1): a `<length-percentage>`,
++/// a percentage of the default thickness; `None` when it is absent or not one (negative, or with
++/// a unit CSS has not), when the default is used. `em` and `ex` are of the fraction's font.
++pub(crate) fn parse_line_thickness(value: &str, default: f32, font_size: f32, x_height: f32) -> Option<f32> {
++    let value = value.trim_matches(|c: char| c.is_ascii_whitespace());
++    // The number: a sign, digits with a decimal point, and an exponent when digits follow its
++    // `e` (`1e2px`; the `e` of `em` and `ex` is the unit's).
++    let bytes = value.as_bytes();
++    let digits_from = |mut at: usize| {
++        while at < bytes.len() && bytes[at].is_ascii_digit() {
++            at += 1;
++        }
++        at
++    };
++    let mut split = if matches!(bytes.first(), Some(b'+' | b'-')) { 1 } else { 0 };
++    split = digits_from(split);
++    if bytes.get(split) == Some(&b'.') {
++        split = digits_from(split + 1);
++    }
++    if matches!(bytes.get(split), Some(b'e' | b'E')) {
++        let sign = usize::from(matches!(bytes.get(split + 1), Some(b'+' | b'-')));
++        if bytes.get(split + 1 + sign).is_some_and(u8::is_ascii_digit) {
++            split = digits_from(split + 1 + sign);
++        }
++    }
++    let (number, unit) = value.split_at(split);
++    let number: f32 = number.parse().ok()?;
++    if !number.is_finite() || number < 0.0 {
++        return None;
++    }
++    let unit = unit.to_ascii_lowercase();
++    let px = match unit.as_str() {
++        // Only zero is a length without a unit.
++        "" if number == 0.0 => 0.0,
++        "%" => number / 100.0 * default,
++        "px" => number,
++        "em" => number * font_size,
++        "ex" => number * x_height,
++        "in" => number * 96.0,
++        "cm" => number * 96.0 / 2.54,
++        "mm" => number * 96.0 / 25.4,
++        "q" => number * 96.0 / 101.6,
++        "pt" => number * 96.0 / 72.0,
++        "pc" => number * 16.0,
++        _ => return None,
++    };
++    Some(px)
++}
++
++/// What the fraction's parameters come to for a fraction (CSS px).
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub(crate) struct FractionParameters {
++    pub(crate) axis_height: f32,
++    pub(crate) thickness: f32,
++    /// With a bar: the minimum gaps between it and the numerator and denominator, and the
++    /// minimum shifts of their baselines up and down from the fraction's baseline.
++    pub(crate) numerator_gap_min: f32,
++    pub(crate) denominator_gap_min: f32,
++    pub(crate) numerator_shift_up: f32,
++    pub(crate) denominator_shift_down: f32,
++    /// Without one (`linethickness` 0): the minimum gap between them, and their shifts.
++    pub(crate) stack_gap_min: f32,
++    pub(crate) stack_top_shift_up: f32,
++    pub(crate) stack_bottom_shift_down: f32,
++}
++
++impl FractionParameters {
++    /// Chromium's `GetFractionParameters` and `GetFractionStackParameters`.
++    pub(crate) fn new(font: &MathFontParameters, font_size: f32, display_style: bool, line_thickness: Option<&str>) -> Self {
++        use MathConstant::*;
++        let rule_fallback = 0.05 * font_size;
++        let x_height = font.x_height.unwrap_or(font_size * 0.5);
++        let axis_height = font.constant(AxisHeight).unwrap_or(x_height / 2.0);
++        let default_thickness = font.constant(FractionRuleThickness).unwrap_or(rule_fallback);
++        let thickness = line_thickness
++            .and_then(|value| parse_line_thickness(value, default_thickness, font_size, x_height))
++            .unwrap_or(default_thickness)
++            .max(0.0);
++        let pick = |display: MathConstant, inline: MathConstant| font.constant(if display_style { display } else { inline });
++        let gap_fallback = if display_style { 3.0 } else { 1.0 } * rule_fallback;
++        FractionParameters {
++            axis_height,
++            thickness,
++            numerator_gap_min: pick(FractionNumDisplayStyleGapMin, FractionNumeratorGapMin).unwrap_or(gap_fallback),
++            denominator_gap_min: pick(FractionDenomDisplayStyleGapMin, FractionDenominatorGapMin).unwrap_or(gap_fallback),
++            numerator_shift_up: pick(FractionNumeratorDisplayStyleShiftUp, FractionNumeratorShiftUp).unwrap_or(0.0),
++            denominator_shift_down: pick(FractionDenominatorDisplayStyleShiftDown, FractionDenominatorShiftDown)
++                .unwrap_or(0.0),
++            stack_gap_min: pick(StackDisplayStyleGapMin, StackGapMin)
++                .unwrap_or(if display_style { 7.0 } else { 3.0 } * rule_fallback),
++            stack_top_shift_up: pick(StackTopDisplayStyleShiftUp, StackTopShiftUp).unwrap_or(0.0),
++            stack_bottom_shift_down: pick(StackBottomDisplayStyleShiftDown, StackBottomShiftDown).unwrap_or(0.0),
++        }
++    }
++
++    /// The shifts of the numerator's baseline up from the fraction's baseline and of the
++    /// denominator's down, given each one's ascent and descent (from its baseline to its top and
++    /// bottom margin edges).
++    pub(crate) fn shifts(&self, numerator: (f32, f32), denominator: (f32, f32)) -> (f32, f32) {
++        let (_, num_descent) = numerator;
++        let (den_ascent, _) = denominator;
++        if self.thickness > 0.0 {
++            let up = self
++                .numerator_shift_up
++                .max(self.axis_height + self.thickness / 2.0 + self.numerator_gap_min + num_descent);
++            let down = self
++                .denominator_shift_down
++                .max(self.thickness / 2.0 + self.denominator_gap_min + den_ascent - self.axis_height);
++            (up, down)
++        } else {
++            let (mut up, mut down) = (self.stack_top_shift_up, self.stack_bottom_shift_down);
++            let gap = up - num_descent + down - den_ascent;
++            if gap < self.stack_gap_min {
++                let delta = (self.stack_gap_min - gap) / 2.0;
++                up += delta;
++                down += delta;
++            }
++            (up, down)
++        }
++    }
++}
++
++impl LayoutPassState<'_> {
++    /// The parameters the fraction `node_id` is laid out with.
++    fn fraction_parameters(&self, node_id: NodeId) -> Option<FractionParameters> {
++        let node = &self.nodes[node_id];
++        let style = node.primary_styles()?;
++        let font_size = style.slow_clone_font_size().used_size().px();
++        let display_style = style.get_font().math_style == style::values::computed::MathStyle::Normal;
++        let provider = crate::font_metrics::BlitzFontMetricsProvider { font_ctx: self.font_ctx.clone() };
++        let font = provider.math_parameters_for(style.get_font(), font_size);
++        let line_thickness = node.element_data().and_then(|el| el.attr(local_name!("linethickness")));
++        Some(FractionParameters::new(&font, font_size, display_style, line_thickness))
++    }
++
++    /// Lays out the ordinary fraction `node_id` (Chromium's `MathMLFractionLayoutAlgorithm`):
++    /// its children at their max-content widths, the numerator's baseline raised and the
++    /// denominator's lowered from the fraction's by `FractionParameters::shifts`, its baseline its
++    /// first and last. Records the bar (`ElementData::math_fraction_bar`) for paint.
++    #[inline(never)]
++    pub(crate) fn compute_math_fraction_layout(&mut self, node_id: taffy::NodeId, inputs: LayoutInput) -> LayoutOutput {
++        let dom_id = dom_node_id(node_id);
++        let children: Vec<NodeId> = self.nodes[dom_id].layout_children.borrow().as_ref().map(|c| c.to_vec()).unwrap_or_default();
++        let Some(params) = self.fraction_parameters(dom_id) else { return LayoutOutput::HIDDEN };
++        let [numerator, denominator] = children[..] else { return LayoutOutput::HIDDEN };
++        let (padding, border) = {
++            let style = self.nodes[dom_id].layout_style();
++            let parent_width = inputs.parent_size.width;
++            (
++                style.padding().resolve_or_zero(parent_width, resolve_calc_value),
++                style.border().resolve_or_zero(parent_width, resolve_calc_value),
++            )
++        };
++        let inset = padding + border;
++
++        // Each child at its max-content size, as an independent formatting context.
++        let child_inputs = LayoutInput {
++            run_mode: RunMode::PerformLayout,
++            sizing_mode: SizingMode::InherentSize,
++            axis: RequestedAxis::Both,
++            known_dimensions: Size::NONE,
++            known_dimensions_are_definite: Size { width: false, height: false },
++            parent_size: Size::NONE,
++            available_space: Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
++            vertical_margins_are_collapsible: taffy::Line::FALSE,
++        };
++        let mut laid_out = [(Rect::<f32>::ZERO, Size::<f32>::ZERO, ScrollableOverflow::ZERO, 0.0f32, 0.0f32); 2];
++        for (slot, child) in laid_out.iter_mut().zip([numerator, denominator]) {
++            let margin = self.nodes[child].layout_style().margin().resolve_or_zero(None, resolve_calc_value);
++            let output = self.compute_child_layout(taffy_node_id(child), child_inputs);
++            // A child without a baseline has one at its bottom border edge (Chromium's
++            // `FirstBaselineOrSynthesize`).
++            let baseline = output.baselines.first.or(output.baselines.last).unwrap_or(output.size.height);
++            let ascent = margin.top + baseline;
++            let descent = output.size.height + margin.top + margin.bottom - ascent;
++            *slot = (margin, output.size, output.scrollable_overflow_rect, ascent, descent);
++        }
++        let [(num_margin, num_size, num_overflow, num_ascent, num_descent), (den_margin, den_size, den_overflow, den_ascent, den_descent)] =
++            laid_out;
++        let (up, down) = params.shifts((num_ascent, num_descent), (den_ascent, den_descent));
++        let ascent = (up + num_ascent).max(den_ascent - down) + inset.top;
++        let descent = (num_descent - up).max(down + den_descent) + inset.bottom;
++        let num_width = num_size.width + num_margin.left + num_margin.right;
++        let den_width = den_size.width + den_margin.left + den_margin.right;
++        let content_width = num_width.max(den_width);
++        let size = Size {
++            width: inputs.known_dimensions.width.unwrap_or(content_width + inset.left + inset.right),
++            height: inputs.known_dimensions.height.unwrap_or(ascent + descent),
++        };
++
++        if inputs.run_mode == RunMode::PerformLayout {
++            let place = [
++                (numerator, num_margin, num_size, num_overflow, num_width, ascent - up - num_ascent),
++                (denominator, den_margin, den_size, den_overflow, den_width, ascent + down - den_ascent),
++            ];
++            for (order, (child, margin, child_size, overflow, width, top)) in place.into_iter().enumerate() {
++                let (child_padding, child_border) = {
++                    let style = self.nodes[child].layout_style();
++                    (
++                        style.padding().resolve_or_zero(None, resolve_calc_value),
++                        style.border().resolve_or_zero(None, resolve_calc_value),
++                    )
++                };
++                let layout = taffy::Layout {
++                    order: order as u32,
++                    location: Point {
++                        x: inset.left + (content_width - width) / 2.0 + margin.left,
++                        y: top + margin.top,
++                    },
++                    size: child_size,
++                    scrollable_overflow_rect: overflow,
++                    scrollbar_size: Size::ZERO,
++                    border: child_border,
++                    padding: child_padding,
++                    margin,
++                };
++                self.set_unrounded_layout(taffy_node_id(child), &layout);
++            }
++            // The bar, centred on the math axis (Chromium's `MathMLPainter::PaintFractionBar`).
++            let bar = (params.thickness > 0.0).then(|| [ascent - params.axis_height - params.thickness / 2.0, params.thickness]);
++            if let Some(element) = self.nodes[dom_id].element_data_mut() {
++                element.math_fraction_bar = bar;
++            }
++        }
++
++        let overflow = ScrollableOverflow::new(
++            Rect {
++                left: 0.0,
++                top: 0.0,
++                right: (size.width - border.left - border.right).max(0.0),
++                bottom: (size.height - border.top - border.bottom).max(0.0),
++            },
++            Point { x: false, y: false },
++        );
++        LayoutOutput::from_sizes_and_baselines(size, overflow, taffy::Baselines::new(Some(ascent), Some(ascent)))
++    }
++}
++
++/// Construction of an ordinary fraction (`construct::collect_layout_children_with_wrap`): its
++/// numerator and denominator are its layout children. Returns whether `node_id` is one (else
++/// the caller builds it as any other box). A fraction built again has no bar until it is laid
++/// out.
++pub(crate) fn construct_fraction(doc: &mut BaseDocument, node_id: NodeId, children: &mut thin_vec::ThinVec<NodeId>) -> bool {
++    let Some(element) = doc.nodes[node_id].element_data_mut() else { return false };
++    if element.name.ns != ns!(mathml) || element.name.local != local_name!("mfrac") {
++        return false;
++    }
++    element.math_fraction_bar = None;
++    let node = &doc.nodes[node_id];
++    if !is_ordinary_fraction(doc, node) {
++        return false;
++    }
++    let pair = fraction_children(doc, node).unwrap();
++    doc.nodes[node_id].flags.insert(NodeFlags::IS_MATH_FRACTION);
++    children.extend(pair);
++    true
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn line_thickness_values() {
++        let parse = |v: &str| parse_line_thickness(v, 2.0, 20.0, 10.0);
++        assert_eq!(parse("0"), Some(0.0));
++        assert_eq!(parse("0px"), Some(0.0));
++        assert_eq!(parse("200%"), Some(4.0));
++        assert_eq!(parse(" 3px "), Some(3.0));
++        assert_eq!(parse("0.5em"), Some(10.0));
++        assert_eq!(parse("1ex"), Some(10.0));
++        assert_eq!(parse("1e1px"), Some(10.0));
++        assert_eq!(parse("12pt"), Some(16.0));
++        assert_eq!(parse("-1px"), None);
++        assert_eq!(parse("3"), None);
++        assert_eq!(parse("thick"), None);
++        assert_eq!(parse("medium"), None);
++        assert_eq!(parse(""), None);
++    }
++
++    #[test]
++    fn shifts_without_a_math_table() {
++        // A 20px font, x-height 10: the axis at 5, the bar 1px, the gaps 1px (inline style).
++        let font = MathFontParameters { constants: None, x_height: Some(10.0) };
++        let p = FractionParameters::new(&font, 20.0, false, None);
++        assert_eq!((p.axis_height, p.thickness, p.numerator_gap_min), (5.0, 1.0, 1.0));
++        // Numerator descent 4: its baseline 5 + 0.5 + 1 + 4 up; denominator ascent 15: 0.5 + 1 + 15 - 5 down.
++        assert_eq!(p.shifts((15.0, 4.0), (15.0, 4.0)), (10.5, 11.5));
++        // Display style: three bars of gap.
++        let p = FractionParameters::new(&font, 20.0, true, None);
++        assert_eq!(p.numerator_gap_min, 3.0);
++        // No bar: the stack gap (3 bars inline) split evenly.
++        let p = FractionParameters::new(&font, 20.0, false, Some("0"));
++        assert_eq!(p.thickness, 0.0);
++        let (up, down) = p.shifts((15.0, 4.0), (15.0, 4.0));
++        assert_eq!((up, down), (11.0, 11.0));
++    }
++
++    #[test]
++    fn math_constants_header() {
++        // Version 1.0, constants at offset 10, every record's value its index.
++        let mut table = vec![0u8, 1, 0, 0, 0, 10, 0, 0, 0, 0];
++        table.extend([0u8; 8]);
++        for index in 0..MATH_CONSTANT_COUNT as i16 {
++            table.extend(index.to_be_bytes());
++            table.extend([0u8, 0]);
++        }
++        let values = read_math_constants(&table).unwrap();
++        assert_eq!(values[MathConstant::AxisHeight as usize], 1);
++        assert_eq!(values[MathConstant::FractionRuleThickness as usize], 34);
++        assert_eq!(read_math_constants(&table[..20]), None);
++    }
++}
 diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layout/mod.rs
 --- a/packages/blitz-dom/src/layout/mod.rs
 +++ b/packages/blitz-dom/src/layout/mod.rs
@@ -21193,7 +21705,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  use std::cell::Ref;
  use std::ops::{Deref, DerefMut};
  use std::sync::Arc;
-@@ -23,19 +23,33 @@
+@@ -23,19 +23,34 @@
      compute_oof_layout, prelude::*,
  };
  
@@ -21210,6 +21722,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  pub(crate) mod inline;
 +pub(crate) mod line_clamp;
  pub(crate) mod list;
++pub(crate) mod math;
 +pub mod multicol;
  pub(crate) mod paint_tree;
  pub(crate) mod replaced;
@@ -21229,7 +21742,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  };
  use self::table::TableTreeWrapper;
  
-@@ -47,16 +61,29 @@
+@@ -47,16 +62,29 @@
  };
  
  /// The intrinsic dimensions and default object size for a replaced element
@@ -21266,7 +21779,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          return (IntrinsicSizes::default(), taffy::Size::ZERO);
      }
      if *tag_name == local_name!("canvas") {
-@@ -74,6 +101,44 @@
+@@ -74,6 +102,44 @@
      (IntrinsicSizes::default(), DEFAULT_OBJECT_SIZE)
  }
  
@@ -21311,7 +21824,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  pub(crate) fn resolve_calc_value(calc_ptr: *const (), parent_size: f32) -> f32 {
      let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
      let result = calc.resolve(CSSPixelLength::new(parent_size));
-@@ -101,9 +166,68 @@
+@@ -101,9 +167,68 @@
      /// size, against which its percentage padding resolves (see `layout::writing_mode`).
      #[cfg(feature = "writing-mode")]
      pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
@@ -21380,7 +21893,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The containing block's inline size when `dom_id` is the box currently laid out in an orthogonal
      /// flow: its percentage padding resolves against it (see `layout::writing_mode`).
      #[inline]
-@@ -138,6 +262,25 @@
+@@ -138,6 +263,25 @@
              current_align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              orthogonal_percent_basis: None,
@@ -21406,7 +21919,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  }
-@@ -174,14 +317,25 @@
+@@ -174,14 +318,25 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -21440,7 +21953,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
-@@ -191,13 +345,627 @@
+@@ -191,13 +346,627 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -22070,7 +22583,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +985,225 @@
+@@ -217,13 +986,226 @@
          }
      }
  
@@ -22102,6 +22615,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            ChildLayout::Grid => self.grid_layout(node_id, inputs),
 +            ChildLayout::Table => self.compute_table_root_layout(node_id, inputs),
 +            ChildLayout::Multicol { inline_root } => self.compute_multicol_layout(node_id, inputs, inline_root),
++            ChildLayout::MathFraction => self.compute_math_fraction_layout(node_id, inputs),
 +        }
 +    }
 +
@@ -22296,7 +22810,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +1219,60 @@
+@@ -239,8 +1221,60 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -22357,7 +22871,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +1287,7 @@
+@@ -255,7 +1289,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -22366,7 +22880,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -278,24 +1310,76 @@
+@@ -278,24 +1312,76 @@
              NodeData::Element(element_data) | NodeData::AnonymousBlock(element_data) => {
                  // TODO: deduplicate with single-line text input
                  if *element_data.name.local == *"textarea" {
@@ -22454,7 +22968,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -308,87 +1392,282 @@
+@@ -308,87 +1394,282 @@
                                      .border()
                                      .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
                          };
@@ -22780,7 +23294,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1686,65 @@
+@@ -407,39 +1688,65 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -22867,7 +23381,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1777,103 @@
+@@ -472,6 +1779,103 @@
                          _ => unreachable!(),
                      };
  
@@ -22971,7 +23485,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1890,697 @@
+@@ -488,126 +1892,704 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -23078,18 +23592,6 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 -                            });
 -                        }
 -                    }
--
--                    // HACK: Cap scrollable overflow at node size to prevent scrolling
--                    let overflow = output.scrollable_overflow_rect;
--                    output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
--                        taffy::Rect {
--                            left: 0.0,
--                            top: 0.0,
--                            right: overflow.right().min(output.size.width),
--                            bottom: overflow.bottom().min(output.size.height),
--                        },
--                        output.scrollable_overflow_rect.is_reversed(),
--                    );
 +                // pyro: a fixed-layout table with a percentage width asks to be as wide as possible:
 +                // its max-content width is Blink's `kTableMaxWidth` (flex items holding such tables
 +                // share the line evenly; WPT css-flexbox
@@ -23115,9 +23617,25 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    }));
 +                }
  
--                    return output;
+-                    // HACK: Cap scrollable overflow at node size to prevent scrolling
+-                    let overflow = output.scrollable_overflow_rect;
+-                    output.scrollable_overflow_rect = taffy::ScrollableOverflow::new(
+-                        taffy::Rect {
+-                            left: 0.0,
+-                            top: 0.0,
+-                            right: overflow.right().min(output.size.width),
+-                            bottom: overflow.bottom().min(output.size.height),
+-                        },
+-                        output.scrollable_overflow_rect.is_reversed(),
+-                    );
 +                if node.flags.is_table_root() {
 +                    return ChildLayout::Table;
++                }
+ 
+-                    return output;
++                // pyro: an ordinary MathML fraction, built as one (`math::construct_fraction`).
++                if node.flags.contains(NodeFlags::IS_MATH_FRACTION) {
++                    return ChildLayout::MathFraction;
                  }
  
                  if node.flags.is_inline_root() {
@@ -23750,12 +24268,14 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    /// pyro: a multi-column container, whose content is a block or (`inline_root`) an inline
 +    /// formatting context.
 +    Multicol { inline_root: bool },
++    /// pyro: an ordinary MathML fraction (`layout::math`).
++    MathFraction,
 +}
 +
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +2640,21 @@
+@@ -667,7 +2649,21 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -23778,7 +24298,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,11 +2662,32 @@
+@@ -675,11 +2671,32 @@
      }
  
      #[inline(always)]
@@ -23811,7 +24331,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
              tree.compute_child_layout_internal(node_id, inputs, None)
          })
-@@ -693,22 +2701,379 @@
+@@ -693,22 +2710,379 @@
          Self: 'a;
  
      fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
@@ -24194,7 +24714,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -718,9 +3083,24 @@
+@@ -718,9 +3092,24 @@
              .borrow_mut()
              .extend(hoisted.iter().copied().map(dom_node_id));
          for &hoisted_id in hoisted {
@@ -24219,7 +24739,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +3112,148 @@
+@@ -732,6 +3121,148 @@
      }
  }
  
@@ -24368,7 +24888,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +3261,12 @@
+@@ -739,10 +3270,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -24385,7 +24905,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +3276,11 @@
+@@ -752,9 +3285,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -24400,7 +24920,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +3308,248 @@
+@@ -782,16 +3317,248 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -24653,7 +25173,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -806,6 +3564,18 @@
+@@ -806,6 +3573,18 @@
      where
          Self: 'a;
  
@@ -24672,7 +25192,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
          self.get_core_container_style(node_id)
      }
-@@ -844,6 +3614,30 @@
+@@ -844,6 +3623,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -24703,7 +25223,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +3646,19 @@
+@@ -852,7 +3655,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -24724,7 +25244,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3674,30 @@
+@@ -868,6 +3683,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -24755,7 +25275,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3802,240 @@
+@@ -972,3 +3811,240 @@
          })
      }
  }
@@ -30924,7 +31444,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  use markup5ever::{LocalName, local_name};
  use taffy::{
      AvailableSpace, BoxSizing, CoreStyle, LayoutInput, LayoutOutput, MaybeMath, MaybeResolve,
-@@ -12,10 +13,174 @@
+@@ -12,10 +13,179 @@
          || *tag_name == local_name!("svg")
          || *tag_name == local_name!("canvas")
          || *tag_name == local_name!("video")
@@ -31093,13 +31613,18 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +    if element.image_broken && !is_content_image(element) {
 +        return false;
 +    }
-+    is_inline_box_element(&element.name.local) || is_image_object(element) || is_document_object(element)
++    is_inline_box_element(&element.name.local)
++        || is_image_object(element)
++        || is_document_object(element)
++        // pyro: a MathML fraction is an atomic inline (`layout::math`; one that is not an
++        // ordinary fraction holds its children's inline layout, as an inline-block would).
++        || (element.name.ns == markup5ever::ns!(mathml) && element.name.local == markup5ever::local_name!("mfrac"))
 +}
 +
  /// The intrinsic dimensions of a replaced element per CSS Images 3
  /// (https://drafts.csswg.org/css-images/#intrinsic-dimensions): an intrinsic
  /// width, an intrinsic height, and an intrinsic aspect ratio, each of which
-@@ -35,6 +200,14 @@
+@@ -35,6 +205,14 @@
      /// used to fill in dimensions the intrinsic sizes leave unresolved. 300x150
      /// for most replaced elements; zero for an image with no loaded resource.
      pub default_object_size: taffy::Size<f32>,
@@ -31114,7 +31639,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  }
  
  /// Whether a height/width value is violating it's min- and max- constraints
-@@ -51,7 +224,7 @@
+@@ -51,7 +229,7 @@
  
  pub fn compute_replaced_layout(
      inputs: LayoutInput,
@@ -31123,7 +31648,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      resolve_calc_value: impl Fn(*const (), f32) -> f32,
      context: &ReplacedContext,
  ) -> LayoutOutput {
-@@ -154,6 +327,19 @@
+@@ -154,6 +332,19 @@
      let intrinsic = context.intrinsic_sizes;
      let style_aspect_ratio = style.aspect_ratio().filter(is_usable_ratio);
      let aspect_ratio: Option<f32> = style_aspect_ratio.or(intrinsic.ratio.filter(is_usable_ratio));
@@ -31143,7 +31668,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
      // Concrete object size per the CSS default sizing algorithm with no
      // specified size (https://drafts.csswg.org/css-images/#default-sizing):
-@@ -187,10 +373,23 @@
+@@ -187,10 +378,23 @@
                  // A ratio-only replaced element stretches to fit the width it is laid out
                  // in: the available width if definite, else (under a max-content constraint)
                  // its containing block, per CSS2 §10.3.2.
@@ -31169,7 +31694,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
                  };
                  if let Some(width) = stretch_fit_width {
                      Size {
-@@ -220,6 +419,32 @@
+@@ -220,6 +424,32 @@
          },
          None => inherent_size,
      };
@@ -31202,7 +31727,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
      // Percentages are only resolved against zero in the inline axis.
      // See https://www.w3.org/TR/css-sizing-3/#replaced-percentage-min-contribution
-@@ -276,6 +501,50 @@
+@@ -276,6 +506,50 @@
          .maybe_max(min_size)
          .maybe_sub(box_sizing_adjustment);
  
@@ -31253,7 +31778,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      // For ContentSize mode, ignore preferred/min size styles in the axis being measured: the
      // parent layout algorithm applies them itself, and content-based measurement should return
      // the content size (the intrinsic size for replaced elements). Constraints in the opposite
-@@ -286,6 +555,13 @@
+@@ -286,6 +560,13 @@
              RequestedAxis::Horizontal => {
                  style_size.width = None;
                  min_size.width = None;
@@ -31267,7 +31792,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
              }
              RequestedAxis::Vertical => {
                  style_size.height = None;
-@@ -295,22 +571,29 @@
+@@ -295,22 +576,29 @@
          }
      }
  
@@ -31305,7 +31830,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
          // Known axes are authoritative (already resolved by the parent); only the axis
          // derived via aspect-ratio transfer (or falling back to the intrinsic size) is
-@@ -322,16 +605,14 @@
+@@ -322,16 +610,14 @@
          return LayoutOutput::from_sizes(size + pb_sum, overflow_rect_for(size));
      }
  
@@ -45264,7 +45789,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  pub struct ElementData {
      /// The elements tag name, namespace and prefix
      pub name: QualName,
-@@ -79,6 +85,34 @@
+@@ -79,6 +85,37 @@
  
      pub mask_images: ThinVec<Option<ImageResourceData>>,
  
@@ -45295,11 +45820,14 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 +    /// pyro: this box (an element or a `::before`/`::after`) shows the gradient its `content` is
 +    /// in place of content, as an image without a natural size (`util::content_gradient`).
 +    pub content_gradient: bool,
++    /// pyro: an ordinary MathML fraction's bar, as its last layout placed it: its top (from the
++    /// border box's top) and thickness, CSS px (`layout::math`). `None` without one.
++    pub math_fraction_bar: Option<[f32; 2]>,
 +
      /// Parley text layout (elements with inline inner display mode only)
      pub inline_layout_data: Option<Box<TextLayout>>,
  
-@@ -114,10 +148,44 @@
+@@ -114,10 +151,44 @@
      /// element (or its pseudo-elements). Lets Stylo skip the animation lookups
      /// for elements that have never animated.
      pub may_have_animations: AtomicBool,
@@ -45344,7 +45872,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
      /// Detailed layout information from the most recent layout (currently
      /// grid track sizing information for grid containers only). Used by
-@@ -129,6 +197,9 @@
+@@ -129,6 +200,9 @@
      /// Layout output state (`None` until layout first writes to this node).
      pub layout_data: Option<Box<LayoutData>>,
      pub transform: Option<Box<Affine>>,
@@ -45354,7 +45882,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  /// Taffy layout output state (cache, layouts, scroll offset and overflow).
-@@ -139,10 +210,57 @@
+@@ -139,10 +213,57 @@
  #[derive(Debug, Clone)]
  pub struct LayoutData {
      pub cache: Cache,
@@ -45412,7 +45940,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
      /// recorded by the layout pass for CSSOM geometry lookups.
      #[cfg(feature = "writing-mode")]
-@@ -153,10 +271,23 @@
+@@ -153,10 +274,23 @@
      pub const fn new() -> Self {
          Self {
              cache: Cache::new(),
@@ -45436,7 +45964,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              #[cfg(feature = "writing-mode")]
              writing_mode: stylo_taffy::WritingMode::empty(),
          }
-@@ -295,6 +426,10 @@
+@@ -295,6 +429,10 @@
              .field("special_data", &self.special_data)
              .field("background_images", &self.background_images)
              .field("mask_images", &self.mask_images)
@@ -45447,7 +45975,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              .field("inline_layout_data", &self.inline_layout_data)
              .field("list_item_data", &self.list_item_data)
              .field("template_contents", &self.template_contents)
-@@ -321,6 +456,15 @@
+@@ -321,6 +459,16 @@
              special_data: self.special_data.clone(),
              background_images: self.background_images.clone(),
              mask_images: self.mask_images.clone(),
@@ -45459,11 +45987,12 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 +            image_broken: self.image_broken,
 +            image_failed: self.image_failed,
 +            content_gradient: self.content_gradient,
++            math_fraction_bar: None,
 +            reference_images: self.reference_images.clone(),
              inline_layout_data: self.inline_layout_data.clone(),
              list_item_data: self.list_item_data.clone(),
              template_contents: self.template_contents,
-@@ -335,12 +479,24 @@
+@@ -335,12 +483,24 @@
              dirty_descendants: AtomicBool::new(true),
              damaged_descendants: AtomicBool::new(true),
              may_have_animations: AtomicBool::new(false),
@@ -45488,7 +46017,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -417,12 +573,14 @@
+@@ -417,12 +577,14 @@
      pub fn new(name: QualName, attrs: Vec<Attribute>) -> Self {
          let id_attr_atom = attrs
              .iter()
@@ -45505,7 +46034,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              .map(|attr| parse_classes(&attr.value))
              .unwrap_or_default();
  
-@@ -439,6 +597,15 @@
+@@ -439,6 +601,16 @@
              template_contents: None,
              background_images: ThinVec::new(),
              mask_images: ThinVec::new(),
@@ -45517,11 +46046,12 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
 +            image_broken: false,
 +            image_failed: false,
 +            content_gradient: false,
++            math_fraction_bar: None,
 +            reference_images: ThinVec::new(),
  
              stylo_element_data: Default::default(),
              selector_flags: Cell::new(ElementSelectorFlags::empty()),
-@@ -449,12 +616,24 @@
+@@ -449,12 +621,24 @@
              dirty_descendants: AtomicBool::new(true),
              damaged_descendants: AtomicBool::new(true),
              may_have_animations: AtomicBool::new(false),
@@ -45546,7 +46076,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          };
          data.flush_is_focussable();
          data.flush_link_state();
-@@ -470,6 +649,12 @@
+@@ -470,6 +654,12 @@
          {
              data.element_state.insert(ElementState::CHECKED);
          }
@@ -45559,7 +46089,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
          // The element state needs to be modified if the element can be disabled.
          if data.can_be_disabled() {
-@@ -494,6 +679,13 @@
+@@ -494,6 +684,13 @@
          Some(&attr.value)
      }
  
@@ -45573,7 +46103,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn attr_parsed<T: FromStr>(&self, name: impl PartialEq<LocalName>) -> Option<T> {
          let attr = self.attrs.iter().find(|attr| name == attr.name.local)?;
          attr.value.parse::<T>().ok()
-@@ -504,6 +696,12 @@
+@@ -504,6 +701,12 @@
          self.attrs.iter().any(|attr| name == attr.name.local)
      }
  
@@ -45586,7 +46116,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn can_be_disabled(&self) -> bool {
          local_names!("button", "input", "select", "textarea").contains(&self.name.local)
      }
-@@ -529,6 +727,23 @@
+@@ -529,6 +732,23 @@
          }
      }
  
@@ -45610,7 +46140,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn flush_open_state(&mut self) {
          let is_open = matches!(
              self.name.local,
-@@ -565,6 +780,14 @@
+@@ -565,6 +785,14 @@
          }
      }
  
@@ -45625,7 +46155,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn canvas_data(&self) -> Option<&CanvasData> {
          match &self.special_data {
              SpecialElementData::Canvas(data) => Some(data),
-@@ -648,6 +871,27 @@
+@@ -648,6 +876,27 @@
          self.element_state.set(ElementState::CHECKED, checked);
      }
  
@@ -45653,7 +46183,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      #[cfg(feature = "file-input")]
      pub fn file_data(&self) -> Option<&FileData> {
          match &self.special_data {
-@@ -698,8 +942,14 @@
+@@ -698,8 +947,14 @@
                  })
      }
  
@@ -45669,7 +46199,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
              ServoArc::new(guard.wrap(parse_style_attribute(
                  style_str,
                  url_extra_data,
-@@ -875,6 +1125,9 @@
+@@ -875,6 +1130,9 @@
      pub height: u32,
      /// The raw image data in RGBA8 format
      pub data: Blob<u8>,
@@ -45679,7 +46209,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  impl RasterImageData {
      pub fn new(width: u32, height: u32, data: Arc<Vec<u8>>) -> Self {
-@@ -882,6 +1135,35 @@
+@@ -882,6 +1140,35 @@
              width,
              height,
              data: Blob::new(data),
@@ -45715,7 +46245,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -909,6 +1191,10 @@
+@@ -909,6 +1196,10 @@
      pub status: Status,
      /// The image data
      pub image: ImageData,
@@ -45726,7 +46256,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  impl ImageResourceData {
-@@ -917,8 +1203,25 @@
+@@ -917,8 +1208,25 @@
              url,
              status: Status::Loading,
              image: ImageData::None,
@@ -45752,7 +46282,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  #[derive(Debug, Clone)]
-@@ -953,11 +1256,26 @@
+@@ -953,11 +1261,26 @@
  #[derive(Clone)]
  pub struct ListItemLayout {
      pub marker: Marker,
@@ -45779,7 +46309,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  //We seperate chars from strings in order to optimise rendering - ie not needing to
-@@ -966,6 +1284,9 @@
+@@ -966,6 +1289,9 @@
  pub enum Marker {
      Char(char),
      String(String),
@@ -45789,7 +46319,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  //Value depends on list-style-position, determining whether a seperate layout is created for it
-@@ -1054,9 +1375,10 @@
+@@ -1054,9 +1380,10 @@
                  data.scroll_offset > 0.0,
                  "expected horizontal scroll for overflowing single-line input"
              );
@@ -45857,7 +46387,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          /// Whether the node is the root node of an Inline Formatting Context
          const IS_INLINE_ROOT = 0b00000001;
          /// Whether the node is the root node of an Table formatting context
-@@ -60,9 +60,326 @@
+@@ -60,9 +60,329 @@
          const IS_IN_DOCUMENT = 0b00000100;
          /// Whether the node is an inline box whose in-flow content is block-level only
          const IS_INLINE_WITH_ONLY_BLOCK_CHILDREN = 0b00001000;
@@ -46003,6 +46533,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        /// out (`BaseDocument::force_hidden_contents`): they get boxes until the next frame, still
 +        /// unpainted, unhit and not sizing it (its size containment stays).
 +        const CV_HIDDEN_FORCED = 1 << 41;
++        /// pyro: the node is an ordinary MathML fraction whose numerator and denominator are its
++        /// layout children (`layout::math`). Set by its construction.
++        const IS_MATH_FRACTION = 1 << 42;
      }
  }
  
@@ -46184,15 +46717,16 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  impl NodeFlags {
      #[inline(always)]
      pub fn is_inline_root(&self) -> bool {
-@@ -84,6 +401,7 @@
+@@ -84,6 +404,8 @@
          self.remove(Self::IS_INLINE_ROOT);
          self.remove(Self::IS_TABLE_ROOT);
          self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
 +        self.remove(Self::IS_SPLIT_INLINE);
++        self.remove(Self::IS_MATH_FRACTION);
      }
  }
  
-@@ -101,6 +419,14 @@
+@@ -101,6 +423,14 @@
      pub layout_parent: Cell<Option<NodeId>>,
      /// A separate child list that includes anonymous collections of inline elements
      pub layout_children: RefCell<Option<ThinVec<NodeId>>>,
@@ -46207,7 +46741,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Out-of-flow (absolutely/fixed positioned) boxes for which this node is the
      /// containing block. Recorded by Taffy's out-of-flow positioning pass. The
      /// `Layout.location` of these boxes is relative to this node's border box.
-@@ -110,6 +436,10 @@
+@@ -110,6 +440,10 @@
      /// block). The box's `Layout.location` is relative to this node rather than
      /// to its `layout_parent`. `None` for in-flow boxes.
      pub oof_containing_block: Cell<Option<NodeId>>,
@@ -46218,7 +46752,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Anonymous block boxes created for this node during layout construction.
      ///
      /// Anonymous blocks live only in the slab (they are not part of the DOM
-@@ -147,7 +477,15 @@
+@@ -147,7 +481,15 @@
  /// (element / anonymous block nodes) and [`DocumentData`] (the document node).
  macro_rules! universal_accessors {
      ($($(#[$meta:meta])* $field:ident / $field_mut:ident : $ty:ty),* $(,)?) => {
@@ -46235,7 +46769,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              $(
                  $(#[$meta])*
                  #[inline]
-@@ -236,19 +574,7 @@
+@@ -236,19 +578,7 @@
      pub fn clear_layout_cache(&mut self) {
          if let Some(layout_data) = self.try_layout_data_mut() {
              layout_data.cache.clear();
@@ -46256,7 +46790,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
      }
  
-@@ -267,9 +593,23 @@
+@@ -267,9 +597,23 @@
          &self.layout_data().unrounded_layout
      }
  
@@ -46283,7 +46817,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      #[inline]
-@@ -289,9 +629,133 @@
+@@ -289,9 +633,133 @@
  
      #[inline]
      pub fn scroll_offset_mut(&mut self) -> &mut crate::Point<f64> {
@@ -46417,7 +46951,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      #[inline]
      pub fn scrollable_overflow(&self) -> &KurboRect {
          &self.layout_data().scrollable_overflow
-@@ -302,6 +766,17 @@
+@@ -302,6 +770,17 @@
          &mut self.layout_data_mut().scrollable_overflow
      }
  
@@ -46435,7 +46969,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Style data from stylo, if this node kind carries it (element or document
      /// nodes). Returns `None` for text/comment nodes.
      #[inline]
-@@ -417,7 +892,13 @@
+@@ -417,7 +896,13 @@
              parent: None,
              children: ThinVec::new(),
              layout_parent: Cell::new(None),
@@ -46449,7 +46983,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              layout_children: RefCell::new(None),
              hoisted_children: RefCell::new(ThinVec::new()),
              anonymous_blocks: ThinVec::new(),
-@@ -425,30 +906,470 @@
+@@ -425,30 +910,470 @@
              stacking_context: None,
              sc_contribution_cache: RefCell::new(ThinVec::new()),
  
@@ -46936,7 +47470,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          let slot = self.transform_mut();
          match (slot.as_deref_mut(), transform) {
-@@ -456,7 +1377,23 @@
+@@ -456,7 +1381,23 @@
              (None, Some(new)) => *slot = Some(Box::new(new)),
              (_, None) => *slot = None,
          }
@@ -46961,7 +47495,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
-@@ -483,13 +1420,60 @@
+@@ -483,13 +1424,60 @@
          Some(
              if self.element_data().is_some_and(|el| el.is_button_input()) {
                  stylo_taffy::convert::button_input_display(display)
@@ -47022,7 +47556,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let style = self.primary_styles();
          let style = style.as_ref();
  
-@@ -514,14 +1498,35 @@
+@@ -514,14 +1502,35 @@
          }
          let display = self.display_style().unwrap_or(StyloDisplay::inline());
          match display.outside() {
@@ -47062,7 +47596,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  } else {
                      false
                  }
-@@ -537,6 +1542,26 @@
+@@ -537,6 +1546,26 @@
              .contains(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN)
      }
  
@@ -47089,7 +47623,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_whitespace_node(&self) -> bool {
          match &self.data {
              NodeData::Text(data) => data.content.chars().all(|c| c.is_ascii_whitespace()),
-@@ -633,6 +1658,56 @@
+@@ -633,6 +1662,56 @@
              .is_some_and(|flag| flag.load(Ordering::Relaxed))
      }
  
@@ -47146,7 +47680,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Clears the damaged_descendants flag on this node.
      pub fn unset_damaged_descendants(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
-@@ -649,6 +1724,8 @@
+@@ -649,6 +1728,8 @@
      pub fn mark_damaged(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
              if flag.swap(true, Ordering::Relaxed) {
@@ -47155,7 +47689,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return;
              }
          }
-@@ -659,6 +1736,8 @@
+@@ -659,6 +1740,8 @@
              // because all further ancestors must also have it set
              if let Some(flag) = parent.damaged_descendants_flag() {
                  if flag.swap(true, Ordering::Relaxed) {
@@ -47164,7 +47698,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      break;
                  }
              }
-@@ -666,6 +1745,55 @@
+@@ -666,6 +1749,55 @@
          }
      }
  
@@ -47220,7 +47754,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      // pub fn damage_mut(&mut self) -> Option<&mut RestyleDamage> {
      //     self.stylo_element_data
      //         .get_mut()
-@@ -761,8 +1889,8 @@
+@@ -761,8 +1893,8 @@
  
      pub fn focus(&mut self, shell_provider: Arc<dyn ShellProvider>) {
          if let Some(data) = self.element_data_mut() {
@@ -47231,7 +47765,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
          self.mark_ancestors_dirty();
  
-@@ -864,9 +1992,13 @@
+@@ -864,9 +1996,13 @@
              .and_then(|el| el.text_input_data())
          {
              if !input_data.is_multiline {
@@ -47247,7 +47781,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
                  return y_offset as f64;
              }
-@@ -945,6 +2077,11 @@
+@@ -945,6 +2081,11 @@
          self.downcast_element()?.attr(name)
      }
  
@@ -47259,7 +47793,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn has_attr(&self, name: impl PartialEq<LocalName>) -> bool {
          self.downcast_element()
              .is_some_and(|elem| elem.has_attr(name))
-@@ -965,11 +2102,14 @@
+@@ -965,11 +2106,14 @@
  pub struct TextNodeData {
      /// The textual content of the text node
      pub content: String,
@@ -47275,7 +47809,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  }
  
-@@ -1061,6 +2201,11 @@
+@@ -1061,6 +2205,11 @@
          matches!(self.data, NodeData::Element { .. })
      }
  
@@ -47287,7 +47821,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1148,6 +2293,11 @@
+@@ -1148,6 +2297,11 @@
          Some(&attr.value)
      }
  
@@ -47299,7 +47833,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn primary_styles(&self) -> Option<impl Deref<Target = ServoArc<ComputedValues>>> {
          self.try_stylo_element_data()
              .and_then(|stylo| stylo.primary_styles())
-@@ -1161,37 +2311,176 @@
+@@ -1161,37 +2315,176 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -47481,7 +48015,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,12 +2523,24 @@
+@@ -1234,12 +2527,24 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -47509,7 +48043,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  if self.element_data().is_some_and(|el| el.is_button_input())
                      && !matches!(
                          display.inside(),
-@@ -1290,7 +2591,7 @@
+@@ -1290,7 +2595,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -47518,7 +48052,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,8 +2628,47 @@
+@@ -1327,8 +2632,47 @@
              .unwrap_or(0)
      }
  
@@ -47567,7 +48101,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
-@@ -1336,7 +2676,7 @@
+@@ -1336,7 +2680,7 @@
          let position = style.clone_position();
          let has_z_index = !style.clone_z_index().is_auto();
  
@@ -47576,7 +48110,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return true;
          }
  
-@@ -1358,10 +2698,37 @@
+@@ -1358,10 +2702,37 @@
              return true;
          }
  
@@ -47614,7 +48148,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2736,48 @@
+@@ -1369,7 +2740,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -47664,7 +48198,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2805,14 @@
+@@ -1397,12 +2809,14 @@
              return true;
          }
  
@@ -47685,7 +48219,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1431,9 +2841,32 @@
+@@ -1431,9 +2845,32 @@
          y: f32,
          scale: f64,
          scrollbar: &mut Option<crate::node::ScrollbarRef>,
@@ -47718,7 +48252,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
-@@ -1500,11 +2933,15 @@
+@@ -1500,11 +2937,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -47734,7 +48268,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1519,7 +2956,25 @@
+@@ -1519,7 +2960,25 @@
              && y >= (overflow.y0 / scale) as f32
              && y <= (overflow.y1 / scale) as f32;
  
@@ -47761,7 +48295,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return None;
          }
  
-@@ -1533,6 +2988,8 @@
+@@ -1533,6 +2992,8 @@
          {
              *scrollbar = Some(sb);
          }
@@ -47770,7 +48304,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1541,10 +2998,7 @@
+@@ -1541,10 +3002,7 @@
          // padded inline root are hit one padding down and right of where
          // they are painted.
          let content_box_offset = if self.flags.is_inline_root() {
@@ -47782,7 +48316,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          } else {
              taffy::Point { x: 0.0, y: 0.0 }
          };
-@@ -1556,30 +3010,46 @@
+@@ -1556,30 +3014,46 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -47841,7 +48375,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,26 +3060,94 @@
+@@ -1590,26 +3064,94 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -47951,7 +48485,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
  
          // Inline children
-@@ -1642,6 +3180,24 @@
+@@ -1642,6 +3184,24 @@
              }
          }
  
@@ -47976,7 +48510,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Self (this node)
          if matches_self && !pointer_events_none {
              return Some(HitResult {
-@@ -1716,7 +3272,7 @@
+@@ -1716,7 +3276,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -47985,7 +48519,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3297,13 @@
+@@ -1741,8 +3301,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -48000,7 +48534,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3379,28 @@
+@@ -1818,8 +3383,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -48031,7 +48565,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3458,36 @@
+@@ -1877,11 +3462,36 @@
                  }
              }
  
@@ -48073,7 +48607,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              })
          }))
      }
-@@ -1938,14 +3544,14 @@
+@@ -1938,14 +3548,14 @@
      /// borders and scrollbar)
      pub fn client_width(&self) -> f32 {
          let layout = self.final_layout();
@@ -48997,7 +49531,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  /// Map a `viewBox` onto a viewport of the given size per `preserveAspectRatio`.
  fn view_box_transform(
      view_box: usvg::NonZeroRect,
-@@ -263,3 +512,314 @@
+@@ -263,3 +512,320 @@
      let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
      usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
  }
@@ -49183,8 +49717,14 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +    if let (ClipPath::Url(ComputedUrl::Valid(url, modifiers)), false) = (style.get_clip_path(), clip_path_attr) {
 +        out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
 +    }
++    // pyro: so is its `filter` attribute's: a URL the hint resolved against the placeholder base
++    // it is parsed with (`DocumentUrl::default`, only a fragment resolves there) is not loaded.
++    // Page CSS's are.
 +    for filter in style.get_effects().filter.0.iter() {
 +        if let GenericFilter::Url(ComputedUrl::Valid(url, modifiers)) = filter {
++            if url.as_str().starts_with("data:text/css;charset=utf-8;base64,") {
++                continue;
++            }
 +            out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
 +        }
 +    }
@@ -49316,7 +49856,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2937 @@
+@@ -0,0 +1,2947 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -50392,6 +50932,16 @@ new file mode 100644
 +                }
 +                if author.contains(&id) {
 +                    let value = computed_value(style, id);
++                    // pyro: usvg reads these keywords only in their SVG spelling, which
++                    // Stylo serializes in lower case.
++                    let value = match (id, value.as_str()) {
++                        (LonghandId::ColorInterpolationFilters, "srgb") => "sRGB".to_string(),
++                        (LonghandId::ColorInterpolationFilters, "linearrgb") => "linearRGB".to_string(),
++                        (LonghandId::ShapeRendering, "optimizespeed") => "optimizeSpeed".to_string(),
++                        (LonghandId::ShapeRendering, "crispedges") => "crispEdges".to_string(),
++                        (LonghandId::ShapeRendering, "geometricprecision") => "geometricPrecision".to_string(),
++                        _ => value,
++                    };
 +                    let _ = write!(declarations, "{name}:{value};");
 +                }
 +            }
@@ -58355,7 +58905,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  
          for opaque in self.snapshots.keys() {
              let id = NodeId::from_u64(opaque.id() as u64);
-@@ -210,8 +307,74 @@
+@@ -210,8 +307,135 @@
  
          // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
          self.stylist.rule_tree().maybe_gc();
@@ -58364,6 +58914,67 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    }
  
 -        style::thread_state::exit(ThreadState::LAYOUT);
++    /// Recompute font-relative values using the current transition samples, leaving the
++    /// stored after-change style in place for transition creation and retargeting.
++    pub fn sampled_font_style(
++        &self, id: NodeId, pseudo: Option<&PseudoElement>,
++        size: Option<&ComputedValues>, line_height: Option<&ComputedValues>,
++    ) -> Option<Arc<ComputedValues>> {
++        use style::computed_value_flags::ComputedValueFlags;
++        use style::context::CascadeInputs;
++        use style::properties::{FirstLineReparenting, LonghandId};
++        use style::values::computed::{LineHeight, NonNegativeLength, ToComputedValue};
++        let node = self.get_node(id)?;
++        let primary = |n: &Node| n.primary_styles().map(|s| (*s).clone()).or_else(|| self.resolve_undisplayed_style(n.id));
++        let base = match pseudo {
++            Some(p) => self.pseudo_element_style(id, p, false)?,
++            None => primary(node)?,
++        };
++        if !base.flags.contains(ComputedValueFlags::USES_FONT_OR_WM_RELATIVE_UNITS) { return None }
++        let parent_node = if pseudo.is_some() { Some(node) } else { TElement::inheritance_parent(&node) };
++        let parent = parent_node.and_then(primary);
++        let mut layout_parent_node = parent_node;
++        let mut layout_parent = parent.clone();
++        while layout_parent.as_ref().is_some_and(|s| s.is_display_contents()) {
++            layout_parent_node = layout_parent_node.and_then(|n| TElement::inheritance_parent(&n));
++            layout_parent = layout_parent_node.and_then(primary);
++        }
++
++        let _scope = LayoutThreadScope::enter();
++        let guard = self.guard.read();
++        let guards = StylesheetGuards::same(&guard);
++        let level = CascadeLevel::new(CascadeOrigin::Transitions);
++        let mut block = base.rules().self_and_ancestors().find(|r| r.cascade_level() == level)
++            .and_then(|r| r.style_source()).map(|s| s.read(&guard).clone()).unwrap_or_default();
++        if let Some(s) = size {
++            let mut context = style::values::resolved::Context {
++                style: s, for_property: style::properties::PropertyId::NonCustom(LonghandId::FontSize.into()), current_longhand: None,
++            };
++            block.push(s.computed_or_resolved_declaration(LonghandId::FontSize, Some(&mut context)), Importance::Normal);
++        }
++        if let Some(s) = line_height {
++            // Preserve unitless line-height and unzoom absolute lengths before cascading them again.
++            let value = match s.slow_clone_line_height() {
++                LineHeight::Length(l) => LineHeight::Length(NonNegativeLength::new(s.effective_zoom.unzoom(l.0.px()))),
++                value => value,
++            };
++            block.push(PropertyDeclaration::LineHeight(ToComputedValue::from_computed_value(&value)), Importance::Normal);
++        }
++        let block = Arc::new(self.guard.wrap(block));
++        let mut inputs = CascadeInputs::new_from_style(&base);
++        for path in [&mut inputs.rules, &mut inputs.visited_rules].into_iter().flatten() {
++            if let Some(new_path) = self.stylist.rule_tree().update_rule_at_level(
++                level, LayerOrder::root(), Some(block.borrow_arc()), path, &guards, &mut false,
++            ) {
++                *path = new_path;
++            }
++        }
++        Some(self.stylist.cascade_style_and_visited(
++            Some(node), pseudo, &inputs, &guards, parent.as_deref(), layout_parent.as_deref(),
++            FirstLineReparenting::No, &Default::default(), None, &mut Default::default(), &mut Default::default(),
++        ))
++    }
++
 +    /// A read-only cascade without a single-rule embedder stylesheet. The normal
 +    /// document retains that rule (Pyro uses it to suppress native animation scheduling).
 +    pub fn style_without_override(
@@ -58431,7 +59042,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      /// Compute the style of an element which the regular style traversal
-@@ -223,12 +386,202 @@
+@@ -223,12 +447,202 @@
      /// (styling any unstyled ancestors along the way) without storing it on the
      /// node. Returns `None` for non-elements and elements outside the document.
      pub fn resolve_undisplayed_style(&self, node_id: NodeId) -> Option<Arc<ComputedValues>> {
@@ -58635,7 +59246,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  
          let guard = &self.guard;
          let guards = StylesheetGuards {
-@@ -240,25 +593,49 @@
+@@ -240,25 +654,49 @@
              stylist: &self.stylist,
              options: GLOBAL_STYLE_DATA.options.clone(),
              guards,
@@ -58674,8 +59285,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        Some(styles)
 +    }
 +}
- 
--        Some(styles.primary().clone())
++
 +/// pyro: what [`BaseDocument::resolve_undisplayed_style_cached`] keeps
 +/// between reads while the document stays the same.
 +#[derive(Default)]
@@ -58683,7 +59293,8 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    styles: style::traversal::UndisplayedStyleCache,
 +    selectors: Option<selectors::context::SelectorCaches>,
 +}
-+
+ 
+-        Some(styles.primary().clone())
 +impl UndisplayedCaches {
 +    /// Forgets everything: the document changed.
 +    pub fn clear(&mut self) {
@@ -58692,7 +59303,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  }
  
-@@ -276,11 +653,13 @@
+@@ -276,11 +714,13 @@
      }
  
      fn is_html_document(&self) -> bool {
@@ -58708,7 +59319,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn shared_lock(&self) -> &SharedRwLock {
-@@ -305,15 +684,18 @@
+@@ -305,15 +745,18 @@
          self
      }
  
@@ -58729,7 +59340,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  }
  
-@@ -408,25 +790,56 @@
+@@ -408,25 +851,56 @@
          OpaqueElement::from_ptr(non_null)
      }
  
@@ -58790,7 +59401,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let mut n = 1;
          while let Some(node) = self.backward(n) {
              if node.is_element() {
-@@ -439,6 +852,9 @@
+@@ -439,6 +913,9 @@
      }
  
      fn next_sibling_element(&self) -> Option<Self> {
@@ -58800,7 +59411,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let mut n = 1;
          while let Some(node) = self.forward(n) {
              if node.is_element() {
-@@ -456,7 +872,11 @@
+@@ -456,7 +933,11 @@
      }
  
      fn is_html_element_in_html_document(&self) -> bool {
@@ -58813,7 +59424,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn has_local_name(&self, local_name: &LocalName) -> bool {
-@@ -493,7 +913,7 @@
+@@ -493,7 +974,7 @@
      fn match_non_ts_pseudo_class(
          &self,
          pseudo_class: &<Self::Impl as selectors::SelectorImpl>::NonTSPseudoClass,
@@ -58822,7 +59433,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      ) -> bool {
          match *pseudo_class {
              NonTSPseudoClass::Active => self.element_state().contains(ElementState::ACTIVE),
-@@ -501,44 +921,121 @@
+@@ -501,44 +982,121 @@
                  .element_state()
                  .intersects(ElementState::VISITED_OR_UNVISITED),
              NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
@@ -58970,7 +59581,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          }
      }
  
-@@ -547,6 +1044,23 @@
+@@ -547,6 +1105,23 @@
          pe: &PseudoElement,
          _context: &mut MatchingContext<Self::Impl>,
      ) -> bool {
@@ -58994,7 +59605,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let pseudo = match self.try_stylo_element_data().and_then(|s| s.get()) {
              Some(el) => el
                  .styles
-@@ -581,12 +1095,15 @@
+@@ -581,12 +1156,15 @@
          }
      }
  
@@ -59011,7 +59622,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn has_id(
-@@ -600,6 +1117,10 @@
+@@ -600,6 +1178,10 @@
              .unwrap_or(false)
      }
  
@@ -59022,7 +59633,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      fn has_class(
          &self,
          search_name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
-@@ -612,19 +1133,32 @@
+@@ -612,19 +1194,32 @@
          })
      }
  
@@ -59060,7 +59671,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_root(&self) -> bool {
-@@ -641,6 +1175,16 @@
+@@ -641,6 +1236,16 @@
      }
  
      fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
@@ -59077,7 +59688,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
          true
      }
-@@ -651,19 +1195,60 @@
+@@ -651,19 +1256,60 @@
  
      type TraversalChildrenIterator = Traverser<'a>;
  
@@ -59142,7 +59753,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
-@@ -674,18 +1259,22 @@
+@@ -674,18 +1320,22 @@
          })
      }
  
@@ -59170,7 +59781,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
-@@ -701,11 +1290,35 @@
+@@ -701,11 +1351,35 @@
      }
  
      fn has_part_attr(&self) -> bool {
@@ -59208,7 +59819,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn id(&self) -> Option<&style::Atom> {
-@@ -806,6 +1419,8 @@
+@@ -806,6 +1480,8 @@
      fn may_have_animations(&self) -> bool {
          self.element_data()
              .is_some_and(|data| data.may_have_animations.load(Ordering::Relaxed))
@@ -59217,7 +59828,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn set_may_have_animations(&self) {
-@@ -818,6 +1433,10 @@
+@@ -818,6 +1494,10 @@
          if !self.may_have_animations() {
              return false;
          }
@@ -59228,7 +59839,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let key = AnimationSetKey::new_for_non_pseudo(TNode::opaque(&TElement::as_node(self)));
          context
              .animations
-@@ -852,6 +1471,10 @@
+@@ -852,6 +1532,10 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -59239,7 +59850,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_animation_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -864,6 +1487,9 @@
+@@ -864,6 +1548,9 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -59249,7 +59860,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_transition_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -873,31 +1499,61 @@
+@@ -873,31 +1560,61 @@
      }
  
      fn shadow_root(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
@@ -59319,7 +59930,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_html_document_body_element(&self) -> bool {
-@@ -917,55 +1573,253 @@
+@@ -917,61 +1634,259 @@
          root_element.children.contains(&self.id)
      }
  
@@ -59377,10 +59988,16 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 -                let g = u8::from_str_radix(&value[1..2], 16).ok()?;
 -                let b = u8::from_str_radix(&value[2..3], 16).ok()?;
 -                return Some((r, g, b, 1.0));
+-            }
 +    fn local_name(&self) -> &LocalName {
 +        &self.element_data().expect("Not an element").name.local
 +    }
-+
+ 
+-            if value.len() == 6 {
+-                let r = u8::from_str_radix(&value[0..2], 16).ok()?;
+-                let g = u8::from_str_radix(&value[2..4], 16).ok()?;
+-                let b = u8::from_str_radix(&value[4..6], 16).ok()?;
+-                return Some((r, g, b, 1.0));
 +    fn namespace(&self) -> &Namespace {
 +        &self.element_data().expect("Not an element").name.ns
 +    }
@@ -59459,11 +60076,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        size
 +    }
  
--            if value.len() == 6 {
--                let r = u8::from_str_radix(&value[0..2], 16).ok()?;
--                let g = u8::from_str_radix(&value[2..4], 16).ok()?;
--                let b = u8::from_str_radix(&value[4..6], 16).ok()?;
--                return Some((r, g, b, 1.0));
+-            None
 +    fn each_custom_state<F>(&self, mut callback: F)
 +    where
 +        F: FnMut(&AtomIdent),
@@ -59473,11 +60086,18 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        if let Some(value) = value {
 +            for state in crate::has_invalidation::pyro_custom_states(Some(value)) {
 +                callback(AtomIdent::cast(&style::Atom::from(state)));
-             }
-+        }
++            }
+         }
 +    }
  
--            None
+-        /// The HTML "rules for parsing dimension values" -- Stylo's
+-        /// implementation of them -- packaged as a specified
+-        /// `<length-percentage>`. `ignoring_zero` selects the spec's separate
+-        /// "maps to the dimension property (ignoring zero)" mapping, where a
+-        /// zero value is dropped rather than honoured.
+-        ///
+-        /// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values
+-        fn parse_size_attr(
 +    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
 +        self.selector_flags().get().contains(flags)
 +    }
@@ -59494,11 +60114,9 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
 +        } else {
 +            ElementSelectorFlags::empty()
-         }
++        }
 +    }
- 
--        /// The HTML "rules for parsing dimension values" -- Stylo's
--        /// implementation of them -- packaged as a specified
++
 +    fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) -> RestyleDamage {
 +        compute_layout_damage(old, new)
 +        // ALL_DAMAGE
@@ -59599,10 +60217,16 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +
 +        /// The HTML "rules for parsing dimension values" -- Stylo's
 +        /// implementation of them -- packaged as a specified
-         /// `<length-percentage>`. `ignoring_zero` selects the spec's separate
-         /// "maps to the dimension property (ignoring zero)" mapping, where a
-         /// zero value is dropped rather than honoured.
-@@ -1083,6 +1937,65 @@
++        /// `<length-percentage>`. `ignoring_zero` selects the spec's separate
++        /// "maps to the dimension property (ignoring zero)" mapping, where a
++        /// zero value is dropped rather than honoured.
++        ///
++        /// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values
++        fn parse_size_attr(
+             value: &str,
+             ignoring_zero: bool,
+         ) -> Option<style::values::specified::LengthPercentage> {
+@@ -1083,6 +1998,65 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
  
@@ -59668,7 +60292,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1092,6 +2005,53 @@
+@@ -1092,6 +2066,53 @@
                  attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
              });
  
@@ -59722,26 +60346,38 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
          let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
          let mut lang = None;
-@@ -1100,6 +2060,28 @@
+@@ -1100,6 +2121,40 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
 +            // SVG presentation attributes enter the author cascade with zero
 +            // specificity. This also resolves custom properties and currentColor
 +            // before SVG serialization, text measurement, and getComputedStyle.
-+            // Geometry attributes have their own mapping below.
++            // Geometry attributes have their own mapping below. Every SVG element
++            // takes them, unknown ones and those the property does not apply to
++            // included (SVG 2 § 6.6; WPT svg/styling/presentation-attributes-*).
++            // pyro: not `filter` and `mask` on an `<svg>`: an outermost one's are
++            // usvg's (its attributes are written out as they are), and as box effects
++            // blitz-paint would apply them a second time. A hint cannot depend on the
++            // parent: hints are cached until the element's attributes change.
 +            if elem.name.ns == ns!(svg)
 +                && attr.name.ns == ns!()
-+                && matches!(&**name,
++                && (matches!(&**name,
 +                    "clip-path" | "transform-origin" | "overflow" | "pointer-events"
 +                    | "fill" | "fill-opacity" | "fill-rule"
 +                    | "stroke" | "stroke-width" | "stroke-opacity" | "stroke-linecap"
 +                    | "stroke-linejoin" | "stroke-miterlimit" | "stroke-dasharray" | "stroke-dashoffset"
 +                    | "opacity" | "color" | "visibility" | "display"
 +                    | "font-family" | "font-size" | "font-weight" | "font-style" | "font-stretch"
++                    | "font-variant"
 +                    | "letter-spacing" | "word-spacing" | "text-anchor" | "text-decoration"
 +                    | "dominant-baseline" | "alignment-baseline" | "baseline-shift"
-+                    | "paint-order" | "vector-effect" | "shape-rendering" | "text-rendering")
++                    | "paint-order" | "vector-effect" | "shape-rendering" | "text-rendering"
++                    | "clip-rule" | "color-interpolation" | "color-interpolation-filters" | "cursor"
++                    | "direction" | "unicode-bidi" | "writing-mode" | "text-overflow" | "image-rendering"
++                    | "flood-color" | "flood-opacity" | "lighting-color" | "stop-color" | "stop-opacity"
++                    | "marker-start" | "marker-mid" | "marker-end" | "mask-type")
++                    || (matches!(&**name, "filter" | "mask") && *tag != local_name!("svg")))
 +            {
 +                for declaration in parse_svg_presentation_attr(&**name, value) {
 +                    push_style(declaration);
@@ -59751,7 +60387,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,12 +2107,42 @@
+@@ -1125,12 +2180,42 @@
                  }
              }
  
@@ -59794,7 +60430,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                      _ => None,
                  };
  
-@@ -1139,6 +2151,67 @@
+@@ -1139,6 +2224,67 @@
                  }
              }
  
@@ -59862,7 +60498,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `valign` on HTML table row groups, rows and cells maps to
              // `vertical-align`, matched ASCII case-insensitively. `vertical-align`
              // is a shorthand in Stylo, so push the three longhands each keyword
-@@ -1164,7 +2237,7 @@
+@@ -1164,7 +2310,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -59871,7 +60507,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2343,9 @@
+@@ -1270,7 +2416,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -59882,7 +60518,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1307,6 +2382,21 @@
+@@ -1307,6 +2455,21 @@
                  }
              }
  
@@ -59904,7 +60540,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `body` carries four legacy margin attributes, as pixel lengths:
              // marginwidth and marginheight set both sides of an axis, and
              // leftmargin and topmargin set one side each.
-@@ -1358,6 +2448,16 @@
+@@ -1358,6 +2521,16 @@
                  }
              }
  
@@ -59921,7 +60557,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1367,154 +2467,107 @@
+@@ -1367,178 +2540,369 @@
                  }
              }
  
@@ -60047,39 +60683,6 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 -
 -    fn namespace(&self) -> &Namespace {
 -        &self.element_data().expect("Not an element").name.ns
--    }
--
--    fn query_container_size(
--        &self,
--        _display: &style::values::specified::Display,
--    ) -> euclid::default::Size2D<Option<app_units::Au>> {
--        // FIXME: Implement container queries. For now this effectively disables them without panicking.
--        Default::default()
--    }
--
--    fn each_custom_state<F>(&self, _callback: F)
--    where
--        F: FnMut(&AtomIdent),
--    {
--        todo!()
--    }
--
--    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
--        self.selector_flags().get().contains(flags)
--    }
--
--    fn relative_selector_search_direction(&self) -> ElementSelectorFlags {
--        let flags = self.selector_flags().get();
--        if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING)
--        {
--            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING
--        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR)
--        {
--            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR
--        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING) {
--            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
--        } else {
--            ElementSelectorFlags::empty()
 +    /// The table a cell takes its `cellpadding` from: the first ancestor
 +    /// that isn't a row or row group, when that is a table.
 +    fn cell_table(&self) -> Option<&Node> {
@@ -60094,73 +60697,32 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                return (*name == local_name!("table")).then_some(node);
 +            }
 +            ancestor = node.parent_node();
-         }
--    }
--
--    fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) -> RestyleDamage {
--        compute_layout_damage(old, new)
--        // ALL_DAMAGE
--    }
--
--    // fn update_animations(
--    //     &self,
--    //     before_change_style: Option<Arc<ComputedValues>>,
--    //     tasks: style::context::UpdateAnimationsTasks,
--    // ) {
--    //     todo!()
--    // }
--
--    // fn process_post_animation(&self, tasks: style::context::PostAnimationTasks) {
--    //     todo!()
--    // }
--
--    // fn needs_transitions_update(
--    //     &self,
--    //     before_change_style: &ComputedValues,
--    //     after_change_style: &ComputedValues,
--    // ) -> bool {
--    //     todo!()
--    // }
--}
--
--pub struct Traverser<'a> {
--    // dom: &'a Slab<Node>,
--    parent: BlitzNode<'a>,
--    child_index: usize,
--}
--
--impl<'a> Iterator for Traverser<'a> {
--    type Item = BlitzNode<'a>;
--
--    fn next(&mut self) -> Option<Self::Item> {
--        let node_id = self.parent.children.get(self.child_index)?;
--        let node = self.parent.with(*node_id);
--
--        self.child_index += 1;
--
--        Some(node)
--    }
--}
--
--impl std::hash::Hash for BlitzNode<'_> {
--    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
--        state.write_u64(self.id.as_u64())
--    }
--}
--
--/// Handle custom painters like images for layouting
--///
--/// todo: actually implement this
--pub struct RegisteredPaintersImpl;
--impl RegisteredSpeculativePainters for RegisteredPaintersImpl {
--    fn get(&self, _name: &Atom) -> Option<&dyn RegisteredSpeculativePainter> {
-         None
++        }
++        None
      }
- }
-@@ -1527,6 +2580,47 @@
-     /// dedicated storage on the node (see `flush_image_layers_from_style`)
-     /// because their style changed during this traversal.
-     nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
++}
+ 
+-    fn query_container_size(
+-        &self,
+-        _display: &style::values::specified::Display,
+-    ) -> euclid::default::Size2D<Option<app_units::Au>> {
+-        // FIXME: Implement container queries. For now this effectively disables them without panicking.
+-        Default::default()
+-    }
++use style::traversal::recalc_style_at;
+ 
+-    fn each_custom_state<F>(&self, _callback: F)
+-    where
+-        F: FnMut(&AtomIdent),
+-    {
+-        todo!()
+-    }
++pub struct RecalcStyle<'a> {
++    context: SharedStyleContext<'a>,
++    /// Nodes whose `background-image`/`mask-image` layers need flushing to
++    /// dedicated storage on the node (see `flush_image_layers_from_style`)
++    /// because their style changed during this traversal.
++    nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
 +    /// pyro: an element styled in this traversal kept a
 +    /// `::before` / `::after` style (one its rules generate).
 +    generated_before_after: std::sync::atomic::AtomicBool,
@@ -60202,13 +60764,29 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +    /// any (`counters_changed`).
 +    track_counters: bool,
 +    counters_changed: std::sync::atomic::AtomicBool,
- }
++}
  
- impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2628,208 @@
-         RecalcStyle {
-             context,
-             nodes_needing_style_image_flush: Mutex::new(Vec::new()),
+-    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
+-        self.selector_flags().get().contains(flags)
+-    }
+-
+-    fn relative_selector_search_direction(&self) -> ElementSelectorFlags {
+-        let flags = self.selector_flags().get();
+-        if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING)
+-        {
+-            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING
+-        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR)
+-        {
+-            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR
+-        } else if flags.contains(ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING) {
+-            ElementSelectorFlags::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
+-        } else {
+-            ElementSelectorFlags::empty()
++impl<'a> RecalcStyle<'a> {
++    pub fn new(context: SharedStyleContext<'a>) -> Self {
++        RecalcStyle {
++            context,
++            nodes_needing_style_image_flush: Mutex::new(Vec::new()),
 +            generated_before_after: std::sync::atomic::AtomicBool::new(false),
 +            sticky_nodes: Mutex::new(Vec::new()),
 +            cis_auto_nodes: Mutex::new(Vec::new()),
@@ -60229,9 +60807,50 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            counters_changed: std::sync::atomic::AtomicBool::new(false),
          }
      }
+-
+-    fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) -> RestyleDamage {
+-        compute_layout_damage(old, new)
+-        // ALL_DAMAGE
+-    }
+-
+-    // fn update_animations(
+-    //     &self,
+-    //     before_change_style: Option<Arc<ComputedValues>>,
+-    //     tasks: style::context::UpdateAnimationsTasks,
+-    // ) {
+-    //     todo!()
+-    // }
+-
+-    // fn process_post_animation(&self, tasks: style::context::PostAnimationTasks) {
+-    //     todo!()
+-    // }
+-
+-    // fn needs_transitions_update(
+-    //     &self,
+-    //     before_change_style: &ComputedValues,
+-    //     after_change_style: &ComputedValues,
+-    // ) -> bool {
+-    //     todo!()
+-    // }
+-}
+-
+-pub struct Traverser<'a> {
+-    // dom: &'a Slab<Node>,
+-    parent: BlitzNode<'a>,
+-    child_index: usize,
  }
  
- #[allow(unsafe_code)]
+-impl<'a> Iterator for Traverser<'a> {
+-    type Item = BlitzNode<'a>;
+-
+-    fn next(&mut self) -> Option<Self::Item> {
+-        let node_id = self.parent.children.get(self.child_index)?;
+-        let node = self.parent.with(*node_id);
+-
+-        self.child_index += 1;
+-
+-        Some(node)
++#[allow(unsafe_code)]
 +/// pyro: what the style traversal must reach once Stylo's relative selector
 +/// invalidator invalidated `element` (as Gecko's `relative_selector_invalidated_at`): the
 +/// hints are set, the dirty-descendants bits lead to them.
@@ -60246,9 +60865,12 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        element.mark_ancestors_dirty();
 +    } else if result.has_invalidated_self() {
 +        element.mark_ancestors_dirty();
-+    }
-+}
-+
+     }
+ }
+ 
+-impl std::hash::Hash for BlitzNode<'_> {
+-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+-        state.write_u64(self.id.as_u64())
 +impl crate::BaseDocument {
 +    /// pyro: the `:has()` anchors whose answer the insertion of `node_id` can change
 +    /// restyle. Stylo's relative selector invalidator (as Gecko's
@@ -60276,8 +60898,16 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            DomMutationOperation::Insert
 +        };
 +        self.invalidate_relative_selectors(node, inherited, operation);
-+    }
-+
+     }
+-}
+ 
+-/// Handle custom painters like images for layouting
+-///
+-/// todo: actually implement this
+-pub struct RegisteredPaintersImpl;
+-impl RegisteredSpeculativePainters for RegisteredPaintersImpl {
+-    fn get(&self, _name: &Atom) -> Option<&dyn RegisteredSpeculativePainter> {
+-        None
 +    /// pyro: as [`Self::invalidate_relative_selectors_for_insertion`] for an element
 +    /// about to be removed (or moved away), called while it is still linked: the anchors are
 +    /// found through its parent and earlier siblings.
@@ -60287,8 +60917,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            return;
 +        }
 +        self.invalidate_relative_selectors(node, ElementSelectorFlags::empty(), DomMutationOperation::Remove);
-+    }
-+
+     }
+-}
+ 
+-use style::traversal::recalc_style_at;
 +    /// pyro: whether a style sheet of the document's origins or of a shadow tree has a relative
 +    /// selector (`:has()`).
 +    fn uses_relative_selectors(&self) -> bool {
@@ -60299,7 +60931,14 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            .any(|origin| data.borrow_for_origin(origin).relative_invalidation_map_attributes().used)
 +            || self.nodes.shadow_roots.values().any(|root| root.styles.data.relative_invalidation_map_attributes().used)
 +    }
-+
+ 
+-pub struct RecalcStyle<'a> {
+-    context: SharedStyleContext<'a>,
+-    /// Nodes whose `background-image`/`mask-image` layers need flushing to
+-    /// dedicated storage on the node (see `flush_image_layers_from_style`)
+-    /// because their style changed during this traversal.
+-    nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
+-}
 +    fn invalidate_relative_selectors(
 +        &self,
 +        node: BlitzNode<'_>,
@@ -60356,7 +60995,12 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            );
 +        }
 +    }
-+
+ 
+-impl<'a> RecalcStyle<'a> {
+-    pub fn new(context: SharedStyleContext<'a>) -> Self {
+-        RecalcStyle {
+-            context,
+-            nodes_needing_style_image_flush: Mutex::new(Vec::new()),
 +    /// pyro: the `:has()` anchors whose answer a change of `node_id`'s emptiness or
 +    /// sibling position can flip restyle (as Gecko's
 +    /// `MaybeInvalidateRelativeSelectorForEmptyDependency`, `...ForNthEdgeDependency` and
@@ -60379,7 +61023,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            || node.relative_selector_search_direction().is_empty()
 +        {
 +            return;
-+        }
+         }
 +        let _layout_thread_scope = LayoutThreadScope::enter();
 +        let invalidator = RelativeSelectorInvalidator {
 +            element: node,
@@ -60408,13 +61052,14 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                    );
 +            },
 +        );
-+    }
-+}
-+
+     }
+ }
+ 
+-#[allow(unsafe_code)]
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2837,269 @@
+@@ -1546,14 +2910,269 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -60684,7 +61329,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +3143,12 @@
+@@ -1597,6 +3216,12 @@
      }
  }
  
@@ -60697,7 +61342,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +3221,41 @@
+@@ -1669,12 +3294,41 @@
                      .push(pe_node_id);
              }
          }
@@ -60739,7 +61384,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3270,46 @@
+@@ -1689,24 +3343,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -60794,7 +61439,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3340,842 @@
+@@ -1737,3 +3413,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

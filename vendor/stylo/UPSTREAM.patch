@@ -1,6 +1,6 @@
 diff -ruN a/color/color_function.rs b/color/color_function.rs
 --- a/color/color_function.rs	2026-11-11 19:55:57
-+++ b/color/color_function.rs	2026-11-21 21:11:19
++++ b/color/color_function.rs	2026-11-23 07:11:34
 @@ -101,6 +101,104 @@
          self.origin_color().is_some()
      }
@@ -211,7 +211,7 @@ diff -ruN a/color/component.rs b/color/component.rs
                      None => Self::ChannelKeyword(*channel_keyword),
 diff -ruN a/color/convert.rs b/color/convert.rs
 --- a/color/convert.rs	2026-11-11 19:55:57
-+++ b/color/convert.rs	2026-11-21 07:42:33
++++ b/color/convert.rs	2026-11-23 06:58:46
 @@ -90,13 +90,13 @@
  pub fn rgb_to_hsl(from: &ColorComponents) -> ColorComponents {
      let ColorComponents(red, green, blue) = *from;
@@ -307,7 +307,7 @@ diff -ruN a/color/convert.rs b/color/convert.rs
      fn to_gamma_encoded(from: &ColorComponents) -> ColorComponents {
 diff -ruN a/color/mix.rs b/color/mix.rs
 --- a/color/mix.rs	2026-11-11 19:55:57
-+++ b/color/mix.rs	2026-11-20 23:03:05
++++ b/color/mix.rs	2026-11-23 06:58:46
 @@ -20,10 +20,12 @@
      Clone,
      Copy,
@@ -492,7 +492,7 @@ diff -ruN a/color/mix.rs b/color/mix.rs
  fn interpolate_premultiplied_component(
 diff -ruN a/color/mod.rs b/color/mod.rs
 --- a/color/mod.rs	2026-11-11 19:55:57
-+++ b/color/mod.rs	2026-11-21 21:11:19
++++ b/color/mod.rs	2026-11-23 07:11:34
 @@ -636,11 +636,17 @@
              ($c:expr) => {{ crate::values::normalize($c.unwrap_or(0.0)) }};
          }
@@ -592,7 +592,7 @@ diff -ruN a/color/to_css.rs b/color/to_css.rs
                      ColorSpace::SrgbLinear
 diff -ruN a/context.rs b/context.rs
 --- a/context.rs	2026-11-11 19:55:57
-+++ b/context.rs	2026-11-21 20:20:12
++++ b/context.rs	2026-11-23 06:58:46
 @@ -612,6 +612,9 @@
      /// Look up the tree-counting function values for the given element. If the element and
      /// its parent node are not cached, the values are computed and stored.
@@ -605,7 +605,7 @@ diff -ruN a/context.rs b/context.rs
              element_context.opaque_parent(),
 diff -ruN a/counter_style/mod.rs b/counter_style/mod.rs
 --- a/counter_style/mod.rs	2026-11-11 19:55:57
-+++ b/counter_style/mod.rs	2026-11-21 12:29:40
++++ b/counter_style/mod.rs	2026-11-23 06:58:46
 @@ -260,22 +260,7 @@
      location: SourceLocation,
  ) -> Result<CounterStyleRule, ParseError> {
@@ -739,7 +739,7 @@ diff -ruN a/counter_style/mod.rs b/counter_style/mod.rs
  }
 diff -ruN a/custom_properties.rs b/custom_properties.rs
 --- a/custom_properties.rs	2026-11-11 19:55:57
-+++ b/custom_properties.rs	2026-11-21 18:54:19
++++ b/custom_properties.rs	2026-11-23 06:58:46
 @@ -756,14 +756,14 @@
      }
  
@@ -801,7 +801,7 @@ diff -ruN a/data.rs b/data.rs
  
 diff -ruN a/device/servo.rs b/device/servo.rs
 --- a/device/servo.rs	2026-11-14 22:08:19
-+++ b/device/servo.rs	2026-11-21 18:57:52
++++ b/device/servo.rs	2026-11-23 06:58:46
 @@ -33,12 +33,37 @@
  use parking_lot::RwLock;
  use servo_arc::Arc;
@@ -1081,7 +1081,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
 diff -ruN a/dom.rs b/dom.rs
 --- a/dom.rs	2026-11-11 19:55:57
-+++ b/dom.rs	2026-11-22 21:21:26
++++ b/dom.rs	2026-11-23 06:58:46
 @@ -498,6 +498,11 @@
  
      /// Get this element's style attribute.
@@ -1170,7 +1170,7 @@ diff -ruN a/dom.rs b/dom.rs
      }
 diff -ruN a/font_face.rs b/font_face.rs
 --- a/font_face.rs	2026-11-11 19:55:57
-+++ b/font_face.rs	2026-11-20 21:19:07
++++ b/font_face.rs	2026-11-23 06:58:46
 @@ -118,6 +118,14 @@
  }
  
@@ -1221,7 +1221,7 @@ diff -ruN a/font_face.rs b/font_face.rs
  macro_rules! impl_range {
 diff -ruN a/gecko/wrapper.rs b/gecko/wrapper.rs
 --- a/gecko/wrapper.rs	2026-11-11 19:55:57
-+++ b/gecko/wrapper.rs	2026-11-21 02:02:38
++++ b/gecko/wrapper.rs	2026-11-23 06:58:46
 @@ -2157,6 +2157,12 @@
      }
  
@@ -1237,7 +1237,7 @@ diff -ruN a/gecko/wrapper.rs b/gecko/wrapper.rs
              Some(c) => c,
 diff -ruN a/invalidation/element/element_wrapper.rs b/invalidation/element/element_wrapper.rs
 --- a/invalidation/element/element_wrapper.rs	2026-11-11 19:55:57
-+++ b/invalidation/element/element_wrapper.rs	2026-11-21 02:02:38
++++ b/invalidation/element/element_wrapper.rs	2026-11-23 06:58:46
 @@ -407,6 +407,15 @@
          }
      }
@@ -1398,7 +1398,7 @@ diff -ruN a/invalidation/element/relative_selector.rs b/invalidation/element/rel
          }
 diff -ruN a/invalidation/stylesheets.rs b/invalidation/stylesheets.rs
 --- a/invalidation/stylesheets.rs	2026-11-11 19:55:57
-+++ b/invalidation/stylesheets.rs	2026-11-21 18:56:03
++++ b/invalidation/stylesheets.rs	2026-11-23 06:58:46
 @@ -669,7 +669,7 @@
                      // Do nothing, this animation can't affect the style of existing elements.
                  }
@@ -1427,7 +1427,7 @@ diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
      if uses_viewport_units {
 diff -ruN a/matching.rs b/matching.rs
 --- a/matching.rs	2026-11-11 19:55:57
-+++ b/matching.rs	2026-11-22 20:31:17
++++ b/matching.rs	2026-11-23 07:02:59
 @@ -712,14 +712,14 @@
              context,
              old_values.as_deref(),
@@ -1489,7 +1489,7 @@ diff -ruN a/matching.rs b/matching.rs
              // This is the common case; no need to examine pseudos here.
 diff -ruN a/parser.rs b/parser.rs
 --- a/parser.rs	2026-11-11 19:55:57
-+++ b/parser.rs	2026-11-21 19:04:27
++++ b/parser.rs	2026-11-23 06:58:46
 @@ -13,7 +13,7 @@
  use cssparser::{Parser, SourceLocation, UnicodeRange};
  use selectors::parser::ParseRelative;
@@ -1614,8 +1614,8 @@ diff -ruN a/parser.rs b/parser.rs
      pub fn nest_for_rule<R>(
          &mut self,
 diff -ruN a/properties/cascade.rs b/properties/cascade.rs
---- a/properties/cascade.rs	2026-11-22 20:23:50
-+++ b/properties/cascade.rs	2026-11-22 20:23:50
+--- a/properties/cascade.rs	2026-11-11 19:55:57
++++ b/properties/cascade.rs	2026-11-23 06:58:46
 @@ -386,6 +386,17 @@
              if using_cached_reset_properties {
                  LonghandIdSet::late_group_only_inherited()
@@ -1634,10 +1634,12 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                  LonghandIdSet::late_group()
              }
          },
-@@ -476,6 +487,15 @@
+@@ -474,6 +485,15 @@
+         Appearance::Base => *box_style.get__moz_default_appearance() != Appearance::None,
+         _ => false,
      }
- }
- 
++}
++
 +/// pyro: whether the element is a select (a widget `appearance: base-select` applies to).
 +fn is_select_widget(context: &computed::Context) -> bool {
 +    use computed::Appearance;
@@ -1645,11 +1647,9 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +        context.builder.get_box().get__moz_default_appearance(),
 +        Appearance::Listbox | Appearance::Menulist
 +    )
-+}
-+
+ }
+ 
  fn tweak_when_ignoring_colors(
-     context: &computed::Context,
-     longhand_id: LonghandId,
 @@ -639,6 +659,7 @@
  pub(crate) struct Declarations<'a> {
      /// Whether we have any prioritary property. This is just a minor optimization.
@@ -1702,10 +1702,12 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                      Self::recompute_math_font_size_if_needed(context);
                  }
                  if self.seen.longhands.contains(LonghandId::XLang)
-@@ -1506,6 +1539,43 @@
+@@ -1504,6 +1537,43 @@
+             return;
+         }
          builder.mutate_font().set_font_size(new_size);
-     }
- 
++    }
++
 +    /// pyro: `font-size: math` for servo (MathML Core § 3.1.2): the parent's size scaled by the
 +    /// change of `math-depth`, by the first available font's MATH script scale-downs or else
 +    /// 0.71 a level (no `script-min-size` clamping, as Blink).
@@ -1741,11 +1743,9 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +            keyword_info: context.builder.get_font().slow_clone_font_size().keyword_info,
 +        };
 +        context.builder.mutate_font().set_font_size(size);
-+    }
-+
+     }
+ 
      /// Special handling of font-size: math (used for MathML).
-     /// https://w3c.github.io/mathml-core/#the-math-script-level-property
-     /// TODO: Bug: 1548471: MathML Core also does not specify a script min size
 @@ -2135,6 +2205,7 @@
          /// Number of variables visited. This is used as the order index
          /// when we visit a new unresolved variable.
@@ -2070,8 +2070,8 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
              &mut Default::default(),
 +            &mut 0,
          );
-+    }
-+}
+     }
+ }
 +
 +/// pyro: the font-size scale factor for a `math-depth` change from `parent_math_depth` to
 +/// `computed_math_depth` (MathML Core § 3.1.2), the gecko cascade's algorithm, for servo.
@@ -2112,8 +2112,8 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +        1.0 / s.max(f32::MIN_POSITIVE)
 +    } else {
 +        s
-     }
- }
++    }
++}
 diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
 --- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
 +++ b/properties/computed_value_flags.rs	2026-11-17 00:11:39
@@ -2134,7 +2134,7 @@ diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags
  
 diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknown_properties.py
 --- a/properties/counted_unknown_properties.py	2026-11-11 19:55:57
-+++ b/properties/counted_unknown_properties.py	2026-11-21 21:45:59
++++ b/properties/counted_unknown_properties.py	2026-11-23 06:58:46
 @@ -4,11 +4,7 @@
  
  COUNTED_UNKNOWN_PROPERTIES = [
@@ -2157,7 +2157,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-22 21:15:04
++++ b/properties/data.py	2026-11-23 06:58:46
 @@ -246,6 +246,21 @@
  
  def to_phys(name, logical, physical):
@@ -2337,7 +2337,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "text-emphasis-position",
 diff -ruN a/properties/declaration_block.rs b/properties/declaration_block.rs
 --- a/properties/declaration_block.rs	2026-11-11 19:55:57
-+++ b/properties/declaration_block.rs	2026-11-21 21:21:16
++++ b/properties/declaration_block.rs	2026-11-23 06:58:46
 @@ -1099,6 +1099,39 @@
      ///
      /// https://drafts.csswg.org/cssom/#serialize-a-css-declaration-block
@@ -2428,7 +2428,7 @@ diff -ruN a/properties/declaration_block.rs b/properties/declaration_block.rs
                      continue;
 diff -ruN a/properties/font_face_descriptors.toml b/properties/font_face_descriptors.toml
 --- a/properties/font_face_descriptors.toml	2026-11-11 19:55:57
-+++ b/properties/font_face_descriptors.toml	2026-11-20 21:19:07
++++ b/properties/font_face_descriptors.toml	2026-11-23 06:58:46
 @@ -11,13 +11,13 @@
  type = "SourceList"
  
@@ -2448,7 +2448,7 @@ diff -ruN a/properties/font_face_descriptors.toml b/properties/font_face_descrip
  [font-display]
 diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/animated_properties.mako.rs
 --- a/properties/helpers/animated_properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/helpers/animated_properties.mako.rs	2026-11-22 18:07:36
++++ b/properties/helpers/animated_properties.mako.rs	2026-11-23 06:58:46
 @@ -183,6 +183,20 @@
  }
  
@@ -2536,7 +2536,7 @@ diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/
  }
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
 --- a/properties/helpers.mako.rs	2026-11-11 19:55:57
-+++ b/properties/helpers.mako.rs	2026-11-21 16:29:35
++++ b/properties/helpers.mako.rs	2026-11-23 06:58:46
 @@ -55,6 +55,13 @@
                      CSSWideKeyword::Initial => {
                          % if not property.style_struct.inherited:
@@ -2710,7 +2710,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                  self.${shorthand.sub_properties[i].ident},
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-22 21:24:33
++++ b/properties/longhands.toml	2026-11-23 06:58:46
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -4120,7 +4120,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = ""
 diff -ruN a/properties/mod.rs b/properties/mod.rs
 --- a/properties/mod.rs	2026-11-11 19:55:57
-+++ b/properties/mod.rs	2026-11-21 18:57:31
++++ b/properties/mod.rs	2026-11-23 06:58:46
 @@ -853,11 +853,16 @@
      }
      saw_arbitrary_substitution_functions =
@@ -4141,7 +4141,7 @@ diff -ruN a/properties/mod.rs b/properties/mod.rs
  }
 diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 --- a/properties/properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/properties.mako.rs	2026-11-21 23:47:05
++++ b/properties/properties.mako.rs	2026-11-23 06:58:46
 @@ -809,6 +809,11 @@
  }
  
@@ -4414,7 +4414,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  size_of_test!(Option<Arc<ComputedValues>>, 8);
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-22 20:29:14
++++ b/properties/shorthands.rs	2026-11-23 06:58:46
 @@ -265,6 +265,152 @@
                  self.corner_bottom_left_shape,
              )
@@ -4990,7 +4990,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
-+++ b/properties/shorthands.toml	2026-11-22 20:29:14
++++ b/properties/shorthands.toml	2026-11-23 06:58:46
 @@ -1,3 +1,78 @@
 +[column-rule-inset]
 +sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end", "column-rule-inset-junction-start", "column-rule-inset-junction-end"]
@@ -5297,7 +5297,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
 diff -ruN a/properties_and_values/syntax/data_type.rs b/properties_and_values/syntax/data_type.rs
 --- a/properties_and_values/syntax/data_type.rs	2026-11-11 19:55:57
-+++ b/properties_and_values/syntax/data_type.rs	2026-11-21 23:47:05
++++ b/properties_and_values/syntax/data_type.rs	2026-11-23 06:58:46
 @@ -18,6 +18,8 @@
          const LENGTH = 1 << 0;
          /// <color> values depend on color-scheme, etc..
@@ -5330,7 +5330,7 @@ diff -ruN a/properties_and_values/syntax/data_type.rs b/properties_and_values/sy
      }
 diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
 --- a/properties_and_values/value.rs	2026-11-11 19:55:57
-+++ b/properties_and_values/value.rs	2026-11-21 22:30:43
++++ b/properties_and_values/value.rs	2026-11-23 06:58:46
 @@ -215,6 +215,9 @@
      /// Flag indicating whether this value is tainted by an attr().
      #[css(skip)]
@@ -5483,7 +5483,7 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
              value,
 diff -ruN a/queries/anchored.rs b/queries/anchored.rs
 --- a/queries/anchored.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/queries/anchored.rs	2026-11-22 21:20:45
++++ b/queries/anchored.rs	2026-11-23 06:58:46
 @@ -0,0 +1,346 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -5833,7 +5833,7 @@ diff -ruN a/queries/anchored.rs b/queries/anchored.rs
 +}
 diff -ruN a/queries/condition.rs b/queries/condition.rs
 --- a/queries/condition.rs	2026-11-11 19:55:57
-+++ b/queries/condition.rs	2026-11-22 21:21:12
++++ b/queries/condition.rs	2026-11-23 06:58:46
 @@ -25,6 +25,8 @@
  use crate::substitution;
  use crate::substitution::AttrTaint;
@@ -6240,7 +6240,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +}
 diff -ruN a/queries/feature.rs b/queries/feature.rs
 --- a/queries/feature.rs	2026-11-11 19:55:57
-+++ b/queries/feature.rs	2026-11-22 20:25:45
++++ b/queries/feature.rs	2026-11-23 06:58:46
 @@ -105,9 +105,9 @@
  /// Different flags or toggles that change how a expression is parsed or
  /// evaluated.
@@ -6266,7 +6266,7 @@ diff -ruN a/queries/feature.rs b/queries/feature.rs
  
 diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
 --- a/queries/feature_expression.rs	2026-11-11 19:55:57
-+++ b/queries/feature_expression.rs	2026-11-22 21:34:27
++++ b/queries/feature_expression.rs	2026-11-23 06:58:46
 @@ -9,7 +9,7 @@
  use super::feature::{FeatureFlags, KeywordDiscriminant};
  use crate::context::QuirksMode;
@@ -6519,7 +6519,7 @@ diff -ruN a/queries/feature_expression.rs b/queries/feature_expression.rs
  
 diff -ruN a/queries/mod.rs b/queries/mod.rs
 --- a/queries/mod.rs	2026-11-11 19:55:57
-+++ b/queries/mod.rs	2026-11-22 21:21:12
++++ b/queries/mod.rs	2026-11-23 06:58:46
 @@ -7,6 +7,7 @@
  //! [mq]: https://drafts.csswg.org/mediaqueries/
  //! [cq]: https://drafts.csswg.org/css-contain-3/#container-rule
@@ -6530,7 +6530,7 @@ diff -ruN a/queries/mod.rs b/queries/mod.rs
  #[macro_use]
 diff -ruN a/queries/values.rs b/queries/values.rs
 --- a/queries/values.rs	2026-11-11 19:55:57
-+++ b/queries/values.rs	2026-11-22 20:25:45
++++ b/queries/values.rs	2026-11-23 06:58:46
 @@ -19,6 +19,27 @@
      Landscape,
  }
@@ -6645,7 +6645,7 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
              .entry(rules)
 diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 --- a/servo/media_features.rs	2026-11-11 19:55:57
-+++ b/servo/media_features.rs	2026-11-21 01:37:49
++++ b/servo/media_features.rs	2026-11-23 06:58:46
 @@ -7,8 +7,12 @@
  use crate::derives::*;
  use crate::queries::feature::{AllowsRanges, Evaluator, FeatureFlags, QueryFeatureDescription};
@@ -7070,7 +7070,7 @@ diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 +]);
 diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
 --- a/servo/restyle_damage.rs	2026-11-11 19:55:57
-+++ b/servo/restyle_damage.rs	2026-11-21 13:53:50
++++ b/servo/restyle_damage.rs	2026-11-23 06:58:46
 @@ -66,7 +66,14 @@
              };
          }
@@ -7152,7 +7152,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
          !self.transform.0.is_empty()
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-22 22:49:21
++++ b/servo/selector_parser.rs	2026-11-23 06:58:46
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -7966,7 +7966,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      fn default_namespace(&self) -> Option<Namespace> {
 diff -ruN a/sharing/checks.rs b/sharing/checks.rs
 --- a/sharing/checks.rs	2026-11-11 19:55:57
-+++ b/sharing/checks.rs	2026-11-21 19:46:25
++++ b/sharing/checks.rs	2026-11-23 06:58:46
 @@ -74,7 +74,22 @@
                  return true;
              }
@@ -7993,11 +7993,13 @@ diff -ruN a/sharing/checks.rs b/sharing/checks.rs
  }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-22 21:42:41
-@@ -186,6 +186,84 @@
++++ b/style_adjuster.rs	2026-11-23 07:11:34
+@@ -184,8 +184,86 @@
+         self.style
+             .mutate_box()
              .set_adjusted_display(new_display, false);
-     }
- 
++    }
++
 +    /// pyro: `display: -webkit-box` in the servo engine, which has no legacy box layout. With
 +    /// `-webkit-box-orient: vertical` and a line clamp the box is a block container whose lines
 +    /// are clamped, as in Blink and Gecko (above); the style keeps that in
@@ -8058,8 +8060,8 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        if clamps {
 +            self.style.add_flags(ComputedValueFlags::WEBKIT_LINE_CLAMP_APPLIES);
 +        }
-+    }
-+
+     }
+ 
 +    /// pyro: a child of a legacy horizontal `-webkit-box` (laid out as flex) flexes by
 +    /// `-webkit-box-flex`, growing and shrinking alike, and its `align-self` does nothing (the
 +    /// box's `-webkit-box-align` aligns it): Blink's `LayoutDeprecatedFlexibleBox`.
@@ -8079,7 +8081,17 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      /// CSS 2.1 section 9.7:
      ///
      ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
-@@ -403,7 +481,52 @@
+@@ -392,7 +470,8 @@
+         let parent_writing_mode = *layout_parent_style.get_inherited_box().get_writing_mode();
+ 
+         if our_writing_mode != parent_writing_mode
+-            && *self.style.get_box().get_display() == Display::Inline
++            // pyro: `ruby` and `ruby-text` are inline boxes too (`Display::without_ruby`).
++            && self.style.get_box().get_display().without_ruby() == Display::Inline
+         {
+             // TODO(emilio): Figure out if we can just set the adjusted display
+             // on Gecko too and unify this code path.
+@@ -403,7 +482,52 @@
              } else {
                  self.style.mutate_box().set_display(Display::InlineBlock);
              }
@@ -8101,7 +8113,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            return;
          }
 +        let parent = layout_parent_style.writing_mode;
-+        if !parent.is_vertical() || parent.is_sideways() || *self.style.get_box().get_display() != Display::Inline {
++        if !parent.is_vertical() || parent.is_sideways() || self.style.get_box().get_display().without_ruby() != Display::Inline {
 +            return;
 +        }
 +        // Emphasis marks of combined text go beside the composition, as for one glyph of the
@@ -8132,7 +8144,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      }
  
      /// CSS overflow-x and overflow-y require some fixup as well in some cases.
-@@ -419,9 +542,14 @@
+@@ -419,9 +543,14 @@
          }
  
          if overflow_x.is_scrollable() != overflow_y.is_scrollable() {
@@ -8149,7 +8161,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          }
      }
  
-@@ -793,7 +921,9 @@
+@@ -793,7 +922,9 @@
              a => a,
          };
  
@@ -8160,7 +8172,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
              if *self.style.get_font().get_line_height() == LineHeight::normal() {
                  return;
              }
-@@ -821,6 +951,156 @@
+@@ -821,6 +952,156 @@
      /// for web-compat reasons.
      /// We intentionally don't check 'list-style-image' below since we want it to use
      /// the same font as its fallback ('list-style-type') in case it fails to load.
@@ -8317,13 +8329,10 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1029,7 +1309,32 @@
-             pos.set_align_self(flipped);
-         } else {
-             pos.set_justify_self(flipped);
-+        }
-+    }
-+
+@@ -1032,6 +1313,31 @@
+         }
+     }
+ 
 +    /// pyro: `backface-visibility: hidden` on an element participating in a 3D rendering context
 +    /// (its layout parent `preserve-3d`) makes it the containing block of its absolutely and
 +    /// fixed positioned descendants, as in Chromium (WPT css-transforms
@@ -8341,16 +8350,18 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            || box_style.will_change.bits.contains(WillChangeBits::FIXPOS_CB_NON_SVG)
 +        {
 +            return;
-         }
++        }
 +        let display = *box_style.get_display();
 +        if display.is_none() || display.is_contents() || display.is_inline_flow() {
 +            return;
 +        }
 +        self.style.mutate_box().will_change.bits |= WillChangeBits::FIXPOS_CB_NON_SVG;
-     }
- 
++    }
++
      /// Adjusts the style to account for various fixups that don't fit naturally into the cascade.
-@@ -1064,7 +1369,20 @@
+     #[allow(unused_variables)]
+     pub fn adjust<E>(
+@@ -1064,7 +1370,20 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -8371,7 +8382,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
          {
-@@ -1084,12 +1402,21 @@
+@@ -1084,12 +1403,21 @@
          }
          self.adjust_for_justify_items();
          self.adjust_for_table_text_align();
@@ -8472,7 +8483,7 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          stylist.push_applicable_declarations(
 diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
 --- a/stylesheets/container_rule.rs	2026-11-11 19:55:57
-+++ b/stylesheets/container_rule.rs	2026-11-22 21:21:26
++++ b/stylesheets/container_rule.rs	2026-11-23 06:58:46
 @@ -8,11 +8,11 @@
  
  use crate::computed_value_flags::ComputedValueFlags;
@@ -8666,7 +8677,7 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
  /// TODO: Support style queries, perhaps.
 diff -ruN a/stylesheets/font_feature_values_rule.rs b/stylesheets/font_feature_values_rule.rs
 --- a/stylesheets/font_feature_values_rule.rs	2026-11-11 19:55:57
-+++ b/stylesheets/font_feature_values_rule.rs	2026-11-20 21:24:08
++++ b/stylesheets/font_feature_values_rule.rs	2026-11-23 06:58:46
 @@ -234,6 +234,8 @@
              /// Family names cannot contain generic families. FamilyName
              /// also accepts only non-generic names.
@@ -8801,7 +8812,7 @@ diff -ruN a/stylesheets/font_palette_values_rule.rs b/stylesheets/font_palette_v
              return Ok(FontPaletteBase::Index(v));
 diff -ruN a/stylesheets/function_rule.rs b/stylesheets/function_rule.rs
 --- a/stylesheets/function_rule.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/stylesheets/function_rule.rs	2026-11-21 19:05:18
++++ b/stylesheets/function_rule.rs	2026-11-23 06:58:46
 @@ -0,0 +1,184 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -8989,7 +9000,7 @@ diff -ruN a/stylesheets/function_rule.rs b/stylesheets/function_rule.rs
 +}
 diff -ruN a/stylesheets/mod.rs b/stylesheets/mod.rs
 --- a/stylesheets/mod.rs	2026-11-11 19:55:57
-+++ b/stylesheets/mod.rs	2026-11-21 18:56:03
++++ b/stylesheets/mod.rs	2026-11-23 06:58:46
 @@ -58,6 +58,8 @@
  pub use self::counter_style_rule::CounterStyleRule;
  pub use self::document_rule::DocumentRule;
@@ -9073,7 +9084,7 @@ diff -ruN a/stylesheets/mod.rs b/stylesheets/mod.rs
              CssRule::Keyframes(ref lock) => lock.read_with(guard).to_css(guard, dest),
 diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
 --- a/stylesheets/rule_parser.rs	2026-11-11 19:55:57
-+++ b/stylesheets/rule_parser.rs	2026-11-21 18:56:03
++++ b/stylesheets/rule_parser.rs	2026-11-23 06:58:46
 @@ -252,6 +252,7 @@
      FontFace,
      FontFeatureValues,
@@ -9155,7 +9166,7 @@ diff -ruN a/stylesheets/rule_parser.rs b/stylesheets/rule_parser.rs
                      CssRule::FontFeatureValues(Arc::new(FontFeatureValuesRule::parse(
 diff -ruN a/stylesheets/rules_iterator.rs b/stylesheets/rules_iterator.rs
 --- a/stylesheets/rules_iterator.rs	2026-11-11 19:55:57
-+++ b/stylesheets/rules_iterator.rs	2026-11-21 18:56:03
++++ b/stylesheets/rules_iterator.rs	2026-11-23 06:58:46
 @@ -91,6 +91,7 @@
              | CssRule::Property(_)
              | CssRule::LayerStatement(_)
@@ -9193,7 +9204,7 @@ diff -ruN a/stylesheets/scope_rule.rs b/stylesheets/scope_rule.rs
                  proximity: ScopeProximity::new(proximity),
 diff -ruN a/stylesheets/stylesheet.rs b/stylesheets/stylesheet.rs
 --- a/stylesheets/stylesheet.rs	2026-11-11 19:55:57
-+++ b/stylesheets/stylesheet.rs	2026-11-21 18:56:03
++++ b/stylesheets/stylesheet.rs	2026-11-23 06:58:46
 @@ -229,6 +229,9 @@
      pub media: Arc<Locked<MediaList>>,
      /// Whether this stylesheet should be disabled.
@@ -9286,7 +9297,7 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  }
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-21 19:05:18
++++ b/stylist.rs	2026-11-23 06:58:46
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -9809,7 +9820,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          }
 diff -ruN a/substitution/attr.rs b/substitution/attr.rs
 --- a/substitution/attr.rs	2026-11-11 19:55:57
-+++ b/substitution/attr.rs	2026-11-21 16:31:37
++++ b/substitution/attr.rs	2026-11-23 06:58:46
 @@ -12,14 +12,15 @@
  use crate::custom_properties::{ComputedValue, Name, VariableValue};
  use crate::parser::{Parse, ParserContext};
@@ -9963,7 +9974,7 @@ diff -ruN a/substitution/attr.rs b/substitution/attr.rs
  
 diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 --- a/substitution/conditional.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/substitution/conditional.rs	2026-11-21 19:04:27
++++ b/substitution/conditional.rs	2026-11-23 06:58:46
 @@ -0,0 +1,126 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10093,7 +10104,7 @@ diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 +}
 diff -ruN a/substitution/function.rs b/substitution/function.rs
 --- a/substitution/function.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/substitution/function.rs	2026-11-21 19:21:33
++++ b/substitution/function.rs	2026-11-23 06:58:46
 @@ -0,0 +1,294 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10391,7 +10402,7 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +}
 diff -ruN a/substitution/mod.rs b/substitution/mod.rs
 --- a/substitution/mod.rs	2026-11-11 19:55:57
-+++ b/substitution/mod.rs	2026-11-21 19:21:33
++++ b/substitution/mod.rs	2026-11-23 06:58:46
 @@ -7,6 +7,8 @@
  
  pub mod attr;
@@ -10666,7 +10677,7 @@ diff -ruN a/substitution/mod.rs b/substitution/mod.rs
              if reference.start == start && reference.end == end {
 diff -ruN a/substitution/var.rs b/substitution/var.rs
 --- a/substitution/var.rs	2026-11-11 19:55:57
-+++ b/substitution/var.rs	2026-11-21 19:21:55
++++ b/substitution/var.rs	2026-11-23 06:58:46
 @@ -7,7 +7,7 @@
  
  use super::{
@@ -10856,7 +10867,7 @@ diff -ruN a/traversal.rs b/traversal.rs
              let cascade_inputs = ElementCascadeInputs::new_from_element_data(data);
 diff -ruN a/url/mod.rs b/url/mod.rs
 --- a/url/mod.rs	2026-11-11 19:55:57
-+++ b/url/mod.rs	2026-11-21 16:51:45
++++ b/url/mod.rs	2026-11-23 06:58:46
 @@ -4,10 +4,12 @@
  
  //! Common handling for the specified value CSS url() values.
@@ -11096,7 +11107,7 @@ diff -ruN a/url/mod.rs b/url/mod.rs
 +}
 diff -ruN a/url/servo.rs b/url/servo.rs
 --- a/url/servo.rs	2026-11-11 19:55:57
-+++ b/url/servo.rs	2026-11-21 16:42:15
++++ b/url/servo.rs	2026-11-23 06:58:46
 @@ -45,6 +45,10 @@
      /// The resolved value for the url, if valid.
      #[ignore_malloc_size_of = "Arc"]
@@ -11290,7 +11301,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
  }
 diff -ruN a/values/animated/color.rs b/values/animated/color.rs
 --- a/values/animated/color.rs	2026-11-11 19:55:57
-+++ b/values/animated/color.rs	2026-11-21 11:23:39
++++ b/values/animated/color.rs	2026-11-23 06:58:46
 @@ -60,6 +60,23 @@
  /// An animated value for `<color>`.
  pub type Color = GenericColor<Percentage>;
@@ -11362,7 +11373,7 @@ diff -ruN a/values/animated/effects.rs b/values/animated/effects.rs
 -pub type AnimatedFilter = GenericFilter<Angle, Number, Length, AnimatedSimpleShadow, Impossible>;
 diff -ruN a/values/animated/mod.rs b/values/animated/mod.rs
 --- a/values/animated/mod.rs	2026-11-11 19:55:57
-+++ b/values/animated/mod.rs	2026-11-21 00:36:36
++++ b/values/animated/mod.rs	2026-11-23 06:58:46
 @@ -429,6 +429,7 @@
  trivial_to_animated_value!(u32);
  trivial_to_animated_value!(usize);
@@ -11373,7 +11384,7 @@ diff -ruN a/values/animated/mod.rs b/values/animated/mod.rs
  //
 diff -ruN a/values/animated/transform.rs b/values/animated/transform.rs
 --- a/values/animated/transform.rs	2026-11-11 19:55:57
-+++ b/values/animated/transform.rs	2026-11-21 07:05:12
++++ b/values/animated/transform.rs	2026-11-23 06:58:46
 @@ -21,7 +21,7 @@
  use crate::values::computed::{Length, LengthPercentage};
  use crate::values::computed::{Number, Percentage};
@@ -11429,7 +11440,7 @@ diff -ruN a/values/animated/transform.rs b/values/animated/transform.rs
      fn animate_mismatched_transforms(
 diff -ruN a/values/computed/animation.rs b/values/computed/animation.rs
 --- a/values/computed/animation.rs	2026-11-11 19:55:57
-+++ b/values/computed/animation.rs	2026-11-22 20:29:14
++++ b/values/computed/animation.rs	2026-11-23 06:58:46
 @@ -23,6 +23,9 @@
  /// A computed value for the `animation-duration` property.
  pub type AnimationDuration = generics::GenericAnimationDuration<Time>;
@@ -11455,7 +11466,7 @@ diff -ruN a/values/computed/basic_shape.rs b/values/computed/basic_shape.rs
      generic::GenericBasicShape<Angle, LengthPercentage, Position, LengthPercentage, InsetRect>;
 diff -ruN a/values/computed/border.rs b/values/computed/border.rs
 --- a/values/computed/border.rs	2026-11-11 19:55:57
-+++ b/values/computed/border.rs	2026-11-22 19:43:34
++++ b/values/computed/border.rs	2026-11-23 06:58:46
 @@ -39,8 +39,32 @@
      pub fn medium() -> Self {
          Self(Au::from_px(3))
@@ -11571,7 +11582,7 @@ diff -ruN a/values/computed/border.rs b/values/computed/border.rs
  impl BorderSpacing {
 diff -ruN a/values/computed/box.rs b/values/computed/box.rs
 --- a/values/computed/box.rs	2026-11-11 19:55:57
-+++ b/values/computed/box.rs	2026-11-22 21:15:04
++++ b/values/computed/box.rs	2026-11-23 06:58:46
 @@ -21,9 +21,9 @@
      AlignmentBaseline, Appearance, BackfaceVisibility, BaselineSource, BoxAlign, BoxCollapse,
      BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain, ContainerName,
@@ -11596,7 +11607,7 @@ diff -ruN a/values/computed/box.rs b/values/computed/box.rs
  pub type ScrollbarInset = GenericScrollbarInset<NonNegativeLength>;
 diff -ruN a/values/computed/calc.rs b/values/computed/calc.rs
 --- a/values/computed/calc.rs	2026-11-11 19:55:57
-+++ b/values/computed/calc.rs	2026-11-21 16:00:02
++++ b/values/computed/calc.rs	2026-11-23 06:58:46
 @@ -107,9 +107,9 @@
          }
      }
@@ -11645,7 +11656,7 @@ diff -ruN a/values/computed/calc.rs b/values/computed/calc.rs
                  *value = op(*value);
 diff -ruN a/values/computed/color.rs b/values/computed/color.rs
 --- a/values/computed/color.rs	2026-11-11 19:55:57
-+++ b/values/computed/color.rs	2026-11-21 20:46:33
++++ b/values/computed/color.rs	2026-11-23 06:58:46
 @@ -5,6 +5,8 @@
  //! Computed color values.
  
@@ -11751,7 +11762,7 @@ diff -ruN a/values/computed/color.rs b/values/computed/color.rs
 +}
 diff -ruN a/values/computed/column.rs b/values/computed/column.rs
 --- a/values/computed/column.rs	2026-11-11 19:55:57
-+++ b/values/computed/column.rs	2026-11-21 06:34:26
++++ b/values/computed/column.rs	2026-11-23 06:58:46
 @@ -5,8 +5,15 @@
  //! Computed types for the column properties.
  
@@ -11801,7 +11812,7 @@ diff -ruN a/values/computed/effects.rs b/values/computed/effects.rs
  pub type SimpleShadow = GenericSimpleShadow<Color, Length, NonNegativeLength>;
 diff -ruN a/values/computed/font.rs b/values/computed/font.rs
 --- a/values/computed/font.rs	2026-11-11 19:55:57
-+++ b/values/computed/font.rs	2026-11-21 16:59:00
++++ b/values/computed/font.rs	2026-11-23 06:58:46
 @@ -32,11 +32,14 @@
  use style_traits::{CssWriter, ParseError, ToCss};
  use thin_vec::ThinVec;
@@ -11849,7 +11860,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 --- a/values/computed/length.rs	2026-11-11 19:55:57
-+++ b/values/computed/length.rs	2026-11-22 21:26:13
++++ b/values/computed/length.rs	2026-11-23 06:58:46
 @@ -453,6 +453,8 @@
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
@@ -12046,7 +12057,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percentage.rs
 --- a/values/computed/length_percentage.rs	2026-11-11 19:55:57
-+++ b/values/computed/length_percentage.rs	2026-11-22 21:25:52
++++ b/values/computed/length_percentage.rs	2026-11-23 06:58:46
 @@ -149,6 +149,10 @@
          Self::new_percent(Percentage::hundred())
      }
@@ -12318,7 +12329,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
 +}
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-22 21:15:04
++++ b/values/computed/mod.rs	2026-11-23 06:58:46
 @@ -51,7 +51,8 @@
  pub use self::animation::{
      AnimationComposition, AnimationDirection, AnimationDuration, AnimationFillMode,
@@ -12497,7 +12508,7 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
      #[inline]
 diff -ruN a/values/computed/position.rs b/values/computed/position.rs
 --- a/values/computed/position.rs	2026-11-11 19:55:57
-+++ b/values/computed/position.rs	2026-11-22 21:26:13
++++ b/values/computed/position.rs	2026-11-23 06:58:46
 @@ -21,7 +21,7 @@
      PositionOrAuto as GenericPositionOrAuto, ZIndex as GenericZIndex,
  };
@@ -12601,7 +12612,7 @@ diff -ruN a/values/computed/ui.rs b/values/computed/ui.rs
  
 diff -ruN a/values/generics/animation.rs b/values/generics/animation.rs
 --- a/values/generics/animation.rs	2026-11-11 19:55:57
-+++ b/values/generics/animation.rs	2026-11-22 20:29:14
++++ b/values/generics/animation.rs	2026-11-23 06:58:46
 @@ -31,7 +31,51 @@
  }
  
@@ -12656,7 +12667,7 @@ diff -ruN a/values/generics/animation.rs b/values/generics/animation.rs
      pub fn auto() -> Self {
 diff -ruN a/values/generics/background.rs b/values/generics/background.rs
 --- a/values/generics/background.rs	2026-11-11 19:55:57
-+++ b/values/generics/background.rs	2026-11-21 11:39:56
++++ b/values/generics/background.rs	2026-11-23 06:58:46
 @@ -37,10 +37,8 @@
          height: GenericLengthPercentageOrAuto<LengthPercent>,
      },
@@ -12670,7 +12681,7 @@ diff -ruN a/values/generics/background.rs b/values/generics/background.rs
  
 diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 --- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/generics/basic_shape.rs	2026-11-21 11:15:00
++++ b/values/generics/basic_shape.rs	2026-11-23 06:58:46
 @@ -133,7 +133,191 @@
  }
  
@@ -12982,7 +12993,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  
 diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
 --- a/values/generics/calc.rs	2026-11-11 19:55:57
-+++ b/values/generics/calc.rs	2026-11-21 16:16:41
++++ b/values/generics/calc.rs	2026-11-23 06:58:46
 @@ -26,6 +26,30 @@
  use style_traits::{CssWriter, ToCss};
  
@@ -13316,7 +13327,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
          }
 diff -ruN a/values/generics/color.rs b/values/generics/color.rs
 --- a/values/generics/color.rs	2026-11-11 19:55:57
-+++ b/values/generics/color.rs	2026-11-21 11:22:36
++++ b/values/generics/color.rs	2026-11-23 06:58:46
 @@ -41,6 +41,8 @@
          const NORMALIZE_WEIGHTS = 1 << 0;
          /// The result should always be converted to the modern color syntax.
@@ -13408,7 +13419,7 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
      Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToShmem, ToCss, ToResolvedValue,
 diff -ruN a/values/generics/column.rs b/values/generics/column.rs
 --- a/values/generics/column.rs	2026-11-11 19:55:57
-+++ b/values/generics/column.rs	2026-11-21 06:39:42
++++ b/values/generics/column.rs	2026-11-23 06:58:46
 @@ -4,7 +4,235 @@
  
  //! Generic types for the column properties.
@@ -13738,7 +13749,7 @@ diff -ruN a/values/generics/image.rs b/values/generics/image.rs
  }
 diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 --- a/values/generics/length.rs	2026-11-11 19:55:57
-+++ b/values/generics/length.rs	2026-11-22 18:07:36
++++ b/values/generics/length.rs	2026-11-23 06:58:46
 @@ -138,7 +138,6 @@
  /// Note that it only accepts non-negative values.
  #[allow(missing_docs)]
@@ -13930,7 +13941,7 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  pub struct GreaterThanOrEqualToOne<T>(pub T);
 diff -ruN a/values/generics/position.rs b/values/generics/position.rs
 --- a/values/generics/position.rs	2026-11-11 19:55:57
-+++ b/values/generics/position.rs	2026-11-22 21:26:13
++++ b/values/generics/position.rs	2026-11-23 06:58:46
 @@ -380,8 +380,9 @@
  /// as well as `LengthPercentageOrAuto | AnchorFunction`. This increases
  /// the size of the style struct, which would not be great.
@@ -13944,12 +13955,11 @@ diff -ruN a/values/generics/position.rs b/values/generics/position.rs
      Debug,
 diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 --- a/values/generics/text.rs	2026-11-11 19:55:57
-+++ b/values/generics/text.rs	2026-11-16 17:29:45
-@@ -8,6 +8,18 @@
- use crate::derives::*;
++++ b/values/generics/text.rs	2026-11-23 06:58:46
+@@ -9,6 +9,18 @@
  use std::fmt::{self, Write};
  use style_traits::{CssWriter, ToCss};
-+
+ 
 +/// Text inflation control: a keyword or a non-negative percentage.
 +#[allow(missing_docs)]
 +#[derive(Animate, Clone, ComputeSquaredDistance, Copy, Debug, MallocSizeOf, Parse, PartialEq,
@@ -13961,9 +13971,10 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 +    None,
 +    Percentage(Percentage),
 +}
- 
++
  /// A generic value that is either a number or `auto`.
  #[derive(
+     Animate,
 @@ -84,6 +96,103 @@
      }
  }
@@ -14068,7 +14079,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
  /// A generic value for the `initial-letter` property.
  #[derive(
      Clone,
-@@ -103,6 +212,34 @@
+@@ -103,8 +212,36 @@
      pub size: Number,
      /// The sink, >=1, if specified, 0 otherwise.
      pub sink: Integer,
@@ -14076,8 +14087,8 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 +    /// as written: `sink` is 0 then.
 +    #[css(skip)]
 +    pub keyword: InitialLetterKeyword,
-+}
-+
+ }
+ 
 +/// pyro: the keyword of `initial-letter` that stands for its sink: `drop` (the size rounded
 +/// down) or `raise` (1).
 +#[derive(
@@ -14100,9 +14111,11 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 +    Drop,
 +    /// `raise`
 +    Raise,
- }
- 
++}
++
  pub use self::GenericInitialLetter as InitialLetter;
+ impl<N: Zero, I: Zero> InitialLetter<N, I> {
+     /// Returns `normal`.
 @@ -113,6 +250,7 @@
          InitialLetter {
              size: N::zero(),
@@ -14125,7 +14138,7 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
              self.sink.to_css(dest)?;
 diff -ruN a/values/mod.rs b/values/mod.rs
 --- a/values/mod.rs	2026-11-11 19:55:57
-+++ b/values/mod.rs	2026-11-21 19:36:17
++++ b/values/mod.rs	2026-11-23 06:58:46
 @@ -174,6 +174,14 @@
  /// A CSS integer value.
  pub type CSSInteger = i32;
@@ -14352,7 +14365,7 @@ diff -ruN a/values/specified/align.rs b/values/specified/align.rs
          f(&["left", "right"]);
 diff -ruN a/values/specified/animation.rs b/values/specified/animation.rs
 --- a/values/specified/animation.rs	2026-11-11 19:55:57
-+++ b/values/specified/animation.rs	2026-11-22 20:29:14
++++ b/values/specified/animation.rs	2026-11-23 06:58:46
 @@ -166,6 +166,18 @@
      }
  }
@@ -14500,7 +14513,7 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
  }
 diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
 --- a/values/specified/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/specified/basic_shape.rs	2026-11-21 07:37:08
++++ b/values/specified/basic_shape.rs	2026-11-23 06:58:46
 @@ -37,9 +37,55 @@
  /// A specified `clip-path` value.
  pub type ClipPath = generic::GenericClipPath<BasicShape, SpecifiedUrl>;
@@ -14626,7 +14639,7 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
  
 diff -ruN a/values/specified/border.rs b/values/specified/border.rs
 --- a/values/specified/border.rs	2026-11-11 19:55:57
-+++ b/values/specified/border.rs	2026-11-22 19:43:34
++++ b/values/specified/border.rs	2026-11-23 06:58:46
 @@ -186,9 +186,9 @@
      fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
          match *self {
@@ -14715,7 +14728,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-22 21:24:33
++++ b/values/specified/box.rs	2026-11-23 07:11:34
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -14778,12 +14791,22 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              DisplayInside::FlowRoot => true,
              _ => false,
          }
-@@ -222,9 +223,18 @@
+@@ -221,10 +222,40 @@
+ impl Display {
      // Our u16 bits are used as follows: LOOOOOOOIIIIIIII
      pub const LIST_ITEM_MASK: u16 = 0b1000000000000000;
-     pub const OUTSIDE_MASK: u16 = 0b0111111100000000;
+-    pub const OUTSIDE_MASK: u16 = 0b0111111100000000;
 -    pub const INSIDE_MASK: u16 = 0b0000000011111111;
++    pub const OUTSIDE_MASK: u16 = 0b0001111100000000;
 +    pub const INSIDE_MASK: u16 = 0b0000000001111111;
++    /// pyro: `display: ruby` / `block ruby` (CSS Ruby 1, as Blink parses them): `inline flow` or
++    /// `block flow` with this bit. It changes only how the value parses and serializes: layout
++    /// sees the inline or block box it says (blitz-dom finds `<ruby>` by tag name), and
++    /// [`Self::without_ruby`] strips it where a computed value is compared with a plain one.
++    pub const RUBY_MASK: u16 = 0b0100000000000000;
++    /// pyro: `display: ruby-text` (CSS Ruby 1, as Blink): `inline flow` with this bit, like
++    /// [`Self::RUBY_MASK`]. It blockifies to `block`, as in Blink.
++    pub const RUBY_TEXT_MASK: u16 = 0b0010000000000000;
 +    /// pyro: `display: run-in` (CSS 2.1 § 9.2.3), a block (`block flow`) with this bit: where it
 +    /// runs in, the next block box lays it out as its first inline box (blitz-dom
 +    /// `layout::construct`); everywhere else it is the block box it says.
@@ -14795,10 +14818,23 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUN_IN_MASK,
 +    );
 +
++    /// pyro: `display: ruby` (`inline ruby`; see [`Self::RUBY_MASK`]).
++    pub const PyroRuby: Self = Self(
++        ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUBY_MASK,
++    );
++    /// pyro: `display: block ruby` (see [`Self::RUBY_MASK`]).
++    pub const PyroBlockRuby: Self = Self(
++        ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUBY_MASK,
++    );
++    /// pyro: `display: ruby-text` (see [`Self::RUBY_TEXT_MASK`]).
++    pub const PyroRubyText: Self = Self(
++        ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUBY_TEXT_MASK,
++    );
++
      /// https://drafts.csswg.org/css-display/#the-display-properties
      /// ::new() inlined so cbindgen can use it
      pub const None: Self =
-@@ -239,7 +249,6 @@
+@@ -239,7 +270,6 @@
      );
      pub const Block: Self =
          Self(((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16);
@@ -14806,7 +14842,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const FlowRoot: Self = Self(
          ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::FlowRoot as u16,
      );
-@@ -268,11 +277,9 @@
+@@ -268,11 +298,9 @@
      #[cfg(feature = "gecko")]
      pub const Ruby: Self =
          Self(((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Ruby as u16);
@@ -14818,20 +14854,39 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const WebkitInlineBox: Self = Self(
          ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
      );
-@@ -368,6 +375,12 @@
-     #[inline]
-     pub fn is_inline_flow(&self) -> bool {
+@@ -370,6 +398,31 @@
          self.outside() == DisplayOutside::Inline && self.inside() == DisplayInside::Flow
-+    }
-+
+     }
+ 
 +    /// pyro: whether this is `display: run-in` (see [`Self::RUN_IN_MASK`]).
 +    #[inline]
 +    pub const fn is_run_in(&self) -> bool {
 +        (self.0 & Self::RUN_IN_MASK) != 0
-     }
- 
++    }
++
++    /// pyro: whether this is `display: ruby` or `block ruby` (see [`Self::RUBY_MASK`]).
++    #[inline]
++    pub const fn is_pyro_ruby(&self) -> bool {
++        (self.0 & Self::RUBY_MASK) != 0
++    }
++
++    /// pyro: whether this is `display: ruby-text` (see [`Self::RUBY_TEXT_MASK`]).
++    #[inline]
++    pub const fn is_pyro_ruby_text(&self) -> bool {
++        (self.0 & Self::RUBY_TEXT_MASK) != 0
++    }
++
++    /// pyro: this value without the ruby bits: the `inline` or `block` box layout sees for
++    /// `ruby`, `block ruby` and `ruby-text` (any other value is unchanged).
++    #[inline]
++    pub const fn without_ruby(&self) -> Self {
++        Self(self.0 & !(Self::RUBY_MASK | Self::RUBY_TEXT_MASK))
++    }
++
      /// Returns whether this `display` value is some kind of list-item.
-@@ -440,6 +453,10 @@
+     #[inline]
+     pub const fn is_list_item(&self) -> bool {
+@@ -440,6 +493,17 @@
          if is_root_element && (self.is_contents() || self.is_list_item()) {
              return Display::Block;
          }
@@ -14839,10 +14894,17 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        if self.is_run_in() {
 +            return Display::Block;
 +        }
++        // pyro: `ruby` blockifies to `block ruby`, `ruby-text` to `block` (as Blink).
++        if self.is_pyro_ruby() {
++            return Display::PyroBlockRuby;
++        }
++        if self.is_pyro_ruby_text() {
++            return Display::Block;
++        }
  
          match self.outside() {
              DisplayOutside::Inline => {
-@@ -495,6 +512,10 @@
+@@ -495,6 +559,14 @@
      Inside(DisplayInside),
      Outside(DisplayOutside),
      ListItem,
@@ -14850,11 +14912,20 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    /// MathML element; on any other element it computes to `flow`, as it is kept here (pyro lays
 +    /// no MathML out). Its default outside is `inline`.
 +    Math,
++    /// pyro: the `ruby` inside keyword (see [`Display::RUBY_MASK`]). Its default outside is
++    /// `inline`; it takes no `list-item` (as Blink).
++    #[cfg(feature = "servo")]
++    Ruby,
  }
  
  impl DisplayKeyword {
-@@ -525,21 +546,21 @@
+@@ -523,23 +595,26 @@
+             "ruby-base-container" => Full(Display::RubyBaseContainer),
+             #[cfg(feature = "gecko")]
              "ruby-text" => Full(Display::RubyText),
++            // pyro: `ruby-text` in servo too (Blink parses it; not `ruby-base` or the containers).
++            #[cfg(feature = "servo")]
++            "ruby-text" => Full(Display::PyroRubyText),
              #[cfg(feature = "gecko")]
              "ruby-text-container" => Full(Display::RubyTextContainer),
 -            #[cfg(feature = "gecko")]
@@ -14877,12 +14948,28 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              "flex" => Inside(DisplayInside::Flex),
              "flow-root" => Inside(DisplayInside::FlowRoot),
              "table" => Inside(DisplayInside::Table),
-@@ -558,10 +579,12 @@
+@@ -547,6 +622,8 @@
+             "grid-lanes" if is_display_grid_lanes_enabled() => Inside(DisplayInside::GridLanes),
+             #[cfg(feature = "gecko")]
+             "ruby" => Inside(DisplayInside::Ruby),
++            #[cfg(feature = "servo")]
++            "ruby" => Ruby,
+         })
+     }
+ }
+@@ -558,10 +635,19 @@
      {
          let outside = self.outside();
          let inside = self.inside();
 +        if self.is_run_in() {
 +            return dest.write_str("run-in");
++        }
++        // pyro: see `Display::RUBY_MASK`.
++        if self.is_pyro_ruby() {
++            return dest.write_str(if outside == DisplayOutside::Block { "block ruby" } else { "ruby" });
++        }
++        if self.is_pyro_ruby_text() {
++            return dest.write_str("ruby-text");
 +        }
          match *self {
              Display::Block | Display::Inline => outside.to_css(dest),
@@ -14891,11 +14978,24 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
              Display::WebkitInlineBox => dest.write_str("-webkit-inline-box"),
              Display::TableCaption => dest.write_str("table-caption"),
              _ => match (outside, inside) {
-@@ -626,10 +649,15 @@
+@@ -608,6 +694,10 @@
+         if outside == DisplayOutside::Block && inside == DisplayInside::Ruby {
+             return Err(());
+         }
++        // pyro: `block ruby`, two keywords, as gecko's above.
++        if self.is_pyro_ruby() && outside == DisplayOutside::Block {
++            return Err(());
++        }
+ 
+         if self.is_list_item()
+             && (outside != DisplayOutside::Block || inside != DisplayInside::Flow)
+@@ -626,10 +716,22 @@
  impl Parse for Display {
      fn parse(_: &ParserContext, input: &mut Parser) -> Result<Display, ParseError> {
          let mut got_list_item = false;
 +        let mut got_math = false;
++        // pyro: see `Display::RUBY_MASK`.
++        let mut got_ruby = false;
          let mut inside = None;
          let mut outside = None;
          match DisplayKeyword::parse(input)? {
@@ -14904,18 +15004,27 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +                got_math = true;
 +                inside = Some(DisplayInside::Flow);
 +            },
++            #[cfg(feature = "servo")]
++            DisplayKeyword::Ruby => {
++                got_ruby = true;
++                inside = Some(DisplayInside::Flow);
++            },
              DisplayKeyword::Outside(o) => {
                  outside = Some(o);
              },
-@@ -651,14 +679,20 @@
-                 },
+@@ -652,15 +754,29 @@
                  DisplayKeyword::Inside(i) if inside.is_none() => {
                      inside = Some(i);
-+                },
+                 },
 +                DisplayKeyword::Math if inside.is_none() => {
 +                    got_math = true;
 +                    inside = Some(DisplayInside::Flow);
-                 },
++                },
++                #[cfg(feature = "servo")]
++                DisplayKeyword::Ruby if inside.is_none() => {
++                    got_ruby = true;
++                    inside = Some(DisplayInside::Flow);
++                },
                  _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
              }
          }
@@ -14924,13 +15033,18 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 -        let outside = outside.unwrap_or_else(|| inside.default_display_outside());
 -        if got_list_item && !inside.is_valid_for_list_item() {
 +        let outside = outside.unwrap_or_else(|| {
-+            if got_math { DisplayOutside::Inline } else { inside.default_display_outside() }
++            if got_math || got_ruby { DisplayOutside::Inline } else { inside.default_display_outside() }
 +        });
-+        if got_list_item && (got_math || !inside.is_valid_for_list_item()) {
++        if got_list_item && (got_math || got_ruby || !inside.is_valid_for_list_item()) {
              return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
          }
++        if got_ruby {
++            return Ok(Display(Display::new(outside, inside).0 | Display::RUBY_MASK));
++        }
  
-@@ -788,7 +822,6 @@
+         Ok(Display::from3(outside, inside, got_list_item))
+     }
+@@ -788,7 +904,6 @@
      Parse,
      PartialEq,
      SpecifiedValueInfo,
@@ -14938,7 +15052,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToShmem,
      ToComputedValue,
      ToResolvedValue,
-@@ -801,31 +834,98 @@
+@@ -801,31 +916,98 @@
      /// Use the text-under baseline.
      TextBottom,
      /// Use the alphabetic baseline.
@@ -15042,7 +15156,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// A specified value for the `baseline-source` property.
  /// https://drafts.csswg.org/css-inline-3/#baseline-source
  #[derive(
-@@ -1095,6 +1195,9 @@
+@@ -1095,6 +1277,9 @@
      Always,
  }
  
@@ -15052,7 +15166,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  #[allow(missing_docs)]
  #[derive(
      Clone,
-@@ -1102,6 +1205,8 @@
+@@ -1102,6 +1287,8 @@
      Debug,
      Deserialize,
      Eq,
@@ -15061,7 +15175,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      MallocSizeOf,
      Parse,
      PartialEq,
-@@ -1114,6 +1219,30 @@
+@@ -1114,6 +1301,30 @@
      ToTyped,
  )]
  #[repr(u8)]
@@ -15092,11 +15206,13 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  pub enum OverscrollBehavior {
      Auto,
      Contain,
-@@ -1336,11 +1465,17 @@
+@@ -1336,11 +1547,17 @@
      ToShmem,
      ToTyped,
  )]
 -#[css(bitflags(single = "none,auto,manipulation", mixed = "pan-x,pan-y,pinch-zoom"))]
+-#[repr(C)]
+-pub struct TouchAction(u8);
 +// pyro: `pan-left`, `pan-right`, `pan-up` and `pan-down` too (Pointer Events 3, as Chromium):
 +// `[pan-x | pan-left | pan-right] || [pan-y | pan-up | pan-down] || pinch-zoom`.
 +#[css(bitflags(
@@ -15104,8 +15220,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    mixed = "pan-x,pan-left,pan-right,pan-y,pan-up,pan-down,pinch-zoom",
 +    validate_mixed = "Self::validate_mixed_flags",
 +))]
- #[repr(C)]
--pub struct TouchAction(u8);
++#[repr(C)]
 +pub struct TouchAction(u16);
  bitflags! {
 -    impl TouchAction: u8 {
@@ -15113,7 +15228,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          /// `none` variant
          const NONE = 1 << 0;
          /// `auto` variant
-@@ -1353,10 +1488,25 @@
+@@ -1353,10 +1570,25 @@
          const MANIPULATION = 1 << 4;
          /// `pinch-zoom` variant
          const PINCH_ZOOM = 1 << 5;
@@ -15139,7 +15254,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      #[inline]
      /// Get default `touch-action` as `auto`
      pub fn auto() -> TouchAction {
-@@ -1373,7 +1523,6 @@
+@@ -1373,7 +1605,6 @@
      Parse,
      PartialEq,
      SpecifiedValueInfo,
@@ -15147,7 +15262,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToCss,
      ToResolvedValue,
      ToShmem,
-@@ -1381,7 +1530,7 @@
+@@ -1381,7 +1612,7 @@
  )]
  #[css(bitflags(
      single = "none,strict,content",
@@ -15156,10 +15271,13 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      overlapping_bits
  ))]
  #[repr(C)]
-@@ -1410,6 +1559,25 @@
-     }
- }
- 
+@@ -1407,7 +1638,26 @@
+         const CONTENT = 1 << 6 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits();
+         /// `strict` variant, turns on all types of containment
+         const STRICT = 1 << 7 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits() | Contain::SIZE.bits();
++    }
++}
++
 +impl crate::values::computed::ToComputedValue for Contain {
 +    type ComputedValue = Self;
 +
@@ -15172,17 +15290,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        } else {
 +            *self
 +        }
-+    }
+     }
 +
 +    fn from_computed_value(value: &Self) -> Self {
 +        *value
 +    }
-+}
-+
+ }
+ 
  impl Parse for ContainIntrinsicSize {
-     /// none | <length> | auto <length>
-     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
-@@ -1593,7 +1761,7 @@
+@@ -1593,7 +1843,7 @@
  )]
  #[css(bitflags(
      single = "normal",
@@ -15191,7 +15307,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      validate_mixed = "Self::validate_mixed_flags",
  ))]
  #[repr(C)]
-@@ -1614,6 +1782,8 @@
+@@ -1614,6 +1864,8 @@
          const SIZE = 1 << 1;
          /// The `scroll-state` variant.
          const SCROLL_STATE = 1 << 2;
@@ -15200,7 +15316,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      }
  }
  
-@@ -2013,8 +2183,12 @@
+@@ -2013,8 +2265,12 @@
      Auto,
      Page,
      Avoid,
@@ -15213,7 +15329,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl BreakBetween {
-@@ -2030,7 +2204,9 @@
+@@ -2030,7 +2286,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -15224,7 +15340,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2047,7 +2223,7 @@
+@@ -2047,7 +2305,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),
@@ -15233,10 +15349,12 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2293,6 +2469,15 @@
+@@ -2291,6 +2549,15 @@
+ pub enum ScrollBehavior {
+     Auto,
      Smooth,
- }
- 
++}
++
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq,
 +         Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -15244,15 +15362,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum ScrollAxisLock {
 +    Auto,
 +    None,
-+}
-+
- /// https://drafts.fxtf.org/compositing/#isolation
- #[allow(missing_docs)]
- #[derive(
-@@ -2320,6 +2505,16 @@
-     Isolate,
  }
  
+ /// https://drafts.fxtf.org/compositing/#isolation
+@@ -2318,6 +2585,16 @@
+ pub enum Isolation {
+     Auto,
+     Isolate,
++}
++
 +/// Which view transition names are scoped to this element (`none | all`, initially `none`,
 +/// as in Chrome).
 +#[allow(missing_docs)]
@@ -15261,17 +15379,13 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum ViewTransitionScope {
 +    None,
 +    All,
-+}
-+
+ }
+ 
  /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
- #[allow(missing_docs)]
- #[derive(
-@@ -2486,8 +2681,41 @@
- pub enum ImageOrientation {
-     FromImage,
+@@ -2488,6 +2765,39 @@
      None,
-+}
-+
+ }
+ 
 +/// CSS Display 4 reading-flow keyword selected on a container.
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -15284,8 +15398,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    GridRows,
 +    GridColumns,
 +    GridOrder,
- }
- 
++}
++
 +/// Whether the element's text is rendered aurally (CSS Speech Level 1).
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -15308,7 +15422,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)
  #[allow(missing_docs)]
  #[derive(
-@@ -2629,3 +2857,90 @@
+@@ -2629,3 +2939,90 @@
      Ltr,
      Rtl,
  }
@@ -15401,7 +15515,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +}
 diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 --- a/values/specified/calc.rs	2026-11-11 19:55:57
-+++ b/values/specified/calc.rs	2026-11-21 20:54:52
++++ b/values/specified/calc.rs	2026-11-23 06:58:46
 @@ -305,6 +305,9 @@
          const ANCHOR = 1 << 0;
          /// `anchor-size()` function.
@@ -15541,7 +15655,7 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
          context: &ParserContext,
 diff -ruN a/values/specified/color.rs b/values/specified/color.rs
 --- a/values/specified/color.rs	2026-11-11 19:55:57
-+++ b/values/specified/color.rs	2026-11-21 20:48:05
++++ b/values/specified/color.rs	2026-11-23 06:58:46
 @@ -841,6 +841,11 @@
                  ) {
                      $color.components.0 = normalize($color.components.0);
@@ -15715,7 +15829,7 @@ diff -ruN a/values/specified/color.rs b/values/specified/color.rs
 +}
 diff -ruN a/values/specified/column.rs b/values/specified/column.rs
 --- a/values/specified/column.rs	2026-11-11 19:55:57
-+++ b/values/specified/column.rs	2026-11-21 06:34:26
++++ b/values/specified/column.rs	2026-11-23 06:58:46
 @@ -7,7 +7,40 @@
  use crate::derives::*;
  use crate::values::generics::column::GenericColumnCount;
@@ -15856,7 +15970,7 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
              let f = input.expect_function()?;
 diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 --- a/values/specified/font.rs	2026-11-11 19:55:57
-+++ b/values/specified/font.rs	2026-11-21 16:59:00
++++ b/values/specified/font.rs	2026-11-23 06:58:46
 @@ -20,6 +20,7 @@
  use crate::values::specified::calc::{Leaf, PercentageContext};
  use crate::values::specified::length::{FontBaseSize, LengthUnit, LineHeightBase, PX_PER_PT};
@@ -16391,7 +16505,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// <cf-image> = <percentage>? && [ <image> | <color> ]
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
-+++ b/values/specified/length.rs	2026-11-22 18:10:13
++++ b/values/specified/length.rs	2026-11-23 06:58:46
 @@ -187,13 +187,14 @@
              "lvi" if !in_page_rule => Self::Lvi,
              "dvi" if !in_page_rule => Self::Dvi,
@@ -16695,7 +16809,7 @@ diff -ruN a/values/specified/list.rs b/values/specified/list.rs
              .try_parse(|input| input.expect_ident_matching("none"))
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-22 21:15:04
++++ b/values/specified/mod.rs	2026-11-23 06:58:46
 @@ -30,7 +30,8 @@
  pub use self::animation::{
      AnimationComposition, AnimationDirection, AnimationDuration, AnimationFillMode,
@@ -16842,7 +16956,7 @@ diff -ruN a/values/specified/number.rs b/values/specified/number.rs
          match self.0.unpack_mut() {
 diff -ruN a/values/specified/position.rs b/values/specified/position.rs
 --- a/values/specified/position.rs	2026-11-11 19:55:57
-+++ b/values/specified/position.rs	2026-11-22 21:18:58
++++ b/values/specified/position.rs	2026-11-23 06:58:46
 @@ -427,6 +427,15 @@
  );
  
@@ -16967,7 +17081,7 @@ diff -ruN a/values/specified/position.rs b/values/specified/position.rs
  /// https://drafts.csswg.org/css-images/#propdef-object-fit
 diff -ruN a/values/specified/random.rs b/values/specified/random.rs
 --- a/values/specified/random.rs	2026-11-11 19:55:57
-+++ b/values/specified/random.rs	2026-11-21 18:57:31
++++ b/values/specified/random.rs	2026-11-23 06:58:46
 @@ -29,11 +29,11 @@
  pub struct RandomUaIdent(CustomIdent);
  
@@ -17051,7 +17165,7 @@ diff -ruN a/values/specified/random.rs b/values/specified/random.rs
  }
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-20 21:35:22
++++ b/values/specified/text.rs	2026-11-23 06:58:46
 @@ -25,6 +25,23 @@
  use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
  use style_traits::{KeywordsCollectFn, SpecifiedValueInfo};
@@ -17473,7 +17587,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  #[derive(
 diff -ruN a/values/specified/time.rs b/values/specified/time.rs
 --- a/values/specified/time.rs	2026-11-11 19:55:57
-+++ b/values/specified/time.rs	2026-11-21 16:10:02
++++ b/values/specified/time.rs	2026-11-23 06:58:46
 @@ -217,6 +217,15 @@
          self.0.is_boxed()
      }
