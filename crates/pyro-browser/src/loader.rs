@@ -2760,7 +2760,10 @@ impl Browser {
         // A module response's `Referrer-Policy` is its imports' (by its request URL).
         let module_key = (kind == ResourceKind::ModuleScript).then(|| url.clone());
         // HTML "fetch a classic script": without a charset in the response, the
-        // element's `charset` encoding, else the document's encoding.
+        // element's `charset` encoding, else the document's encoding. A UTF-16
+        // document leaves UTF-8 instead, as Chrome (a script without a byte order
+        // mark is not UTF-16; WPT the-input-byte-stream-003/-004 load testharness.js
+        // into a UTF-16 page).
         let document_charset = (kind == ResourceKind::Script)
             .then(|| self.doc(page).and_then(|p| p.main_frame.page_dom.clone()))
             .flatten()
@@ -2768,7 +2771,9 @@ impl Browser {
                 let dom = pd.dom.borrow();
                 let charset = dom.document_data(pd.document()).ok().map(|d| d.charset);
                 charset
-            });
+            })
+            // The document's encoding is a canonical name.
+            .filter(|c| !c.eq_ignore_ascii_case("UTF-16LE") && !c.eq_ignore_ascii_case("UTF-16BE"));
         let charset = charset.filter(|_| kind == ResourceKind::Script);
         let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
         let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
