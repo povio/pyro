@@ -494,6 +494,7 @@ pub(crate) fn bind(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
             crate::custom::run_reactions(&page);
             crate::custom::run_upgrades(&page);
             checkpoint(&page);
+            crate::html::current_src_checkpoint(&page, s);
         }
     })))?;
     let weak = Rc::downgrade(page);
@@ -525,6 +526,10 @@ fn hook_pending(page: &PageDom) -> bool {
         return false;
     }
     let Ok(dom) = page.dom.try_borrow() else { return true };
+    // `<img>` relevant mutations queue their microtask right away (`html::current_src_checkpoint`).
+    if dom.has_current_src_updates() {
+        return true;
+    }
     let m = &page.mutations;
     // Every condition below changes only with `Dom::hook_epoch` (an entry in
     // one of the queues the hook drains), `epoch` (this struct) or, for the

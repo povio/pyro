@@ -144,6 +144,10 @@ pub(crate) struct ResourceQueue {
     /// (tree) order: HTML's autofocus insertion steps, which the embedder completes by
     /// appending them to their top-level document's autofocus candidates.
     pub(crate) autofocus: Vec<NodeId>,
+    /// `<img>` elements with a relevant mutation (HTML "update the image data") since the
+    /// embedder last took them: their current request, and so `currentSrc`, changes in the
+    /// microtask the mutation queues (`Dom::take_current_src_updates`).
+    pub(crate) current_src_updates: Vec<NodeId>,
 }
 
 impl Dom {
@@ -189,6 +193,52 @@ impl Dom {
     /// Whether `take_resource_events` would return anything.
     pub fn has_resource_events(&self) -> bool {
         !self.resources.events.is_empty()
+    }
+
+    /// The `<img>` elements that had a relevant mutation (their `src`, `srcset`, `sizes`,
+    /// `width`, `crossorigin` or `referrerpolicy` changed, or they or a `<source>` sibling came
+    /// into or left a `<picture>` parent) since the last call, in order, repeated per mutation.
+    pub fn take_current_src_updates(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.resources.current_src_updates)
+    }
+
+    /// Whether [`Dom::take_current_src_updates`] has any.
+    pub fn has_current_src_updates(&self) -> bool {
+        !self.resources.current_src_updates.is_empty()
+    }
+
+    /// Notes a relevant mutation of `img` for [`Dom::take_current_src_updates`].
+    fn note_current_src_update(&mut self, img: u32) {
+        if self.resources.enabled && self.is_html_img(img) {
+            let id = self.id_of(img);
+            self.resources.current_src_updates.push(id);
+        }
+    }
+
+    fn is_html_img(&self, i: u32) -> bool {
+        i != NIL && self.n(i).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("img"))
+    }
+
+    /// `node` came into or is about to leave its parent: when that is a `<picture>`, a relevant
+    /// mutation of the `<img>` itself, or of the picture's `<img>` children for a `<source>`.
+    fn note_picture_child_change(&mut self, node: u32) {
+        if !self.resources.enabled {
+            return;
+        }
+        let parent = self.n(node).parent;
+        let picture = parent != NIL
+            && self.n(parent).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("picture"));
+        if !picture {
+            return;
+        }
+        if self.is_html_img(node) {
+            self.note_current_src_update(node);
+        } else if self.n(node).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("source")) {
+            let images: Vec<u32> = self.child_idx_iter(parent).filter(|&c| self.is_html_img(c)).collect();
+            for img in images {
+                self.note_current_src_update(img);
+            }
+        }
     }
 
     /// Drains pending resource events. Node ids stay valid until the next
@@ -266,6 +316,7 @@ impl Dom {
 
     /// Called after `node` was inserted (tree mutation or parser).
     pub(crate) fn resources_after_insert(&mut self, node: u32) {
+        self.note_picture_child_change(node);
         // The usual insertion of a script: one element holding at most text
         // (`createElement`, `textContent`, `appendChild`), or the text node
         // itself. Its subtree has one node that can be anything to the four
@@ -367,6 +418,7 @@ impl Dom {
 
     /// Called before `node` is unlinked from a connected parent.
     pub(crate) fn resources_before_remove(&mut self, node: u32) {
+        self.note_picture_child_change(node);
         self.iframes_before_remove(node);
         self.media_before_remove(node);
         if !self.resources.enabled || !self.connected_for_resources(node) {
@@ -389,6 +441,9 @@ impl Dom {
     /// Called after the attribute `local` of `idx` was set or removed;
     /// `added` when the element did not have it before.
     pub(crate) fn resources_after_attr(&mut self, idx: u32, local: &str, added: bool) {
+        if matches!(local, "src" | "srcset" | "sizes" | "width" | "crossorigin" | "referrerpolicy") {
+            self.note_current_src_update(idx);
+        }
         self.iframes_after_attr(idx, local);
         self.media_after_attr(idx, local);
         // HTML: a connected script is prepared when it gets a `src` it did

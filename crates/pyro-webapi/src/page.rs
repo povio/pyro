@@ -264,6 +264,9 @@ pub struct PageDom {
     /// re-clamp is queued for the next frame (`layout_api::clamp_scrolls`).
     pub(crate) scroll_clamp: Cell<(Option<u64>, bool)>,
     pub(crate) mutations: crate::mutation_observer::BindingState,
+    /// `<img>` `currentSrc` between a relevant mutation and the microtask it queues
+    /// (`html::current_src_checkpoint`).
+    pub(crate) current_src: RefCell<crate::html::CurrentSrcState>,
     pub(crate) identity: RefCell<crate::identity::IdentityState>,
     /// CSP violation reports of the document shown: its `Reporting-Endpoints` and the reports
     /// it sent (`csp_report`).
@@ -1075,6 +1078,7 @@ impl PageDom {
             max_touch_points: Cell::new(0),
             permission_watchers: RefCell::new(Vec::new()),
             mutations: Default::default(),
+            current_src: Default::default(),
             intersections: Default::default(),
             resizes: Default::default(),
             pending_scrolls: Default::default(),

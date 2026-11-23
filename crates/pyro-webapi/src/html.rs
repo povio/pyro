@@ -2238,30 +2238,105 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     def.getter("naturalHeight", |s, n| Ok(s.number({ n.page().image_complete(n.id); n.page().dom.borrow() }.reported_natural_size(n.id).map_or(0.0, |(_, h)| h.trunc()))));
     def.getter("complete", |s, n| Ok(s.boolean(n.page().image_complete(n.id))));
     def.getter("currentSrc", |s, n| {
-        let viewport = n.page().viewport();
-        let dom = n.page().dom.borrow();
-        // The source the loader selected for the current request (a lazy image's `sizes=auto`
-        // needs its layout), else a `<picture>` parent's matching `<source>`.
-        // The loader's selection when `sizes=auto` took part (it needs the layout the image had
-        // when selected): a lazy image, or one whose `sizes` (or a `<picture>` `<source>`'s) says
-        // `auto`.
-        let lazy = dom.get_attribute(n.id, "loading").js()?.is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
-        let auto = |el: NodeId| {
-            dom.get_attribute(el, "sizes").ok().flatten().is_some_and(|s| s.split(',').next().is_some_and(|f| f.trim().eq_ignore_ascii_case("auto")))
-        };
-        let in_picture_auto = dom.parent(n.id).ok().flatten().is_some_and(|p| {
-            dom.element(p).is_ok_and(|e| &*e.name.local == "picture")
-                && dom.children(p).is_ok_and(|mut kids| kids.any(|k| dom.element(k).is_ok_and(|e| &*e.name.local == "source") && auto(k)))
-        });
-        let stored = if lazy || auto(n.id) || in_picture_auto { dom.image_source(n.id).map(str::to_owned) } else { None };
-        let picture = stored.or_else(|| dom.picture_source(n.id, &viewport));
-        let selected = picture.as_deref().or(dom.get_attribute(n.id, "src").js()?);
-        // An empty selected source is no request: the current URL stays the empty string
-        // (not the document's URL it would resolve to).
-        Ok(s.string(&selected.filter(|v| !v.is_empty()).map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))
+        // Between a relevant mutation and the microtask it queued, the current request is the
+        // one before the mutation (WPT update-the-image-data/current-request-microtask*.html).
+        // An image left with no source is cleared at once, as its update's synchronous steps do
+        // (WPT the-img-element/remove-attribute-src.html).
+        current_src_checkpoint(n.page(), s);
+        let live = live_current_src(n.page(), n.id)?;
+        if !live.is_empty() {
+            if let Some((_, frozen)) = n.page().current_src.borrow().frozen.get(&n.id) {
+                return Ok(s.string(frozen));
+            }
+        }
+        Ok(s.string(&live))
     });
     def.method("decode", 0, |s, n, _a| crate::image_decode::decode(s, n.page(), n.id));
 });
+
+/// `currentSrc` of `<img>` elements with a relevant mutation whose microtask has not run yet.
+#[derive(Default)]
+pub(crate) struct CurrentSrcState {
+    /// Per image: the generation of its last relevant mutation and the `currentSrc` it had
+    /// before the first of the pending ones.
+    pub(crate) frozen: rustc_hash::FxHashMap<NodeId, (u64, String)>,
+    /// The `currentSrc` each image's last update microtask found.
+    last: rustc_hash::FxHashMap<NodeId, String>,
+    generation: u64,
+}
+
+/// HTML "update the image data" for each relevant mutation of an `<img>` since the last call
+/// (`Dom::take_current_src_updates`): `currentSrc` keeps the current request's URL until the
+/// microtask the mutation queues runs, which takes the new one unless a later mutation of the
+/// same image queued another (that one then does).
+pub(crate) fn current_src_checkpoint(page: &Rc<PageDom>, s: &Scope<'_>) {
+    let updates = match page.dom.try_borrow_mut() {
+        Ok(mut dom) => dom.take_current_src_updates(),
+        Err(_) => return,
+    };
+    if updates.is_empty() {
+        return;
+    }
+    let mut queued = Vec::with_capacity(updates.len());
+    {
+        let mut state = page.current_src.borrow_mut();
+        for id in updates {
+            state.generation += 1;
+            let generation = state.generation;
+            let before = match state.frozen.get(&id) {
+                Some((_, before)) => before.clone(),
+                None => state.last.get(&id).cloned().unwrap_or_default(),
+            };
+            state.frozen.insert(id, (generation, before));
+            queued.push((id, generation));
+        }
+    }
+    for (id, generation) in queued {
+        let weak = Rc::downgrade(page);
+        let settle = move |_: &Scope<'_>, _: Value<'_>| {
+            let Some(page) = weak.upgrade() else { return };
+            let current = page.current_src.borrow().frozen.get(&id).map(|(g, _)| *g);
+            if current != Some(generation) {
+                return;
+            }
+            page.current_src.borrow_mut().frozen.remove(&id);
+            if let Ok(src) = live_current_src(&page, id) {
+                page.current_src.borrow_mut().last.insert(id, src);
+            }
+        };
+        if s.then(s.undefined(), settle, |_, _| {}).is_err() {
+            page.current_src.borrow_mut().frozen.remove(&id);
+        }
+    }
+}
+
+/// The URL of the source an `<img>` selects now, resolved: what its current request takes.
+fn live_current_src(page: &Rc<PageDom>, id: NodeId) -> JsResult<String> {
+    let viewport = page.viewport();
+    let dom = page.dom.borrow();
+    // The loader's selection when `sizes=auto` took part (it needs the layout the image had
+    // when selected): a lazy image, or one whose `sizes` (or a `<picture>` `<source>`'s) says
+    // `auto`. Else a `<picture>` parent's matching `<source>`, else `src`.
+    let lazy = dom.get_attribute(id, "loading").js()?.is_some_and(|l| l.eq_ignore_ascii_case("lazy"));
+    let auto = |el: NodeId| {
+        dom.get_attribute(el, "sizes")
+            .ok()
+            .flatten()
+            .is_some_and(|s| s.split(',').next().is_some_and(|f| f.trim().eq_ignore_ascii_case("auto")))
+    };
+    let in_picture_auto = dom.parent(id).ok().flatten().is_some_and(|p| {
+        dom.element(p).is_ok_and(|e| &*e.name.local == "picture")
+            && dom
+                .children(p)
+                .is_ok_and(|mut kids| kids.any(|k| dom.element(k).is_ok_and(|e| &*e.name.local == "source") && auto(k)))
+    });
+    let stored = if lazy || auto(id) || in_picture_auto { dom.image_source(id).map(str::to_owned) } else { None };
+    let picture = stored.or_else(|| dom.picture_source(id, &viewport));
+    let selected = picture.as_deref().or(dom.get_attribute(id, "src").js()?);
+    // An empty selected source is no request: the current URL stays the empty string
+    // (not the document's URL it would resolve to).
+    Ok(selected.filter(|v| !v.is_empty()).map(|v| resolve_url(&dom, id, v)).unwrap_or_default())
+}
 
 // ----- forms --------------------------------------------------------------------
 
