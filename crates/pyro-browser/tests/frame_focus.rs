@@ -131,3 +131,42 @@ fn stale_child_request_during_blur_cannot_cancel_live_transition() {
         t.browser.frames(page).into_iter().find(|f| f.parent.is_some()).unwrap().id
     );
 }
+
+/// Focus moving into a frame (as into Vitest's test iframe) fires `focus` at the frame's Window
+/// (HTML focus update steps), then at the element. Capture listeners at the Window see both; the
+/// Window's event has the Window as its target and path, and is no `instanceof Element` (react-aria's
+/// window `focus` listener calls `matches` on a target that is). Document capture listeners see
+/// only element-targeted events, whose target and first `composedPath()` entry are the element,
+/// including the control a modal dialog's `showModal` focuses.
+#[test]
+fn focus_event_targets_are_elements_except_the_windows_own() {
+    let (_t, _page, r) = setup();
+    eval(&r, r#"globalThis.log=[];globalThis.cw=f.contentWindow;globalThis.cd=f.contentDocument;
+      const name=(t)=>t===cw||t===window?'window':t===cd||t===document?'document':t&&t.id;
+      const rec=(where)=>(e)=>{const t=e.target;
+        log.push([where,e.type,name(t),name(e.composedPath()[0]),e.composedPath().length,t instanceof cw.Element&&typeof t.matches].join(':'))};
+      for (const ty of ['focus','blur','focusin','focusout']) { cw.addEventListener(ty,rec('W'),true); cd.addEventListener(ty,rec('D'),true); }
+      globalThis.dlg=cd.createElement('dialog');globalThis.di=cd.createElement('input');di.id='in-dialog';dlg.append(di);cd.body.append(dlg);"#);
+    assert_eq!(
+        eval(&r, "[cw instanceof cw.Element, cw instanceof cw.Node, cw instanceof cw.HTMLElement, cw instanceof cw.Document, cw instanceof cw.Window, cw instanceof cw.EventTarget, window instanceof Element, window instanceof Window].join()"),
+        "false,false,false,false,true,true,false,true"
+    );
+    let step = |js: &str| eval(&r, &format!("log.length=0;{js};log.join(' ')"));
+    eval(&r, "a.focus()");
+    assert_eq!(
+        step("c.focus()"),
+        "W:focus:window:window:1:false W:focus:child:child:5:function D:focus:child:child:5:function \
+         W:focusin:child:child:5:function D:focusin:child:child:5:function"
+    );
+    assert_eq!(
+        step("dlg.showModal()"),
+        "W:blur:child:child:5:function D:blur:child:child:5:function W:focusout:child:child:5:function \
+         D:focusout:child:child:5:function W:focus:in-dialog:in-dialog:6:function D:focus:in-dialog:in-dialog:6:function \
+         W:focusin:in-dialog:in-dialog:6:function D:focusin:in-dialog:in-dialog:6:function"
+    );
+    assert_eq!(
+        step("a.focus()"),
+        "W:blur:in-dialog:in-dialog:6:function D:blur:in-dialog:in-dialog:6:function \
+         W:focusout:in-dialog:in-dialog:6:function D:focusout:in-dialog:in-dialog:6:function W:blur:window:window:1:false"
+    );
+}
