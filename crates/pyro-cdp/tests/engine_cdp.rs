@@ -10061,6 +10061,47 @@ fn driver_centered_retry_still_rejects_a_covering_overlay() {
     assert_eq!(proof["result"]["result"]["value"], json!([false, 0]), "{proof}");
 }
 
+/// A tooltip that closes when its scroller scrolls covers a button in a `position: sticky`
+/// actions column, with the scroller already at its end. Centering moves nothing there;
+/// Playwright's next retry alignments (`end`, then `start`) do, so the click scrolls the
+/// tooltip away and lands, as in Chromium (it was intercepted until its deadline).
+#[test]
+fn driver_scrolls_a_sticky_target_from_under_a_cover_that_closes_on_scroll() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>body{margin:0}
+      #s{width:400px;overflow:auto} table{width:1000px;border-collapse:collapse}
+      .sticky{position:sticky;right:0;background:white;width:100px}
+      button{width:30px;height:30px}
+      #tip{position:fixed;left:300px;top:0;width:100px;height:40px;background:black;z-index:10}
+    </style><div id=s><table><tr><td style="width:900px">wide</td>
+      <td class=sticky><button id=b onclick="document.title='clicked'">ok</button></td></tr></table></div>
+    <div id=tip></div>
+    <script>const s=document.getElementById('s');s.scrollLeft=s.scrollWidth;window.atEnd=s.scrollLeft;
+      window.armed=false;s.addEventListener('scroll',()=>{if(armed)document.getElementById('tip').remove()});</script>"#,
+    );
+    let pre = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"[atEnd, s.scrollWidth - s.clientWidth, document.elementFromPoint(315,15).id]","returnByValue":true}),
+    );
+    let pre = &pre["result"]["result"]["value"];
+    assert_eq!(pre[0], pre[1], "the scroller starts at its end: {pre}");
+    assert_eq!(pre[2], "tip", "the tooltip covers the button: {pre}");
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 2000, "steps": [
+            // The scroll event of the load's own scrollLeft has been delivered; only the click's scroll counts.
+            {"eval": {"expression": "new Promise((r) => requestAnimationFrame(() => setTimeout(() => { armed = true; r(document.elementFromPoint(315, 15).id); })))", "as": "armed"}},
+            {"act": {"locator": {"css": "#b"}, "action": "click"}},
+            {"eval": {"expression": "[document.title, !!document.getElementById('tip')]", "as": "after"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["armed"], "tip", "the tooltip still covers the button: {r}");
+    assert_eq!(r["result"]["reads"]["after"], json!(["clicked", false]), "{r}");
+}
+
 #[test]
 fn driver_explicit_clock_advances_dates_and_timers_without_automatic_time() {
     let mut h = Harness::new();

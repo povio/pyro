@@ -3714,8 +3714,9 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(
             // A transient pointer block (e.g. a virtual list while scrolling)
             // needs time, not another scroll that can dismiss its popover.
             let hit_testable = page.layout().style().is_hit_testable(&page.dom.borrow(), id);
-            if opts.position.is_none() && hit_testable && super::dom::reveal_centered(page, id) {
-                return Err(Attempt::RetrySoon(format!("centered target after <{tag}> intercepted pointer events")));
+            if opts.position.is_none() && hit_testable && super::dom::reveal_past_interception(page, id) {
+                // A cover that stays (an overlay) keeps reporting what it is, as Playwright's log does.
+                return Err(Attempt::RetrySoon(format!("<{tag}> intercepts pointer events (target scrolled, retrying)")));
             }
             Err(Attempt::Retry(format!("<{tag}> intercepts pointer events")))
         }

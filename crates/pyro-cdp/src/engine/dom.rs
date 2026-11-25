@@ -528,6 +528,34 @@ pub(super) fn reveal_centered(page: &Rc<PageDom>, node: NodeId) -> bool {
     changed
 }
 
+/// What Playwright's pointer actions do after their hit target was intercepted: a forced
+/// `scrollIntoView` per retry, `end`, `center`, then `start` on both axes
+/// (`_retryPointerAction`), so the target leaves what covers it and a scroll can dismiss
+/// what dismisses on scroll (a tooltip). Center first, as before; `end` and `start` when it
+/// moves nothing: a target at the far end of a scroller already at its limit (a
+/// `position: sticky` actions column) only moves away from it.
+pub(super) fn reveal_past_interception(page: &Rc<PageDom>, node: NodeId) -> bool {
+    use pyro_dom::layout::ScrollAlign;
+    if reveal_centered(page, node) {
+        return true;
+    }
+    for align in [ScrollAlign::End, ScrollAlign::Start] {
+        let moved = page.layout.borrow_mut().scroll_into_view_aligned_script_targets(&page.dom.borrow(), node, align, align);
+        if moved.is_empty() {
+            continue;
+        }
+        for target in moved {
+            let node = match target {
+                pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
+                pyro_dom::layout::ScrollTarget::Viewport => None,
+            };
+            pyro_webapi::layout_api::fire_scroll(page, node);
+        }
+        return true;
+    }
+    false
+}
+
 /// Scrolls the window so the node-relative area is visible, as little as
 /// possible (nearest edge), queueing a scroll event when it moved.
 fn reveal_area(page: &Rc<PageDom>, node: NodeId, x: f64, y: f64, width: f64, height: f64) {
