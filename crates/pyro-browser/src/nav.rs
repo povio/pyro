@@ -156,6 +156,12 @@ pub struct HistoryEntry {
 
 struct NavState {
     url: String,
+    /// The URL the current document committed with: the name of its
+    /// `navigation` performance entry (Navigation Timing "create the
+    /// navigation timing entry" takes the document's URL then), which
+    /// `pushState`, fragment navigations and `document.open()` leave alone,
+    /// as in Chrome.
+    committed_url: String,
     entries: Vec<Entry>,
     index: usize,
     doc_seq: u64,
@@ -329,6 +335,7 @@ impl PageNav {
             sched,
             state: RefCell::new(NavState {
                 url: "about:blank".into(),
+                committed_url: "about:blank".into(),
                 entries: Vec::new(),
                 index: 0,
                 doc_seq: 0,
@@ -367,6 +374,12 @@ impl PageNav {
 
     pub fn url(&self) -> String {
         self.state.borrow().url.clone()
+    }
+
+    /// The URL the current document committed with (see
+    /// `NavState::committed_url`).
+    fn committed_url(&self) -> String {
+        self.state.borrow().committed_url.clone()
     }
 
     /// `history.length`: the steps of the page's joint session history.
@@ -549,6 +562,7 @@ impl PageNav {
             }
         }
         st.url = url.to_string();
+        st.committed_url = url.to_string();
         drop(st);
         if let Some(from) = pushed_from {
             self.joint.prune_forward(self, from);
@@ -2255,9 +2269,11 @@ fn navigation_values(page: &pyro_webapi::PageDom, nav: &PageNav) -> NavigationVa
 
 /// The document's `navigation` entry. Chrome adds it to the timeline as the
 /// document starts loading and fills it in as it goes; an `about:` document
-/// (the initial one, `setContent`) has none.
+/// (the initial one, `setContent`) has none, even once `document.open()` has
+/// given it its entry document's URL. The name is the URL the document
+/// committed with, not its current one.
 fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
-    let url = p.nav.url();
+    let url = p.nav.committed_url();
     if !(url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")) {
         return None;
     }

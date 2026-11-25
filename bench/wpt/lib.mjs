@@ -27,8 +27,12 @@ export const PAINT_DIRS = [
 // 36, webidl 44, FileAPI 61, fetch/api request/response/headers/abort/body 68 (fetch/api/basic is a default
 // directory; cors, policies and redirect need wptserve), css/css-variables 63 and css/css-conditional 220
 // (testharness pages; their reftests run in LAYOUT_DIRS too). html/semantics/links 14 and document-metadata 88
-// (link stylesheets and their events, <base>, <meta>, <style>, <title>; lane F3a), less TESTHARNESS_SKIP.
-export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api', 'html/semantics/embedded-content/the-embed-element', 'html/semantics/embedded-content/the-iframe-element', 'html/webappapis', 'html/semantics/scripting-1', 'html/syntax', 'selection', 'streams', 'user-timing', 'webidl', 'FileAPI', 'fetch/api/request', 'fetch/api/response', 'fetch/api/headers', 'fetch/api/abort', 'fetch/api/body', 'css/css-variables', 'css/css-conditional', 'html/semantics/links', 'html/semantics/document-metadata'];
+// (link stylesheets and their events, <base>, <meta>, <style>, <title>; lane F3a). Pages rc.7 lost with no gate
+// noticing (2026-11-23, PR fixing the rc5 to rc7 regressions): mathml 208 (operator spacing, row layout),
+// web-animations/animation-model/animation-types 11 (keyframe property detection), navigation-timing 47 and
+// html/semantics/embedded-content/the-img-element 114 (lazy images in frames), about 85 s at --jobs 4. Less
+// TESTHARNESS_SKIP.
+export const FEATURE_DIRS = ['custom-elements', 'css/css-font-loading', 'css/css-typed-om', 'html/semantics/embedded-content/the-object-element', 'intersection-observer', 'workers', 'scroll-animations', 'css/css-scroll-snap', 'css/css-shapes', 'html/semantics/forms', 'css/cssom', 'css/css-cascade', 'trusted-types', 'navigation-api', 'html/semantics/embedded-content/the-embed-element', 'html/semantics/embedded-content/the-iframe-element', 'html/webappapis', 'html/semantics/scripting-1', 'html/syntax', 'selection', 'streams', 'user-timing', 'webidl', 'FileAPI', 'fetch/api/request', 'fetch/api/response', 'fetch/api/headers', 'fetch/api/abort', 'fetch/api/body', 'css/css-variables', 'css/css-conditional', 'html/semantics/links', 'html/semantics/document-metadata', 'mathml', 'web-animations/animation-model/animation-types', 'navigation-timing', 'html/semantics/embedded-content/the-img-element'];
 export const DEFAULT_DIRS = [
   'dom', 'html/dom', 'encoding', 'url', 'fetch/api/basic', 'xhr', 'css/selectors', 'uievents', 'shadow-dom', 'webstorage',
   ...PAINT_DIRS,

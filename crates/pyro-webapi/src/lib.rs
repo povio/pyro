@@ -300,10 +300,10 @@ fn install_listener_connected_hook(page: &Rc<PageDom>) {
     }
     let mut dom = page.dom.borrow_mut();
     if new || !dom.has_listener_connected_hook() {
-        dom.set_listener_connected_hook(Some(Rc::new(move |idx, all, callbacks| {
+        dom.set_listener_connected_hook(Some(Rc::new(move |id, all, callbacks| {
             let Ok(list) = pages.try_borrow() else { return };
             for page in list.iter().filter_map(std::rc::Weak::upgrade) {
-                page.keep_connected_listener_node(idx, all, callbacks);
+                page.keep_connected_listener_node(id, all, callbacks);
             }
         })));
     }
@@ -371,9 +371,12 @@ pub fn adopt_window(old: &PageDom, new: &Rc<PageDom>, realm: pyro_js::RealmId) -
         dom.forget_target(new_key);
         dom.set_document_window(new_doc, Some(old_key));
     }
-    // The realm's helpers (made by install.js once) and roots go along.
+    // The realm's helpers (made by install.js once) and roots go along. Without
+    // `blobParts` the Blob and File constructors of the kept Window would make
+    // empty blobs.
     for (from, to) in [
         (&old.window_holders, &new.window_holders),
+        (&old.blob_parts, &new.blob_parts),
         (&old.encoding_helpers, &new.encoding_helpers),
         (&old.header_helpers, &new.header_helpers),
         (&old.url_params_helpers, &new.url_params_helpers),

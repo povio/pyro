@@ -100,8 +100,15 @@ fn valid_space(value: &str) -> bool {
 }
 
 /// MathML Core § 3.2.4.1, "Dictionary-based attributes": the entry for (content, form), else for
-/// the content in the other forms in the order infix, postfix, prefix, else the default.
+/// the content in the other forms in the order infix, postfix, prefix, else the default. A
+/// character followed by U+0338 COMBINING LONG SOLIDUS OVERLAY or U+20D2 COMBINING LONG VERTICAL
+/// LINE OVERLAY (a negated operator, `=&#x338;` for ≠) takes the entry of that character alone.
 pub(crate) fn lookup(content: &str, form: Form) -> (u8, u8) {
+    let mut chars = content.chars();
+    let content = match (chars.next(), chars.next(), chars.next()) {
+        (Some(base), Some('\u{338}' | '\u{20D2}'), None) => &content[..base.len_utf8()],
+        _ => content,
+    };
     let find = |form: Form| {
         DICTIONARY
             .binary_search_by(|(c, f, _, _)| c.as_bytes().cmp(content.as_bytes()).then(f.cmp(&form)))
@@ -1316,5 +1323,17 @@ mod tests {
         assert_eq!(lookup("=", Form::Prefix), (5, 5));
         // Not in the dictionary: thickmathspace each side.
         assert_eq!(lookup("xyz", Form::Infix), DEFAULT_SPACING);
+    }
+
+    #[test]
+    fn a_combining_overlay_takes_its_base_operators_entry() {
+        // ⋉ (infix, thinmathspace) and ∃ (prefix only, no space) with a slash or a vertical line.
+        assert_eq!(lookup("\u{22C9}\u{338}", Form::Infix), (3, 3));
+        assert_eq!(lookup("\u{22C9}\u{20D2}", Form::Infix), (3, 3));
+        assert_eq!(lookup("\u{2203}\u{338}", Form::Infix), (0, 0));
+        // Only one base character, and only those two overlays.
+        assert_eq!(lookup("\u{22C9}\u{22C9}\u{338}", Form::Infix), DEFAULT_SPACING);
+        assert_eq!(lookup("\u{22C9}\u{301}", Form::Infix), DEFAULT_SPACING);
+        assert_eq!(lookup("\u{338}", Form::Infix), DEFAULT_SPACING);
     }
 }

@@ -452,6 +452,11 @@ impl ResourceLoader for NetLoader {
             req.mode = pyro_net::RequestMode::Cors;
         } else if request.kind == ResourceKind::Track {
             req.mode = pyro_net::RequestMode::SameOrigin;
+        } else if request.kind == ResourceKind::Fetch {
+            // `<link rel=preload as=fetch>` without `crossorigin`: HTML "create a potential-CORS
+            // request" makes it no-cors (destination "" alone would make it CORS, as for
+            // `fetch()`), so a service worker may answer it with an opaque response, as in Chrome.
+            req.mode = pyro_net::RequestMode::NoCors;
         }
         req.credentials = request.effective_credentials();
         if req.url.scheme() == "blob" {
@@ -2561,6 +2566,12 @@ impl Browser {
             info
         };
         if info.kind == ScriptKind::ImportMap {
+            // CSP: an inline import map is a script element's inline behaviour (HTML "prepare the
+            // script element", "Should element's inline behavior be blocked"): one `script-src-elem`
+            // blocks (no nonce, a wrong one, no listed hash) is not registered.
+            if info.src.is_none() && !self.inline_script_allowed(page, &info, nonce.as_deref()) {
+                return;
+            }
             let map_base = {
                 let d = dom.borrow();
                 d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
@@ -2581,15 +2592,30 @@ impl Browser {
         let src_url = match info.src.as_deref() {
             Some(s) => {
                 // `<base href>` aware; the inline-script URL stays `base`.
-                let resolved = {
-                    let dom = element.dom.borrow();
-                    resolve_url(node_base_str(&dom, node).unwrap_or(&base), s)
-                };
+                // An SVG script with an empty `href` (its source since
+                // 99c9c0fb3; WPT execution-timing/137) is not fetched: the
+                // page itself would be fetched and run as script. (HTML
+                // prepare step 31.3 says the same of an HTML script's empty
+                // `src`. That one is still fetched: the parser creates a
+                // script with the parser's document as its node document
+                // even inside an element a script moved to another document,
+                // so step 15 does not see such a move, and the error event
+                // would fire where WPT moving-between-documents expects
+                // none.)
+                let svg_empty = s.is_empty()
+                    && element.dom.borrow().element(node).is_ok_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg");
+                let resolved = (!svg_empty)
+                    .then(|| {
+                        let dom = element.dom.borrow();
+                        resolve_url(node_base_str(&dom, node).unwrap_or(&base), s)
+                    })
+                    .flatten();
                 match resolved {
                     Some(u) => Some(u),
                     None => {
-                        // HTML prepare step 31.4: a URL that does not parse
-                        // gets `error` in a task (no insertion point then).
+                        // HTML prepare steps 31.3 and 31.4: an empty source (an
+                        // SVG script's, above) or a URL that does not parse gets
+                        // `error` in a task (no insertion point then).
                         let loader_id = self.frame_loader(page);
                         self.scheduler().post(TaskSource::DomManipulation, move |b| {
                             if b.frame_loader(page) == loader_id {
@@ -2730,7 +2756,16 @@ impl Browser {
         registered: bool,
         options: &crate::preload::ModuleFetchOptions,
     ) -> Option<String> {
-        let referrer = referrer?;
+        let Some(referrer) = referrer else {
+            // An engine that reports no referrers (the system JavaScriptCore, without patch 0039)
+            // gives `None` for every import, also for one a script element's code makes: it is
+            // attributed to the document's script elements as a whole, with their nonce while
+            // they all had the same one (fail closed otherwise), as an inline script's is.
+            if pyro_js::module_fetch_referrers_available() {
+                return None;
+            }
+            return self.doc(page)?.preloads.script_nonce().map(str::to_owned);
+        };
         if registered {
             return options.nonce.clone();
         }
@@ -3276,6 +3311,11 @@ impl Browser {
             info
         };
         if info.kind == ScriptKind::ImportMap {
+            // CSP, as for the parser's import maps; one the parser did not insert is checked as
+            // such (`inserted_inline_script_allowed`).
+            if info.src.is_none() && !self.inserted_inline_script_allowed(page, &info) {
+                return;
+            }
             let map_base = {
                 let d = dom.borrow();
                 d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))

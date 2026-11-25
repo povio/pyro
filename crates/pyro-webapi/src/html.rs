@@ -5437,11 +5437,16 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
 /// An import map in written markup, registered when the parser reaches it (as
 /// the loader's `add_import_map` does for network markup) against the document
 /// base URL then, so the module scripts after it resolve through it.
-fn register_written_import_map(page: &PageDom, doc: NodeId, info: &pyro_dom::script::ScriptInfo) {
+fn register_written_import_map(page: &Rc<PageDom>, doc: NodeId, info: &pyro_dom::script::ScriptInfo) {
     let Some(realm) = page.main_world_realm() else { return };
     let Ok(scope) = realm.scope() else { return };
     if info.src.is_some() {
         scope.console_warn("External import maps are not supported: <script type=\"importmap\"> ignored its src.");
+        return;
+    }
+    // CSP `script-src-elem`, as for the loader's import maps: a blocked one is not registered.
+    let nonce = crate::csp::element_nonce(page, info.node);
+    if !crate::csp::inline_allowed(page, crate::csp::InlineKind::Script, &nonce, &info.inline_text, Some(info.node)) {
         return;
     }
     let base = page.dom.borrow().document_base_url(doc).map(str::to_owned).unwrap_or_default();

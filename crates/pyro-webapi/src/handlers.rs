@@ -326,8 +326,18 @@ pub(crate) fn compile_handler<'s>(
     // handler's script has default fetch options and the document's base URL (HTML "getting the
     // current value of the event handler"); a script without a URL resolves its imports against
     // the document base URL and passes down no nonce (WPT string-compilation-nonce-*).
+    // The system JavaScriptCore has no base URL for a script without a URL: there its `import()`
+    // would reject ("Could not determine the base URL"), so the handler is evaluated with the
+    // document base URL as its source URL, which its imports resolve against.
+    let source_url = if pyro_js::url_less_scripts_can_import() {
+        None
+    } else {
+        let dom = page.dom.borrow();
+        let doc = document.unwrap_or_else(|| page.document());
+        dom.document_base_url(doc).ok().map(str::to_owned)
+    };
     let outer = |code: &str| -> JsResult<pyro_js::Object<'s>> {
-        let outer = s.eval(&format!("(function (\n) {{\n{code}\n}})"), None, 1)?;
+        let outer = s.eval(&format!("(function (\n) {{\n{code}\n}})"), source_url.as_deref(), 1)?;
         outer.as_object().ok_or_else(|| pyro_js::JsError::type_error("event handler did not compile to a function"))
     };
     let Some(element) = element else {
@@ -389,7 +399,10 @@ pub(crate) fn drain_inline_after_fragment(s: &Scope<'_>, page: &crate::page::Pag
 fn drain_pending(page: &crate::page::PageDom) {
     let Some(realm) = page.main_world_realm() else { return };
     let Ok(s) = realm.scope() else { return };
-    let pending = page.dom.borrow_mut().take_pending_inline_handlers();
+    // Only the page document's: a page's frames share one `Dom`, and another frame's elements
+    // wait for its own bindings (a parent's drain while a child frame's parser is paused on a
+    // script lost the child's `<body onload>`).
+    let pending = page.dom.borrow_mut().take_pending_inline_handlers_of(page.document());
     for id in pending {
         let attrs: Vec<(String, String)> = {
             let dom = page.dom.borrow();

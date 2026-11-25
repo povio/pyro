@@ -49,6 +49,9 @@ use crate::speculate::Shape;
 use crate::{FetchDone, ResourceLoader};
 use std::rc::Rc;
 
+/// A document's layout observation stamp (`pyro_dom::Layout::observation_stamp`).
+type LazyStamp = ((u64, u64, u32, u32), u64);
+
 /// Bytes kept from an image response for header parsing.
 const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -131,9 +134,10 @@ pub(crate) struct Images {
     auto_widths: HashMap<NodeId, f64>,
     /// Deferred lazy images the lazy load check found intersecting: their next steps fetch.
     approved: HashSet<NodeId>,
-    /// The observation stamp (DOM, style, viewport, scroll) and the window `load` state at
-    /// the last lazy load check.
-    lazy_checked: Option<(((u64, u64, u32, u32), u64), bool)>,
+    /// The observation stamps (DOM, style, viewport, scroll) of the document and of each
+    /// document it is shown in ([`Browser::lazy_stamp`]), and the window `load` state, at the
+    /// last lazy load check.
+    lazy_checked: Option<(Vec<LazyStamp>, bool)>,
     generation: u64,
     /// Entry count at which those of collected elements are dropped (a
     /// finished request no longer pins its element, and `new Image()`
@@ -948,7 +952,6 @@ impl Browser {
         let nodes: Vec<NodeId> = state.images.deferred.keys().copied().collect();
         let Some(bindings) = state.main_frame.page_dom.clone() else { return };
         let loaded = state.main_frame.loaded;
-        let checked = state.images.lazy_checked;
         drop(state);
         // As Chrome, from the first layout (a lazy image never delays `load`, see
         // `blocks_load`). Before `load` only from a layout that is already current: the check
@@ -960,10 +963,11 @@ impl Browser {
                 return;
             }
         }
-        // Checked again only when the DOM, style, viewport or a scroll offset changed (this
-        // runs at every microtask checkpoint).
-        let stamp = || (bindings.layout().observation_stamp(&bindings.dom.borrow()), loaded);
-        if checked == Some(stamp()) {
+        // Checked again only when the DOM, style, viewport or a scroll offset changed, this
+        // document's or that of a frame it is shown in (this runs at every microtask
+        // checkpoint).
+        let stamp = (self.lazy_stamp(page), loaded);
+        if self.doc(page).is_some_and(|p| p.images.lazy_checked.as_ref() == Some(&stamp)) {
             return;
         }
         for node in nodes {
@@ -988,9 +992,31 @@ impl Browser {
             }
         }
         // After the checks, which may have synced layout.
-        let stamp = stamp();
+        let stamp = (self.lazy_stamp(page), loaded);
         if let Some(mut p) = self.doc_mut(page) {
             p.images.lazy_checked = Some(stamp);
+        }
+    }
+
+    /// The observation stamps of `page`'s document and of the documents of the frames it is
+    /// shown in, up to the top-level one: a lazy image of a child frame intersects the
+    /// top-level viewport through each of them (`lazy_load_intersects`), so a scroll or
+    /// layout change of any of them may bring it into view.
+    fn lazy_stamp(&self, page: FrameKey) -> Vec<LazyStamp> {
+        let host = self.page(page.page).map(|p| p.frames.clone());
+        let mut stamps = Vec::new();
+        let mut key = page;
+        loop {
+            if let Some(bindings) = self.doc(key).and_then(|d| d.main_frame.page_dom.clone()) {
+                stamps.push(bindings.layout().observation_stamp(&bindings.dom.borrow()));
+            }
+            let Some(parent) = host.as_ref().filter(|_| key.child.is_some()).map(|h| h.parent_key(key)) else {
+                return stamps;
+            };
+            if parent == key {
+                return stamps;
+            }
+            key = parent;
         }
     }
 

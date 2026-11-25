@@ -732,7 +732,10 @@ impl Browser {
         host.connect_rendered_objects(|parent| self.apply_same_document_url(parent));
         self.fetch_rendered_objects(&host);
         self.resume_lazy_frames(&host);
-        self.fetch_rendered_images(page);
+        // Every frame's lazy images: the checkpoint drains a page once, with its top-level key.
+        for key in host.keys() {
+            self.fetch_rendered_images(key);
+        }
         // Runs at every checkpoint: leave early when nothing is queued.
         let (iframe_events, resource_events) = {
             let dom = host.dom.borrow();

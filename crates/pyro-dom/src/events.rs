@@ -36,9 +36,9 @@ struct Listener {
     passive: bool,
 }
 
-/// See [`Dom::set_listener_connected_hook`]: the node's index, whether it is
-/// marked [`Dom::mark_pin_on_connect`], and its listeners' callbacks.
-pub type ListenerConnectedHook = std::rc::Rc<dyn Fn(u32, bool, &[ListenerHandle])>;
+/// See [`Dom::set_listener_connected_hook`]: the node, whether it is marked
+/// [`Dom::mark_pin_on_connect`], and its listeners' callbacks.
+pub type ListenerConnectedHook = std::rc::Rc<dyn Fn(NodeId, bool, &[ListenerHandle])>;
 
 #[derive(Default)]
 pub struct ListenerStore {
@@ -373,7 +373,11 @@ impl Dom {
         if self.events.map.is_empty() && self.events.pin_on_connect.is_empty() {
             return;
         }
-        let hook = self.events.connected_hook.clone();
+        // Only a node of an active document is kept at once: the safe point keeps no other
+        // (`reconcile_pins`), and so would release no pin made here (a node connected in a
+        // `createHTMLDocument` or DOMParser document).
+        let active = self.is_in_active_document(self.id_of(root));
+        let hook = self.events.connected_hook.clone().filter(|_| active);
         let mut callbacks = Vec::new();
         let mut i = root;
         while i != NIL {
@@ -384,7 +388,7 @@ impl Dom {
                 if let Some(hook) = &hook {
                     callbacks.clear();
                     callbacks.extend(listeners.into_iter().flatten().map(|l| l.callback));
-                    hook(i, pin, &callbacks);
+                    hook(self.id_of(i), pin, &callbacks);
                 }
             }
             i = self.next_shadow_including_rev(i, root);

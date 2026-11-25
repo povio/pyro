@@ -51,3 +51,18 @@ pub use rejections::{available as rejection_tracking_available, RejectionHooks};
 pub fn compile_strings_hooks_available() -> bool {
     pyro_jsc_sys::spi::get().set_compile_strings_callbacks.is_some()
 }
+
+/// Whether this JavaScriptCore reports the referring script of a module fetch
+/// ([`ModuleRequest::referrer_key`], patch 0039). Without it every request's
+/// referrer is `None`, also for an import whose referring script exists.
+pub fn module_fetch_referrers_available() -> bool {
+    unsafe { pyro_jsc_sys::modules::pyro_jsc_module_fetch_referrer_available() == 1 }
+}
+
+/// Whether a script evaluated without a URL resolves its `import()` against the
+/// document base URL (the source-built JavaScriptCore's module base URL callback).
+/// Without it such an `import()` rejects, so code that must import from a
+/// URL-less script (an event handler) gives it the base URL as its source URL.
+pub fn url_less_scripts_can_import() -> bool {
+    unsafe { pyro_jsc_sys::modules::pyro_jsc_module_base_url_available() == 1 }
+}

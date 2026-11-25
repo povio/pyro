@@ -875,6 +875,10 @@ fn collect_layout_children_with_wrap(
     if super::math::construct_fraction(doc, container_node_id, &mut out.children) {
         return;
     }
+    // pyro: a MathML row: its element children side by side (`layout::math`).
+    if super::math::construct_row(doc, container_node_id, &mut out.children) {
+        return;
+    }
 
     if super::multicol::has_multicol_content_box(&doc.nodes[container_node_id]) {
         out.create_anonymous_block(container_node_id, doc);

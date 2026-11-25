@@ -3474,6 +3474,29 @@ impl Dom {
     pub fn take_pending_inline_handlers(&mut self) -> Vec<NodeId> {
         std::mem::take(&mut self.pending_inline_handlers)
     }
+    /// Whether an element of `doc` waits in `pending_inline_handlers`. The frames of a page
+    /// share one `Dom`, so the elements another frame's parser made do not count.
+    pub fn has_pending_inline_handlers_in(&self, doc: NodeId) -> bool {
+        self.pending_inline_handlers.iter().any(|&id| self.node_document(id).ok() == Some(doc))
+    }
+    /// Takes the pending elements of `doc`. Those of another active document (another frame's,
+    /// whose bindings compile them in its own realm) stay pending; those of an inactive document
+    /// (template contents, `DOMParser` and `createHTMLDocument` documents, a detached frame's)
+    /// and removed nodes are dropped: they have no scripting.
+    pub fn take_pending_inline_handlers_of(&mut self, doc: NodeId) -> Vec<NodeId> {
+        let pending = std::mem::take(&mut self.pending_inline_handlers);
+        let mut taken = Vec::new();
+        for id in pending {
+            let Ok(i) = self.check(id) else { continue };
+            let owner = self.n(i).owner_doc;
+            if self.id_of(owner) == doc {
+                taken.push(id);
+            } else if self.doc_data(owner).active {
+                self.pending_inline_handlers.push(id);
+            }
+        }
+        taken
+    }
 
     pub fn clone_node(&mut self, node: NodeId, deep: bool, doc: Option<NodeId>) -> DomResult<NodeId> {
         let fallback = match doc {

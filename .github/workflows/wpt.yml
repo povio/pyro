@@ -397,6 +397,152 @@ jobs:
       - name: Playwright-compatible suite (pyro run)
         run: PYRO_BIN="$GITHUB_WORKSPACE/browser/pyro" bun run test:playwright
 
+  # ---------- The system JavaScriptCore (PYRO_JSC=system) ----------
+  # The macOS standard archives and the npm package's Intel browser link the system JavaScriptCore.framework, without
+  # the patches in crates/pyro-jsc-sys/webkit/patches; every other job here runs the patched one. Code that needs a
+  # patch has a fallback for the system framework (build.rs cfg gates, the shims' *_available()), and round 7 broke
+  # some of those fallbacks with no job noticing (dynamic import nonces and event handler imports, 2026-11-23). This
+  # job builds the browser against the system framework and gates the pages where the two differ most: script
+  # elements and modules, event handlers and iframes (about 620 pages, about 2 minutes at --jobs 4), against
+  # bench/wpt/baseline-system-jsc.json, bootstrapped from this job's `wpt-system-jsc-baseline` artifact.
+  wpt-system-jsc:
+    needs: prepare
+    if: ${{ !cancelled() && !failure() && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}
+    runs-on: lp-m1
+    timeout-minutes: 60
+    concurrency:
+      group: wpt-system-jsc-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read # the wpt-accept-loss label
+    env:
+      PYRO_JSC: system
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+      # The pages: script elements and modules (import(), nonces, base URLs), event handlers, iframes (WindowProxy).
+      PAGES: '^html/semantics/scripting-1/|^html/webappapis/scripting/|^html/semantics/embedded-content/the-iframe-element/'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The base branch's baseline and flaky list (a pull request's merge commit and its first parent).
+          fetch-depth: 2
+      - id: cache
+        uses: actions/cache/restore@v4
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
+        with:
+          path: browser-system-jsc.tgz
+          key: ${{ needs.prepare.outputs.browser-key }}-system-jsc
+      - name: Install Rust
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: rustup toolchain install stable --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@v2
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          shared-key: wpt-registry-macos-arm64
+          cache-targets: false
+          cache-bin: false
+          save-if: false
+      - name: Isolate the compiler-cache server
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          socket_dir=$(mktemp -d "$RUNNER_TEMP/sccache.XXXXXX")
+          echo "SCCACHE_SERVER_UDS=$socket_dir/sock" >> "$GITHUB_ENV"
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        if: steps.cache.outputs.cache-hit != 'true'
+        id: sccache
+        with:
+          disable_annotations: 'true'
+      # The `build` job's wptiter profile, against the system framework.
+      - name: Build the browser against the system JavaScriptCore
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          SCCACHE_GHA_ENABLED: 'true'
+          RUSTC_WRAPPER: sccache
+          CARGO_PROFILE_WPTITER_DEBUG: 'false'
+          CARGO_PROFILE_WPTITER_INHERITS: release-fast
+          CARGO_PROFILE_WPTITER_LTO: 'false'
+          CARGO_PROFILE_WPTITER_CODEGEN_UNITS: '16'
+          CARGO_PROFILE_WPTITER_INCREMENTAL: 'false'
+        run: cargo +stable build --locked --profile wptiter --package pyro
+      - name: Compiler-cache stats and shutdown
+        if: always() && steps.sccache.outcome == 'success'
+        run: |
+          sccache --show-stats || true
+          sccache --stop-server || true
+      - name: Stage and check the browser
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir browser
+          cp target/wptiter/pyro browser/
+          # Linked against the system framework: no patched JavaScriptCore, so no fork.
+          otool -L browser/pyro | grep -F /System/Library/Frameworks/JavaScriptCore.framework
+          browser/pyro version | grep -q 'fork: false'
+          browser/pyro eval -e 'console.log("ok")' | grep -Fx ok
+          tar -czf browser-system-jsc.tgz browser
+      - uses: actions/cache/save@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          PATH: /usr/bin:/bin:/usr/sbin:/sbin
+        with:
+          path: browser-system-jsc.tgz
+          key: ${{ needs.prepare.outputs.browser-key }}-system-jsc
+      - name: Unpack the cached browser
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: tar -xzf browser-system-jsc.tgz
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Install the runner's dependencies
+        working-directory: bench
+        run: bun install --frozen-lockfile
+      - name: Prepare local WPT checkout
+        run: bench/wpt/prepare-ci-wpt.sh subset
+      - name: Run and check the pages
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gate=(--baseline bench/wpt/baseline-system-jsc.json --flaky bench/wpt/flaky-system-jsc.json --artifact wpt-system-jsc-baseline)
+          bun bench/wpt/gate.mjs run "${gate[@]}" --wpt "$WPT_DIR" --bin browser/pyro --jobs 4 --match "$PAGES" \
+            --out wpt-system-jsc.json --no-check
+          args=()
+          if [ "$EVENT" = pull_request ]; then
+            if git show HEAD^1:bench/wpt/baseline-system-jsc.json > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
+              args+=(--base-baseline "$RUNNER_TEMP/base-baseline.json")
+              if git show HEAD^1:bench/wpt/flaky-system-jsc.json > "$RUNNER_TEMP/base-flaky.json" 2>/dev/null; then
+                args+=(--base-flaky "$RUNNER_TEMP/base-flaky.json")
+              fi
+            fi
+            if labels="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.labels[].name')"; then
+              if grep -qx wpt-accept-loss <<< "$labels"; then args+=(--accept-loss); fi
+            fi
+          fi
+          bun bench/wpt/gate.mjs check "${gate[@]}" wpt-system-jsc.json --summary "$GITHUB_STEP_SUMMARY" "${args[@]}"
+      - name: Refresh the baseline
+        id: refresh
+        if: ${{ !cancelled() && contains(fromJSON('["pass", "stale", "bootstrap", "rebaseline"]'), steps.check.outputs.verdict) }}
+        run: |
+          bun bench/wpt/gate.mjs update --baseline bench/wpt/baseline-system-jsc.json --flaky bench/wpt/flaky-system-jsc.json \
+            wpt-system-jsc.json --out baseline-system-jsc.json
+          if cmp -s baseline-system-jsc.json bench/wpt/baseline-system-jsc.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "The refreshed baseline is the \`wpt-system-jsc-baseline\` artifact: \`gh run download $GITHUB_RUN_ID -n wpt-system-jsc-baseline -D bench/wpt\`." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.refresh.outputs.changed == 'true' }}
+        with:
+          name: wpt-system-jsc-baseline
+          path: baseline-system-jsc.json
+          retention-days: 30
+          overwrite: true
+
   gate:
     needs: [prepare, jsc, build, wpt]
     if: ${{ !cancelled() && !contains(needs.*.result, 'cancelled') && needs.prepare.outputs.linux-baseline != 'true' && inputs.suites != 'reftest' && inputs.suites != 'crashtest' }}

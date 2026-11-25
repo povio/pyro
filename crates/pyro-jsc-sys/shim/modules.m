@@ -220,6 +220,11 @@ JSStringRef pyro_jsc_module_fetch_referrer(JSContextRef ctx) {
     (void)ctx;
     return NULL;
 }
+int pyro_jsc_module_fetch_referrer_available(void) { return 0; }
+
+// A script without a URL (an event handler's) resolves its import() against the
+// document base URL only through the source-built JavaScriptCore's base URL callback.
+int pyro_jsc_module_base_url_available(void) { return 0; }
 
 // The module script phases are the source-built JavaScriptCore's (patch 0037).
 int pyro_jsc_module_phases_available(void) { return 0; }
