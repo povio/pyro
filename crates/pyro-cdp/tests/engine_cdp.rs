@@ -6906,6 +6906,78 @@ fn a_resize_observer_loop_does_not_hold_a_click() {
     assert_eq!(r["result"]["reads"]["title"], "clicked", "{r}");
 }
 
+/// An animation that never ends (a loading spinner) keeps the
+/// ResizeObserver gathers paced while a page observes sizes that do not
+/// change. Those pacing wakes are not owed work for input: a click proceeds,
+/// as in Chromium (they held every press until its deadline: no size
+/// changed, so no round was ever delivered). Settling still samples the
+/// animation (`pending_resize_observer_work`).
+#[test]
+fn a_moving_animation_with_resize_observers_does_not_hold_a_click() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+  @keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+  #spinner { width: 10px; height: 10px; animation: spin 1s linear infinite }
+</style>
+<div id="spinner"></div><div id="t" style="width:100px;height:20px"></div>
+<button id="b" onclick="document.title = 'clicked ' + rounds">Go</button>
+<script>
+  let rounds = 0;
+  new ResizeObserver(() => { rounds++; }).observe(document.getElementById('t'));
+</script>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 3000, "steps": [
+            {"act": {"locator": {"css": "#b"}, "action": "click", "settle": false}},
+            {"eval": {"expression": "document.title", "as": "title"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    // The initial observation was delivered once; nothing resized after it.
+    assert_eq!(r["result"]["reads"]["title"], "clicked 1", "{r}");
+}
+
+/// A loading spinner (an animation that repeats forever) or a toast's
+/// progress bar (2.5 s, longer than the settle limit) on a page with
+/// ResizeObservers does not hold an action's settle to its limit: settling
+/// cannot wait them out, and every action waited out the limit (a form of
+/// many steps ran out of time). One that ends within the limit still is.
+#[test]
+fn settle_does_not_wait_out_its_limit_for_a_spinner_or_a_long_animation() {
+    for animation in ["spin 1s linear infinite", "spin 2500ms linear"] {
+        let mut h = Harness::new();
+        load_html(
+            &mut h,
+            &format!(
+                r#"<!doctype html><style>
+  @keyframes spin {{ from {{ transform: rotate(0deg) }} to {{ transform: rotate(360deg) }} }}
+  #spinner {{ width: 10px; height: 10px; animation: {animation} }}
+</style>
+<div id="spinner"></div><div id="t" style="width:100px;height:20px"></div>
+<button id="b" onclick="document.title = 'clicked'">Go</button>
+<script>new ResizeObserver(() => {{}}).observe(document.getElementById('t'));</script>"#
+            ),
+        );
+        let r = h.page(
+            "Pyro.run",
+            json!({"timeout": 3000, "steps": [
+                {"act": {"locator": {"css": "#b"}, "action": "click"}},
+                {"act": {"locator": {"css": "#b"}, "action": "click"}},
+                {"eval": {"expression": "document.title", "as": "title"}},
+            ]}),
+        );
+        assert!(r.get("error").is_none(), "{animation}: {r}");
+        assert_eq!(r["result"]["reads"]["title"], "clicked", "{animation}: {r}");
+        for click in [&r["result"]["results"][0], &r["result"]["results"][1]] {
+            assert!(click.get("settled").is_none(), "{animation}: {r}");
+            assert!(click["settleMs"].as_f64().unwrap() < 500.0, "{animation}: {r}");
+        }
+    }
+}
+
 /// Playwright's visibility: `visibility: hidden` or `collapse` (own or
 /// inherited) is not visible to the `visible` filter, `read: visible` and the
 /// visible/hidden checks, and an action waits on it.

@@ -2575,6 +2575,15 @@ impl PageDom {
         self.resizes.pending_work()
     }
 
+    /// Resize work owed now: queued callbacks or a gather owed to a changed
+    /// layout, not the pacing wake of a moving animation. A press waits for
+    /// it, and a settle brings it forward; a pacing wake samples at the frame
+    /// interval (bringing it forward lays the whole document out again, for
+    /// every action on a page whose transitions run).
+    pub fn owed_resize_observer_work(&self) -> bool {
+        self.resizes.owed_work()
+    }
+
     /// Rounds of ResizeObserver callbacks delivered so far.
     pub fn resize_observer_deliveries(&self) -> u64 {
         self.resizes.deliveries()

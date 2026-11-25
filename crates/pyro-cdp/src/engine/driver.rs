@@ -1351,7 +1351,7 @@ impl Sequence {
         // and never holds input for them) do not hold the press.
         if !self.opts.force
             && matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
-            && page.pending_resize_observer_work()
+            && page.owed_resize_observer_work()
         {
             let delivered = page.resize_observer_deliveries();
             let first = *self.resize_round.get_or_insert(delivered);
@@ -1510,7 +1510,7 @@ impl Sequence {
         let (observers, queued, wake, next) = self.page.resize_observer_work_state();
         format!(
             "press_next={press_next}, resize_pending={}, resize_observers={observers}, resize_callback_queued={queued}, resize_wake_queued={wake}, resize_next_gather_ms={:?}, stability(ready,frame_done,previous)={stability:?}",
-            self.page.pending_resize_observer_work(),
+            self.page.owed_resize_observer_work(),
             next.map(|delay| delay.as_secs_f64() * 1000.0),
         )
     }

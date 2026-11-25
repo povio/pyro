@@ -624,13 +624,49 @@ fn walk(page: &PageDom, now: f64, transitions: bool, visit: &mut dyn FnMut(NodeI
 }
 
 fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMut(NodeId, Level, Effect)) -> bool {
+    walk_motion(page, clock, transitions, visit).moving
+}
+
+/// What moves at a walk's time.
+#[derive(Clone, Copy, Default)]
+struct Motion {
+    /// A value moves with time.
+    moving: bool,
+    /// One of the moving values ends within [`ENDING_HORIZON_MS`] (a drawer
+    /// sliding in). Not one that repeats forever (a loading spinner) or runs
+    /// longer (a toast's 2.5 s progress bar): an action's settle could not
+    /// wait those out (the driver's limit is a second), only lose its time.
+    ending: bool,
+}
+
+/// How soon a moving value must end for settling to wait for it: the driver's
+/// settle limit (pyro-cdp `SETTLE_MAX`).
+const ENDING_HORIZON_MS: f64 = 1_000.0;
+
+/// Milliseconds of wall time until a value at local time `local`, playing at
+/// `rate`, leaves its active interval and end delay (infinite for one that
+/// repeats forever or does not play).
+fn remaining_ms(timing: &Timing, local: f64, rate: f64) -> f64 {
+    if rate == 0.0 {
+        return f64::INFINITY;
+    }
+    let active = if timing.duration == 0.0 || timing.iterations == 0.0 { 0.0 } else { timing.duration * timing.iterations };
+    if !active.is_finite() {
+        return f64::INFINITY;
+    }
+    let left = if rate > 0.0 { timing.delay + active + timing.end_delay - local } else { local };
+    (left / rate.abs()).max(0.0)
+}
+
+fn walk_motion(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMut(NodeId, Level, Effect)) -> Motion {
     let now = clock.now();
     let settled = matches!(clock, Clock::Settled);
     let state = &page.animation_events;
-    let Ok(scripted) = state.scripted.try_borrow() else { return false };
-    let Some((animations, transition_list)) = state.try_timelines() else { return false };
+    let Ok(scripted) = state.scripted.try_borrow() else { return Motion::default() };
+    let Some((animations, transition_list)) = state.try_timelines() else { return Motion::default() };
     let overrides: FxHashMap<u64, &Scripted> = scripted.values().filter_map(|s| Some((s.css?, s))).collect();
     let mut moving = false;
+    let mut ending = false;
     // Transitions, in the order they started (none when settled: finished;
     // none for the layout engine, which samples no transitions).
     for t in transition_list.iter().filter(|t| transitions && !settled && t.is_live()) {
@@ -643,7 +679,9 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             None => (now - t.start_ms(), 1.0, transition_timing(t), Some(Arc::from(t.easing().unwrap_or("ease")))),
         };
         let Some(p) = progress(&timing, local, rate) else { continue };
-        moving |= p.moving && overrides.get(&t.id()).is_none_or(|s| s.hold.is_none() && s.rate != 0.0);
+        let moves = p.moving && overrides.get(&t.id()).is_none_or(|s| s.hold.is_none() && s.rate != 0.0);
+        moving |= moves;
+        ending |= moves && remaining_ms(&timing, local, rate) <= ENDING_HORIZON_MS;
         // An effect script gave the object replaces the transition's.
         let (el, keyframes) = match overrides.get(&t.id()) {
             Some(s) if !s.keyframes.frames.is_empty() => (s.el.unwrap_or(t.el()), s.keyframes.clone()),
@@ -666,7 +704,9 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
     }
     // SMIL `<animate>` elements, under the CSS animations of their targets.
     let now_or_settled = (!settled).then_some(now);
-    moving |= crate::smil::walk(page, now_or_settled, &mut |el, effect| visit(el, Level::Animation, effect));
+    let smil = crate::smil::walk(page, now_or_settled, &mut |el, effect| visit(el, Level::Animation, effect));
+    moving |= smil;
+    ending |= smil;
     // CSS animations, in each element's `animation-name` order.
     for t in animations.iter().filter(|t| t.is_live()) {
         let Some((own_timing, style)) = css_animation_timing(t) else { continue };
@@ -729,7 +769,9 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
         let Some(local) = clock.local(&timing, local, rate) else { continue };
         let bounds = overrides.get(&t.id()).and_then(|s| s.scroll.as_ref()).map_or((false, false), |r| scroll_bounds(page, r));
         let Some((p, level)) = in_effect_or_current_bounded(&timing, local, rate, settled, bounds) else { continue };
-        moving |= p.moving && !held;
+        let moves = p.moving && !held;
+        moving |= moves;
+        ending |= moves && remaining_ms(&timing, local, rate) <= ENDING_HORIZON_MS;
         let effect = match overrides.get(&t.id()) {
             // An effect script gave the object replaces the `@keyframes`.
             Some(s) if !s.keyframes.frames.is_empty() => Effect {
@@ -780,7 +822,9 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
         let bounds = s.scroll.as_ref().map_or((false, false), |r| scroll_bounds(page, r));
         let Some((p, level)) = in_effect_or_current_bounded(&s.timing, local, s.rate, settled, bounds) else { continue };
         // (One on a progress-based timeline moves with scrolling: the stamp follows the scroll.)
-        moving |= p.moving && s.hold.is_none() && s.rate != 0.0 && s.scroll.is_none();
+        let moves = p.moving && s.hold.is_none() && s.rate != 0.0 && s.scroll.is_none();
+        moving |= moves;
+        ending |= moves && remaining_ms(&s.timing, local, s.rate) <= ENDING_HORIZON_MS;
         let effect = Effect {
             keyframes: Keyframes::Text(s.keyframes.clone()),
             progress: p.progress,
@@ -801,7 +845,7 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
         };
         visit(el, level, effect);
     }
-    moving
+    Motion { moving, ending }
 }
 
 /// Changes whenever the frame at `now` could differ from an earlier one: the
@@ -1031,6 +1075,13 @@ impl PageDom {
     pub fn moving_animation_frame_interval(&self) -> Option<std::time::Duration> {
         walk(self, crate::event::page_now_ms(self), true, &mut |_, _, _| {})
             .then(|| std::time::Duration::from_millis(FRAME_MS as u64))
+    }
+
+    /// [`Self::moving_animation_frame_interval`], and whether a moving value
+    /// ends soon enough for settling to wait for it ([`Motion::ending`]).
+    pub(crate) fn moving_animation_pacing(&self) -> Option<(std::time::Duration, bool)> {
+        let motion = walk_motion(self, Clock::At(crate::event::page_now_ms(self)), true, &mut |_, _, _| {});
+        motion.moving.then(|| (std::time::Duration::from_millis(FRAME_MS as u64), motion.ending))
     }
 
     /// The style update at the end of an animation frame (after its
