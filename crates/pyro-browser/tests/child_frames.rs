@@ -1091,6 +1091,61 @@ fn first_same_origin_document_reuses_the_initial_window() {
     );
 }
 
+/// The Window an iframe's first same-origin document reuses keeps the
+/// per-realm bindings install.js made for its initial about:blank document.
+/// Its Blob and File constructors read their parts (they made empty blobs,
+/// so a test runner's `new File([xml])` uploaded nothing), and the other
+/// helper-backed APIs work there as they do in a new Window.
+#[test]
+fn reused_window_keeps_its_blob_and_helper_bindings() {
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("https://example.test/main", "text/html", "<body></body>", Duration::ZERO);
+    let probe = "[new Blob(['abc']).size, new File([new Uint8Array(4)], 'f.xml', { type: 'text/xml' }).size, \
+                 new Blob([new Blob(['xy']), 'z\\r\\n'], { endings: 'native' }).size, \
+                 new TextDecoder('latin1').decode(new Uint8Array([0xe9])), new Headers({ a: '1' }).get('a'), \
+                 new URLSearchParams('q=1&q=2').getAll('q').join('+'), structuredClone({ n: 5 }).n].join(',')";
+    loader.insert(
+        "https://example.test/child",
+        "text/html",
+        &format!("<script>window.made = {probe}</script>"),
+        Duration::from_millis(10),
+    );
+    loader.insert(
+        "https://example.test/next",
+        "text/html",
+        &format!("<script>window.made = {probe}</script>"),
+        Duration::ZERO,
+    );
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar("https://example.test/main")).unwrap();
+    settle(&mut t);
+    let root = main_realm(&t, page);
+    eval(
+        &root,
+        "globalThis.f = document.createElement('iframe'); f.src = '/child'; document.body.appendChild(f); \
+         globalThis.w = f.contentWindow",
+    );
+    settle(&mut t);
+    assert_eq!(eval(&root, "f.contentWindow === w"), "true", "the child document reuses the initial Window");
+    let expected = "3,4,4,é,1,1+2,5";
+    assert_eq!(eval(&root, "w.made"), expected);
+    // Constructed from the parent through the reused Window, and through its eval.
+    assert_eq!(
+        eval(
+            &root,
+            "[new w.Blob(['abcd']).size, new w.File(['ab'], 'a').size, \
+             w.eval(\"new Blob([new Uint8Array(6)]).size\")].join()"
+        ),
+        "4,2,6"
+    );
+    // A new Window (the second navigation) has them too.
+    eval(&root, "f.src = '/next'");
+    settle(&mut t);
+    assert_eq!(eval(&root, "f.contentWindow.made"), expected);
+}
+
 /// A frame document is given to the renderer at its own base URL (its `<base href>`), as the top
 /// document's capture is (security review cycle 5, 5).
 #[test]
