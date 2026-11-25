@@ -591,6 +591,7 @@ fn global_object_backed_by_host_class() {
         }
     }
     let e = engine();
+    e.register::<Element>();
     let id = e.register::<Window>();
     let r = e.create_realm(RealmOptions { global_class: Some(id), ..Default::default() }).unwrap();
     let drops = Rc::new(Cell::new(0));
@@ -605,6 +606,12 @@ fn global_object_backed_by_host_class() {
         ("alert2 === Window.prototype.alert2 && ping === EventTarget.prototype.ping", "true"),
         ("Object.prototype.toString.call(globalThis)", "[object Window]"),
         ("({}) instanceof Window", "false"),
+        // The global is an instance of its own interfaces only. Node and Element inherit
+        // EventTarget's `Symbol.hasInstance` (their interface objects' prototype chain), and
+        // must not accept the global through it.
+        ("Object.getPrototypeOf(Element) === Node && Object.getPrototypeOf(Node) === EventTarget", "true"),
+        ("globalThis instanceof Node", "false"),
+        ("globalThis instanceof Element", "false"),
         ("(function () { 'use strict'; return EventTarget.prototype.ping.call(undefined) })()", "pong"),
     ];
     for (src, want) in checks {

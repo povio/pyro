@@ -555,10 +555,22 @@
           defineProperty(global, key, getOwnPropertyDescriptor(proto, key));
         }
       }
+      // Only the global's own interfaces accept it. Interface objects inherit from their parent
+      // interface's (Element -> Node -> EventTarget), so the brand on EventTarget is also what
+      // `window instanceof Element` finds: it must not answer true there (react-aria tests a
+      // Window focus event's target with `instanceof Element` before calling `matches`).
+      // `instanceof` calls it with the constructor script sees (`ctors`), whose target is the
+      // function the brand is defined on (`targets`).
+      const brands = [];
+      for (let i = 0; i < targets.length; i++) apply(arrayPush, brands, [targets[i], ctors[i]]);
+      const branded = (C) => {
+        for (let i = 0; i < brands.length; i++) if (brands[i] === C) return true;
+        return false;
+      };
       for (let i = 0; i < targets.length; i++) {
         const C = targets[i];
         defineProperty(C, Symbol.hasInstance, {
-          value: { [Symbol.hasInstance](v) { return v === global || apply(hasInstance, this, [v]); } }[Symbol.hasInstance],
+          value: { [Symbol.hasInstance](v) { return (v === global && branded(this)) || apply(hasInstance, this, [v]); } }[Symbol.hasInstance],
           configurable: true,
         });
       }
