@@ -339,6 +339,42 @@ fn get_animations_lists_css_animations_and_transitions() {
     assert_eq!(eval(&root, "document.getAnimations().map(a => a.constructor.name).join()"), "CSSTransition");
 }
 
+#[test]
+fn a_css_transition_listed_while_pending_finishes_when_it_ends_before_its_pending_play() {
+    // react-aria's exit animation: the class that starts a transition, then `getAnimations()` in
+    // the same task waits for `finished` before it unmounts. A transition over before the object's
+    // pending play ran (a short one, a busy task) has ended, not been canceled: Chrome (checked
+    // 2026-11-26) resolves `finished`; it rejected with an AbortError and the popover stayed.
+    // (No transition event listener, as on the page: `getAnimations()` keeps the transitions.)
+    let (mut t, root) = page();
+    eval(
+        &root,
+        "document.head.appendChild(document.createElement('style')).textContent =
+           '.box { opacity: 1; transition: opacity 1ms } .box.out { opacity: 0 }'; 0",
+    );
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(50)));
+    eval(
+        &root,
+        "globalThis.box = document.body.appendChild(document.createElement('div')); box.className = 'box';
+         globalThis.other = document.body.appendChild(document.createElement('div'));
+         // (Listed once before, as the popover's entering transitions were.)
+         box.offsetHeight; document.getAnimations();
+         setTimeout(() => {
+           // A task queued before the change, that runs after it: another style change and
+           // another `getAnimations()` (a toast showing), which find the transition over.
+           setTimeout(() => { other.style.width = '7px'; document.getAnimations(); }, 0);
+           box.classList.add('out');
+           const list = box.getAnimations();
+           globalThis.result = list.length + ':' + list[0].pending;
+           const until = performance.now() + 20;
+           while (performance.now() < until) {}
+           list[0].finished.then(a => result += ':finished:' + a.playState, e => result += ':' + e.name);
+         }, 0); 0",
+    );
+    run_until(&mut t, &root, "/finished|Error/.test(String(globalThis.result))");
+    assert_eq!(eval(&root, "result"), "1:true:finished:finished");
+}
+
 /// A page with the sheet `css`, listening for the transition events
 /// (`log`), with helpers to add a sheet and an element: `sheet(text)`,
 /// `el(id, class, parent)`. The sheet is registered in a task of its own:

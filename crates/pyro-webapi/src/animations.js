@@ -1881,6 +1881,9 @@
     // as a CSS animation or transition that starts does: listed by
     // getAnimations() however short it is, `ready` once it runs.
     const age = now() - start;
+    // (When the engine's timeline ends: `endedWhilePending`.)
+    a.cssStart = start;
+    a.cssEnd = start + delay + duration * iterations;
     if (held !== null) {
       a.startTime = null;
       a.holdTime = held;
@@ -2057,9 +2060,23 @@
       if (gone) {
         gone.cssOwner = null;
         triggered.delete(gone);
-        if (gone.css === CSS_ANIMATION || playStateOf(gone) !== 'finished') cancel(gone);
+        if (endedWhilePending(gone)) finishEndedCss(gone);
+        else if (gone.css === CSS_ANIMATION || playStateOf(gone) !== 'finished') cancel(gone);
       }
     }
+  }
+  // A transition the engine dropped at its end (its time passed: the engine's clock is this one)
+  // while its object still waited for its pending play (a busy task, then a style change event
+  // before that play's task): it ended, so it finishes, as in Chrome, and is not canceled.
+  function endedWhilePending(a) {
+    return a.css === CSS_TRANSITION && a.pending === 'play' && !a.scripted && a.cssEnd !== undefined && now() >= a.cssEnd;
+  }
+  function finishEndedCss(a) {
+    cancelPending(a);
+    a.startTime = a.cssStart;
+    a.holdTime = null;
+    settle(a.ready, a.self, false);
+    updateFinished(a, true, false);
   }
 
   function viewRuns(target, entries) {
