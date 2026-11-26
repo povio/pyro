@@ -1564,6 +1564,14 @@ impl Geometry {
                             let offset = |b: usize| map[(b - base).min(map.len() - 1)];
                             let (start, end) =
                                 if cluster.is_rtl() { (range.end, range.start) } else { (range.start, range.end) };
+                            // A collapsed space the layout keeps at the start of this node's text
+                            // (white space collapsing moved it there from the node before) is no
+                            // character of this node: no word of it, or a range over the node would
+                            // reach back to where the space is, at the end of the line before.
+                            if blank && offset(start) == offset(end) {
+                                x += advance;
+                                continue;
+                            }
                             let w = word.get_or_insert_with(|| (i, vec![(offset(start), x)]));
                             w.1.push((offset(end), x + advance));
                             if blank {

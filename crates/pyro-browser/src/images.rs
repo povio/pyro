@@ -787,10 +787,13 @@ impl Browser {
                 raster = Some(r);
                 return Some(size);
             }
-            if !ok_status {
+            // A PNG/GIF/JPEG/WebP whose header does not parse is corrupt: `error`, as Chromium
+            // (and as `fetch_for_load_event` has it for `<object>` and SVG `<image>`). A format
+            // without a header parser here (AVIF, ICO, ...) loads with no natural size.
+            if !ok_status || matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp") {
                 return None;
             }
-            decodable = !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp");
+            decodable = true;
             r.mime.starts_with("image/").then_some(None)
         });
         let decodable = decodable && outcome.is_some();

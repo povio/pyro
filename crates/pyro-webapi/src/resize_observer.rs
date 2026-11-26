@@ -42,11 +42,41 @@ fn observation_stamp(page: &PageDom) -> Stamp {
     (page.document(), layout.observation_stamp(&page.dom.borrow()), layout.style().animation_stamp())
 }
 
-fn schedule_gather(owner: &Rc<PageDom>, delay: Duration) {
-    if owner.resizes.wake_queued.borrow().is_some() { return; }
+/// Why a gather wake is queued.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Wake {
+    /// A gather is owed to a layout that changed.
+    Owed,
+    /// Nothing is owed: the wake samples a page whose animations keep
+    /// moving. `ending`: one of them ends within the settle limit (a drawer
+    /// sliding in), not only ones that repeat forever or run longer (a
+    /// loading spinner, a toast's progress bar).
+    Pacing { ending: bool },
+}
+
+impl Default for Wake {
+    /// A wake of unknown cause is work.
+    fn default() -> Self {
+        Wake::Owed
+    }
+}
+
+/// Queues the delayed wake that runs the next gather. A wake already queued
+/// takes on what the later one adds: an owed gather rides on a pacing wake
+/// (then owed), as does an ending animation on a pacing one.
+fn schedule_gather(owner: &Rc<PageDom>, delay: Duration, wake: Wake) {
+    if owner.resizes.wake_queued.borrow().is_some() {
+        let merged = match (owner.resizes.wake_kind.get(), wake) {
+            (Wake::Owed, _) | (_, Wake::Owed) => Wake::Owed,
+            (Wake::Pacing { ending: a }, Wake::Pacing { ending: b }) => Wake::Pacing { ending: a || b },
+        };
+        owner.resizes.wake_kind.set(merged);
+        return;
+    }
     if let Some(hooks) = owner.hooks() {
         let token = Rc::new(());
         *owner.resizes.wake_queued.borrow_mut() = Some(token.clone());
+        owner.resizes.wake_kind.set(wake);
         let weak = Rc::downgrade(owner);
         hooks.post_delayed_task(delay, Box::new(move || {
             if let Some(page) = weak.upgrade() {
@@ -67,6 +97,8 @@ pub(crate) struct BindingState {
     /// of the delayed wake that may perform it.
     next_gather: Cell<Option<Instant>>,
     wake_queued: RefCell<Option<Rc<()>>>,
+    /// Why the queued wake is queued (meaningless without one).
+    wake_kind: Cell<Wake>,
     /// Rounds of callbacks delivered so far (input readiness waits for one
     /// round, not for observers that resize again in every round).
     deliveries: Cell<u64>,
@@ -78,14 +110,32 @@ impl BindingState {
     pub(crate) fn has_observers(&self) -> bool {
         !self.observers.borrow().is_empty()
     }
+    /// Work a page settling waits for: callbacks queued, a gather owed, or
+    /// the sampling of an animation that ends within the settle limit (its
+    /// last sizes are still to be delivered). Not one that repeats forever or
+    /// runs longer (a spinner, a toast's progress bar): each action would
+    /// wait out the settle limit for nothing.
     pub(crate) fn pending_work(&self) -> bool {
-        self.has_observers() && (self.queued.get() || self.wake_queued.borrow().is_some())
+        self.has_observers()
+            && (self.queued.get()
+                || (self.wake_queued.borrow().is_some() && self.wake_kind.get() != Wake::Pacing { ending: false }))
+    }
+    /// Callbacks queued, or a gather owed to a changed layout: what input
+    /// waits for and a settle brings forward. A pacing wake is not: it is
+    /// queued again after every sample for as long as an animation moves (an
+    /// infinite spinner: always), and with no size changing no round is ever
+    /// delivered, so a press would wait until its deadline.
+    pub(crate) fn owed_work(&self) -> bool {
+        self.has_observers() && (self.queued.get() || self.owed_wake())
+    }
+    fn owed_wake(&self) -> bool {
+        self.wake_queued.borrow().is_some() && self.wake_kind.get() == Wake::Owed
     }
     pub(crate) fn pending_work_state(&self) -> (bool, bool, bool, Option<Duration>) {
         (
             self.has_observers(),
             self.queued.get(),
-            self.wake_queued.borrow().is_some(),
+            self.owed_wake(),
             self.next_gather.get().map(|next| next.saturating_duration_since(Instant::now())),
         )
     }
@@ -398,7 +448,7 @@ pub(crate) fn after_task(page: &PageDom) {
         // once more so the final size is still delivered.
         let now = Instant::now();
         if let Some(next) = page.resizes.next_gather.get().filter(|&n| n > now) {
-            schedule_gather(&owner, next - now);
+            schedule_gather(&owner, next - now, Wake::Owed);
             return;
         }
     }
@@ -430,9 +480,9 @@ pub(crate) fn after_task(page: &PageDom) {
     let pending =
         page.resizes.observers.borrow().iter().filter_map(Weak::upgrade).any(|o| !o.records.borrow().is_empty());
     if !page.resizes.pins.borrow().is_empty() && page.resizes.wake_queued.borrow().is_none() {
-        if let Some(interval) = page.moving_animation_frame_interval() {
+        if let Some((interval, ending)) = page.moving_animation_pacing() {
             let remaining = page.resizes.next_gather.get().map_or(Duration::ZERO, |next| next.saturating_duration_since(Instant::now()));
-            schedule_gather(&owner, interval.max(remaining));
+            schedule_gather(&owner, interval.max(remaining), Wake::Pacing { ending });
         }
     }
     if pending && !page.resizes.queued.get() {

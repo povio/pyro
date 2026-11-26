@@ -1351,7 +1351,7 @@ impl Sequence {
         // and never holds input for them) do not hold the press.
         if !self.opts.force
             && matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
-            && page.pending_resize_observer_work()
+            && page.owed_resize_observer_work()
         {
             let delivered = page.resize_observer_deliveries();
             let first = *self.resize_round.get_or_insert(delivered);
@@ -1510,7 +1510,7 @@ impl Sequence {
         let (observers, queued, wake, next) = self.page.resize_observer_work_state();
         format!(
             "press_next={press_next}, resize_pending={}, resize_observers={observers}, resize_callback_queued={queued}, resize_wake_queued={wake}, resize_next_gather_ms={:?}, stability(ready,frame_done,previous)={stability:?}",
-            self.page.pending_resize_observer_work(),
+            self.page.owed_resize_observer_work(),
             next.map(|delay| delay.as_secs_f64() * 1000.0),
         )
     }
@@ -3714,8 +3714,9 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(
             // A transient pointer block (e.g. a virtual list while scrolling)
             // needs time, not another scroll that can dismiss its popover.
             let hit_testable = page.layout().style().is_hit_testable(&page.dom.borrow(), id);
-            if opts.position.is_none() && hit_testable && super::dom::reveal_centered(page, id) {
-                return Err(Attempt::RetrySoon(format!("centered target after <{tag}> intercepted pointer events")));
+            if opts.position.is_none() && hit_testable && super::dom::reveal_past_interception(page, id) {
+                // A cover that stays (an overlay) keeps reporting what it is, as Playwright's log does.
+                return Err(Attempt::RetrySoon(format!("<{tag}> intercepts pointer events (target scrolled, retrying)")));
             }
             Err(Attempt::Retry(format!("<{tag}> intercepts pointer events")))
         }

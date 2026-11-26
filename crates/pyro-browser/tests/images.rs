@@ -88,6 +88,29 @@ fn parsed_images_report_natural_size_and_delay_window_load() {
     );
 }
 
+/// A PNG/GIF/JPEG/WebP response whose header does not parse is a broken image, `error` as in
+/// Chromium, whether it came over the network or as a `data:` URL (a React fallback that swaps
+/// in a placeholder `onError` never sees `load`). A format with no header parser still loads.
+#[test]
+fn corrupt_images_fire_error() {
+    let (mut thread, page, loader) = setup(
+        "<img id=a src=/bad.png><img id=b src=/bad.jpg><img id=c src='data:image/png;base64,broken'>\
+         <img id=d src='data:image/gif;base64,R0lGODlh'><img id=e src=/ok.avif><img id=f src=/good.png>",
+    );
+    loader.insert("http://site.test/bad.png", "image/png", "garbage-bytes-here", Duration::ZERO);
+    loader.insert("http://site.test/bad.jpg", "image/jpeg", "garbage-bytes-here", Duration::ZERO);
+    loader.insert("http://site.test/ok.avif", "image/avif", "\0\0\0\x1cftypavif", Duration::ZERO);
+    loader.insert_bytes("http://site.test/good.png", "image/png", &png(3, 2), Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let events = eval(&thread, page, "events.join('|')");
+    for expected in
+        ["a:error:true:0x0", "b:error:true:0x0", "c:error:true:0x0", "d:error:true:0x0", "e:load:true:0x0", "f:load:true:3x2"]
+    {
+        assert!(events.contains(expected), "{expected} in {events}");
+    }
+}
+
 #[test]
 fn svg_image_completion_preserves_available_html_image() {
     let (mut thread, page, loader) = setup("<img src='/asset.png'><svg id='svg'></svg>");

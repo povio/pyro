@@ -372,8 +372,12 @@ pub fn adopt_window(old: &PageDom, new: &Rc<PageDom>, realm: pyro_js::RealmId) -
         dom.set_document_window(new_doc, Some(old_key));
     }
     // The realm's helpers (made by install.js once) and roots go along.
+    // `realm_disposed` then clears whatever is left on `old` for this realm:
+    // a helper missing here is gone for the reused Window (without
+    // `blob_parts`, every Blob and File it made was empty).
     for (from, to) in [
         (&old.window_holders, &new.window_holders),
+        (&old.blob_parts, &new.blob_parts),
         (&old.encoding_helpers, &new.encoding_helpers),
         (&old.header_helpers, &new.header_helpers),
         (&old.url_params_helpers, &new.url_params_helpers),

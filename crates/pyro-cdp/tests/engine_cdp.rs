@@ -6906,6 +6906,78 @@ fn a_resize_observer_loop_does_not_hold_a_click() {
     assert_eq!(r["result"]["reads"]["title"], "clicked", "{r}");
 }
 
+/// An animation that never ends (a loading spinner) keeps the
+/// ResizeObserver gathers paced while a page observes sizes that do not
+/// change. Those pacing wakes are not owed work for input: a click proceeds,
+/// as in Chromium (they held every press until its deadline: no size
+/// changed, so no round was ever delivered). Settling still samples the
+/// animation (`pending_resize_observer_work`).
+#[test]
+fn a_moving_animation_with_resize_observers_does_not_hold_a_click() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+  @keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+  #spinner { width: 10px; height: 10px; animation: spin 1s linear infinite }
+</style>
+<div id="spinner"></div><div id="t" style="width:100px;height:20px"></div>
+<button id="b" onclick="document.title = 'clicked ' + rounds">Go</button>
+<script>
+  let rounds = 0;
+  new ResizeObserver(() => { rounds++; }).observe(document.getElementById('t'));
+</script>"#,
+    );
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 3000, "steps": [
+            {"act": {"locator": {"css": "#b"}, "action": "click", "settle": false}},
+            {"eval": {"expression": "document.title", "as": "title"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    // The initial observation was delivered once; nothing resized after it.
+    assert_eq!(r["result"]["reads"]["title"], "clicked 1", "{r}");
+}
+
+/// A loading spinner (an animation that repeats forever) or a toast's
+/// progress bar (2.5 s, longer than the settle limit) on a page with
+/// ResizeObservers does not hold an action's settle to its limit: settling
+/// cannot wait them out, and every action waited out the limit (a form of
+/// many steps ran out of time). One that ends within the limit still is.
+#[test]
+fn settle_does_not_wait_out_its_limit_for_a_spinner_or_a_long_animation() {
+    for animation in ["spin 1s linear infinite", "spin 2500ms linear"] {
+        let mut h = Harness::new();
+        load_html(
+            &mut h,
+            &format!(
+                r#"<!doctype html><style>
+  @keyframes spin {{ from {{ transform: rotate(0deg) }} to {{ transform: rotate(360deg) }} }}
+  #spinner {{ width: 10px; height: 10px; animation: {animation} }}
+</style>
+<div id="spinner"></div><div id="t" style="width:100px;height:20px"></div>
+<button id="b" onclick="document.title = 'clicked'">Go</button>
+<script>new ResizeObserver(() => {{}}).observe(document.getElementById('t'));</script>"#
+            ),
+        );
+        let r = h.page(
+            "Pyro.run",
+            json!({"timeout": 3000, "steps": [
+                {"act": {"locator": {"css": "#b"}, "action": "click"}},
+                {"act": {"locator": {"css": "#b"}, "action": "click"}},
+                {"eval": {"expression": "document.title", "as": "title"}},
+            ]}),
+        );
+        assert!(r.get("error").is_none(), "{animation}: {r}");
+        assert_eq!(r["result"]["reads"]["title"], "clicked", "{animation}: {r}");
+        for click in [&r["result"]["results"][0], &r["result"]["results"][1]] {
+            assert!(click.get("settled").is_none(), "{animation}: {r}");
+            assert!(click["settleMs"].as_f64().unwrap() < 500.0, "{animation}: {r}");
+        }
+    }
+}
+
 /// Playwright's visibility: `visibility: hidden` or `collapse` (own or
 /// inherited) is not visible to the `visible` filter, `read: visible` and the
 /// visible/hidden checks, and an action waits on it.
@@ -6947,6 +7019,27 @@ fn a_range_over_display_contents_children_unites_their_boxes() {
         "(() => { const rect = (b) => [b.x, b.y, b.width, b.height].map(Math.round).join();            const range = (id) => { const r = document.createRange(); r.selectNodeContents(document.getElementById(id)); return rect(r.getBoundingClientRect()); };            const x = x_ => document.getElementById(x_).getBoundingClientRect();            const [a, b] = [x('x'), x('y')];            return [range('c') === rect(x('in')), rect(x('in')) !== '0,0,0,0',                    range('m') === [a.x, a.y, b.right - a.x, Math.max(a.bottom, b.bottom) - a.y].map(Math.round).join()].join(); })()",
     );
     assert_eq!(r, json!("true,true,true"));
+}
+
+/// A range over an inline element that starts a line (`selectNodeContents`, or one
+/// over its text) covers that line alone, as the element's own box does: not the
+/// end of the line before, where the break before it was (a line count from its
+/// height would read two lines).
+#[test]
+fn a_range_over_an_inline_that_starts_a_line_stays_on_that_line() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<body style="margin:0"><p style="width:300px;font:600 14px/24px sans-serif;margin:0">Za dokončanje registracije odprite potrditveno povezavo, poslano na <strong id="s">ana@example.test</strong>.</p></body>"#,
+    );
+    let r = eval_value(
+        &mut h,
+        "(() => { const s = document.getElementById('s'); const e = s.getBoundingClientRect(); \
+           const box = (r) => { const b = r.getBoundingClientRect(); const l = r.getClientRects(); return [b.top === e.top, b.height === e.height, l.length, l[0].top === e.top]; }; \
+           const a = document.createRange(); a.selectNodeContents(s); const t = document.createRange(); t.selectNodeContents(s.firstChild); \
+           return JSON.stringify([e.top > 0, ...box(a), ...box(t)]); })()",
+    );
+    assert_eq!(r, json!("[true,true,true,1,true,true,true,1,true]"));
 }
 
 /// Observers that keep resizing what they observe do not turn the settle
@@ -9987,6 +10080,47 @@ fn driver_centered_retry_still_rejects_a_covering_overlay() {
         json!({"expression":"[document.getElementById('row').checked,clicks]","returnByValue":true}),
     );
     assert_eq!(proof["result"]["result"]["value"], json!([false, 0]), "{proof}");
+}
+
+/// A tooltip that closes when its scroller scrolls covers a button in a `position: sticky`
+/// actions column, with the scroller already at its end. Centering moves nothing there;
+/// Playwright's next retry alignments (`end`, then `start`) do, so the click scrolls the
+/// tooltip away and lands, as in Chromium (it was intercepted until its deadline).
+#[test]
+fn driver_scrolls_a_sticky_target_from_under_a_cover_that_closes_on_scroll() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>body{margin:0}
+      #s{width:400px;overflow:auto} table{width:1000px;border-collapse:collapse}
+      .sticky{position:sticky;right:0;background:white;width:100px}
+      button{width:30px;height:30px}
+      #tip{position:fixed;left:300px;top:0;width:100px;height:40px;background:black;z-index:10}
+    </style><div id=s><table><tr><td style="width:900px">wide</td>
+      <td class=sticky><button id=b onclick="document.title='clicked'">ok</button></td></tr></table></div>
+    <div id=tip></div>
+    <script>const s=document.getElementById('s');s.scrollLeft=s.scrollWidth;window.atEnd=s.scrollLeft;
+      window.armed=false;s.addEventListener('scroll',()=>{if(armed)document.getElementById('tip').remove()});</script>"#,
+    );
+    let pre = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"[atEnd, s.scrollWidth - s.clientWidth, document.elementFromPoint(315,15).id]","returnByValue":true}),
+    );
+    let pre = &pre["result"]["result"]["value"];
+    assert_eq!(pre[0], pre[1], "the scroller starts at its end: {pre}");
+    assert_eq!(pre[2], "tip", "the tooltip covers the button: {pre}");
+    let r = h.page(
+        "Pyro.run",
+        json!({"timeout": 2000, "steps": [
+            // The scroll event of the load's own scrollLeft has been delivered; only the click's scroll counts.
+            {"eval": {"expression": "new Promise((r) => requestAnimationFrame(() => setTimeout(() => { armed = true; r(document.elementFromPoint(315, 15).id); })))", "as": "armed"}},
+            {"act": {"locator": {"css": "#b"}, "action": "click"}},
+            {"eval": {"expression": "[document.title, !!document.getElementById('tip')]", "as": "after"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["armed"], "tip", "the tooltip still covers the button: {r}");
+    assert_eq!(r["result"]["reads"]["after"], json!(["clicked", false]), "{r}");
 }
 
 #[test]

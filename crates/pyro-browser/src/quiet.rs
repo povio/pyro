@@ -131,7 +131,8 @@ impl Browser {
             .keys()
             .into_iter()
             .filter_map(|key| self.doc(key)?.main_frame.page_dom.clone())
-            .filter(|page| page.pending_scroll_work() || page.pending_resize_observer_work())
+            // Owed resize work only: a pacing wake keeps to the frame interval.
+            .filter(|page| page.pending_scroll_work() || page.owed_resize_observer_work())
             .collect();
         for page in pending {
             page.request_rendering_update();
