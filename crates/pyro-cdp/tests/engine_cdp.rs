@@ -7021,6 +7021,27 @@ fn a_range_over_display_contents_children_unites_their_boxes() {
     assert_eq!(r, json!("true,true,true"));
 }
 
+/// A range over an inline element that starts a line (`selectNodeContents`, or one
+/// over its text) covers that line alone, as the element's own box does: not the
+/// end of the line before, where the break before it was (a line count from its
+/// height would read two lines).
+#[test]
+fn a_range_over_an_inline_that_starts_a_line_stays_on_that_line() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<body style="margin:0"><p style="width:300px;font:600 14px/24px sans-serif;margin:0">Za dokončanje registracije odprite potrditveno povezavo, poslano na <strong id="s">ana@example.test</strong>.</p></body>"#,
+    );
+    let r = eval_value(
+        &mut h,
+        "(() => { const s = document.getElementById('s'); const e = s.getBoundingClientRect(); \
+           const box = (r) => { const b = r.getBoundingClientRect(); const l = r.getClientRects(); return [b.top === e.top, b.height === e.height, l.length, l[0].top === e.top]; }; \
+           const a = document.createRange(); a.selectNodeContents(s); const t = document.createRange(); t.selectNodeContents(s.firstChild); \
+           return JSON.stringify([e.top > 0, ...box(a), ...box(t)]); })()",
+    );
+    assert_eq!(r, json!("[true,true,true,1,true,true,true,1,true]"));
+}
+
 /// Observers that keep resizing what they observe do not turn the settle
 /// into a busy loop: it brings a few gathers forward, then the pacing
 /// applies again until it gives up and reports the observers as pending.
