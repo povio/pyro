@@ -6,6 +6,7 @@
 //! The state is one `Cell` on the page: without capture, each mouse event
 //! pays one read of it.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use pyro_dom::NodeId;
@@ -28,6 +29,55 @@ pub struct MouseCapture {
 }
 
 const MOUSE_POINTER_ID: i32 = 1;
+
+/// The pending and the current pointer capture target of a touch pointer.
+#[derive(Copy, Clone, Debug, Default)]
+pub(crate) struct TouchCapture {
+    pub(crate) pending: Option<NodeId>,
+    pub(crate) current: Option<NodeId>,
+}
+
+thread_local! {
+    /// The touches down: (page address, pointerId, capture state). A touch sequence is a few
+    /// entries long at most, so a list.
+    static TOUCH_CAPTURE: RefCell<Vec<(usize, i32, TouchCapture)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn page_key(page: &PageDom) -> usize {
+    page as *const PageDom as usize
+}
+
+/// A touch pointer comes down on `target`: implicit capture is pending for it.
+pub(crate) fn touch_capture_begin(page: &PageDom, id: i32, target: NodeId) {
+    let key = page_key(page);
+    TOUCH_CAPTURE.with(|t| {
+        let mut t = t.borrow_mut();
+        t.retain(|(p, i, _)| !(*p == key && *i == id));
+        t.push((key, id, TouchCapture { pending: Some(target), current: None }));
+    });
+}
+
+/// The capture state of touch pointer `id` while it is down.
+pub(crate) fn touch_capture(page: &PageDom, id: i32) -> Option<TouchCapture> {
+    let key = page_key(page);
+    TOUCH_CAPTURE.with(|t| t.borrow().iter().find(|(p, i, _)| *p == key && *i == id).map(|(_, _, c)| *c))
+}
+
+/// Stores the capture state of touch pointer `id` (only while it is down).
+pub(crate) fn set_touch_capture(page: &PageDom, id: i32, state: TouchCapture) {
+    let key = page_key(page);
+    TOUCH_CAPTURE.with(|t| {
+        if let Some(entry) = t.borrow_mut().iter_mut().find(|(p, i, _)| *p == key && *i == id) {
+            entry.2 = state;
+        }
+    });
+}
+
+/// The touch pointer `id` went away: its capture state with it.
+pub(crate) fn touch_capture_end(page: &PageDom, id: i32) {
+    let key = page_key(page);
+    TOUCH_CAPTURE.with(|t| t.borrow_mut().retain(|(p, i, _)| !(*p == key && *i == id)));
+}
 
 fn capture_connected(page: &PageDom, el: NodeId) -> bool {
     let dom = page.dom.borrow();
@@ -70,6 +120,32 @@ pub(crate) fn process_pending_capture(page: &Rc<PageDom>, m: &MouseInput) {
     }
 }
 
+/// "Process pending pointer capture" for touch pointer `id` (Pointer Events §4.1.3.2): returns
+/// where `lostpointercapture` fires (the old capture target, its document when that left the
+/// document) and where `gotpointercapture` does (the new one); the caller fires them, lost
+/// first. A pending target that left the document is no longer pending.
+pub(crate) fn touch_process_pending(page: &PageDom, id: i32) -> (Option<NodeId>, Option<NodeId>) {
+    let Some(c) = touch_capture(page, id) else { return (None, None) };
+    let pending = c.pending.filter(|&p| capture_connected(page, p));
+    let lost = c.current.filter(|&cur| Some(cur) != pending).map(|cur| if capture_connected(page, cur) { cur } else { page.document() });
+    let mut current = if lost.is_some() { None } else { c.current };
+    let got = pending.filter(|&p| Some(p) != current);
+    if got.is_some() {
+        current = got;
+    }
+    set_touch_capture(page, id, TouchCapture { pending, current });
+    (lost, got)
+}
+
+/// The touch pointer's implicit release after pointerup or pointercancel: no capture is pending
+/// any more, so [`touch_process_pending`] loses the current one (the returned lost target).
+pub(crate) fn touch_release_pending(page: &PageDom, id: i32) -> Option<NodeId> {
+    if let Some(c) = touch_capture(page, id) {
+        set_touch_capture(page, id, TouchCapture { pending: None, ..c });
+    }
+    touch_process_pending(page, id).0
+}
+
 /// The `pointerId` argument (a WebIDL `long`, wrapping modulo 2^32); ids
 /// below 1 are never active pointers.
 fn pointer_id_arg(a: &Args<'_>, method: &str) -> JsResult<i32> {
@@ -81,13 +157,23 @@ fn pointer_id_arg(a: &Args<'_>, method: &str) -> JsResult<i32> {
     Ok(id)
 }
 
-/// `Element.setPointerCapture(pointerId)` for the mouse; other (touch)
-/// pointers keep their implicit capture and ignore it.
+/// `Element.setPointerCapture(pointerId)` for the mouse and the touches down; other ids
+/// are ignored.
 pub(crate) fn set_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let id = pointer_id_arg(&a, "Element.setPointerCapture")?;
     let page = n.page();
+    // (An id that is no active pointer: the mouse, or a touch that is down.)
+    if id != MOUSE_POINTER_ID && touch_capture(page, id).is_none() {
+        return Err(JsError::dom("NotFoundError", "No active pointer with the given id is found."));
+    }
     if !page.dom.borrow().is_connected(n.id).unwrap_or(false) {
         return Err(JsError::dom("InvalidStateError", "The element is not connected."));
+    }
+    if id != MOUSE_POINTER_ID {
+        if let Some(c) = touch_capture(page, id).filter(|_| capture_connected(page, n.id)) {
+            set_touch_capture(page, id, TouchCapture { pending: Some(n.id), ..c });
+        }
+        return Ok(s.undefined());
     }
     let c = page.mouse_capture.get();
     if id == MOUSE_POINTER_ID && c.buttons_down && capture_connected(page, n.id) {
@@ -99,6 +185,15 @@ pub(crate) fn set_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
 pub(crate) fn release_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let id = pointer_id_arg(&a, "Element.releasePointerCapture")?;
     let page = n.page();
+    if id != MOUSE_POINTER_ID && touch_capture(page, id).is_none() {
+        return Err(JsError::dom("NotFoundError", "No active pointer with the given id is found."));
+    }
+    if id != MOUSE_POINTER_ID {
+        if let Some(c) = touch_capture(page, id).filter(|c| c.pending == Some(n.id)) {
+            set_touch_capture(page, id, TouchCapture { pending: None, ..c });
+        }
+        return Ok(s.undefined());
+    }
     let c = page.mouse_capture.get();
     if id == MOUSE_POINTER_ID && c.pending == Some(n.id) {
         page.mouse_capture.set(MouseCapture { pending: None, ..c });
@@ -109,5 +204,11 @@ pub(crate) fn release_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'
 pub(crate) fn has_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(1, "Element.hasPointerCapture")?;
     let id = crate::util::to_i32(a.get(0))?;
-    Ok(s.boolean(id == MOUSE_POINTER_ID && n.page().mouse_capture.get().pending == Some(n.id)))
+    let page = n.page();
+    let has = if id == MOUSE_POINTER_ID {
+        page.mouse_capture.get().pending == Some(n.id)
+    } else {
+        touch_capture(page, id).is_some_and(|c| c.pending == Some(n.id))
+    };
+    Ok(s.boolean(has))
 }

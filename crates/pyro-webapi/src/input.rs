@@ -3460,7 +3460,6 @@ struct ActiveTouch {
     /// The touchstart target: the touch's events go there for the whole
     /// sequence (implicit pointer capture).
     target: NodeId,
-    captured: bool,
     /// A scroll took the touch over: no more pointer events for it.
     pointer_cancelled: bool,
 }
@@ -3604,17 +3603,39 @@ fn touch_pointer_event(
 }
 
 fn fire_touch_pointer(page: &Rc<PageDom>, ty: &str, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers) -> bool {
-    match key_of(page, t.target) {
+    fire_touch_pointer_at(page, t.target, ty, t, p, modifiers)
+}
+
+fn fire_touch_pointer_at(page: &Rc<PageDom>, node: NodeId, ty: &str, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers) -> bool {
+    match key_of(page, node) {
         Some(key) => fire(page, key, &touch_pointer_event(page, ty, t, p, modifiers, None)),
         None => true,
     }
 }
 
-/// gotpointercapture before the touch's first event after pointerdown.
-fn capture(page: &Rc<PageDom>, t: &mut ActiveTouch, p: &PointerState, modifiers: Modifiers) {
-    if !t.captured {
-        t.captured = true;
-        fire_touch_pointer(page, "gotpointercapture", t, p, modifiers);
+/// Where the touch's pointermove, pointerup and pointercancel go: its pointer capture target
+/// (the touchstart target while implicit capture is pending); without capture (script released
+/// it, or the target left the document) the element under the touch, else the touchstart target.
+fn fire_touch_pointer_routed(page: &Rc<PageDom>, ty: &str, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers) -> bool {
+    let node = match crate::pointer_capture::touch_capture(page, t.pointer_id) {
+        Some(c) if c.current.is_some() => c.current,
+        Some(c) if c.pending.is_some() => Some(t.target),
+        _ => None,
+    };
+    let node = node.or_else(|| pointer_target(page, t.input.x, t.input.y, true)).unwrap_or(t.target);
+    fire_touch_pointer_at(page, node, ty, t, p, modifiers)
+}
+
+/// "Process pending pointer capture" before the touch's next pointer event: lostpointercapture
+/// at the old capture target, then gotpointercapture at the new one (the implicit one after
+/// pointerdown, or what script set).
+fn capture(page: &Rc<PageDom>, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers) {
+    let (lost, got) = crate::pointer_capture::touch_process_pending(page, t.pointer_id);
+    if let Some(node) = lost {
+        fire_touch_pointer_at(page, node, "lostpointercapture", t, p, modifiers);
+    }
+    if let Some(node) = got {
+        fire_touch_pointer_at(page, node, "gotpointercapture", t, p, modifiers);
     }
 }
 
@@ -3632,8 +3653,12 @@ fn touch_enter(page: &Rc<PageDom>, t: &ActiveTouch, p: &PointerState, modifiers:
 /// pointerout and pointerleave (inner to outer) for a touch going away.
 fn touch_leave(page: &Rc<PageDom>, last: &str, t: &mut ActiveTouch, p: &PointerState, modifiers: Modifiers) {
     capture(page, t, p, modifiers);
-    fire_touch_pointer(page, last, t, p, modifiers);
-    fire_touch_pointer(page, "lostpointercapture", t, p, modifiers);
+    fire_touch_pointer_routed(page, last, t, p, modifiers);
+    // The implicit release: no capture is pending after the last event of the touch.
+    if let Some(node) = crate::pointer_capture::touch_release_pending(page, t.pointer_id) {
+        fire_touch_pointer_at(page, node, "lostpointercapture", t, p, modifiers);
+    }
+    crate::pointer_capture::touch_capture_end(page, t.pointer_id);
     fire_touch_pointer(page, "pointerout", t, p, modifiers);
     for n in hover_chain(page, t.target) {
         if let Some(k) = key_of(page, n) {
@@ -3918,7 +3943,7 @@ pub fn dispatch_touch(
             }
             let state = PointerState::moved(&t.input);
             capture(page, t, &state, modifiers);
-            fire_touch_pointer(page, "pointermove", t, &state, modifiers);
+            fire_touch_pointer_routed(page, "pointermove", t, &state, modifiers);
         }
         // A single touch within the slop region is still a tap: no
         // touchmove (Chrome's touchmove slop suppression).
@@ -3991,11 +4016,13 @@ pub fn dispatch_touch(
             pointer_id: seq.next_pointer_id,
             primary: seq.active.is_empty(),
             target,
-            captured: false,
             pointer_cancelled: false,
         };
         seq.next_pointer_id += 1;
         let state = PointerState::pressed(&t.input);
+        // Implicit capture of the touchstart target is pending from the start of pointerdown
+        // (Pointer Events §4.1.3.2); script may override or release it there.
+        crate::pointer_capture::touch_capture_begin(page, t.pointer_id, target);
         touch_enter(page, &t, &state, modifiers);
         if !fire_touch_pointer(page, "pointerdown", &t, &state, modifiers) {
             seq.mouse_suppressed = true;
