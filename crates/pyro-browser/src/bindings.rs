@@ -386,6 +386,29 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn resize_window(&self, width: u32, height: u32) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::DomManipulation, move |b| {
+            // Only a popup's top-level context (the page checked its window features already).
+            if page.child.is_some() || !b.page(page.page).is_some_and(|p| p.script_closable) {
+                return;
+            }
+            if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                return;
+            }
+            let Some(mut viewport) = b.page(page.page).map(|p| p.viewport.clone()) else { return };
+            viewport.width = width;
+            viewport.height = height;
+            if let Some(p) = b.page_mut(page.page) {
+                p.native_viewport = viewport.clone();
+                p.frames.settings.borrow_mut().viewport = viewport.clone();
+            }
+            // (The window's `resize` event follows, as with a CDP metrics change.)
+            let _ = b.set_viewport(page.page, viewport);
+        });
+    }
+
     fn file_chooser(&self, input: pyro_dom::NodeId, multiple: bool) {
         let page = self.page;
         let loader = self.loader.clone();

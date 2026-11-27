@@ -368,6 +368,12 @@ where
         crate::popup::note_window_access(w.page(), "blur");
         Ok(s.undefined())
     });
+    // CSSOM View: a popup's size and position follow the script; any other window ignores them.
+    // (The window is as large as its viewport here: no chrome around it.)
+    def.method("resizeTo", 2, |s, w, a| window_resize(s, w.page(), &a, "resizeTo", false));
+    def.method("resizeBy", 2, |s, w, a| window_resize(s, w.page(), &a, "resizeBy", true));
+    def.method("moveTo", 2, |s, w, a| window_move(s, w.page(), &a, "moveTo", false));
+    def.method("moveBy", 2, |s, w, a| window_move(s, w.page(), &a, "moveBy", true));
     def.method("print", 0, |s, _w, _a| Ok(s.undefined()));
     // pyro: css-sizing-4 responsive iframes: a responsively embedded document (one that opted in with
     // `<meta name="responsive-embedded-sizing">`) in a child frame asks its iframe to take its
@@ -428,6 +434,46 @@ where
         Ok(s.undefined())
     });
     def.method("postMessage", 1, |s, w, a| post_message_to_self(s, w.page(), &a).map(|()| s.undefined()));
+}
+
+/// The two `long` arguments of `resizeTo`/`resizeBy`/`moveTo`/`moveBy` (WebIDL conversion).
+fn window_long_pair(a: &pyro_js::Args<'_>, name: &str) -> JsResult<(i32, i32)> {
+    if a.len() < 2 {
+        return Err(JsError::Type(format!("Failed to execute '{name}' on 'Window': 2 arguments required, but only {} present.", a.len()).into()));
+    }
+    let long = |v: pyro_js::Value<'_>| -> JsResult<i32> {
+        let n = v.to_number()?;
+        Ok(if n.is_finite() { n.trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32 } else { 0 })
+    };
+    Ok((long(a.get(0))?, long(a.get(1))?))
+}
+
+fn window_resize<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>, name: &str, by: bool) -> JsResult<Value<'s>> {
+    let (x, y) = window_long_pair(a, name)?;
+    if !page.is_script_sizable_window() {
+        return Ok(s.undefined());
+    }
+    let device = page.device_viewport();
+    let screen = (device.screen_width.unwrap_or(device.width), device.screen_height.unwrap_or(device.height));
+    let (width, height) = if by { (i64::from(device.width) + i64::from(x), i64::from(device.height) + i64::from(y)) } else { (i64::from(x), i64::from(y)) };
+    // (At least one CSS pixel, at most the screen.)
+    let fit = |size: i64, screen: u32| size.clamp(1, i64::from(screen.max(1))) as u32;
+    page.resize_window(fit(width, screen.0), fit(height, screen.1));
+    Ok(s.undefined())
+}
+
+fn window_move<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Args<'s>, name: &str, by: bool) -> JsResult<Value<'s>> {
+    let (x, y) = window_long_pair(a, name)?;
+    if !page.is_script_sizable_window() {
+        return Ok(s.undefined());
+    }
+    let device = page.device_viewport();
+    let (is_popup, left, top) = page.window_chrome();
+    let (left, top) = if by { (left.saturating_add(x), top.saturating_add(y)) } else { (x, y) };
+    // (Kept on the screen.)
+    let room = |screen: Option<u32>, size: u32| screen.unwrap_or(size).saturating_sub(size) as i32;
+    page.set_window_chrome(is_popup, left.clamp(0, room(device.screen_width, device.width)), top.clamp(0, room(device.screen_height, device.height)));
+    Ok(s.undefined())
 }
 
 /// `postMessage` of a window outside a frame tree, which only reaches

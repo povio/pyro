@@ -928,6 +928,9 @@ pub trait PageHooks {
     /// `window.close()`: the embedder closes the page if its top-level
     /// browsing context is script-closable (a popup). The default ignores it.
     fn close_window(&self) {}
+    /// `window.resizeTo()`/`resizeBy()` of a popup: the embedder gives its viewport this size (CSS
+    /// pixels) and the window a `resize` event. The default ignores it.
+    fn resize_window(&self, _width: u32, _height: u32) {}
     /// The hovered element changed: `link` is the `<a>`/`<area>` with an `href` that is it or
     /// its nearest flat-tree ancestor (`None`: the pointer is over no link). Speculation rules'
     /// `moderate` and `eager` eagerness start on a hovered link. Runs inside the pointer event's
@@ -1435,6 +1438,9 @@ impl PageDom {
     /// Number of live object URLs registered by the current document.
     pub fn blob_url_count(&self) -> usize {
         self.blob_urls.borrow().len()
+    }
+    pub(crate) fn window_chrome(&self) -> (bool, i32, i32) {
+        self.window_chrome.get()
     }
     pub fn set_window_chrome(&self, is_popup: bool, left: i32, top: i32) {
         self.window_chrome.set((is_popup, left, top));
@@ -3107,6 +3113,16 @@ impl PageDom {
     pub(crate) fn popup_command(&self, popup: Rc<crate::popup::PopupState>, command: crate::popup::PopupCommand) {
         if let Some(h) = self.hooks() {
             h.popup_command(popup, command);
+        }
+    }
+    /// A popup (a top-level context a script opened with window features) may be resized and moved
+    /// by script; other windows ignore it (CSSOM View `resizeTo`, Chrome).
+    pub(crate) fn is_script_sizable_window(&self) -> bool {
+        self.window_chrome.get().0 && !self.nested_frame.get()
+    }
+    pub(crate) fn resize_window(&self, width: u32, height: u32) {
+        if let Some(h) = self.hooks() {
+            h.resize_window(width, height);
         }
     }
     pub(crate) fn close_window(&self) {
