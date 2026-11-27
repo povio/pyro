@@ -22,6 +22,11 @@
     return new U8(buffer,offset,length ?? size);
   }
   function invalid() { throw new DOMException('Invalid MediaSource state.', 'InvalidStateError'); }
+  // QuotaExceededError is its own DOMException subclass (quota and requested null); fall back to
+  // a plain DOMException of that name where the interface is unavailable.
+  function quotaExceeded(message) {
+    return typeof QuotaExceededError === 'function' ? new QuotaExceededError(message) : new DOMException(message, 'QuotaExceededError');
+  }
   function unsupported() { throw new DOMException('Unsupported media type.', 'NotSupportedError'); }
   function finite(v) {
     const n = +v;
@@ -157,7 +162,7 @@
       if (b.source.error) invalid();
       reopen(b.source);
       if (!b.model('canAppend',input.byteLength))
-        throw new DOMException('SourceBuffer quota exceeded.', 'QuotaExceededError');
+        throw quotaExceeded('SourceBuffer quota exceeded.');
       const copy = new U8(input);
       scheduleUpdate(this,b,false,() => {
         const initialized = b.model('append',copy);
@@ -277,7 +282,7 @@
           const kinds = native.typeKinds(type);
           if (!kinds) unsupported();
           if (overlaps(s,kinds))
-            throw new DOMException('A SourceBuffer already uses this decoder kind.', 'QuotaExceededError');
+            throw quotaExceeded('A SourceBuffer already uses this decoder kind.');
           if (s.readyState !== 'open') invalid();
           const b = {model:native.makeBuffer(target,type),source:s,kinds,mode:'segments',
             start:0,end:Infinity,updating:false,removing:false,generation:0};
