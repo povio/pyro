@@ -57,7 +57,10 @@ impl Order {
             dom.insert(id, ids.len());
             ids.push(id);
             stack.push((id,true));
-            stack.extend(node.children.iter().rev().map(|&child|(child,false)));
+            // pyro: `::before` precedes and `::after` follows the children in tree order (css-anchor-position-1
+            // §anchor-name: pseudo-elements are ordered like their originating element's box tree position).
+            let (before, after) = (node.before(), node.after());
+            stack.extend(after.into_iter().chain(node.children.iter().rev().copied()).chain(before).map(|child|(child,false)));
         }
         let mut children: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
         let mut roots = Vec::new();
