@@ -28,8 +28,9 @@ import * as bidi from './bidi.mjs';
 import * as report from './report.mjs';
 import * as pressure from './pressure.mjs';
 import * as webauthn from './webauthn.mjs';
+import * as sensors from './sensors.mjs';
 
-const GROUPS = [core, cookies, bidi, report, pressure, webauthn];
+const GROUPS = [core, cookies, bidi, report, pressure, webauthn, sensors];
 
 export const commands = new Map();
 for (const g of GROUPS) {
