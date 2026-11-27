@@ -251,10 +251,18 @@ impl Dom {
                 let type_ok = e.attr_local(&markup5ever::local_name!("type")).is_none_or(supported_image_type);
                 if media_ok && type_ok {
                     if let Some(srcset) = e.attr_local(&markup5ever::local_name!("srcset")) {
-                        let candidates = parse_srcset(
-                            srcset,
-                            source_size(e.attr_local(&markup5ever::local_name!("sizes")), viewport),
-                        );
+                        // A `<source>` without `sizes` takes the `<img>`'s when that starts with `auto`
+                        // (Chrome; "authors have to specify sizes=auto on the img"): the lazy image's
+                        // concrete width.
+                        let own = e.attr_local(&markup5ever::local_name!("sizes"));
+                        let img_sizes = self.n(i).element().and_then(|img| img.attr_local(&markup5ever::local_name!("sizes")));
+                        let width = match (own, img_sizes) {
+                            (None, Some(sizes)) if sizes.split(',').next().is_some_and(|f| f.trim().eq_ignore_ascii_case("auto")) => {
+                                source_size_auto(Some(sizes), viewport, auto)
+                            }
+                            _ => source_size(own, viewport),
+                        };
+                        let candidates = parse_srcset(srcset, width);
                         if let Some(c) = pick_candidate(&candidates, viewport.device_scale_factor) {
                             return Some(c.clone());
                         }
