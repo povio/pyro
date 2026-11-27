@@ -115,6 +115,8 @@ pub struct TimelineBuffers {
     /// Document-clock time of the last trusted `wheel` (a scroll input:
     /// LCP stops at it, layout shifts do not count it as input).
     last_wheel: Cell<Option<f64>>,
+    /// The shared painted-candidate scan's memo and identities (`perf/scan.rs`).
+    pub(super) scan: RefCell<super::scan::ScanState>,
 }
 
 impl TimelineBuffers {

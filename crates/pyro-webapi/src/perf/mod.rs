@@ -127,9 +127,38 @@
 //! least 16, rounded to 8, default 104), includeSoftNavigationObservations})`,
 //! `droppedEntriesCount`, sorting by `startTime`.
 //!
-//! Not in core (left for whoever needs it): the painted-candidate scan of the
-//! plan (`perf/scan.rs`): `paint`, `lcp`, `element` and `softnav` each compute
-//! what they need from layout themselves for now.
+//! # Painted candidates (`perf/scan.rs`)
+//!
+//! `scan::painted_candidates(page, frame) -> Rc<FrameScan>`, once per frame and shared
+//! by every module that asks (memoized by `frame.presented`; a document whose layout
+//! stamp, image loads and canvases did not change returns the previous result, so a
+//! layout is not forced on pages that sit still). `FrameScan::candidates` is
+//! everything painted now, in document order: `Candidate { node, kind (Text, Image,
+//! VideoPoster, BackgroundImage, Svg, Canvas), url, natural, border_box, visible,
+//! area, load_time, first_painted }`; `FrameScan::newly_painted(frame)` those first
+//! painted in this frame. Who uses what: `paint` (FCP: any candidate; FP: its own
+//! rule), `lcp` (`area`, `natural` for the upscaled-image rule, `url`, `load_time`,
+//! `first_painted` = render time), `element` (the candidates whose node has an
+//! `elementtiming` attribute: `visible` is the `intersectionRect`), `softnav` (the
+//! candidates first painted after a soft navigation's start). Details, what counts and
+//! what does not, and the identity rule are in the `scan.rs` docs. The scan walks
+//! the document and reads computed styles: a module calls it only when it will use the
+//! result (not while nothing observes and nothing is pending). `scan::walks(page)`
+//! counts the walks. A lane that needs another fact adds a field to `Candidate`
+//! in `scan.rs` (one small commit, named in its hand-back) and does not write a second
+//! scan.
+//!
+//! # Soft navigations: who edits what
+//!
+//! Lane perf-8 owns every soft-navigation hook, behind `softnav::ENABLED`: the History
+//! API / Navigation API URL-change notification (`pyro-browser/src/nav.rs`, the one file
+//! outside `perf/` it edits besides registrations), the DOM-mutation notification
+//! it needs to attribute "paints after the URL change" (it uses `scan` for the painted
+//! side; a mutation hook on `PageDom` that is a no-op unless `softnav::ENABLED` is
+//! perf-8's to add) and the user-interaction side (`softnav::dispatch_begin/end`,
+//! called by core around trusted events). Other lanes do not touch these paths; `shift`,
+//! `lcp` and `element` get soft-navigation attribution through
+//! `TimelineEntry::soft_navigation` and `queue_entry` only.
 
 use std::rc::Rc;
 
@@ -142,6 +171,7 @@ pub mod lcp;
 pub mod loaf;
 pub mod longtask;
 pub mod paint;
+pub mod scan;
 pub mod shift;
 pub mod softnav;
 pub mod timeline;

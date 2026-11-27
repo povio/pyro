@@ -44,7 +44,7 @@ pub(crate) fn source_attribute(dom: &pyro_dom::Dom, el: NodeId) -> Option<String
 
 /// The source `<img>` loads: a `<picture>`'s matching `<source>` or its own
 /// `srcset`, else `src` (what the loader selects); an SVG `<image>`'s `href`.
-fn selected_source(page: &PageDom, el: NodeId) -> Option<String> {
+pub(crate) fn selected_source(page: &PageDom, el: NodeId) -> Option<String> {
     let viewport = page.viewport();
     let dom = page.dom.borrow();
     let picture = if is_svg_image(&dom, el) { None } else { dom.picture_source(el, &viewport) };
@@ -141,6 +141,7 @@ impl PageDom {
     /// Pending `decode()` calls for the current source settle.
     pub fn image_loaded(&self, el: NodeId, src: &str, decodable: bool) {
         self.images.borrow_mut().insert(el, (src.to_owned(), false, decodable));
+        crate::perf::scan::note_image_loaded(self, el, src);
         self.settle_image_decodes(el);
     }
 
