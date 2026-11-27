@@ -2245,6 +2245,9 @@ impl Io {
     ) -> Result<(), NetError> {
         let origin_url = req.origin.as_deref().and_then(|o| Url::parse(o).ok());
         let max_body = req.max_body.unwrap_or(self.shared.config.max_body);
+        if let Some(report) = req.defaults.corp_report.as_mut() {
+            report.first_url.get_or_insert_with(|| req.url.clone());
+        }
         let mut redirects = 0u32;
         // The referrer of the hop being made. `req.referrer` stays the
         // request's initiator (Fetch Metadata, the `file:` check).
@@ -2524,9 +2527,7 @@ impl Io {
             }
             if let Some(cached) = cached_redirect {
                 let (status, resp_headers) = (cached.status, cached.headers);
-                if cors::corp_blocks(&req, &url, &resp_headers) {
-                    return Err(corp_blocked());
-                }
+                corp_check(&req, &url, &resp_headers)?;
                 if cors_cross {
                     cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                         .map_err(NetError::Cors)?;
@@ -2844,9 +2845,7 @@ impl Io {
 
             // Fetch's cross-origin resource policy check, on every response a
             // `no-cors` request gets (a redirect's included) before it is used.
-            if cors::corp_blocks(&req, &url, &resp_headers) {
-                return Err(corp_blocked());
-            }
+            corp_check(&req, &url, &resp_headers)?;
             // Redirects.
             // Fetch's redirect statuses: 300, 304, 305 and 306 are ordinary responses.
             if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
@@ -3269,9 +3268,7 @@ impl Io {
         from_cache: bool,
         encoded_len: u64,
     ) -> Result<(), NetError> {
-        if cors::corp_blocks(req, url, &cached.headers) {
-            return Err(corp_blocked());
-        }
+        corp_check(req, url, &cached.headers)?;
         let kind = if hop.cors_cross {
             cors::cors_check(&cached.headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                 .map_err(NetError::Cors)?;
@@ -3545,6 +3542,32 @@ struct Hop {
     cors_cross: bool,
     same_origin: bool,
     redirected: bool,
+}
+
+/// Fetch's cross-origin resource policy check on one response, with HTML § 7.1.4's reports: a
+/// response the report-only policy would block is reported (`disposition: "reporting"`, before the
+/// enforced policy's report, as Chrome orders them) and let through; one the enforced policy
+/// blocks is reported and fails the request.
+fn corp_check(req: &Request, url: &Url, headers: &HeaderMap) -> Result<(), NetError> {
+    let report = req.defaults.corp_report.as_ref();
+    let violation = |report: &CorpReport, report_only| CorpViolation {
+        kind: "corp",
+        blocked_url: report.first_url.as_ref().unwrap_or(&req.url).as_str().to_owned(),
+        destination: Some(crate::referrer::fetch_dest(req.destination)),
+        report_only,
+    };
+    if let Some(report) = report.filter(|r| r.report_only != EmbedderPolicy::UnsafeNone) {
+        if cors::corp_blocks_under(req, url, headers, report.report_only) {
+            (report.sink)(violation(report, true));
+        }
+    }
+    if cors::corp_blocks(req, url, headers) {
+        if let Some(report) = report {
+            (report.sink)(violation(report, false));
+        }
+        return Err(corp_blocked());
+    }
+    Ok(())
 }
 
 /// The network error of a response `Cross-Origin-Resource-Policy` blocks

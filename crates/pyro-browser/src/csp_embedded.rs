@@ -1274,6 +1274,7 @@ mod tests {
             referrer_policy: None,
             origin_agent_cluster: false, force_load_at_top: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+            embedder_reporting: Default::default(),
             coop: Vec::new(),
             sent_referrer: None,
             timing: None,

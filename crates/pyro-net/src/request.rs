@@ -148,6 +148,55 @@ pub enum EmbedderPolicy {
     Credentialless,
 }
 
+/// The reporting parts of a response's embedder policies (HTML "embedder policy": `report-to` of
+/// `Cross-Origin-Embedder-Policy`, and the whole `Cross-Origin-Embedder-Policy-Report-Only`):
+/// what a document keeps next to its enforced [`EmbedderPolicy`] to report what the policy blocks
+/// or, for the report-only value, would block.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EmbedderReporting {
+    /// The enforced policy's `report-to` endpoint name (only when that parameter is a string).
+    pub report_to: Option<String>,
+    /// The report-only policy's value.
+    pub report_only: EmbedderPolicy,
+    /// The report-only policy's `report-to` endpoint name.
+    pub report_only_report_to: Option<String>,
+}
+
+/// What a context's Cross-Origin Resource Policy check reports (HTML § 7.1.4 "queue a cross-origin
+/// embedder policy CORP violation report" and "navigation"), handed to [`CorpReport::sink`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CorpViolation {
+    /// The report body's `type`: `"corp"` for a blocked response, `"worker initialization"` for a
+    /// worker script the owner's policy refuses (made by the worker's thread).
+    pub kind: &'static str,
+    /// The request's URL (the first of a redirect chain: Chrome names that one), not yet stripped.
+    pub blocked_url: String,
+    /// The request's Fetch destination (`""` for `fetch()`, `"script"`, `"iframe"`, ...); none for a
+    /// report that has no destination (a worker's initialization).
+    pub destination: Option<&'static str>,
+    /// `true`: the report-only policy would have blocked the response (`disposition: "reporting"`);
+    /// `false`: the enforced policy blocked it.
+    pub report_only: bool,
+}
+
+/// The reporting half of a context's embedder policy, for the network thread: the
+/// `Cross-Origin-Embedder-Policy-Report-Only` value the client checks next to the enforced one,
+/// and where a violation goes (a closure that posts it to the context's own thread).
+#[derive(Clone)]
+pub struct CorpReport {
+    pub report_only: EmbedderPolicy,
+    pub sink: std::sync::Arc<dyn Fn(CorpViolation) + Send + Sync>,
+    /// The URL the request was made for, set by the client when it starts the request: a blocked
+    /// redirect target is reported under it.
+    pub first_url: Option<Url>,
+}
+
+impl std::fmt::Debug for CorpReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CorpReport").field("report_only", &self.report_only).finish_non_exhaustive()
+    }
+}
+
 /// Browser/page defaults, distinct from author headers for CORS preflight.
 /// Cloned into a request so later page changes do not alter an in-flight hop.
 #[derive(Clone, Debug, Default)]
@@ -180,6 +229,9 @@ pub struct RequestDefaults {
     /// access rules (`Browser.setStorageAccess`): a request to a URL it blocks sends no cookies and
     /// stores none. `None` (every context without rules): cookies as the SameSite rules say.
     pub cookie_blocking: Option<std::sync::Arc<crate::cookies::CookieBlocking>>,
+    /// Where the Cross-Origin Resource Policy check reports its violations, and the report-only
+    /// policy it checks. `None` for a context with neither a policy nor a report-only policy.
+    pub corp_report: Option<CorpReport>,
 }
 
 #[derive(Clone, Debug)]

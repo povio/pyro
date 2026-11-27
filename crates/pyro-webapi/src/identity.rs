@@ -28,6 +28,7 @@ impl UserAgentOverride {
             embedder_policy: pyro_net::EmbedderPolicy::default(),
             embedder_origin: None,
             cookie_blocking: None,
+            corp_report: None,
         })
     }
 }
@@ -78,6 +79,7 @@ pub(crate) struct IdentityState {
     /// The document's cross-origin embedder policy (HTML § 7.1.4): from its response, or for a local-scheme
     /// document the one it inherits; a worker's is its owner's (or its script response's).
     embedder_policy: pyro_net::EmbedderPolicy,
+    embedder_reporting: pyro_net::EmbedderReporting,
 }
 impl PageDom {
     /// Applies atomically to existing navigator wrappers/worlds and future
@@ -142,6 +144,15 @@ impl PageDom {
     pub fn embedder_policy(&self) -> pyro_net::EmbedderPolicy {
         self.identity.borrow().embedder_policy
     }
+    /// Sets the reporting parts of the document's embedder policies (`report-to`, the report-only
+    /// policy), as its navigation commits next to `set_embedder_policy`.
+    pub fn set_embedder_reporting(&self, reporting: pyro_net::EmbedderReporting) {
+        self.identity.borrow_mut().embedder_reporting = reporting;
+    }
+    /// The reporting parts of the embedder policies this context is subject to.
+    pub fn embedder_reporting(&self) -> pyro_net::EmbedderReporting {
+        self.identity.borrow().embedder_reporting.clone()
+    }
     fn window_prohibits_mixed(&self) -> bool {
         if let Some(origin) = self.main_world_realm().and_then(|r| r.origin()) {
             if origin.starts_with("https:") {
@@ -174,5 +185,7 @@ impl PageDom {
             embedder_policy: identity.embedder_policy,
             ..identity.defaults.clone()
         };
+        drop(identity);
+        self.apply_embedder_defaults(&mut request.defaults);
     }
 }

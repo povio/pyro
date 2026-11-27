@@ -1443,6 +1443,11 @@ impl PageDom {
         self.id
     }
 
+    /// A weak handle to this page (for a registry a cross-thread task finds it in by `id`).
+    pub(crate) fn weak_self(&self) -> std::rc::Weak<PageDom> {
+        self.this.clone()
+    }
+
     /// Bytes and type registered for a live `URL.createObjectURL` URL.
     pub fn blob_url(&self, url: &str) -> Option<(bytes::Bytes, String)> {
         self.blob_urls.borrow().get(url).map(|entry| (entry.bytes.clone(), entry.mime.clone()))

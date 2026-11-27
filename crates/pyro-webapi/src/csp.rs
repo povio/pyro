@@ -148,6 +148,8 @@ pub struct InheritedCsp {
     /// The cross-origin embedder policy of the same policy container (HTML § 7.1.4 "embedder policy"
     /// is inherited with the CSP list by local-scheme documents).
     pub embedder_policy: pyro_net::EmbedderPolicy,
+    /// Its reporting parts (`report-to`, the report-only policy), inherited the same way.
+    pub embedder_reporting: pyro_net::EmbedderReporting,
     /// The creator's `Connection-Allowlist` (its policy container's, so an `about:blank`, `srcdoc`
     /// or `blob:` document, or a popup's first document, cannot connect where its creator
     /// could not).
@@ -161,6 +163,7 @@ impl InheritedCsp {
             policies: inherited_policies(page),
             self_origin: self_origin(page),
             embedder_policy: page.embedder_policy(),
+            embedder_reporting: page.embedder_reporting(),
             connection_allowlist: page.connection_allowlist(),
         }
     }
@@ -170,6 +173,7 @@ impl InheritedCsp {
     /// `'self'` keeps meaning the creator's origin (as Chrome).
     pub fn apply(&self, page: &PageDom) {
         page.set_embedder_policy(self.embedder_policy);
+        page.set_embedder_reporting(self.embedder_reporting.clone());
         if self.connection_allowlist.is_some() {
             page.set_connection_allowlist(self.connection_allowlist.clone());
         }

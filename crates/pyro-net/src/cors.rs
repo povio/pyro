@@ -38,7 +38,12 @@ const CROSS_ORIGIN_RESOURCE_POLICY: header::HeaderName =
 /// credentials, `Request::hop_credentials`) but not for a nested navigation, and neither applies to a response that is not HTTP(S) (`data:`,
 /// `blob:`, files).
 pub fn corp_blocks(req: &Request, url: &Url, headers: &HeaderMap) -> bool {
-    let embedder = req.defaults.embedder_policy;
+    corp_blocks_under(req, url, headers, req.defaults.embedder_policy)
+}
+
+/// [`corp_blocks`] for the policy `embedder` instead of the request's enforced one: the check of
+/// the report-only policy, which decides whether a violation is reported (it blocks nothing).
+pub fn corp_blocks_under(req: &Request, url: &Url, headers: &HeaderMap, embedder: EmbedderPolicy) -> bool {
     // Fetch "cross-origin resource policy check" `forNavigation`: a nested navigation's response is
     // checked for the embedding document, whose policy is not `unsafe-none`.
     let for_navigation = req.mode == RequestMode::Navigate

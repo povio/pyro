@@ -21,6 +21,7 @@ mod animation_events;
 mod animation_frame;
 mod animations;
 mod cache_storage;
+pub mod coep_report;
 mod cookie_store;
 mod opfs;
 pub mod canvas;
