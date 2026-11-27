@@ -134,6 +134,8 @@ pub(crate) struct Settings {
     pub local: pyro_webapi::StorageNamespace,
     pub services: Rc<pyro_webapi::ContextServices>,
     pub max_touch_points: u32,
+    /// The page's window is minimized: a document made now starts hidden.
+    pub window_hidden: bool,
     pub session: pyro_webapi::StorageNamespace,
     pub net: Option<pyro_net::NetClient>,
     pub viewport: pyro_dom::media::Viewport,
@@ -562,6 +564,7 @@ impl FrameHost {
                 local,
                 services,
                 max_touch_points: 0,
+                window_hidden: false,
                 session: Default::default(),
                 net: browser.context_net(context).cloned(),
                 viewport: Default::default(),
@@ -2931,6 +2934,7 @@ impl Browser {
             settings.bypass_service_worker = p.bypass_service_worker;
             settings.viewport = p.viewport.clone();
             settings.max_touch_points = p.max_touch_points;
+            settings.window_hidden = p.window_hidden;
         }
         let settings = host.settings.borrow().clone();
         let bindings: Vec<_> = host.children.borrow().values().filter_map(|d| d.main_frame.page_dom.clone()).collect();

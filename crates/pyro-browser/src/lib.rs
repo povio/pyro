@@ -670,6 +670,8 @@ pub struct Page {
     user_agent_override: Option<pyro_webapi::UserAgentOverride>,
     /// `navigator.maxTouchPoints` of its documents (touch emulation).
     max_touch_points: u32,
+    /// The page's window is minimized (`Browser.setWindowBounds`): its documents, current and future, are hidden.
+    window_hidden: bool,
     /// `Emulation.setScriptExecutionDisabled`: documents committed from now
     /// on, and their frames, run no script of their own.
     script_execution_disabled: bool,
@@ -1763,6 +1765,7 @@ impl Browser {
             popup_sandbox: None,
             user_agent_override: None,
             max_touch_points: 0,
+            window_hidden: false,
             script_execution_disabled: false,
             bypass_csp: false,
             extra_http_headers: Default::default(),
@@ -2008,6 +2011,34 @@ impl Browser {
             bindings.set_max_touch_points(points);
         }
         self.refresh_frame_settings(page);
+        true
+    }
+
+    /// Minimizes (`hidden`) or restores the page's window: every document of the page, frames included, gets
+    /// `document.visibilityState` "hidden" and `visibilitychange` (or "visible" and the event again), and the
+    /// documents the page commits while it is minimized start hidden. Returns false if there is no such page.
+    pub fn set_window_hidden(&mut self, page: PageId, hidden: bool) -> bool {
+        let Some(state) = self.page_mut(page) else { return false };
+        if state.window_hidden == hidden {
+            return true;
+        }
+        state.window_hidden = hidden;
+        self.refresh_frame_settings(page);
+        let Some(host) = self.page(page).map(|p| p.frames.clone()) else { return false };
+        // The top document first, then its frames.
+        fn collect(b: &Browser, host: &frames::FrameHost, key: FrameKey, out: &mut Vec<Rc<pyro_webapi::PageDom>>) {
+            if let Some(dom) = b.doc(key).and_then(|d| d.main_frame.page_dom.clone()) {
+                out.push(dom);
+            }
+            for child in host.child_keys(key) {
+                collect(b, host, child, out);
+            }
+        }
+        let mut documents = Vec::new();
+        collect(self, &host, page.into(), &mut documents);
+        for dom in documents {
+            pyro_webapi::lifecycle::set_window_hidden(&dom, hidden);
+        }
         true
     }
 

@@ -923,6 +923,30 @@ fn window_bounds_round_trip() {
     assert_eq!(w["result"]["bounds"]["left"], 0);
 }
 
+#[test]
+fn minimized_window_hides_its_documents_until_restored() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><body><iframe srcdoc='<p>x</p>'></iframe>");
+    eval_value(
+        &mut h,
+        "window.log = []; document.addEventListener('visibilitychange', () => log.push(document.visibilityState));",
+    );
+    let window = h.page("Browser.getWindowForTarget", json!({}))["result"]["windowId"].clone();
+    assert_eq!(eval_value(&mut h, "[document.visibilityState, document.hidden]"), json!(["visible", false]));
+    // A rectangle cannot come with a state other than normal.
+    let r = h.page("Browser.setWindowBounds", json!({"windowId": window, "bounds": {"windowState": "minimized", "width": 500}}));
+    assert!(r.get("error").is_some(), "{r}");
+    h.page("Browser.setWindowBounds", json!({"windowId": window, "bounds": {"windowState": "minimized"}}));
+    assert_eq!(eval_value(&mut h, "[document.visibilityState, document.hidden]"), json!(["hidden", true]));
+    assert_eq!(eval_value(&mut h, "frames[0].document.visibilityState"), json!("hidden"));
+    assert_eq!(h.page("Browser.getWindowForTarget", json!({}))["result"]["bounds"]["windowState"], "minimized");
+    // Minimizing again changes nothing; restoring makes the documents visible with one more event.
+    h.page("Browser.setWindowBounds", json!({"windowId": window, "bounds": {"windowState": "minimized"}}));
+    h.page("Browser.setWindowBounds", json!({"windowId": window, "bounds": {"windowState": "normal"}}));
+    assert_eq!(eval_value(&mut h, "[document.visibilityState, frames[0].document.visibilityState]"), json!(["visible", "visible"]));
+    assert_eq!(eval_value(&mut h, "log"), json!(["hidden", "visible"]));
+}
+
 fn wait_for_network_finish(h: &mut Harness, events: &mut Vec<Value>) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !events.iter().any(|e| e["method"] == "Network.loadingFinished") {

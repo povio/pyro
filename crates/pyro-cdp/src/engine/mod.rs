@@ -1192,6 +1192,18 @@ impl EngineHost {
                 if p.window_id != cmd.page {
                     return Err(CdpError::server("Browser window not found"));
                 }
+                // Chrome: a minimized, maximized or full screen window takes no rectangle with it.
+                let window_state = p.bounds.get("windowState").and_then(|v| v.as_str()).map(str::to_owned);
+                if let Some(window_state) = window_state.as_deref() {
+                    if !matches!(window_state, "normal" | "minimized" | "maximized" | "fullscreen") {
+                        return Err(CdpError::invalid_params("Invalid window state"));
+                    }
+                    if window_state != "normal" && ["left", "top", "width", "height"].iter().any(|k| p.bounds.contains_key(*k)) {
+                        return Err(CdpError::invalid_params(
+                            "The 'minimized', 'maximized' and 'fullscreen' states cannot be combined with 'left', 'top', 'width' or 'height'",
+                        ));
+                    }
+                }
                 // Merge like Chrome: unspecified fields keep their values.
                 let mut bounds = state.window_bounds.clone().unwrap_or_else(|| {
                     serde_json::json!({ "left": left, "top": top, "width": width, "height": height, "windowState": "normal" })
@@ -1201,7 +1213,13 @@ impl EngineHost {
                         bounds[k] = v;
                     }
                 }
+                let id = state.id;
                 state.window_bounds = Some(bounds);
+                // A minimized window shows none of its documents: they become hidden (and `visibilitychange`
+                // fires), and visible again when the window is restored, maximized or made full screen.
+                if let Some(window_state) = window_state {
+                    self.thread.browser.set_window_hidden(id, window_state == "minimized");
+                }
                 Ok(Some(serde_json::json!({})))
             }
             _ => Err(CdpError::unsupported(&cmd.command.method)),

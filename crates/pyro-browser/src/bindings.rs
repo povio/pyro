@@ -774,6 +774,7 @@ impl Browser {
                 .clone(),
             services: self.context_services(state.context).ok_or(JsError::ContextDestroyed)?,
             max_touch_points: state.max_touch_points,
+            window_hidden: state.window_hidden,
             session: state.session_storage.clone(),
             net: self.context_net(state.context).cloned(),
             viewport: state.viewport.clone(),
@@ -1539,6 +1540,7 @@ pub(crate) fn create(
         host.media_policy_frames.set(true);
     }
     bindings.set_max_touch_points(settings.max_touch_points);
+    bindings.set_window_hidden_state(settings.window_hidden);
     bindings
         .set_user_agent_override(settings.user_agent)
         .map_err(|e| JsError::type_error(format!("invalid request defaults: {e}")))?;

@@ -319,6 +319,9 @@ pub struct PageDom {
     /// HTML "visibility state" of the document is "hidden": set as it is
     /// unloaded (`lifecycle::unload`).
     hidden: Cell<bool>,
+    /// The window the document is in is minimized (`Browser.setWindowBounds`): its visibility state is
+    /// "hidden" until the window is restored ([`crate::lifecycle::set_window_hidden`]).
+    window_hidden: Cell<bool>,
     pub(crate) transition_captures: RefCell<Option<Box<crate::view_transition::Captures>>>,
     pub(crate) transition_quota: RefCell<Option<std::sync::Arc<crate::view_transition::Quota>>>,
     /// The document's unload events (`pagehide` ...) have started: set before the first is
@@ -1200,6 +1203,7 @@ impl PageDom {
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
             hidden: Cell::new(false),
+            window_hidden: Cell::new(false),
             transition_captures: RefCell::new(None),
             transition_quota: RefCell::new(None),
             unloading: Cell::new(false),
@@ -3198,9 +3202,23 @@ impl PageDom {
         self.ready.borrow().get(&doc).copied().unwrap_or("complete")
     }
 
-    /// `document.visibilityState` is "hidden" (`document.hidden`).
+    /// `document.visibilityState` is "hidden" (`document.hidden`): the document was unloaded, or its window
+    /// is minimized.
     pub fn is_hidden(&self) -> bool {
+        self.hidden.get() || self.window_hidden.get()
+    }
+    /// The document was unloaded (`lifecycle::unload`), for good.
+    pub(crate) fn is_unloaded(&self) -> bool {
         self.hidden.get()
+    }
+    /// Whether the window the document is in is minimized.
+    pub fn window_hidden(&self) -> bool {
+        self.window_hidden.get()
+    }
+    /// Records that the window is minimized or restored, firing nothing: for a document made in a window
+    /// that is already minimized. A change in a live document goes through [`crate::lifecycle::set_window_hidden`].
+    pub fn set_window_hidden_state(&self, hidden: bool) {
+        self.window_hidden.set(hidden);
     }
     pub(crate) fn set_hidden(&self, hidden: bool) {
         if self.hidden.replace(hidden) != hidden {

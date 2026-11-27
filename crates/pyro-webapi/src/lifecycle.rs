@@ -269,6 +269,21 @@ pub fn unload(page: &Rc<PageDom>) {
     unload_document(page, true);
 }
 
+/// HTML "update the visibility state" for a document whose window was minimized or restored
+/// (`Browser.setWindowBounds` with a `windowState`): `document.visibilityState` / `hidden` change and
+/// `visibilitychange` fires at the document (bubbling to the Window) when the state really changed. A
+/// document already unloaded is hidden for good and ignores it.
+pub fn set_window_hidden(page: &Rc<PageDom>, hidden: bool) {
+    if page.is_disposed() || page.is_unloaded() || page.window_hidden() == hidden {
+        return;
+    }
+    page.set_window_hidden_state(hidden);
+    if page.scripting_disabled() || page.window_target().is_none() {
+        return;
+    }
+    crate::input::fire_simple(page, page.document(), "visibilitychange", true, false);
+}
+
 /// The events of a document whose frame was removed from its parent (its iframe left the document),
 /// as Chrome fires them, synchronously after the removal: `pagehide` and `visibilitychange` (now
 /// hidden), and `unload` only when `fire_unload` (the frame being removed, when its container's
@@ -281,7 +296,7 @@ pub fn removed(page: &Rc<PageDom>, fire_unload: bool) {
 fn unload_document(page: &Rc<PageDom>, fire_unload: bool) {
     // Once per document, marked before any listener runs: one that removes an ancestor frame unloads
     // that frame's documents, this one among them, which must not get its events again.
-    if page.is_disposed() || page.is_hidden() || !page.start_unloading() {
+    if page.is_disposed() || page.is_unloaded() || !page.start_unloading() {
         return;
     }
     let window = page.window_target().filter(|_| !page.scripting_disabled());
@@ -294,9 +309,11 @@ fn unload_document(page: &Rc<PageDom>, fire_unload: bool) {
     if listens(page).0 {
         fire_for_document(page, window, doc, &page_transition_event(page, "pagehide"));
     }
+    // A minimized window's document is hidden already: the state does not change, so no event.
+    let was_hidden = page.is_hidden();
     page.set_hidden(true);
     let (window_listens, document_listens) = listens(page);
-    if document_listens || window_listens {
+    if !was_hidden && (document_listens || window_listens) {
         crate::input::fire_simple(page, doc, "visibilitychange", true, false);
     }
     // A listener may have added an `unload` one: look again.
