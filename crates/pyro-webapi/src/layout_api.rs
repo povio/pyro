@@ -297,7 +297,7 @@ pub(crate) fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend
     // Scrolls that complete (instant ones: programmatic, reveal, wheel; a
     // smooth scroll's last step) are followed by `scrollend` in the same
     // update, as Chromium fires it after instant programmatic scrolls (Gap
-    // 35); layout clamps and a smooth scroll's other steps fire `scroll` only.
+    // 35); layout clamps and re-snaps end with `scrollend` too; a smooth scroll's other steps fire `scroll` only.
     let doc = page.document();
     let token = {
         let mut pending = page.pending_scrolls.borrow_mut();
@@ -605,21 +605,32 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
         moved
     };
     let doc = page.document();
+    // A clamp or re-snap is a scroll that finished: `scroll` is followed by `scrollend` (Chromium;
+    // WPT `scrollend-event-fired-after-layout-clamping`, `scrollend-event-fired-for-mandatory-snap-
+    // point-after-load`). `moved` holds only real offset changes.
+    let mut ended = Vec::new();
     for target in moved {
         let node = match target {
             pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
             pyro_dom::layout::ScrollTarget::Viewport => None,
         };
         if !now {
-            queue_scroll(page, node, false);
-        } else if !page.pending_scrolls.borrow().iter().any(|(key, _, _)| *key == (doc, node)) {
+            queue_scroll(page, node, true);
+        } else if page.pending_scrolls.borrow().iter().any(|(key, _, _)| *key == (doc, node)) {
+            // Its queued `scroll` is still to come: let it carry the `scrollend`.
+            queue_scroll(page, node, true);
+        } else {
             dispatch_scroll(page, doc, node, "scroll");
+            ended.push(node);
         }
     }
     // pyro: a re-snap's snap events, after its `scroll` (a script read's at the next rendering
     // update).
     if now {
         fire_snap_events(page);
+        for node in ended {
+            dispatch_scroll(page, doc, node, "scrollend");
+        }
     }
 }
 
