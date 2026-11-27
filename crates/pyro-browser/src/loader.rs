@@ -107,14 +107,16 @@ pub enum ResourceKind {
 }
 
 /// What a request is for beyond its kind: a request that says so in `Sec-Purpose`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Purpose {
     /// A speculation-rules prefetch of a document (nav-speculation "prefetch"): a
     /// [`ResourceKind::Document`] navigation request (`Sec-Fetch-Dest: document`, mode `navigate`)
     /// that says `Sec-Purpose: prefetch` and has no `Sec-Fetch-User`. `cross_site`: its initiator
     /// is another site, so it carries no cookies and no non-default client hints. Its result goes
-    /// to the initiator document's prefetch cache (`crate::prefetch`), never to a frame.
-    Prefetch { cross_site: bool },
+    /// to the initiator document's prefetch cache (`crate::prefetch`), never to a frame. `tags`:
+    /// the `Sec-Speculation-Tags` value (`crate::speculation_tags::tag_header`) the net client
+    /// sends on each hop to the initiator's site.
+    Prefetch { cross_site: bool, tags: Option<String> },
 }
 
 #[derive(Debug, Clone)]
@@ -561,9 +563,12 @@ impl ResourceLoader for NetLoader {
         req.referrer_policy = referrer.policy;
         // A speculation-rules prefetch says so on every hop (the client keeps a request's headers
         // across redirects); it is not a user's navigation, and cross-site it is credential-less.
-        if let Some(Purpose::Prefetch { cross_site }) = request.purpose {
+        if let Some(Purpose::Prefetch { cross_site, tags }) = &request.purpose {
             req.headers.insert(pyro_net::http::HeaderName::from_static("sec-purpose"), pyro_net::http::HeaderValue::from_static("prefetch"));
-            req.cross_site_prefetch = cross_site;
+            req.cross_site_prefetch = *cross_site;
+            if let Some(value) = tags.as_deref().and_then(|t| pyro_net::http::HeaderValue::from_str(t).ok()) {
+                req.headers.insert(pyro_net::http::HeaderName::from_static("sec-speculation-tags"), value);
+            }
         }
         let part = request.part;
         if let Some(start) = part.map(|p| p.start).filter(|&s| s > 0) {

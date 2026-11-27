@@ -3,12 +3,19 @@
 //! the claim a later navigation makes on one so that it does not touch the network again.
 //!
 //! # The driver
-//! `Browser::speculation_changed` (`speculation_rules`) calls [`Browser::prefetch_rules_changed`]
-//! when a rule set is added to or removed from a TOP-LEVEL document (Chrome ignores the rules of
-//! nested documents). An added set starts a fetch for each URL of its `prefetch` list rules with
-//! `eagerness` `immediate` (the others, `eager`, `moderate` and `conservative`, start on pointer
-//! or visibility events: the document-rules / eagerness lane calls [`Browser::start_prefetch_of`]
-//! with the candidate when that happens). A candidate is NOT prefetched when
+//! `Browser::speculation_changed` (`speculation_rules`; the document-rules lane calls it too when
+//! links or the pointer changed what is active) calls [`Browser::prefetch_rules_changed`] for a
+//! TOP-LEVEL document (Chrome ignores the rules of nested documents). Each time it reads both
+//! candidate sources again: the `Immediate` candidates of `speculation_candidates` (list rules;
+//! the others wait for the pointer) and all of `document_rule_candidates` (document rules, and
+//! the list rules' hover / pointerdown candidates once reached). Each candidate without a
+//! prefetch yet starts one; a document starts a URL once (a claimed, failed or expired prefetch
+//! is not started again unless its candidates went away and came back). The request's
+//! `Sec-Speculation-Tags` lists the tags of every candidate that asked for the URL
+//! ([`tag_header`]); the net client sends it on the hops to the initiator's site only.
+//! A rule set that is removed takes its prefetches with it (unless another rule asks for the
+//! URL), and a document that went away or was replaced takes all of its (`sweep_prefetches`, run
+//! after every task). A candidate is NOT prefetched when
 //! - the initiator or the URL is not potentially trustworthy (https, or localhost): a prefetch
 //!   from or to a plain http page is never made;
 //! - the URL has credentials, or only differs from the document's URL by a fragment (that is a
@@ -48,6 +55,7 @@
 //! `Clear-Site-Data` naming `"prefetchCache"` or `"cache"` (`NetClient::prefetch_cache_cleared_since`)
 //! drops the origin's entries, in flight ones included. At most [`MAX_ENTRIES`] live.
 
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use pyro_net::nvs::NoVarySearch;
@@ -56,6 +64,7 @@ use url::Url;
 
 use crate::frames::FrameKey;
 use crate::loader::{Purpose, ResourceCancellation};
+use crate::speculation_tags::tag_header;
 use crate::speculation_rules::{Action, Candidate, Eagerness, Requirement, RuleSetId, SpeculationChange};
 use crate::{Browser, ContextId, FetchRequest, NavigateOpts, NavigationReason, PageId, Resource, ResourceKind};
 
@@ -103,6 +112,10 @@ struct Entry {
 pub(crate) struct PrefetchCache {
     entries: Vec<Entry>,
     next_id: u64,
+    /// The prefetches each document started, by (page, loader id, URL without fragment), kept
+    /// after their entry is gone (claimed, failed, expired): a rule set change must not start
+    /// the same fetch again. A URL whose candidates went away is forgotten.
+    attempted: HashSet<(PageId, String, String)>,
 }
 
 /// What a navigation got from the cache.
@@ -175,33 +188,69 @@ impl PrefetchCache {
 }
 
 impl Browser {
-    /// A rule set was added to or removed from `page`'s document (`Browser::speculation_changed`).
+    /// The candidates a prefetch starts for now: the immediate ones of the list rules
+    /// (`speculation_candidates`: the others wait for the pointer) and every candidate the
+    /// document rules and the pointer made active (`document_rule_candidates`: all of them
+    /// eligible now), of the `prefetch` action.
+    fn prefetch_candidates(&self, page: FrameKey) -> Vec<Candidate> {
+        let mut candidates: Vec<Candidate> =
+            self.speculation_candidates(page).into_iter().filter(|c| c.eagerness == Eagerness::Immediate).collect();
+        candidates.extend(self.document_rule_candidates(page));
+        candidates.retain(|c| c.action == Action::Prefetch);
+        candidates
+    }
+
+    /// A rule set was added to or removed from `page`'s document (`Browser::speculation_changed`;
+    /// document-rule and pointer changes arrive as `Added` too). Whatever the change, both
+    /// candidate sources are read again and each candidate that has no prefetch yet starts one.
     pub(crate) fn prefetch_rules_changed(&mut self, page: FrameKey, change: SpeculationChange) {
         if page.child.is_some() {
             return;
         }
-        match change {
-            SpeculationChange::Added(set) => {
-                let candidates: Vec<Candidate> =
-                    self.speculation_candidates(page).into_iter().filter(|c| c.set == set).collect();
-                for candidate in candidates {
-                    if candidate.action == Action::Prefetch && candidate.eagerness == Eagerness::Immediate {
-                        self.start_prefetch_of(page, &candidate);
-                    }
+        let Some(loader) = self.doc(page).map(|d| d.main_frame.loader_id.0.clone()) else { return };
+        let candidates = self.prefetch_candidates(page);
+        if let SpeculationChange::Removed(set) = change {
+            self.prefetch_rule_set_removed(page, &loader, set, &candidates);
+        }
+        for candidate in &candidates {
+            // The tags of every rule that produced the URL (the first request carries them all).
+            let tags: Vec<Option<String>> =
+                candidates.iter().filter(|c| without_fragment(c.url.clone()) == without_fragment(candidate.url.clone())).map(|c| c.tag.clone()).collect();
+            self.start_prefetch_of(page, candidate, tag_header(&tags));
+        }
+    }
+
+    /// The rule set `removed` left `page`'s document: its prefetches are cancelled and no longer
+    /// usable (a navigation already waiting on one keeps it), except those another rule still
+    /// asks for, which belong to that rule's set now. (Removing a rule from a set that stays
+    /// registered does not come here: the set's script text changing is no removal.)
+    fn prefetch_rule_set_removed(&mut self, page: FrameKey, loader: &str, removed: RuleSetId, candidates: &[Candidate]) {
+        let still: HashMap<Url, RuleSetId> = candidates.iter().map(|c| (without_fragment(c.url.clone()), c.set)).collect();
+        let mut forgotten = Vec::new();
+        self.prefetches.entries.retain_mut(|e| {
+            if e.initiator_loader != loader || e.set != removed || e.state.claimed() {
+                return true;
+            }
+            match still.get(&e.url) {
+                Some(&set) => {
+                    e.set = set;
+                    true
+                }
+                None => {
+                    forgotten.push(e.url.to_string());
+                    false
                 }
             }
-            SpeculationChange::Removed(set) => {
-                // The prefetches of a rule set that went away stop (one a navigation waits on
-                // keeps going for it).
-                let Some(loader) = self.doc(page).map(|d| d.main_frame.loader_id.0.clone()) else { return };
-                self.prefetches.entries.retain(|e| e.initiator_loader != loader || e.set != set || e.state.claimed());
-            }
+        });
+        for url in forgotten {
+            self.prefetches.attempted.remove(&(page.page, loader.to_owned(), url));
         }
     }
 
     /// Starts the prefetch `candidate` of `page`'s (top-level) document asks for, unless it is
-    /// not eligible (see the module header).
-    pub(crate) fn start_prefetch_of(&mut self, page: FrameKey, candidate: &Candidate) {
+    /// not eligible (see the module header) or the document made it already. `tags`: the
+    /// `Sec-Speculation-Tags` value of the rules that asked for the URL.
+    pub(crate) fn start_prefetch_of(&mut self, page: FrameKey, candidate: &Candidate, tags: Option<String>) {
         let Some(frame) = self.doc(page).map(|d| d.main_frame.clone()) else { return };
         let Some(loader) = self.loader_for(page) else { return };
         let Some(context) = self.page(page.page).map(|p| p.context) else { return };
@@ -239,7 +288,7 @@ impl Browser {
             return;
         }
         self.sweep_prefetches();
-        if self.prefetches.entries.iter().any(|e| e.context == context && e.initiator_loader == frame.loader_id.0 && e.url == url) {
+        if !self.prefetches.attempted.insert((page.page, frame.loader_id.0.clone(), url.to_string())) {
             return;
         }
         self.prefetches.make_room();
@@ -262,7 +311,7 @@ impl Browser {
             accept_signature: None,
             csp: None,
             required_csp: None,
-            purpose: Some(Purpose::Prefetch { cross_site }),
+            purpose: Some(Purpose::Prefetch { cross_site, tags }),
             parser_priority: false,
             credentials: None,
             post: None,
@@ -294,7 +343,15 @@ impl Browser {
     /// Drops the entries that expired, whose browsing context is gone, or whose document is no
     /// longer its page's (an entry belongs to the document that asked), but not one a navigation
     /// waits on.
-    fn sweep_prefetches(&mut self) {
+    pub(crate) fn sweep_prefetches(&mut self) {
+        if self.prefetches.entries.is_empty() && self.prefetches.attempted.is_empty() {
+            return;
+        }
+        let attempted = std::mem::take(&mut self.prefetches.attempted);
+        self.prefetches.attempted = attempted
+            .into_iter()
+            .filter(|(page, loader, _)| self.doc(FrameKey::from(*page)).is_some_and(|d| d.main_frame.loader_id.0 == *loader))
+            .collect();
         let now = Instant::now();
         let keep: Vec<bool> = self
             .prefetches

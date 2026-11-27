@@ -365,6 +365,8 @@ impl Browser {
     /// The checkpoint's call: every top-level document that holds a document rule is evaluated
     /// again when something its candidates depend on changed (see the module header).
     pub(crate) fn document_rules_after_task(&mut self) {
+        // The prefetches of a document that went away (or expired) stop being usable and are freed.
+        self.sweep_prefetches();
         let pages: Vec<PageId> = self.pages.iter().filter(|p| has_document_rule(&p.document.speculation)).map(|p| p.id).collect();
         if pages.is_empty() && self.document_rules.docs.is_empty() {
             return;

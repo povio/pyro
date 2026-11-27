@@ -506,6 +506,13 @@ impl Shared {
         // request would otherwise copy to read them once.
         let settings = self.settings.lock().unwrap();
         let mut h = req.headers.clone();
+        // `Sec-Speculation-Tags` of a speculation-rules prefetch goes to same-site hops only (per
+        // hop: a redirect to the initiator's site has it again, one to another site has not).
+        if h.contains_key(SEC_SPECULATION_TAGS)
+            && req.referrer.as_ref().map(crate::cookies::partition_key) != Some(crate::cookies::partition_key(&req.url))
+        {
+            h.remove(SEC_SPECULATION_TAGS);
+        }
         let ua = match &settings.user_agent {
             Some(ua) => HeaderValue::from_str(ua).ok(),
             None => self.default_user_agent.clone(),
@@ -1978,6 +1985,7 @@ const SEC_FETCH_MODE: header::HeaderName = header::HeaderName::from_static("sec-
 const SEC_FETCH_DEST: header::HeaderName = header::HeaderName::from_static("sec-fetch-dest");
 const SEC_FETCH_USER: header::HeaderName = header::HeaderName::from_static("sec-fetch-user");
 const SEC_PURPOSE: header::HeaderName = header::HeaderName::from_static("sec-purpose");
+const SEC_SPECULATION_TAGS: header::HeaderName = header::HeaderName::from_static("sec-speculation-tags");
 
 /// The `Sec-Fetch-Site` relation of one hop: to the requesting document's
 /// origin, else (a navigation a document started) its referrer, else none
