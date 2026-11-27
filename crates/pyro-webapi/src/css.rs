@@ -414,6 +414,13 @@ impl StyleData {
         self.is_position_try().then_some(CssRuleType::PositionTry)
     }
 
+    /// Whether the property attribute `name` exists on this declaration object: a `@page` block keeps every
+    /// declaration (as Chrome's CSSOM does) but `CSSPageDescriptors` only has the descriptors of its IDL
+    /// (css-page-3: `margin*`, `size`, `page-orientation`), so `style.cssFloat` is `undefined` there.
+    fn exposes(&self, name: &str) -> bool {
+        !self.is_page_rule() || matches!(name, "margin" | "margin-top" | "margin-right" | "margin-bottom" | "margin-left" | "size" | "page-orientation")
+    }
+
     fn allows(&self, name: &str) -> bool {
         if self.is_font_face() { return pyro_dom::font_face::DescriptorBlock::supports(name); }
         self.declaration_rule().is_none_or(|rule| DeclarationBlock::allowed_in_rule(name, rule))
@@ -888,12 +895,12 @@ impl JsClass for CssStyleDeclaration {
         });
         def.named(false, |s, st, name| {
             let Some(property) = named_property(name) else { return Ok(None) };
-            if !st.allows(&property) { return Ok(None); }
+            if !st.allows(&property) || !st.exposes(&property) { return Ok(None); }
             Ok(Some(s.string(&st.get(&property))))
         });
         def.named_setter(|_s, st, name, v| {
             let Some(property) = named_property(name) else { return Ok(false) };
-            if !st.allows(&property) { return Ok(false); }
+            if !st.allows(&property) || !st.exposes(&property) { return Ok(false); }
             let value = if v.is_null() { String::new() } else { dom_string(v)? };
             st.set(&property, &value, false)?;
             Ok(true)
