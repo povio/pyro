@@ -316,6 +316,10 @@ fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>
     let _ = page.dom.borrow_mut().set_focused(doc, None);
     // A button or checkable input that blurs stops being `:active`, pressed by Space or a pointer
     // (WPT checkable-active-onblur-with-click).
+    // The element focus leaves for nothing is the sequential focus navigation starting point.
+    if related.is_none() {
+        page.sequential_start.set(Some(el));
+    }
     let held = page.space_target.take().is_some();
     if page.dom.borrow().activated(doc) == Some(el) && (held || space_clickable(&page.dom.borrow(), el)) {
         set_active(page, doc, None);
@@ -3670,6 +3674,7 @@ fn dispatch_mouse_inner(
                     // (WPT css/selectors `focus-visible-script-focus-002`, `-006`, `-016`).
                     Some(f) => {
                         page.pointer_modality.set(true);
+                        page.sequential_start.set(None);
                         focus_element_with_options(page, f, true)
                     }
                     None => {
@@ -3678,6 +3683,10 @@ fn dispatch_mouse_inner(
                         if let Some(f) = focused {
                             blur_element(page, f);
                         }
+                        // HTML "sequential focus navigation starting point": a press on content
+                        // that cannot take focus moves it there, so Tab goes on from the clicked
+                        // node (after the blur, whose own starting point it replaces).
+                        page.sequential_start.set(Some(target));
                         // The press still makes this document's frame the focused one (Chrome's
                         // `FocusController::SetFocusedFrame` on mouse down): an iframe's owner becomes
                         // the parent's activeElement and keys go to the frame (WPT css-overscroll-behavior
