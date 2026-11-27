@@ -767,8 +767,8 @@ impl JsClass for MessageChannel {
 // channel is an `Endpoint` in the process-wide `BUS`. A receiver on another
 // thread is reached through its page's `RemotePoster`: the task finds the
 // channel by endpoint id in that thread's `CHANNELS` and delivers there. Only
-// channels of the same name, origin, browser context and storage partition
-// (top-level site) match, and a channel of a detached document neither sends
+// channels of the same name, origin, browser context and storage key
+// (top-level site, nonce, cross-site-ancestor bit) match, and a channel of a detached document neither sends
 // nor receives (HTML: "if the document is not fully active, return").
 
 thread_local! {
@@ -786,6 +786,8 @@ struct Endpoint {
     context: usize,
     /// The cookie/storage partition: the top-level site of the document.
     partition: Option<String>,
+    /// The document sits below a cross-site ancestor (the third bit of its storage key, as for Web Locks).
+    cross_site_ancestor: bool,
     closed: std::sync::atomic::AtomicBool,
     /// Runs a closure on the owning thread (`None`: only that thread's own channels reach it).
     poster: Option<crate::page::RemotePoster>,
@@ -801,6 +803,7 @@ impl Endpoint {
             && self.origin == other.origin
             && self.name == other.name
             && self.partition == other.partition
+            && self.cross_site_ancestor == other.cross_site_ancestor
     }
 }
 
@@ -903,6 +906,7 @@ impl JsClass for BroadcastChannel {
                 origin,
                 context: page.context_services().web_locks.identity(),
                 partition: page.storage_partition_key(),
+                cross_site_ancestor: page.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite,
                 closed: std::sync::atomic::AtomicBool::new(false),
                 poster: page.remote_poster(),
             });
