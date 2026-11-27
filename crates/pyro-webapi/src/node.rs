@@ -2037,6 +2037,13 @@ impl JsClass for Document {
                 node_value(s, n.page(), e)
             },
             |s, n, v| {
+                // `HTMLElement? body`: null (and undefined, as no argument) is converted, then it is not a body.
+                if v.is_nullish() {
+                    return Err(JsError::dom(
+                        "HierarchyRequestError",
+                        "The new body element is null. It must be either a 'BODY' or 'FRAMESET' element.",
+                    ));
+                }
                 let new = node_arg(s, v, "body")?;
                 let mut dom = n.page().dom.borrow_mut();
                 // HTML: only a body or frameset element can be the body; setting the current one
