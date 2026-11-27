@@ -4627,7 +4627,15 @@ fn module_graph_has_script(scope: &pyro_js::Scope<'_>, error: pyro_js::Value<'_>
             .get_atom("message")
             .ok()
             .and_then(|m| m.as_string())
-            .is_some_and(|m| m.starts_with("Failed to resolve module specifier")),
+            // JavaScriptCore's resolution errors: a bare specifier without an import-map hit
+            // (`Module specifier: x does not start with "/", "./", or "../".`) and an unknown
+            // `with { type }` (`Import attribute type "x" is not valid`) both reject the graph
+            // although no fetch failed: the module script reports them and then fires `load`.
+            .is_some_and(|m| {
+                m.starts_with("Failed to resolve module specifier")
+                    || m.starts_with("Module specifier: ")
+                    || m.starts_with("Import attribute type ")
+            }),
         _ => false,
     }
 }
