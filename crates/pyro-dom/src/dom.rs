@@ -1061,6 +1061,7 @@ impl Dom {
             activated: NIL,
             activated_alone: false,
             focus_visible: false,
+            marker_focus: None,
             design_mode: false,
             style_with_css: false,
             default_paragraph_separator: "div",

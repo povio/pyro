@@ -5414,6 +5414,64 @@ impl Layout {
         let Some(source) = self.synced_geometry_source(dom).cloned() else { return Vec::new() };
         let doc_point = (point.0 + self.window_scroll.0 as f64, point.1 + self.window_scroll.1 as f64);
         let Some((key, column)) = source.scroll_marker_at(doc_point.0, doc_point.1) else { return Vec::new() };
+        self.activate_marker_target(dom, &source, key, column)
+    }
+
+    /// pyro: the scroll container whose `::scroll-marker-group` holds the marker at the client point
+    /// (the group the press on it focuses), and whether the group is in tabs mode (its markers
+    /// take the focus: CSS Overflow 5 § 3.1, `scroll-marker-group: tabs`).
+    pub fn scroll_marker_group_at(&self, dom: &Dom, point: (f64, f64)) -> Option<(NodeId, bool)> {
+        let source = self.synced_geometry_source(dom)?;
+        let doc_point = (point.0 + self.window_scroll.0 as f64, point.1 + self.window_scroll.1 as f64);
+        let owner = crate::geometry::node_of(dom, source.scroll_marker_group_at(doc_point.0, doc_point.1)?)?;
+        Some((owner, self.scroll_marker_group_is_tabs(dom, owner)))
+    }
+
+    /// Whether the `scroll-marker-group` of `owner` is in `tabs` mode.
+    pub fn scroll_marker_group_is_tabs(&self, dom: &Dom, owner: NodeId) -> bool {
+        self.style.computed_value(dom, owner, "scroll-marker-group").is_some_and(|v| v.split_whitespace().any(|w| w == "tabs"))
+    }
+
+    /// pyro: an arrow key at the focused marker group of `owner` (tabs mode) moves to the next
+    /// marker (the arrow points to the end of the container's inline or block axis) or the previous
+    /// one (to its start), cycling, and activates it: scrolls to its target (CSS Overflow 5 § 3.2;
+    /// WPT css-overflow `scroll-marker-navigation-cycles`). `arrow` is the physical direction the key points to
+    /// (`(dx, dy)`). Returns the scrollers that moved; `None` when the group has no markers.
+    pub fn step_scroll_marker(
+        &mut self,
+        dom: &Dom,
+        owner: NodeId,
+        arrow: (i8, i8),
+    ) -> Option<Vec<ScrollTarget>> {
+        use style::logical_geometry::PhysicalSide;
+        let side = match arrow {
+            (0, -1) => PhysicalSide::Top,
+            (0, 1) => PhysicalSide::Bottom,
+            (-1, 0) => PhysicalSide::Left,
+            (1, 0) => PhysicalSide::Right,
+            _ => return None,
+        };
+        let source = self.synced_geometry_source(dom).cloned()?;
+        let (targets, active) = source.scroll_marker_group_targets(crate::snapshot::render_key(owner))?;
+        let count = targets.len();
+        if count == 0 {
+            return None;
+        }
+        let mode = self.style.stylo_style(dom, owner).map_or_else(style::logical_geometry::WritingMode::horizontal_tb, |style| style.writing_mode);
+        let forward = side == mode.inline_end_physical_side() || side == mode.block_end_physical_side();
+        let next = match (active, forward) {
+            (Some(i), true) => (i + 1) % count,
+            (Some(i), false) => (i + count - 1) % count,
+            (None, true) => 0,
+            (None, false) => count - 1,
+        };
+        let (key, column) = targets[next]?;
+        Some(self.activate_marker_target(dom, &source, key, column))
+    }
+
+    /// The default action of activating the marker that targets the element `key` (or its column
+    /// `column`): scrolls to it.
+    fn activate_marker_target(&mut self, dom: &Dom, source: &Rc<dyn GeometrySource>, key: u64, column: Option<u32>) -> Vec<ScrollTarget> {
         let Some(target) = crate::geometry::node_of(dom, key) else { return Vec::new() };
         let Some(index) = column else {
             return self.scroll_marker_target_into_view(dom, target);

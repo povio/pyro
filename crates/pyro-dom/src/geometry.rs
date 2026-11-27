@@ -994,6 +994,16 @@ pub trait GeometrySource {
     fn scroll_marker_at(&self, _x: f64, _y: f64) -> Option<(u64, Option<u32>)> {
         None
     }
+    /// pyro: the key of the scroll container whose `::scroll-marker-group` holds the marker at the
+    /// document point (`x`, `y`).
+    fn scroll_marker_group_at(&self, _x: f64, _y: f64) -> Option<u64> {
+        None
+    }
+    /// pyro: the targets (an element's key, and the column's index of a multi-column container) of
+    /// the markers of the scroll container `owner`'s group in order, and the index of the active one.
+    fn scroll_marker_group_targets(&self, _owner: u64) -> Option<(Vec<Option<(u64, Option<u32>)>>, Option<usize>)> {
+        None
+    }
     /// pyro: the `::scroll-button()` of the element `owner` that the painted hit test finds at the
     /// client point (`x`, `y`), as [`Self::generated_hit`]: the physical direction it scrolls
     /// (`(dx, dy)`, each -1, 0 or 1) and whether it is enabled (`owner` can still scroll that way).

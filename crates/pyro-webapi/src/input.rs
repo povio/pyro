@@ -1703,6 +1703,11 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     {
         return;
     }
+    if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta || k.modifiers.shift)
+        && scroll_marker_key_action(page, target, &k.key)
+    {
+        return;
+    }
     let editable = is_text_control(&page.dom.borrow(), target);
     match k.key.as_str() {
         "Backspace" if editable => delete(page, target, "deleteContentBackward", true),
@@ -1736,6 +1741,67 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         }
         _ => {}
     }
+}
+
+/// pyro: an arrow key while a `::scroll-marker` has the focus (tabs mode; the focused element is
+/// the marker group's scroll container) moves to the next or previous marker and activates it
+/// (CSS Overflow 5 § 3.2: the arrow keys cycle through the markers). Whether the key was taken.
+fn scroll_marker_key_action(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool {
+    let arrow = match key {
+        "ArrowUp" => (0, -1),
+        "ArrowDown" => (0, 1),
+        "ArrowLeft" => (-1, 0),
+        "ArrowRight" => (1, 0),
+        _ => return false,
+    };
+    if page.dom.borrow().marker_focus(page.document()).map(|(owner, _)| owner) != Some(target) {
+        return false;
+    }
+    let moved = page.layout.borrow_mut().step_scroll_marker(&page.dom.borrow(), target, arrow);
+    for scrolled in moved.unwrap_or_default() {
+        let node = match scrolled {
+            pyro_dom::layout::ScrollTarget::Viewport => None,
+            pyro_dom::layout::ScrollTarget::Container(node) => Some(node),
+        };
+        crate::layout_api::fire_scroll(page, node);
+    }
+    true
+}
+
+/// pyro: a primary press on a scroll pseudo-element's box: a `::scroll-marker` of a tabs-mode group
+/// takes the focus (the group's scroll container is the focused element, `document.activeElement`,
+/// and the active marker has `:focus`), a `::scroll-button()` focuses its scroll container (CSS
+/// Overflow 5 § 2.2, § 3.2; WPT css-overflow `scroll-marker-activation-retains-focus`,
+/// `scroll-button-focus-active-element`). Whether the press took the focus, which it then does
+/// not take elsewhere.
+fn scroll_pseudo_press_focus(page: &Rc<PageDom>, m: &MouseInput, target: NodeId) -> bool {
+    let doc = page.document();
+    let marker = {
+        let dom = page.dom.borrow();
+        page.layout().scroll_marker_group_at(&dom, (m.x, m.y))
+    };
+    if let Some((owner, true)) = marker {
+        page.pointer_modality.set(true);
+        page.sequential_start.set(None);
+        focus_element_with_options(page, owner, true);
+        let focused = page.dom.borrow().focused(doc).ok().flatten() == Some(owner);
+        if focused {
+            let _ = page.dom.borrow_mut().set_marker_focus(doc, Some(false));
+        }
+        return focused;
+    }
+    let button = {
+        let dom = page.dom.borrow();
+        let key = pyro_dom::snapshot::render_key(target);
+        page.layout().synced_geometry_source(&dom).and_then(|g| g.scroll_button_hit(key, m.x, m.y))
+    };
+    if matches!(button, Some((_, true))) {
+        page.pointer_modality.set(true);
+        page.sequential_start.set(None);
+        focus_element_with_options(page, target, true);
+        return page.dom.borrow().focused(doc).ok().flatten() == Some(target);
+    }
+    false
 }
 
 /// Whether a scroll key on key target `target` may scroll: not when the target takes the key itself
@@ -3962,7 +4028,18 @@ fn dispatch_mouse_inner(
             remember_press(page, target);
             page.pressed_pseudo.set(pseudo);
             note_buttons(page, m);
-            let place_caret = m.button == MouseButton::Left && pd && md;
+            // pyro: a press on a `::scroll-marker` or `::scroll-button()` (the mousedown went to its
+            // originating element) takes the focus by its own rules and selects no text; a marker
+            // clears the selection.
+            let marker_press = m.button == MouseButton::Left
+                && pd
+                && md
+                && page.layout().scroll_marker_group_at(&page.dom.borrow(), (m.x, m.y)).is_some();
+            let pseudo_focused = m.button == MouseButton::Left && pd && md && scroll_pseudo_press_focus(page, m, target);
+            if marker_press {
+                crate::editing::clear_selection(page);
+            }
+            let place_caret = m.button == MouseButton::Left && pd && md && !marker_press;
             // A middle or secondary press moves the caret in editable content too (Chrome), without starting a
             // selection drag, and with Shift extends the selection; on a link Shift does not extend.
             let caret_only = matches!(m.button, MouseButton::Middle | MouseButton::Right) && pd && md;
@@ -3971,7 +4048,7 @@ fn dispatch_mouse_inner(
                 (m.button == MouseButton::Left && pd && md).then(|| drag_source(&page.dom.borrow(), target)).flatten();
             page.drag_candidate.set(source.map(|s| (s, m.x, m.y)));
             // Default action of mousedown: focus the nearest focusable ancestor.
-            if pd && md {
+            if pd && md && !pseudo_focused {
                 let focus_target = {
                     let layout = page.layout();
                     let dom = page.dom.borrow();

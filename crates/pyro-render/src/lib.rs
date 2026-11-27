@@ -876,6 +876,9 @@ pub struct Renderer {
     timeline_scroll: HashMap<u64, TimelineScroll>,
     /// pyro: each page's pointer (client position) as last told ([`Renderer::set_pointer`]).
     pointer: HashMap<u64, (f64, f64)>,
+    /// pyro: each page's focused scroll marker group (its scroll container's key, and whether the
+    /// focus ring shows) as last told ([`Renderer::set_focused_scroll_group`]).
+    focused_scroll_group: HashMap<u64, (u64, bool)>,
     /// pyro: each page's scroll directions as last told ([`Renderer::set_scroll_directions`]),
     /// which a document built again takes at its next sync.
     scroll_directions: HashMap<u64, Vec<(u64, (i8, i8))>>,
@@ -1054,6 +1057,7 @@ impl Renderer {
             animations: HashMap::new(),
             timeline_scroll: HashMap::new(),
             pointer: HashMap::new(),
+            focused_scroll_group: HashMap::new(),
             scroll_directions: HashMap::new(),
             snapped: HashMap::new(),
             stuck: HashMap::new(),
@@ -1080,6 +1084,7 @@ impl Renderer {
         self.forget_document(page);
         self.timeline_scroll.remove(&page);
         self.pointer.remove(&page);
+        self.focused_scroll_group.remove(&page);
         self.scroll_directions.remove(&page);
         self.snapped.remove(&page);
         self.stuck.remove(&page);
@@ -1245,6 +1250,33 @@ impl Renderer {
             None => self.pointer.remove(&page),
         };
         old != point && self.uses_scroll_markers(page)
+    }
+
+    /// pyro: the scroll container (by key) of `page` whose marker group has the focus, and whether
+    /// the focus ring shows (`None`: no marker has the focus), for `:focus` on the active marker;
+    /// applied at the next interaction sync.
+    pub fn set_focused_scroll_group(&mut self, page: u64, group: Option<(u64, bool)>) {
+        match group {
+            Some(group) => self.focused_scroll_group.insert(page, group),
+            None => self.focused_scroll_group.remove(&page),
+        };
+    }
+
+    /// pyro: the key of the scroll container whose marker group holds the marker the painted hit
+    /// test finds at the document point (`x`, `y`) of `page`.
+    pub fn scroll_marker_group_at(&mut self, page: u64, x: f64, y: f64) -> Option<u64> {
+        self.at_page_scroll(page, |m| {
+            let owner = m.doc.scroll_marker_group_at(x as f32, y as f32)?;
+            m.key_of(owner)
+        })?
+    }
+
+    /// pyro: the targets (element key, and column index of a multi-column container) of the markers
+    /// of the group of the scroll container `owner` of `page`, and the index of the active one.
+    pub fn scroll_marker_group_targets(&self, page: u64, owner: u64) -> Option<(Vec<Option<(u64, Option<u32>)>>, Option<usize>)> {
+        let m = self.mirrors.get(&page)?;
+        let (targets, active) = m.doc.scroll_marker_group_targets(m.node(owner)?)?;
+        Some((targets.into_iter().map(|t| t.and_then(|(id, column)| Some((m.key_of(id)?, column)))).collect(), active))
     }
 
     pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) -> bool {
@@ -1987,6 +2019,7 @@ impl Renderer {
     fn mark_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>) -> bool {
         // pyro: the pointer over a scroll pseudo-element's box hovers it and its originating element.
         let pointer = self.pointer.get(&page).copied();
+        let group = self.focused_scroll_group.get(&page).copied();
         let pseudo_hover = self.at_page_scroll(page, |m| {
             let scroll = m.doc.viewport_scroll();
             m.doc.hover_scroll_pseudos(pointer.map(|(x, y)| ((x + scroll.x) as f32, (y + scroll.y) as f32)))
@@ -1994,7 +2027,10 @@ impl Renderer {
         let Some(m) = self.mirrors.get_mut(&page) else { return false };
         let hover = hovered.and_then(|k| m.node(k));
         let focus = focused.and_then(|k| m.node(k));
-        let (pseudo_changed, pseudo_origin) = pseudo_hover.unwrap_or((false, None));
+        let (mut pseudo_changed, pseudo_origin) = pseudo_hover.unwrap_or((false, None));
+        // (The focused marker group of the scroll container, if it still has a box.)
+        let group = group.and_then(|(key, ring)| Some((m.node(key)?, ring)));
+        pseudo_changed |= m.doc.set_focused_scroll_group(group);
         let hover = pseudo_origin.or(hover);
         let mut changed = m.doc.set_hover_node(hover) || pseudo_changed;
         if m.doc.focused_node() != focus {

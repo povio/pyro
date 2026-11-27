@@ -714,6 +714,9 @@ pub struct BaseDocument {
     /// pyro: the scroll pseudo-element boxes the pointer is over (`:hover`), innermost first
     /// (`layout::scroll_markers::hover_scroll_pseudos`).
     pub(crate) scroll_pseudo_hover: Vec<NodeId>,
+    /// pyro: the scroll container whose marker group has the focus, and whether it shows the focus
+    /// ring (`set_focused_scroll_group`).
+    pub(crate) focused_scroll_group: Option<(NodeId, bool)>,
     pub(crate) named_anchor_nodes: HashMap<(Option<NodeId>, style::values::DashedIdent), HashSet<NodeId>>,
     pub(crate) popover_anchors: HashMap<NodeId, NodeId>,
     anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
@@ -1095,6 +1098,7 @@ impl BaseDocument {
             marker_items_restyled: Vec::new(),
             scroll_markers_dirty: true,
             scroll_pseudo_hover: Vec::new(),
+            focused_scroll_group: None,
             named_anchor_nodes: HashMap::new(),
             popover_anchors: HashMap::new(),
             anchor_node_names: HashMap::new(),

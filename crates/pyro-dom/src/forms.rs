@@ -2256,6 +2256,31 @@ impl Dom {
         self.check(doc).is_ok_and(|d| self.focus_visible_now(d))
     }
 
+    /// The focused element when it holds the focus for its `::scroll-marker-group` (the active
+    /// marker has `:focus`), with whether the focus shows its ring.
+    pub fn marker_focus(&self, doc: NodeId) -> Option<(NodeId, bool)> {
+        let d = self.check(doc).ok()?;
+        let NodeKind::Document(dd) = &self.n(d).kind else { return None };
+        let ring = dd.marker_focus?;
+        Some((self.opt_id(self.focused_idx(d))?, ring))
+    }
+
+    /// Makes the focused element hold the focus for its marker group (`Some(ring)`), or not.
+    pub fn set_marker_focus(&mut self, doc: NodeId, ring: Option<bool>) -> DomResult<()> {
+        let d = self.check(doc)?;
+        if self.focused_idx(d) == NIL {
+            return Ok(());
+        }
+        let NodeKind::Document(dd) = &mut self.n_mut(d).kind else { return Ok(()) };
+        if dd.marker_focus == ring {
+            return Ok(());
+        }
+        dd.marker_focus = ring;
+        self.bump();
+        self.note(crate::dom::Change::Pseudo);
+        Ok(())
+    }
+
     /// Sets whether the focused element matches `:focus-visible`.
     pub fn set_focus_visible(&mut self, doc: NodeId, visible: bool) -> DomResult<()> {
         let d = self.check(doc)?;
@@ -2384,6 +2409,7 @@ impl Dom {
         }
         if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
             dd.focused = new;
+            dd.marker_focus = None;
         }
         // :focus / :focus-within participate in style matching (the style
         // cache compares the focused elements).

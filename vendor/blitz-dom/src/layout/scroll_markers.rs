@@ -1380,6 +1380,36 @@ impl BaseDocument {
     /// element, or its multi-column container and column (CSS Overflow 5 § 3.2: activating a
     /// marker scrolls to its target; WPT css-overflow `column-scroll-marker-002`).
     pub fn scroll_marker_at(&mut self, x: f32, y: f32) -> Option<(NodeId, Option<u32>)> {
+        let marker = self.marker_hit(x, y)?;
+        self.marker_target(marker)
+    }
+
+    /// pyro: the scroll container whose `::scroll-marker-group` holds the marker the painted hit
+    /// test finds at the document point (`x`, `y`): the owner of the group a press on a marker
+    /// focuses (tabs mode).
+    pub fn scroll_marker_group_at(&mut self, x: f32, y: f32) -> Option<NodeId> {
+        let marker = self.marker_hit(x, y)?;
+        let group = self.nodes.get(marker)?.parent?;
+        let (_, owner) = self.nodes.get(group)?.scroll_pseudo()?;
+        Some(owner)
+    }
+
+    /// pyro: the targets of the markers of `owner`'s group in order (an element, or a column of a
+    /// multi-column container) and the index of the active one (`:target-current`), which a key
+    /// moving through the focused group steps from.
+    pub fn scroll_marker_group_targets(&self, owner: NodeId) -> Option<(Vec<Option<(NodeId, Option<u32>)>>, Option<usize>)> {
+        use style::selector_parser::TARGET_CURRENT;
+        let group = self.nodes.get(owner)?.scroll_pseudos()?.group?;
+        let markers: Vec<NodeId> = self.nodes.get(group)?.children.iter().copied().collect();
+        let active = markers.iter().position(|&marker| {
+            self.nodes.get(marker).and_then(|node| node.element_data()).is_some_and(|data| data.element_state.contains(TARGET_CURRENT))
+        });
+        Some((markers.iter().map(|&marker| self.marker_target(marker)).collect(), active))
+    }
+
+    /// The marker the painted hit test finds at the document point (`x`, `y`), unless its group is
+    /// inert.
+    fn marker_hit(&mut self, x: f32, y: f32) -> Option<NodeId> {
         if self.scroll_pseudo_owners.is_empty() {
             return None;
         }
@@ -1404,7 +1434,7 @@ impl BaseDocument {
         if inert {
             return None;
         }
-        self.marker_target(marker)
+        Some(marker)
     }
 
     /// pyro: the `::scroll-button()` of `owner` hit at the document point (`x`, `y`), by the
@@ -1541,6 +1571,19 @@ impl BaseDocument {
         (changed, origin)
     }
 
+    /// pyro: the scroll container whose marker group holds the keyboard or pointer focus (tabs
+    /// mode), and whether the focus shows its ring (`:focus-visible`): the active marker of its
+    /// group has the focus ([`Self::update_target_current`]). Whether it changed (the next
+    /// resolve restyles the boxes).
+    pub fn set_focused_scroll_group(&mut self, group: Option<(NodeId, bool)>) -> bool {
+        if self.focused_scroll_group == group {
+            return false;
+        }
+        self.focused_scroll_group = group;
+        self.update_scroll_marker_states();
+        true
+    }
+
     /// pyro: whether an element of the document was ever styled with a `scroll-snap-type`.
     pub fn uses_scroll_snap(&self) -> bool {
         self.scroll_snap_styles
@@ -1570,6 +1613,7 @@ impl BaseDocument {
         use style_dom::ElementState;
         use style::selector_parser::{TARGET_AFTER, TARGET_BEFORE, TARGET_CURRENT};
         const TARGET_STATES: ElementState = TARGET_CURRENT.union(TARGET_BEFORE).union(TARGET_AFTER);
+        const FOCUS_STATES: ElementState = ElementState::FOCUS.union(ElementState::FOCUS_WITHIN).union(ElementState::FOCUSRING);
         // `:target-current` on the active marker, `:target-before` on the ones before it and
         // `:target-after` on the ones after it (none without an active marker).
         let target_states = |index: usize, active: Option<usize>| match active {
@@ -1599,11 +1643,19 @@ impl BaseDocument {
             let targets: Vec<Option<Target>> = markers.iter().map(|&marker| self.marker_target(marker)).collect();
             let active = self.select_active_target(&targets);
             let mut active_changed = false;
+            // pyro: a focused marker group (tabs mode, the press or Tab that focused it) has its
+            // focus on the active marker, wherever it moves: `:focus` (`:focus-visible` after the
+            // keyboard) and `:focus-within` on it, `:focus-within` on the group (CSS Overflow 5 § 3.2).
+            let focus = self.focused_scroll_group.filter(|&(focused, _)| focused == owner);
             for (index, &marker) in markers.iter().enumerate() {
                 let Some(data) = self.nodes.get_mut(marker).and_then(|node| node.element_data_mut()) else { continue };
-                let state = target_states(index, active);
-                if data.element_state & TARGET_STATES != state {
-                    data.element_state.remove(TARGET_STATES);
+                let mut state = target_states(index, active);
+                if let Some((_, ring)) = focus.filter(|_| Some(index) == active) {
+                    state |= ElementState::FOCUS | ElementState::FOCUS_WITHIN;
+                    state.set(ElementState::FOCUSRING, ring);
+                }
+                if data.element_state & (TARGET_STATES | FOCUS_STATES) != state {
+                    data.element_state.remove(TARGET_STATES | FOCUS_STATES);
                     data.element_state.insert(state);
                     if let Some(style) = self.pseudo_node_style(marker) {
                         self.set_scroll_pseudo_style(marker, style);
@@ -1611,6 +1663,17 @@ impl BaseDocument {
                     changed = true;
                     active_changed |= index == active.unwrap_or(usize::MAX);
                 }
+            }
+            let group_within = if focus.is_some() && active.is_some() { ElementState::FOCUS_WITHIN } else { ElementState::empty() };
+            if let Some(data) = self.nodes.get_mut(group).and_then(|node| node.element_data_mut())
+                && data.element_state & ElementState::FOCUS_WITHIN != group_within
+            {
+                data.element_state.remove(ElementState::FOCUS_WITHIN);
+                data.element_state.insert(group_within);
+                if let Some(style) = self.pseudo_node_style(group) {
+                    self.set_scroll_pseudo_style(group, style);
+                }
+                changed = true;
             }
             // pyro: a group that scrolls keeps its active marker in view (CSS Overflow 5 § 3.1.5,
             // as Chromium: aligned as the marker snaps in a snapping group, else the nearest

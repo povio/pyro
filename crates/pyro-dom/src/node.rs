@@ -142,6 +142,10 @@ pub struct DocumentData {
     /// The focused element matches `:focus-visible` (Chrome's heuristics,
     /// decided by the bindings when focus moves).
     pub(crate) focus_visible: bool,
+    /// The focused element holds the focus for its `::scroll-marker-group` (a marker of it in tabs
+    /// mode was pressed or tabbed to), whether that focus shows its ring: the active marker has
+    /// `:focus`. Ends when the focused element changes.
+    pub(crate) marker_focus: Option<bool>,
     /// HTML `document.designMode` is "on": the whole document is editable.
     pub(crate) design_mode: bool,
     /// The editing commands' CSS styling flag and default single-line container.

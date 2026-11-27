@@ -547,9 +547,11 @@ impl BlitzGeometry {
         let focused = dom.focused(doc).ok().flatten().map(pyro_dom::snapshot::render_key);
         let active = dom.activated(doc).map(pyro_dom::snapshot::render_key);
         let focus_visible = dom.focus_visible(doc);
+        let marker_group = dom.marker_focus(doc).map(|(owner, ring)| (pyro_dom::snapshot::render_key(owner), ring));
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {
                 if let Some(r) = r.as_mut() {
+                    r.set_focused_scroll_group(self.page, marker_group);
                     r.set_interaction_states(self.page, hovered, focused, active, focus_visible, style_only);
                 }
             }
@@ -1353,6 +1355,14 @@ impl GeometrySource for BlitzGeometry {
 
     fn scroll_marker_at(&self, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
         RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.scroll_marker_at(self.page, x, y))
+    }
+
+    fn scroll_marker_group_at(&self, x: f64, y: f64) -> Option<u64> {
+        RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.scroll_marker_group_at(self.page, x, y))
+    }
+
+    fn scroll_marker_group_targets(&self, owner: u64) -> Option<(Vec<Option<(u64, Option<u32>)>>, Option<usize>)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.scroll_marker_group_targets(self.page, owner))
     }
 
     fn scroll_button_hit(&self, owner: u64, x: f64, y: f64) -> Option<((i8, i8), bool)> {
