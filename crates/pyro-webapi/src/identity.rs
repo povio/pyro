@@ -24,6 +24,7 @@ impl UserAgentOverride {
             extra_headers: HeaderMap::new(),
             cache_disabled: false,
             client_hints: self.metadata.as_ref().map(|m| std::sync::Arc::new(client_hint_headers(m))),
+            insecure: pyro_net::InsecurePolicy::default(),
         })
     }
 }
@@ -68,6 +69,9 @@ pub(crate) struct IdentityState {
     /// Page-scoped `Network.setBypassServiceWorker`: fetch/XHR skip the
     /// controlling service worker.
     bypass_service_worker: bool,
+    /// A worker's Mixed Content / Upgrade Insecure Requests state from its creator (its own
+    /// document has no window origin to ask): `None` for a window.
+    creator_insecure: Option<pyro_net::InsecurePolicy>,
 }
 impl PageDom {
     /// Applies atomically to existing navigator wrappers/worlds and future
@@ -106,6 +110,42 @@ impl PageDom {
     pub fn bypass_service_worker(&self) -> bool {
         self.identity.borrow().bypass_service_worker
     }
+    /// A worker's page takes its creator's Mixed Content / Upgrade Insecure Requests state.
+    pub(crate) fn set_creator_insecure(&self, policy: pyro_net::InsecurePolicy) {
+        self.identity.borrow_mut().creator_insecure = Some(policy);
+    }
+    /// Mixed Content / Upgrade Insecure Requests state of requests this context makes, for
+    /// `RequestDefaults::insecure`. `upgrade`: an enforced CSP of the context (header, `<meta>`
+    /// or inherited) has `upgrade-insecure-requests`; a worker also keeps its creator's.
+    /// `prohibits_mixed`: an `https:` origin; for an opaque origin, a secure context whose
+    /// URL is https/data/blob (the frame chain's own rule is the embedder's `is_secure_context`).
+    pub fn insecure_policy(&self) -> pyro_net::InsecurePolicy {
+        let creator = self.identity.borrow().creator_insecure;
+        let own_upgrade = crate::csp::upgrades_insecure_requests(self);
+        match creator {
+            Some(c) => pyro_net::InsecurePolicy { prohibits_mixed: c.prohibits_mixed, upgrade: c.upgrade || own_upgrade },
+            None => pyro_net::InsecurePolicy { prohibits_mixed: self.window_prohibits_mixed(), upgrade: own_upgrade },
+        }
+    }
+    fn window_prohibits_mixed(&self) -> bool {
+        if let Some(origin) = self.main_world_realm().and_then(|r| r.origin()) {
+            if origin.starts_with("https:") {
+                return true;
+            }
+            if origin.starts_with("http:") {
+                return false;
+            }
+        }
+        // An opaque origin (sandboxed frame, `data:` document).
+        let scheme = self
+            .dom
+            .borrow()
+            .document_data(self.document())
+            .ok()
+            .and_then(|d| pyro_net::Url::parse(&d.url.to_string()).ok())
+            .map(|u| u.scheme().to_owned());
+        self.hooks_secure_context() == Some(true) && scheme.is_some_and(|s| matches!(s.as_str(), "https" | "data" | "blob"))
+    }
     pub(crate) fn apply_request_defaults(&self, request: &mut Request) {
         request.top_level_site = self.cookie_partition_key();
         request.cross_site_ancestor = self.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite;
@@ -113,6 +153,7 @@ impl PageDom {
         request.defaults = RequestDefaults {
             extra_headers: identity.extra_headers.clone(),
             cache_disabled: identity.cache_disabled,
+            insecure: self.insecure_policy(),
             ..identity.defaults.clone()
         };
     }

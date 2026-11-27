@@ -83,6 +83,8 @@ pub(crate) struct WorkerStart {
     origin: Option<String>,
     creator_cluster: Option<crate::page::AgentCluster>,
     creator_secure: bool,
+    /// The creator's Mixed Content / Upgrade Insecure Requests state: the worker's requests keep it.
+    insecure: pyro_net::InsecurePolicy,
     cookie_partition_key: Option<String>,
     cookie_site_context: pyro_net::cookies::SiteContext,
     user_agent: Option<UserAgentOverride>,
@@ -147,6 +149,7 @@ impl WorkerStart {
             creator_cluster: Some(page.agent_cluster()),
             cookie_partition_key: page.cookie_partition_key(),
             cookie_site_context: page.cookie_site_context(),
+            insecure: page.insecure_policy(),
             creator_secure: s.global_data::<WorkerGlobalScope>()
                 .map_or_else(|| crate::secure_context::secure(s, page), |parent| parent.secure),
             user_agent: page.identity.borrow().value.clone(),
@@ -200,6 +203,7 @@ impl WorkerStart {
             cookie_partition_key: service.partition_key.clone(),
             cookie_site_context: service.cookie_site_context,
             creator_secure: true,
+            insecure: page.insecure_policy(),
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
@@ -697,6 +701,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     page.set_user_agent_override(start.user_agent.clone()).map_err(|e| JsError::Type(e.to_string().into()))?;
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
+    page.set_creator_insecure(start.insecure);
     page.set_storage_namespaces(
         crate::storage::StorageNamespace::with_shared(
             start.indexed_db.clone(), start.caches.clone(), start.opfs.clone(), start.buckets.clone(),

@@ -109,6 +109,15 @@ pub enum RedirectMode {
     Manual,
 }
 
+/// Mixed Content / Upgrade Insecure Requests state of the requesting context, checked by the client on every hop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InsecurePolicy {
+    /// Mixed Content "prohibits mixed security contexts": an `https:` origin (the context's, or for an opaque one its nearest ancestor/creator with a tuple origin). As Chrome: an `http://localhost` page is a secure context but does not prohibit.
+    pub prohibits_mixed: bool,
+    /// Upgrade Insecure Requests: an enforced CSP of the context has `upgrade-insecure-requests`.
+    pub upgrade: bool,
+}
+
 /// Browser/page defaults, distinct from author headers for CORS preflight.
 /// Cloned into a request so later page changes do not alter an in-flight hop.
 #[derive(Clone, Debug, Default)]
@@ -128,6 +137,8 @@ pub struct RequestDefaults {
     /// `-Platform`) of a page whose agent override carries metadata. Sent
     /// only to potentially trustworthy origins, never over request headers.
     pub client_hints: Option<std::sync::Arc<Vec<(http::HeaderName, HeaderValue)>>>,
+    /// Mixed Content blocking and Upgrade Insecure Requests of the requesting context.
+    pub insecure: InsecurePolicy,
 }
 
 #[derive(Clone, Debug)]

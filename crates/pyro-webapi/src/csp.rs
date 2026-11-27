@@ -112,6 +112,21 @@ pub fn policy_list(page: &PageDom) -> Option<Arc<PolicyList>> {
     (!list.is_empty()).then(|| Arc::new(list))
 }
 
+/// Whether an enforced (not report-only) policy of `page`'s document has the
+/// `upgrade-insecure-requests` directive (Upgrade Insecure Requests §3.1), by header, `<meta>` or inheritance.
+pub(crate) fn upgrades_insecure_requests(page: &PageDom) -> bool {
+    let dom = page.dom.borrow();
+    dom.csp_policies(page.document()).iter().any(|policy| {
+        !policy.report_only
+            && policy.text.split([',', ';']).any(|d| {
+                d.trim_matches(|c: char| c.is_ascii_whitespace())
+                    .split(|c: char| c.is_ascii_whitespace())
+                    .next()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("upgrade-insecure-requests"))
+            })
+    })
+}
+
 /// The policies of `page`'s document as delivered (each with its delivery, header or `<meta>`,
 /// and disposition), for a worker that inherits them (a `data:` or `blob:` script).
 pub fn inherited_policies(page: &PageDom) -> Vec<pyro_dom::CspPolicy> {

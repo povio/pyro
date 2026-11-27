@@ -366,6 +366,12 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
                 .and_then(|u| pyro_net::Url::parse(&u).ok())
                 .map_or_else(|| "null".into(), |u| u.origin().ascii_serialization())
         });
+        // Upgrade Insecure Requests §3.3: a `ws:` URL of a context with the directive connects as `wss:`.
+        let mut conn_url = url.clone();
+        if conn_url.scheme() == "ws" && page.insecure_policy().upgrade {
+            let _ = conn_url.set_scheme("wss");
+        }
+        let url = conn_url;
         let mut http_url = url.clone();
         let _ = http_url.set_scheme(if url.scheme() == "wss" { "https" } else { "http" });
         // Mixed content: a secure context only opens secure connections.

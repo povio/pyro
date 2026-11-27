@@ -2147,6 +2147,14 @@ impl Io {
             if tainted {
                 req.origin = Some("null".into());
             }
+            // Upgrade Insecure Requests / Mixed Content autoupgrade, on the first hop and on every
+            // redirect target: before anything below derives from the URL (origin, site, cookies, cache).
+            if crate::secure_context::insecure_step(req.defaults.insecure, req.destination, &req.url)
+                == crate::secure_context::InsecureStep::Upgrade
+                && req.url.set_scheme("https").is_err()
+            {
+                return Err(NetError::InvalidUrl);
+            }
             // Same-origin to the requester (`cors::is_same_origin_request`),
             // once per hop: a request without an initiator is browser-owned;
             // a tainted ("null") or unparsable one is never same-origin.
@@ -2214,6 +2222,12 @@ impl Io {
             match req.url.scheme() {
                 "http" | "https" => {}
                 s => return Err(NetError::UnsupportedScheme(s.to_owned())),
+            }
+            // Mixed Content §4.4: an `http:` hop of a request from a secure context that was not upgraded above.
+            if crate::secure_context::insecure_step(req.defaults.insecure, req.destination, &req.url)
+                == crate::secure_context::InsecureStep::Block
+            {
+                return Err(NetError::Blocked("net::ERR_BLOCKED_BY_MIXED_CONTENT".into()));
             }
             if self.shared.settings.lock().unwrap().offline {
                 return Err(NetError::Blocked("net::ERR_INTERNET_DISCONNECTED".into()));

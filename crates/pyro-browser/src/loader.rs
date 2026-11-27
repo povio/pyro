@@ -439,6 +439,13 @@ impl ResourceLoader for NetLoader {
         req.csp = request.csp.clone();
         if let Some(page) = browser.page(request.page) {
             req.defaults = page.request_defaults.clone();
+            // Mixed Content / Upgrade Insecure Requests: the requesting document's state (for a
+            // nested navigation the embedding document's); a top-level navigation has none.
+            if request.kind != ResourceKind::Document {
+                if let Some(d) = &document {
+                    req.defaults.insecure = d.insecure_policy();
+                }
+            }
             if request.kind == ResourceKind::Document {
                 req.top_level_site = pyro_net::cookies::partition_key(&req.url);
             } else {
