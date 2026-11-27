@@ -1490,11 +1490,8 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
     if !accepts_keyboard(page) {
         return;
     }
-    // Escape ends a pointer lock, as the browser's own handling of it does: the page does not see the key.
-    if matches!(kind, KeyKind::KeyDown | KeyKind::RawKeyDown) && k.key == "Escape" && crate::pointer_lock::target(page).is_some() {
-        crate::pointer_lock::release(page);
-        return;
-    }
+    // Escape is an ordinary key here: leaving a pointer lock on Escape is the browser UI's handling, which
+    // `Input.dispatchKeyEvent` bypasses (headless Chrome delivers the key to the page and stays locked).
     let doc = page.document();
     let Some(target) = key_target(page) else { return };
     let Some(tkey) = key_of(page, target) else { return };

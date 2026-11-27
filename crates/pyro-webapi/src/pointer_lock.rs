@@ -5,8 +5,8 @@
 //! While an element holds the lock, the mouse input of its document (`crate::input::dispatch_mouse_inner`) is
 //! delivered to it, whatever is under the pointer: the pointer stays where it was when the lock was granted
 //! (`clientX/Y`, `screenX/Y` do not move), `movementX/Y` keep reporting the motion of the input, no boundary events are
-//! fired, and pointer capture does not apply. The lock ends by `exitPointerLock()`, Escape, the document losing focus,
-//! or the lock target leaving the document.
+//! fired, and pointer capture does not apply. The lock ends by `exitPointerLock()`, the document losing focus,
+//! or the lock target leaving the document (the Escape key is browser UI, which CDP key events bypass).
 //!
 //! The input pyro receives is a CDP stream of positions, not a device: it has no raw (unadjusted) movement to give, so
 //! `requestPointerLock({unadjustedMovement: true})` is refused (`NotSupportedError`), as a platform without raw input does.
@@ -171,7 +171,7 @@ pub(crate) fn request<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, unadjus
     Ok(promise)
 }
 
-/// The lock ends (`exitPointerLock()`, Escape, blur, or its target left the document): `pointerLockElement` is null at
+/// The lock ends (`exitPointerLock()`, blur, or its target left the document): `pointerLockElement` is null at
 /// once and `pointerlockchange` fires in a task, once. Nothing when the document holds no lock.
 pub(crate) fn release(page: &Rc<PageDom>) {
     let held = page.pointer_lock.borrow_mut().element.take().is_some();
