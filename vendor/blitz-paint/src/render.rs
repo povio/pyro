@@ -2572,6 +2572,13 @@ pub(crate) fn hit_shape_contains(dom: &BaseDocument, id: NodeId, shape: HitShape
     if node.element_data().is_none() || node.primary_styles().is_none() {
         return true;
     }
+    // pyro: plain `border-radius` corners need no painter (every mouse move asks, for each rounded
+    // box under the pointer): the border box's corner ellipses are tested directly.
+    if shape == HitShape::Own {
+        if let Some(inside) = plain_rounded_corners_contain(node, x, y) {
+            return inside;
+        }
+    }
     #[cfg(feature = "svg")]
     let _raster_scope = anyrender_svg::PageRasterScope::enter(&dom.raster_budget);
     let scale = dom.viewport().scale_f64();
@@ -2584,6 +2591,61 @@ pub(crate) fn hit_shape_contains(dom: &BaseDocument, id: NodeId, shape: HitShape
         HitShape::Own => cx.own_shape_contains(Point::new(x * scale, y * scale)),
         HitShape::Overflow => cx.overflow_shape_contains(Point::new(x * scale, y * scale)),
     }
+}
+
+/// pyro: [`HitShape::Own`] for a box whose corners are plain `border-radius` ones (no `border-shape`,
+/// every `corner-shape` round), answered without a painter: whether the point (`x`, `y`) (CSS px
+/// from the border box's origin) is inside the border box less its corner ellipses, the radii
+/// resolved and scaled to fit as they are painted ([`create_css_rect`], at scale 1). `None` when
+/// the box needs the painter (a `border-shape` or other `corner-shape`, a table's grid box, a
+/// fieldset's legend-shifted border).
+fn plain_rounded_corners_contain(node: &Node, x: f64, y: f64) -> Option<bool> {
+    let style = node.primary_styles()?;
+    let border = style.get_border();
+    if !matches!(border.border_shape, style::values::generics::basic_shape::GenericBorderShape::None) {
+        return None;
+    }
+    let round = |k: f32| (f64::from(k) - 1.0).abs() < 1e-4;
+    if ![border.corner_top_left_shape.k, border.corner_top_right_shape.k, border.corner_bottom_right_shape.k, border.corner_bottom_left_shape.k]
+        .into_iter()
+        .all(round)
+    {
+        return None;
+    }
+    let element = node.element_data()?;
+    if matches!(element.special_data, blitz_dom::node::SpecialElementData::TableRoot(_))
+        || node.data.is_element_with_tag_name(&local_name!("fieldset"))
+    {
+        return None;
+    }
+    let frame = create_css_rect(&style, &node.final_layout(), 1.0);
+    if !frame.has_border_radius() {
+        return Some(true);
+    }
+    let b = frame.border_box;
+    if x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1 {
+        return Some(false);
+    }
+    let r = frame.border_radii;
+    // (Each corner: its radii, and the centre of its ellipse.)
+    for (radius, cx, cy) in [
+        (r.top_left, b.x0 + r.top_left.x, b.y0 + r.top_left.y),
+        (r.top_right, b.x1 - r.top_right.x, b.y0 + r.top_right.y),
+        (r.bottom_right, b.x1 - r.bottom_right.x, b.y1 - r.bottom_right.y),
+        (r.bottom_left, b.x0 + r.bottom_left.x, b.y1 - r.bottom_left.y),
+    ] {
+        if radius.x <= 0.0 || radius.y <= 0.0 {
+            continue;
+        }
+        // In the corner's square (the quarter of the ellipse's box that holds the corner).
+        let (dx, dy) = ((x - cx) / radius.x, (y - cy) / radius.y);
+        let in_corner_x = if cx < (b.x0 + b.x1) / 2.0 { x < cx } else { x > cx };
+        let in_corner_y = if cy < (b.y0 + b.y1) / 2.0 { y < cy } else { y > cy };
+        if in_corner_x && in_corner_y && dx * dx + dy * dy > 1.0 {
+            return Some(false);
+        }
+    }
+    Some(true)
 }
 
 /// pyro: the element whose background paints the canvas (CSS Backgrounds 3 §2.11.2), as Blink's
