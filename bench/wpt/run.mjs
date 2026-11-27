@@ -19,7 +19,7 @@
 // Every page gets a new browser context, so a page's result does not depend on the page that ran before it in the
 // same worker (window.open popups, focus, storage), which changes with sharding; --reuse-context keeps one context
 // per worker, as this runner used to.
-// Reads window.report (bench/wpt/testharnessreport.js, served by serve.mjs) once the harness completes.
+// Reads window.__pyroWptReport, the shim's object, which a page's own global `report` cannot replace (bench/wpt/testharnessreport.js, served by serve.mjs) once the harness completes.
 import { createRequire } from 'node:module';
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -225,13 +225,13 @@ function waitForReport(ms) {
     const finish = (complete) => {
       if (settled) return;
       settled = true;
-      const current = typeof report === 'object' && report ? report : null;
+      const current = typeof __pyroWptReport === 'object' && __pyroWptReport ? __pyroWptReport : null;
       resolve({ complete, log: current?.log ?? null, harnessStatus: current?.harnessStatus });
     };
     setTimeout(() => finish(false), ms);
     const hook = () => {
-      if (typeof report !== 'object' || !report) return setTimeout(hook, 5);
-      if (report.complete) return finish(true);
+      if (typeof __pyroWptReport !== 'object' || !__pyroWptReport) return setTimeout(hook, 5);
+      if (__pyroWptReport.complete) return finish(true);
       add_completion_callback(() => finish(true));
     };
     hook();
@@ -287,7 +287,7 @@ async function runOne(slot, t, gen) {
     if (r?.complete) return { status: 'complete', log: r.log, harnessStatus: r.harnessStatus, ms: Date.now() - t0 };
     if (!r) replaced();
     if (Date.now() - t0 >= t.limit) {
-      const partial = r?.log ?? (await page.evaluate(() => (typeof report === 'object' && report ? report.log : null)).catch(() => null));
+      const partial = r?.log ?? (await page.evaluate(() => (typeof __pyroWptReport === 'object' && __pyroWptReport ? __pyroWptReport.log : null)).catch(() => null));
       if (partial == null) replaced();
       return { status: 'timeout', log: partial, ms: Date.now() - t0 };
     }
