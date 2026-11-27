@@ -54,10 +54,20 @@ fn config(value: Value<'_>) -> JsResult<Option<Config>> {
     let scalability = d.get_atom("scalabilityMode")?;
     if bitrate.is_some_and(|v| v > f64::from(u32::MAX))
         || d.get_atom("alpha")?.to_string()? == "keep"
-        || (!scalability.is_undefined() && scalability.to_string()? != "L1T1")
     {
         return Ok(None);
     }
+    // Temporal scalability only (one spatial layer): OpenH264 emits L1T1 to L1T3.
+    let temporal_layers = if scalability.is_undefined() {
+        0
+    } else {
+        match scalability.to_string()?.as_str() {
+            "L1T1" => 1,
+            "L1T2" => 2,
+            "L1T3" => 3,
+            _ => return Ok(None),
+        }
+    };
     let format = match d.get_atom("avc")?.as_object() {
         Some(avc) => avc.get_atom("format")?.to_string()?,
         None => "avc".into(),
@@ -72,6 +82,7 @@ fn config(value: Value<'_>) -> JsResult<Option<Config>> {
             framerate: optional_number("framerate")?,
             bitrate_mode: if mode.is_undefined() { "variable".into() } else { mode.to_string()? },
             format,
+            temporal_layers,
         },
         display_width: optional_number("displayWidth")?.map_or(width, |v| v as u32),
         display_height: optional_number("displayHeight")?.map_or(height, |v| v as u32),
@@ -275,6 +286,12 @@ fn create<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value<'s>> {
             (packet, changed)
         };
         let metadata = s.object();
+        if cfg.codec.temporal_layers > 0 {
+            // VideoEncoderOutputMetadata.svc: the temporal layer of this chunk.
+            let svc = s.object();
+            svc.set_atom("temporalLayerId", s.number(f64::from(packet.temporal_layer)))?;
+            metadata.set_atom("svc", svc.value())?;
+        }
         if changed {
             let proto = metadata.prototype();
             metadata.set_prototype(s.null());
