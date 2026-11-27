@@ -1262,13 +1262,29 @@ fn number_unit(text: &str) -> Option<(f64, &str)> {
 fn clock_ms(text: &str) -> Option<f64> {
     let text = text.trim();
     if text.contains(':') {
-        let parts: Vec<f64> = text.split(':').map(|p| p.trim().parse::<f64>().ok()).collect::<Option<_>>()?;
-        let seconds = match parts.as_slice() {
-            [h, m, s] => h * 3600.0 + m * 60.0 + s,
-            [m, s] => m * 60.0 + s,
+        // SMIL 3 "clock values": `Hours ":" Minutes ":" Seconds` or `Minutes ":" Seconds`, hours any
+        // number of digits, minutes and seconds two digits below 60, a fraction one digit or more.
+        let (sign, body) = match text.as_bytes().first() {
+            Some(b'-') => (-1.0, &text[1..]),
+            Some(b'+') => (1.0, &text[1..]),
+            _ => (1.0, text),
+        };
+        let digits = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+        let sexagesimal = |p: &str| p.len() == 2 && digits(p) && p.parse::<f64>().is_ok_and(|v| v < 60.0);
+        let seconds = |p: &str| -> Option<f64> {
+            let (whole, fraction) = match p.split_once('.') {
+                Some((whole, fraction)) => (whole, Some(fraction)),
+                None => (p, None),
+            };
+            (sexagesimal(whole) && fraction.is_none_or(digits)).then(|| p.parse().ok()).flatten()
+        };
+        let parts: Vec<&str> = body.split(':').collect();
+        let total = match parts.as_slice() {
+            [h, m, sec] if digits(*h) && sexagesimal(*m) => h.parse::<f64>().ok()? * 3600.0 + m.parse::<f64>().ok()? * 60.0 + seconds(*sec)?,
+            [m, sec] if sexagesimal(*m) => m.parse::<f64>().ok()? * 60.0 + seconds(*sec)?,
             _ => return None,
         };
-        return Some(seconds * 1000.0);
+        return Some(sign * total * 1000.0);
     }
     let (count, scale) = if let Some(c) = text.strip_suffix("ms") {
         (c, 1.0)
@@ -2140,6 +2156,12 @@ mod tests {
         assert_eq!(clock_ms("01:30"), Some(90_000.0));
         assert_eq!(clock_ms("00:00:02.5"), Some(2500.0));
         assert_eq!(clock_ms("-1s"), Some(-1000.0));
+        assert_eq!(clock_ms("00:59:59"), Some(3_599_000.0));
+        assert_eq!(clock_ms("101:00:01"), Some(363_601_000.0));
+        assert_eq!(clock_ms("00:01.50"), Some(1500.0));
+        for invalid in ["01:99:01", "99:01", "01:30:99", "30:99", "00:59:59.", "00:59:9.9", "00:59:.9", "00:59:009", ":30:01", "01::01", "5:30"] {
+            assert_eq!(clock_ms(invalid), None, "{invalid}");
+        }
         assert_eq!(clock_ms("click"), None);
         assert_eq!(clock_ms("a.end+1s"), None);
     }
