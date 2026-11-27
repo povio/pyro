@@ -93,7 +93,7 @@ pub struct TextKeyframes {
 
 #[derive(Debug, PartialEq)]
 pub struct TextKeyframe {
-    /// The computed keyframe offset, 0 to 1.
+    /// The computed keyframe offset (0 to 1; outside it for a timeline range offset).
     pub offset: f64,
     /// The keyframe's easing (`None`: `linear`).
     pub easing: Option<String>,
@@ -1437,11 +1437,15 @@ fn sample_property(
     if frames.is_empty() {
         return None;
     }
-    // Neutral keyframes: the underlying value.
-    if frames[0].offset != 0.0 {
+    // pyro: a keyframe at a timeline range offset (`cover 0%`) has a computed offset outside 0..1;
+    // the frames are in offset order (stable: equal offsets keep their order).
+    frames.sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap_or(std::cmp::Ordering::Equal));
+    // Neutral keyframes: the underlying value, where no keyframe has offset 0 or 1.
+    if !frames.iter().any(|f| f.offset == 0.0) {
         let value = underlying?.clone();
+        let at = frames.partition_point(|f| f.offset < 0.0);
         frames.insert(
-            0,
+            at,
             Frame {
                 offset: 0.0,
                 easing: resolved.implicit_easing.as_ref(),
@@ -1449,13 +1453,17 @@ fn sample_property(
             },
         );
     }
-    if frames[frames.len() - 1].offset != 1.0 {
+    if !frames.iter().any(|f| f.offset == 1.0) {
         let value = underlying?.clone();
-        frames.push(Frame {
-            offset: 1.0,
-            easing: resolved.implicit_easing.as_ref(),
-            value,
-        });
+        let at = frames.partition_point(|f| f.offset <= 1.0);
+        frames.insert(
+            at,
+            Frame {
+                offset: 1.0,
+                easing: resolved.implicit_easing.as_ref(),
+                value,
+            },
+        );
     }
     let at = |offset: f64| frames.iter().filter(|f| f.offset == offset).count();
     if progress < 0.0 && at(0.0) > 1 {

@@ -389,8 +389,62 @@
     if (typeof v === 'symbol') throw new TypeError('Cannot convert a Symbol value to a string');
     return String(v);
   }
+  // A keyframe offset at a position of a timeline range (`cover 25%`, Scroll-driven Animations 1
+  // "named range keyframes"): `{rangeName, pct}`; its computed offset depends on the animation's
+  // timeline (`frameOffset`).
+  const KEYFRAME_RANGE_NAMES = ['cover', 'contain', 'entry', 'exit', 'entry-crossing', 'exit-crossing'];
+  const isRangeOffset = v => v !== null && typeof v === 'object' && typeof v.rangeName === 'string';
+  const NUMBER_TEXT = '[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:e[+-]?\\d+)?';
+  const RANGE_TEXT = new RegExp(`^(${KEYFRAME_RANGE_NAMES.join('|')})\\s+(${NUMBER_TEXT})%$`, 'i');
+  const PERCENT_TEXT = new RegExp(`^(${NUMBER_TEXT})%$`, 'i');
+  // `calc()` of numbers and percentages joined by + and -: its number.
+  function calcOffset(text) {
+    const m = /^calc\((.*)\)$/i.exec(text);
+    if (!m) return null;
+    const re = new RegExp(`\\s*([+-])?\\s*(${NUMBER_TEXT})(%?)\\s*`, 'iy');
+    let sum = 0, at = 0, first = true;
+    while (at < m[1].length) {
+      re.lastIndex = at;
+      const t = re.exec(m[1]);
+      if (!t || (!first && !t[1])) return null;
+      const value = Number(t[2]) / (t[3] ? 100 : 1);
+      sum += t[1] === '-' ? -value : value;
+      at = re.lastIndex;
+      first = false;
+    }
+    return first ? null : sum;
+  }
   const offsetValue = v => {
     if (v === null || v === undefined) return null;
+    if (isObject(v) && !(typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue)) {
+      // A TimelineRangeOffset dictionary `{rangeName, offset}`.
+      if (!('rangeName' in v)) {
+        const n = Number(v);
+        if (!Number.isFinite(n)) throw new TypeError('offset must be a finite number');
+        if (n < 0 || n > 1) throw new TypeError('Offsets must be null or in the range [0,1]');
+        return n;
+      }
+      const rangeName = String(v.rangeName), offset = v.offset;
+      if (!KEYFRAME_RANGE_NAMES.includes(rangeName)) throw new TypeError(`'${rangeName}' is not a valid timeline range name`);
+      if (!isPercentValue(offset)) throw new TypeError('A timeline range offset must be a percentage');
+      return { rangeName, pct: offset.value };
+    }
+    if (typeof v === 'string') {
+      const text = v.trim();
+      let m = RANGE_TEXT.exec(text);
+      if (m) return { rangeName: m[1].toLowerCase(), pct: Number(m[2]) };
+      // (A string is a <number>, a <percentage> or a calc() of them.)
+      const n = PERCENT_TEXT.test(text) ? parseFloat(text) / 100 : calcOffset(text);
+      if (n !== null) {
+        if (n < 0 || n > 1) throw new TypeError('Offsets must be null or in the range [0,1]');
+        return n;
+      }
+      if (/[^\d\s.eE+-]/.test(text) || text === '') throw new TypeError('offset must be a finite number');
+    }
+    if (typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue) {
+      if (v.unit !== 'number' && v.unit !== 'percent') throw new TypeError('offset must be a number or a percentage');
+      v = v.unit === 'percent' ? v.value / 100 : v.value;
+    }
     const n = Number(v);
     if (!Number.isFinite(n)) throw new TypeError('offset must be a finite number');
     if (n < 0 || n > 1) throw new TypeError('Offsets must be null or in the range [0,1]');
@@ -445,7 +499,7 @@
       if (easingError !== null) throw easingError;
       let last = -Infinity;
       for (const f of frames) {
-        if (f.offset === null) continue;
+        if (f.offset === null || isRangeOffset(f.offset)) continue;
         if (f.offset < last) throw new TypeError('Offsets must be monotonically non-decreasing');
         last = f.offset;
       }
@@ -468,7 +522,7 @@
       offsetList.slice(0, frames.length).forEach((o, i) => { frames[i].offset = o; });
       let lastO = -Infinity;
       for (const f of frames) {
-        if (f.offset === null) continue;
+        if (f.offset === null || isRangeOffset(f.offset)) continue;
         if (f.offset < lastO) throw new TypeError('Offsets must be monotonically non-decreasing');
         lastO = f.offset;
       }
@@ -484,13 +538,17 @@
     return frames;
   }
 
-  function computeOffsets(frames) {
-    frames.forEach(f => { f.computed = f.offset; });
-    if (frames.length === 0) return;
-    if (frames.every(f => f.implicit !== undefined && f.offset === null)) {
-      frames.forEach(f => { f.computed = f.implicit; });
+  function computeOffsets(allFrames) {
+    allFrames.forEach(f => { f.computed = isRangeOffset(f.offset) ? null : f.offset; });
+    if (allFrames.length === 0) return;
+    if (allFrames.every(f => f.implicit !== undefined && f.offset === null)) {
+      allFrames.forEach(f => { f.computed = f.implicit; });
       return;
     }
+    // The keyframes at timeline range offsets take no part in spreading the others' offsets (their
+    // own depend on the animation's timeline: `frameOffset`).
+    const frames = allFrames.filter(f => !isRangeOffset(f.offset));
+    if (frames.length === 0) return;
     if (frames.length > 1 && frames[0].computed === null) frames[0].computed = 0;
     if (frames[frames.length - 1].computed === null) frames[frames.length - 1].computed = 1;
     for (let i = 0; i < frames.length; i++) {
@@ -501,6 +559,28 @@
       for (let k = i; k < j; k++) frames[k].computed = a + (b - a) * (k - i + 1) / (j - i + 1);
       i = j;
     }
+  }
+
+  // A frame's computed offset for `effect`: a timeline range offset resolves against the
+  // animation's view timeline and attachment range (a fraction of it, outside 0..1 for positions
+  // beyond it); null when it cannot (no such timeline, inactive, a zero-length range).
+  function frameOffset(effect, f) {
+    if (!isRangeOffset(f.offset)) return f.computed;
+    const anim = effect.animation;
+    if (!anim || !progressBased(anim)) return null;
+    const st = timelines.get(anim.timeline);
+    if (st.subject === null) return null;
+    const bounds = rangeOffsets(anim);
+    const at = rangeBoundary(st, f.offset.rangeName, f.offset.pct);
+    if (bounds === null || at === null || !(bounds[1] > bounds[0])) return null;
+    return (at - bounds[0]) / (bounds[1] - bounds[0]);
+  }
+  // The frames of `effect` with their computed offsets, in offset order, without the ones that
+  // have none (a range offset the effect's timeline cannot resolve).
+  function sampledFrames(effect) {
+    if (!effect.frames.some(f => isRangeOffset(f.offset))) return effect.frames.map(f => ({ frame: f, offset: f.computed }));
+    return effect.frames.map(f => ({ frame: f, offset: frameOffset(effect, f) })).filter(x => x.offset !== null)
+      .sort((a, b) => a.offset - b.offset);
   }
 
   // ----- interpolation ------------------------------------------------------
@@ -543,17 +623,17 @@
     if (timing.progress === null || !effect.target) return out;
     const p = timing.progress;
     const props = new Map();
-    for (const f of effect.frames) {
+    for (const { frame: f, offset } of sampledFrames(effect)) {
       for (const { prop, value } of f.values.values()) {
         if (!props.has(prop)) props.set(prop, []);
-        props.get(prop).push({ offset: f.computed, value, easing: f.easing });
+        props.get(prop).push({ offset, value, easing: f.easing });
       }
     }
     for (const [prop, frames] of props) {
       let list = frames;
       const base = () => underlying(effect.target, prop);
-      if (list[0].offset !== 0) list = [{ offset: 0, value: base(), easing: LINEAR }, ...list];
-      if (list[list.length - 1].offset !== 1) list = [...list, { offset: 1, value: base(), easing: LINEAR }];
+      if (!list.some(f => f.offset === 0)) list = [...list.filter(f => f.offset < 0), { offset: 0, value: base(), easing: LINEAR }, ...list.filter(f => f.offset >= 0)];
+      if (!list.some(f => f.offset === 1)) list = [...list.filter(f => f.offset <= 1), { offset: 1, value: base(), easing: LINEAR }, ...list.filter(f => f.offset > 1)];
       let start, end;
       if (p < 0 && list.filter(f => f.offset === 0).length > 1) {
         start = end = list.find(f => f.offset === 0);
@@ -737,6 +817,21 @@
   }
   // The animation's attachment range as percentages of its progress-based timeline ([start, end];
   // [0, 100] for 'normal'); null while the timeline is inactive.
+  // The place of `pct`% of the named range `rangeName` of view timeline `st`, in percent of the
+  // timeline (0: cover start); null while it is inactive.
+  function rangeBoundary(st, rangeName, pct) {
+    const state = stateOf(st);
+    if (state === null) return null;
+    const [, start, end, , c0, c1, size] = state;
+    const length = end - start;
+    if (!(length > 0)) return null;
+    const named = {
+      cover: [start, end], contain: [c0, c1], entry: [start, c0], exit: [c1, end],
+      'entry-crossing': [start, start + size], 'exit-crossing': [end - size, end],
+    };
+    const [lo, hi] = named[rangeName];
+    return (lo + (hi - lo) * pct / 100 - start) / length * 100;
+  }
   function rangeOffsets(a) {
     const st = timelines.get(a.timeline);
     const rs = a.rangeStart === undefined ? 'normal' : a.rangeStart;
@@ -1029,7 +1124,10 @@
     getKeyframes() {
       const st = brand(effects, this, 'a KeyframeEffect');
       return exposedFrames(st).map(f => {
-        const out = { offset: f.offset, computedOffset: f.computed, easing: f.easing.text, composite: f.composite };
+        const out = {
+          offset: isRangeOffset(f.offset) ? { rangeName: f.offset.rangeName, offset: percent(f.offset.pct) } : f.offset,
+          computedOffset: frameOffset(st, f), easing: f.easing.text, composite: f.composite,
+        };
         for (const [key, { prop, value }] of f.values) {
           if (st.cssFrames) out[key] = value;
           else {
@@ -1405,10 +1503,10 @@
       : null;
     // A CSS animation's or transition's own effect has no keyframes (the
     // engine's are the CSS ones); one script gave it has.
-    const frames = e.frames.map(f => {
+    const frames = sampledFrames(e).map(({ frame: f, offset }) => {
       let text = '';
       for (const { prop, value } of f.values.values()) text += `${prop}: ${value}; `;
-      return [f.computed, f.easing.text === 'linear' ? null : f.easing.text, f.composite === 'auto' ? null : f.composite, text];
+      return [offset, f.easing.text === 'linear' ? null : f.easing.text, f.composite === 'auto' ? null : f.composite, text];
     });
     const origin = a.timeline && !timelines.get(a.timeline).scroll ? timelines.get(a.timeline).origin : null;
     reportState(a.key, [
