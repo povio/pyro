@@ -904,25 +904,34 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
     // § 3.9.2, § 3.9.4 and the abspos section; WPT css-tables `absolute-tables-002`, `-004`,
     // `-height-quirks-001`, css-position `position-absolute-table-001`). A width or height the table
     // takes from stretching is a minimum already (`min_size` above).
+    // (A table's min-content width also wins over `max-width` in Chrome: it is applied again after the
+    // final clamp below.)
+    let table_min_width = if is_table && (known_dimensions.width.is_some() || max_size.width.is_some()) {
+        Some(tree.measure_child_size(
+            candidate.node,
+            Size::NONE,
+            area_size.map(Some),
+            Size { width: AvailableSpace::MinContent, height: AvailableSpace::MaxContent },
+            SizingMode::ContentSize,
+            AbsoluteAxis::Horizontal,
+            Line::FALSE,
+        ))
+    } else {
+        None
+    };
     if is_table {
-        if let Some(width) = known_dimensions.width {
-            let content = tree.measure_child_size(
-                candidate.node,
-                Size::NONE,
-                area_size.map(Some),
-                Size { width: AvailableSpace::MinContent, height: AvailableSpace::MaxContent },
-                SizingMode::ContentSize,
-                AbsoluteAxis::Horizontal,
-                Line::FALSE,
-            );
+        if let (Some(width), Some(content)) = (known_dimensions.width, table_min_width) {
             known_dimensions.width = Some(width.max(content));
         }
-        if let (Some(width), Some(height)) = (known_dimensions.width, known_dimensions.height) {
+        // (the height is a minimum with or without a known width: without one the table is measured at its
+        // shrink-to-fit width)
+        if let Some(height) = known_dimensions.height {
+            let width = known_dimensions.width;
             let content = tree.measure_child_size(
                 candidate.node,
-                Size { width: Some(width), height: None },
+                Size { width, height: None },
                 area_size.map(Some),
-                Size { width: AvailableSpace::Definite(width), height: available_space.height },
+                Size { width: width.map_or(available_space.width, AvailableSpace::Definite), height: available_space.height },
                 SizingMode::ContentSize,
                 AbsoluteAxis::Vertical,
                 Line::FALSE,
@@ -997,6 +1006,10 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
         }
     }
     .maybe_clamp(min_size, max_size);
+    let final_size = match table_min_width {
+        Some(min_width) => Size { width: final_size.width.max(min_width), ..final_size },
+        None => final_size,
+    };
 
     if trial || tree.checks_position_overflow(candidate.node) {
         let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset(candidate.node, container));
