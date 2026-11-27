@@ -3719,6 +3719,8 @@ fn touch_point(page: &PageDom, t: &ActiveTouch) -> crate::event::TouchPoint {
         client_y: t.input.y,
         screen_x: t.input.x,
         screen_y: t.input.y,
+        page_x: t.input.x + page.layout.borrow().scroll_x() as f64,
+        page_y: t.input.y + page.layout.borrow().scroll_y() as f64,
         radius_x: t.input.radius_x,
         radius_y: t.input.radius_y,
         rotation_angle: t.input.rotation_angle,

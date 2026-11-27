@@ -74,6 +74,8 @@ pub struct TouchPoint {
     pub client_y: f64,
     pub screen_x: f64,
     pub screen_y: f64,
+    pub page_x: f64,
+    pub page_y: f64,
     pub radius_x: f64,
     pub radius_y: f64,
     pub rotation_angle: f64,
@@ -2427,6 +2429,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<StorageEvent>();
     engine.register::<MediaQueryListEvent>();
     engine.register::<Touch>();
+    engine.register::<TouchList>();
     engine.register::<TouchEvent>();
     engine.register::<AnimationEvent>();
     engine.register::<TransitionEvent>();
@@ -2479,6 +2482,8 @@ impl JsClass for Touch {
                 client_y: num("clientY", 0.0)?,
                 screen_x: num("screenX", 0.0)?,
                 screen_y: num("screenY", 0.0)?,
+                page_x: num("pageX", 0.0)?,
+                page_y: num("pageY", 0.0)?,
                 radius_x: num("radiusX", 0.0)?,
                 radius_y: num("radiusY", 0.0)?,
                 rotation_angle: num("rotationAngle", 0.0)?,
@@ -2492,8 +2497,8 @@ impl JsClass for Touch {
         def.getter("clientY", |s, t| Ok(s.number(t.point.client_y)));
         def.getter("screenX", |s, t| Ok(s.number(t.point.screen_x)));
         def.getter("screenY", |s, t| Ok(s.number(t.point.screen_y)));
-        def.getter("pageX", |s, t| Ok(s.number(t.point.client_x)));
-        def.getter("pageY", |s, t| Ok(s.number(t.point.client_y)));
+        def.getter("pageX", |s, t| Ok(s.number(t.point.page_x)));
+        def.getter("pageY", |s, t| Ok(s.number(t.point.page_y)));
         def.getter("radiusX", |s, t| Ok(s.number(t.point.radius_x)));
         def.getter("radiusY", |s, t| Ok(s.number(t.point.radius_y)));
         def.getter("rotationAngle", |s, t| Ok(s.number(t.point.rotation_angle)));
@@ -2511,17 +2516,41 @@ fn event_target_key(s: &Scope<'_>, v: pyro_js::Value<'_>) -> Option<TargetKey> {
     s.unwrap::<crate::target::EventTarget>(v).map(|t| t.key)
 }
 
-/// A `TouchList`: an array of `Touch` wrappers with `item()`.
-fn touch_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, points: &[TouchPoint]) -> JsResult<pyro_js::Value<'s>> {
-    let mut items = pyro_js::RootedVec::new();
-    for point in points {
-        let touch = s.wrap::<Touch>(Rc::new(TouchData { page: page.clone(), point: point.clone() }), None)?;
-        items.push(s, touch.value());
+/// A `TouchList`'s state: the touches, wrapped on access.
+pub struct TouchListData {
+    page: Rc<PageDom>,
+    points: Vec<TouchPoint>,
+}
+
+impl TouchListData {
+    fn touch<'s>(&self, s: &Scope<'s>, i: usize) -> JsResult<Option<pyro_js::Value<'s>>> {
+        let Some(point) = self.points.get(i) else { return Ok(None) };
+        Ok(Some(s.wrap::<Touch>(Rc::new(TouchData { page: self.page.clone(), point: point.clone() }), None)?.value()))
     }
-    let list = s.array(&items.iter(s).collect::<Vec<_>>())?;
-    let item = s.eval("(function item(i) { return this[i >>> 0] ?? null; })", None, 1)?;
-    list.set_with(&pyro_js::JsString::new("item"), item, pyro_js::sys::kJSPropertyAttributeDontEnum)?;
-    Ok(list.value())
+}
+
+pub struct TouchList;
+impl JsClass for TouchList {
+    const NAME: &'static str = "TouchList";
+    type Data = Rc<TouchListData>;
+    type Parent = pyro_js::NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("length", |s, l| Ok(s.number(l.points.len() as f64)));
+        def.method("item", 1, |s, l, a| {
+            a.require(1, "TouchList.item")?;
+            let i = a.get(0).to_number()?;
+            let i = if i.is_finite() { i.trunc().rem_euclid(4294967296.0) as usize } else { 0 };
+            Ok(l.touch(s, i)?.unwrap_or_else(|| s.null()))
+        });
+        def.legacy_platform_object();
+        def.indexed(|s, l, i| l.touch(s, i as usize));
+        def.indexed_iterator();
+    }
+}
+
+/// A `TouchList` over `points`.
+fn touch_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, points: &[TouchPoint]) -> JsResult<pyro_js::Value<'s>> {
+    Ok(s.wrap::<TouchList>(Rc::new(TouchListData { page: page.clone(), points: points.to_vec() }), None)?.value())
 }
 
 fn touch_points<'s>(s: &Scope<'s>, init: Option<Object<'s>>, name: &'static str) -> JsResult<Vec<TouchPoint>> {
