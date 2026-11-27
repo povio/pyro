@@ -396,6 +396,7 @@ impl JsClass for SharedWorker {
                     let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).map(|mut start| {
                         start.control = control;
                         start.shared_worker = true;
+                        start.owner_embedder = worker_scope::OwnerEmbedder::of(&page, true);
                         start.module = module;
                         start.credentials = credentials;
                         start.csp = csp;
@@ -430,7 +431,7 @@ impl JsClass for SharedWorker {
                 return Ok(object);
             }
             let check = worker_scope::ConnectCheck {
-                owner: worker_scope::OwnerEmbedder::of(&page),
+                owner: worker_scope::OwnerEmbedder::of(&page, true),
                 client: match client_key {
                     TargetKey::Other(k) => k,
                     _ => unreachable!(),

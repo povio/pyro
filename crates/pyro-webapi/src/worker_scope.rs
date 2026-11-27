@@ -80,14 +80,24 @@ pub(crate) struct OwnerEmbedder {
 impl OwnerEmbedder {
     /// `page`'s policies, when its worker's script has to be compatible with them: none for an owner without
     /// a (report-only) policy or one with a Document-Isolation-Policy (its workers inherit it).
-    pub(crate) fn of(page: &PageDom) -> Option<OwnerEmbedder> {
+    ///
+    /// `shared`: the owner of a shared worker is enforced only when its policy is `require-corp`. The spec
+    /// would refuse a `credentialless` owner a worker without a policy too, but Chrome does not
+    /// (html/cross-origin-embedder-policy/credentialless/shared-worker.https.window.js expects a
+    /// credentialless window's `unsafe-none` shared worker to run), and the page is the proxy for Chrome.
+    pub(crate) fn of(page: &PageDom, shared: bool) -> Option<OwnerEmbedder> {
         let owner_reporting = page.embedder_reporting();
         if owner_reporting.dip || owner_reporting.report_only_dip {
             return None;
         }
         let mut owner = pyro_net::RequestDefaults::default();
         page.apply_embedder_defaults(&mut owner);
-        owner.corp_report.map(|report| OwnerEmbedder { policy: owner.embedder_policy, report_only: report.report_only, report: Some(report) })
+        let enforced = if shared && owner.embedder_policy != pyro_net::EmbedderPolicy::RequireCorp {
+            pyro_net::EmbedderPolicy::UnsafeNone
+        } else {
+            owner.embedder_policy
+        };
+        owner.corp_report.map(|report| OwnerEmbedder { policy: enforced, report_only: report.report_only, report: Some(report) })
     }
 }
 
@@ -126,7 +136,7 @@ pub(crate) struct WorkerStart {
     pub(crate) embedder_policy: pyro_net::EmbedderPolicy,
     /// The owner's policies when a dedicated worker's script must be compatible with them: none
     /// for a service worker, a shared worker, or an owner without a (report-only) policy.
-    owner_embedder: Option<OwnerEmbedder>,
+    pub(crate) owner_embedder: Option<OwnerEmbedder>,
     /// The creator's reporting parts of it: a `blob:` or `data:` worker inherits them with the policy.
     pub(crate) embedder_reporting: pyro_net::EmbedderReporting,
     cookie_partition_key: Option<String>,
@@ -188,7 +198,7 @@ impl WorkerStart {
         let poster = page.remote_poster()?;
         let script = (url.scheme() == "blob").then(|| page.blob_url(url.as_str()).map(|(bytes, _)| bytes)).flatten();
         // (A Document-Isolation-Policy's workers inherit it: nothing to check.)
-        let owner_embedder = OwnerEmbedder::of(page);
+        let owner_embedder = OwnerEmbedder::of(page, false);
         Some(WorkerStart {
             id,
             url,
