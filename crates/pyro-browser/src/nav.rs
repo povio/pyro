@@ -935,12 +935,19 @@ impl PageNav {
         let frame_id = self.frame_id.clone();
         let document = self.state.borrow().doc_seq;
         let url = url.to_owned();
+        // HTML "navigate to a javascript: URL" makes this the navigable's ongoing navigation as it is asked
+        // for: a navigation started before the task runs (a link's default action after its onclick set
+        // `location = "javascript:..."`) supersedes it, and nothing is evaluated.
+        let asked = self.page_dom.borrow().upgrade().map(|dom| dom.navigation_started());
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(key) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(doc) = b.doc(key).filter(|p| p.nav.state.borrow().doc_seq == document) else { return };
             let (realm, page_dom) = (doc.main_frame.main_realm().cloned(), doc.main_frame.page_dom.clone());
             drop(doc);
             let (Some(realm), Some(page_dom)) = (realm, page_dom) else { return };
+            if asked.is_some_and(|asked| page_dom.navigation_started() != asked) {
+                return;
+            }
             // CSP `script-src-elem` of the initiator for a navigation ('unsafe-inline', or with
             // 'unsafe-hashes' a hash of the whole URL): blocked, nothing runs.
             let initiator = initiator.unwrap_or_else(|| pyro_webapi::csp::NavigationInitiator::of(&page_dom));
