@@ -237,6 +237,16 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             if dom.reactions.any_custom && dom.is_connected_idx(parent) {
                 dom.enqueue_custom_reactions(n, crate::custom::CustomReaction::Connected);
             }
+            // A constructor may have attached a shadow root and filled it
+            // with unupgraded candidates (a clone of a template's contents):
+            // DOM "insert" tries to upgrade the shadow-including descendants
+            // once the host is connected. They run after the host's
+            // connectedCallback (queued just above), in shadow-including
+            // tree order.
+            // (`upgrades_after_insert` returns at once until a custom element was ever defined.)
+            if dom.n(n).element().is_some_and(|e| e.shadow_root != NIL) && dom.is_connected_idx(parent) {
+                dom.upgrades_after_insert(n);
+            }
         }
     }
 }
@@ -363,7 +373,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             if (before == NIL || d.n(before).parent == parent) && !cannot_insert(d, parent, &child) {
                 insert_node(d, parent, before, child);
             }
-            d.custom_reactions_queued()
+            d.custom_reactions_queued() || d.has_upgrade_candidates()
         });
         if queued {
             self.run_custom_reactions();
@@ -487,7 +497,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                     insert_node(d, target, before, new_node);
                 }
             }
-            d.custom_reactions_queued()
+            d.custom_reactions_queued() || d.has_upgrade_candidates()
         });
         if queued {
             self.run_custom_reactions();
@@ -781,7 +791,7 @@ impl<A: DomAccess> Sink<A> {
         }
         let hooks = self.dom.with(|d| {
             let doc = self.doc_owner(d);
-            let hooks = d.parser_reactions_pending(doc)?;
+            let hooks = d.parser_reactions_pending(doc).or_else(|| d.parser_custom_work(doc))?;
             matches!(&d.n(doc).kind, NodeKind::Document(data) if data.active).then_some(hooks)
         });
         if let Some(hooks) = hooks {
