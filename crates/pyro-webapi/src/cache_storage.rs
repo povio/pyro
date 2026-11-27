@@ -40,6 +40,14 @@ impl Namespace {
         Self { lease: Some(lease), ..Self::default() }
     }
 
+    /// The bytes `origin`'s caches hold (requests, responses and their bodies), for
+    /// `navigator.storage.estimate()`.
+    pub(crate) fn usage(&self, origin: &str) -> u64 {
+        let directory = lock(&self.directory);
+        let Some(caches) = directory.origins.get(origin) else { return 0 };
+        caches.iter().map(|(_, cache)| lock(&cache.entries).iter().map(entry_size).sum::<u64>()).sum()
+    }
+
     /// Revoke every cache of this generation, including caches that were
     /// removed by name but still have a live Cache object.
     pub(crate) fn retire(&self) {

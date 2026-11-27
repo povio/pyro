@@ -1528,6 +1528,22 @@ impl JsClass for WorkerGlobalScope {
             },
             |s, g, v| crate::lazy_module::replace(s, &g.target.page, "Notification", v),
         );
+        // `Permissions` and `PermissionStatus` are exposed to workers too.
+        macro_rules! permission_interface {
+            ($name:literal) => {
+                def.global_value_accessor(
+                    $name,
+                    |s, g| {
+                        let value = crate::navigator_extras::member(s, &g.target.page, $name)?;
+                        crate::lazy_module::replace(s, &g.target.page, $name, value)?;
+                        Ok(value)
+                    },
+                    |s, g, v| crate::lazy_module::replace(s, &g.target.page, $name, v),
+                );
+            };
+        }
+        permission_interface!("Permissions");
+        permission_interface!("PermissionStatus");
         // [Replaceable] (WindowOrWorkerGlobalScope): assignment shadows it
         // with an own data property; the realm's origin is left as it is.
         def.accessor(
@@ -1872,6 +1888,7 @@ impl JsClass for WorkerNavigator {
         def.getter("language", |s, _ua| Ok(s.string("en-US")));
         def.getter("locks", |s, _ua| crate::web_locks::locks(s, &crate::target::page_of(s)?));
         def.getter("storage", |s, _ua| crate::storage_manager::storage(s, &crate::target::page_of(s)?));
+        def.getter("permissions", |s, _ua| crate::navigator_extras::member(s, &crate::target::page_of(s)?, "permissions"));
         def.getter("storageBuckets", |s, _ua| crate::storage_buckets::manager(s, &crate::target::page_of(s)?));
     }
 }

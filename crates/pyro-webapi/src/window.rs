@@ -216,6 +216,9 @@ where
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
     def.getter("Keyboard", |s, w| crate::navigator_extras::member(s, w.page(), "Keyboard"));
+    def.getter("Clipboard", |s, w| crate::navigator_extras::member(s, w.page(), "Clipboard"));
+    def.getter("Permissions", |s, w| crate::navigator_extras::member(s, w.page(), "Permissions"));
+    def.getter("PermissionStatus", |s, w| crate::navigator_extras::member(s, w.page(), "PermissionStatus"));
     crate::streams::define_globals(def);
     crate::scheduler::define_global(def);
     crate::observable::define_globals(def);

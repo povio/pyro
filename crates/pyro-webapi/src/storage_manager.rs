@@ -46,7 +46,7 @@ const SCRIPT: &str = r#"((estimate, directory, directorySlot, window, secure) =>
       }
     }
     persisted() {
-      return this.#check('persisted');
+      return StorageManager.#check(this, 'persisted');
     }
     getDirectory() {
       try {
@@ -58,11 +58,12 @@ const SCRIPT: &str = r#"((estimate, directory, directorySlot, window, secure) =>
       }
     }
     persist() {
-      return this.#check('persist');
+      return StorageManager.#check(this, 'persist');
     }
-    #check(name) {
+    // Static, so a call on a foreign receiver rejects instead of throwing on `this.#check`.
+    static #check(self, name) {
       try {
-        if (!(#brand in this)) throw new TypeErrorC(`Failed to execute '${name}' on 'StorageManager': Illegal invocation`);
+        if (!(#brand in self)) throw new TypeErrorC(`Failed to execute '${name}' on 'StorageManager': Illegal invocation`);
         estimate();
         return PromiseC.resolve(false);
       } catch (e) {
@@ -100,15 +101,17 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         let storage = page.local_storage.borrow();
         let catalog = storage.buckets();
         let default_files = storage.opfs_usage(&key.origin);
-        let default_usage = storage.usage(&key.origin) as u64 + default_files;
+        let default_idb = storage.indexed_db().usage(&key.origin);
+        let default_caches = storage.caches().usage(&key.origin);
+        let default_usage = storage.usage(&key.origin) as u64 + default_files + default_idb + default_caches;
         drop(storage);
         let named = catalog.usage(&key);
         Ok(s.array(&[
             s.number((default_usage + named.usage) as f64),
             s.number(QUOTA),
             s.number((default_files + named.file_system) as f64),
-            s.number(named.caches as f64),
-            s.number(named.indexed_db as f64),
+            s.number((default_caches + named.caches) as f64),
+            s.number((default_idb + named.indexed_db) as f64),
         ])?.value())
     })?;
     let estimate = Persistent::new(s, estimate.value());
@@ -212,6 +215,16 @@ pub(crate) fn install_worker_file_system_globals(s: &Scope<'_>) -> JsResult<()> 
     install!(FileSystemDirectoryHandle);
     install!(FileSystemFileHandle);
     install!(FileSystemWritableFileStream);
+    // StorageManager is an own property of a worker global (not an accessor of its prototype).
+    struct StorageManagerInterface;
+    impl pyro_js::LazyGlobalInterface for StorageManagerInterface {
+        const NAME: &'static str = "StorageManager";
+        fn value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+            let page = crate::target::page_of(s)?;
+            module(s, &page)?.get_atom("StorageManager")
+        }
+    }
+    s.define_lazy_global_interface::<StorageManagerInterface>()?;
     if dedicated_worker(s) {
         install!(FileSystemSyncAccessHandle);
     }

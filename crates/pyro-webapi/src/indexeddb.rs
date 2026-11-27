@@ -174,6 +174,32 @@ impl Namespace {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// What `origin`'s databases occupy, for `navigator.storage.estimate()`: the committed
+    /// serialized records plus each database's, object store's and index's name and key path
+    /// (the metadata an on-disk store keeps, so creating a database or store is not free).
+    pub(crate) fn usage(&self, origin: &str) -> u64 {
+        const METADATA: u64 = 64;
+        let server = self.lock();
+        let Some(dbs) = server.origins.get(origin) else { return 0 };
+        dbs.iter()
+            .map(|(name, db)| {
+                let stores: u64 = db
+                    .stores
+                    .iter()
+                    .map(|(store, data)| {
+                        let indexes: u64 = data
+                            .indexes
+                            .iter()
+                            .map(|(index, i)| METADATA + (index.len() + i.key_path.len()) as u64)
+                            .sum();
+                        METADATA + (store.len() + data.key_path.len()) as u64 + indexes
+                    })
+                    .sum();
+                METADATA + name.len() as u64 + db.committed_bytes + stores
+            })
+            .sum()
+    }
+
     fn databases(&self, origin: &str) -> Vec<DatabaseInfo> {
         let server = self.lock();
         let Some(dbs) = server.origins.get(origin) else { return Vec::new() };

@@ -623,5 +623,8 @@
     Keyboard,
     ClipboardItem,
     Notification,
+    Clipboard,
+    Permissions,
+    PermissionStatus,
   };
 })
