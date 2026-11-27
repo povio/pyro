@@ -1215,8 +1215,10 @@ fn register(
     let base = page.dom.borrow().document_base_url(page.document()).ok().map(str::to_owned);
     let base = base.and_then(|b| pyro_net::Url::parse(&b).ok());
     let parse = |input: &str, base: Option<&pyro_net::Url>| pyro_net::Url::options().base_url(base).parse(input);
-    let script_url =
+    let mut script_url =
         parse(script, base.as_ref()).map_err(|_| type_error(format!("{prefix}: The URL '{script}' is invalid.")))?;
+    // Register: the script URL's fragment is dropped (the worker's `scriptURL` has none).
+    script_url.set_fragment(None);
     if !matches!(script_url.scheme(), "http" | "https") {
         return Err(type_error(format!("{prefix}: The URL protocol of the script ('{script_url}') is not supported.")));
     }
@@ -1424,7 +1426,8 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: pyro_
                     }
                     ResponseEvent::Failed(error) => {
                         state.done = true;
-                        Err(error.to_string())
+                        // The redirect mode "error": the script is behind a redirect.
+                        Err(if matches!(error, pyro_net::NetError::RedirectNotAllowed) { "redirected".to_owned() } else { error.to_string() })
                     }
                 }
             };
@@ -1508,6 +1511,13 @@ fn fetched_script(
     };
     let (head, body) = match result {
         Ok(found) => found,
+        // Fetch with the redirect mode "error": no service worker script comes from a redirect.
+        Err(error) if error == "redirected" => {
+            return fail(reply_error(
+                "SecurityError",
+                &format!("{prefix}: The script resource is behind a redirect, which is disallowed."),
+            ))
+        }
         Err(_) => {
             return fail(reply_error(
                 "TypeError",
@@ -1532,6 +1542,13 @@ fn fetched_script(
     }
     let max_scope = match head.headers.get("service-worker-allowed").and_then(|v| v.to_str().ok()) {
         Some(allowed) => match script_url.join(allowed) {
+            // The header's value is parsed against the script's URL and must stay on its origin.
+            Ok(url) if url.origin() != script_url.origin() => {
+                return fail(reply_error(
+                    "SecurityError",
+                    &format!("{prefix}: The Service-Worker-Allowed header value ('{allowed}') is cross-origin to the script."),
+                ))
+            }
             Ok(url) => url.path().to_owned(),
             Err(_) => {
                 return fail(reply_error(
