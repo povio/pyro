@@ -59,6 +59,12 @@ pub trait Animated {
         None
     }
 
+    /// The matrix of `el`'s `transform` attribute under the `<animateTransform>`s in effect on it (its
+    /// `animVal`), replacing the attribute's.
+    fn transform(&self, _el: NodeId) -> Option<[f64; 6]> {
+        None
+    }
+
     /// The supplemental transform of the `<animateMotion>`s in effect on `el` (SVG 2, "animateMotion"):
     /// applied after the element's `transform`, in the element's own user space.
     fn motion(&self, _el: NodeId) -> Option<[f64; 6]> {
@@ -70,10 +76,10 @@ pub trait Animated {
 pub struct Still;
 impl Animated for Still {}
 
-/// `el`'s `transform` attribute as a matrix with its supplemental motion transform applied after it
+/// `el`'s `transform` (animated: `animVal`) as a matrix with its supplemental motion transform applied after it
 /// (`transform` then motion: a point goes through the motion first, then through the attribute).
 fn placement(dom: &Dom, animated: &dyn Animated, el: NodeId) -> Option<[f64; 6]> {
-    let own = dom.get_attribute(el, "transform").ok().flatten().and_then(parse_transform);
+    let own = animated.transform(el).or_else(|| dom.get_attribute(el, "transform").ok().flatten().and_then(parse_transform));
     match (own, animated.motion(el)) {
         (Some(own), Some(motion)) => Some(multiply(own, motion)),
         (own, None) => own,

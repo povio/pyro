@@ -2923,24 +2923,40 @@ pub fn animated_transform_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, at
         if contributions.is_empty() {
             return None;
         }
-        // SMIL 3.3: an additive animation adds its transform to the list below it; any other
-        // replaces the list.
-        let mut items = base.to_vec();
-        for c in &contributions {
-            let (Some(kind), Some(args)) = (c.transform_type(), crate::smil::evaluate(&TransformSpace, c, &Vec::new())) else {
-                continue;
-            };
-            let args: Vec<String> = args.iter().map(|v| v.to_string()).collect();
-            let animation = parse_transform_list(&format!("{kind}({})", args.join(" ")));
-            if c.additive() && !items.is_empty() {
-                items.extend(animation);
-            } else {
-                items = animation;
-            }
-        }
-        Some(items)
+        Some(animated_transform_items(&contributions, base))
     }));
     s.wrap::<SvgAnimatedTransformList>(lists, Some(key))
+}
+
+/// SMIL 3.3: the transform list `base` under the `<animateTransform>`s `contributions` (in sandwich
+/// order): an additive animation adds its transform to the list below it; any other replaces the list.
+fn animated_transform_items(contributions: &[crate::smil::Contribution], base: &[TransformValue]) -> Vec<TransformValue> {
+    let mut items = base.to_vec();
+    for c in contributions {
+        let (Some(kind), Some(args)) = (c.transform_type(), crate::smil::evaluate(&TransformSpace, c, &Vec::new())) else {
+            continue;
+        };
+        let args: Vec<String> = args.iter().map(|v| v.to_string()).collect();
+        let animation = parse_transform_list(&format!("{kind}({})", args.join(" ")));
+        if c.additive() && !items.is_empty() {
+            items.extend(animation);
+        } else {
+            items = animation;
+        }
+    }
+    items
+}
+
+/// The matrix of the `transform` attribute of `id` under the `<animateTransform>`s in effect on it (its
+/// `animVal`), for `getBBox()` and `getCTM()`; `None` when no animation changes it.
+pub(crate) fn animated_transform_matrix(page: &PageDom, id: NodeId) -> Option<[f64; 6]> {
+    let contributions = attribute_contributions(page, id, &["transform"]);
+    if contributions.is_empty() {
+        return None;
+    }
+    let base = page.dom.borrow().get_attribute(id, "transform").ok().flatten().map(parse_transform_list).unwrap_or_default();
+    let items = animated_transform_items(&contributions, &base);
+    Some(items.iter().fold(IDENTITY_MATRIX, |matrix, item| pyro_dom::svg_geometry::multiply(matrix, item.matrix)))
 }
 
 // ----- SVGRect, SVGAnimatedRect -------------------------------------------------------
@@ -3074,6 +3090,10 @@ impl pyro_dom::svg_geometry::Animated for SmilGeometry<'_> {
 
     fn number(&self, el: NodeId, name: &str) -> Option<f64> {
         animated_geometry_number(self.page, el, name)
+    }
+
+    fn transform(&self, el: NodeId) -> Option<[f64; 6]> {
+        animated_transform_matrix(self.page, el)
     }
 }
 
