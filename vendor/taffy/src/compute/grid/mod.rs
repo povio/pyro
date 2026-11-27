@@ -1523,8 +1523,11 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         // box of its cells (css-tables-3 § 3.10; WPT css-flexbox `flex-align-baseline-table-001`, css-grid
         // `grid-align-baseline-table-001`). (A cell of the table's last row is not the last item in grid order.)
         if table_rows {
+            // (a row whose cells all span several rows has no baseline of its own, as in Blink: the last row
+            // with a single-row cell gives it)
+            let baseline_row = items.iter().filter(|item| item.span(AbstractAxis::Block) == 1).map(|item| item.row_indexes.end).max();
             let row_cells = || {
-                items.iter().filter(|item| item.row_indexes.end == last_row && item.span(AbstractAxis::Block) == 1)
+                items.iter().filter(|item| Some(item.row_indexes.end) == baseline_row && item.span(AbstractAxis::Block) == 1)
             };
             let lowest = |values: &mut dyn Iterator<Item = f32>| values.reduce(f32::max);
             let aligned = lowest(&mut row_cells()
