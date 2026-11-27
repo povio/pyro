@@ -5,7 +5,7 @@
 //   native.register(id, scriptURL, scope, type, updateViaCache), trustedScriptURL(value)
 //   native.blocked(): the context blocks registration (serviceWorkers: 'block')
 //   native.getRegistration(id, clientURL), getRegistrations(id)
-//   native.unregister(id, registrationId), update(id, registrationId)
+//   native.unregister(id, registrationId), update(id, registrationId), preload(id, registrationId, op, value)
 //     each settles request `id` later through settle(id, ok, json, name, message)
 //   native.postMessage(versionId, message, options) serializes now.
 // The browser thread calls, each in its own task:
@@ -150,21 +150,45 @@
   // -- ServiceWorkerRegistration -------------------------------------------------
   const registrations = new Map();
   const registrationData = new WeakMap();
+  // The registration's navigation preload state lives on the browser thread (`native.preload`).
+  const managerData = new WeakMap();
+  const preloadOp = (manager, op, value) => {
+    try {
+      const d = managerData.get(manager);
+      if (!d) throw new TypeErrorC('Illegal invocation');
+      return request('preload', d.id, op, value);
+    } catch (e) {
+      return PromiseC.reject(e);
+    }
+  };
   class NavigationPreloadManager {
     constructor() {
-      if (arguments[0] !== token) throw illegal('NavigationPreloadManager');
+      const [t, id] = arguments;
+      if (t !== token) throw illegal('NavigationPreloadManager');
+      managerData.set(this, { id });
     }
     enable() {
-      return PromiseC.resolve(undefined);
+      return preloadOp(this, 'enable');
     }
     disable() {
-      return PromiseC.resolve(undefined);
+      return preloadOp(this, 'disable');
     }
-    setHeaderValue() {
-      return PromiseC.resolve(undefined);
+    setHeaderValue(value) {
+      if (arguments.length === 0) {
+        return PromiseC.reject(new TypeErrorC("Failed to execute 'setHeaderValue' on 'NavigationPreloadManager': 1 argument required, but only 0 present."));
+      }
+      // ByteString, and a header value: no NUL, CR or LF.
+      const v = String(value);
+      for (let i = 0; i < v.length; i++) {
+        const c = v.charCodeAt(i);
+        if (c > 0xff || c === 0 || c === 10 || c === 13) {
+          return PromiseC.reject(new TypeErrorC("Failed to execute 'setHeaderValue' on 'NavigationPreloadManager': The provided value is not a valid header value."));
+        }
+      }
+      return preloadOp(this, 'setHeaderValue', v);
     }
     getState() {
-      return PromiseC.resolve({ enabled: false, headerValue: 'true' });
+      return preloadOp(this, 'getState');
     }
   }
   tag(NavigationPreloadManager, 'NavigationPreloadManager');
@@ -181,7 +205,7 @@
       native.registrationCookies.set(this, () => cookies ??= native.cookieManager(r.id, r.scope));
       registrationData.set(this, {
         id: r.id, seq: -1, scope: r.scope, updateViaCache: r.updateViaCache,
-        installing: null, waiting: null, active: null, preload: new NavigationPreloadManager(token),
+        installing: null, waiting: null, active: null, preload: new NavigationPreloadManager(token, r.id),
       });
     }
     get scope() {

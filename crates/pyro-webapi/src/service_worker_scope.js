@@ -3,13 +3,16 @@
 // for pages). `native` crosses to the browser thread or answers fetches:
 //   query(kind, a, b) -> id: an asynchronous browser-thread request
 //     ('skipWaiting', 'claim', 'matchAll' (includeUncontrolled, type), 'get'
-//     (clientId), 'unregister', 'update'), answered by reply(id, ok, json).
+//     (clientId), 'unregister', 'update', 'preload' (op, value: the registration's
+//     NavigationPreloadManager)), answered by reply(id, ok, json).
 //   postToClient(clientId, message, options) structured-serializes now.
 //   respondHead(fetchId, status, statusText, headers, url, type), respondChunk(fetchId, bytes),
 //   respondEnd(fetchId): the response to an intercepted request, event by event
 //   (a worker that goes away between head and end truncates the body)
 //   passthrough(fetchId), failFetch(fetchId, reason), startRace(fetchId) (the static router's
 //   race source: the network request starts now, the first good response wins)
+//   startPreload(fetchId): the navigation preload request of a job with `preload` (the header
+//   value) starts; preloadDone(id, response) / preloadFailed(id, message) are called back
 //   hasFetchHandler(): whether the global has a `fetch` listener (addRoutes needs one for some sources)
 //   done(kind, ok): the install or activate event's lifetime promises settled.
 // `info`: {scope, scriptURL, registrationId, versionId, updateViaCache}.
@@ -108,7 +111,7 @@
         resultingClientId: init.resultingClientId === undefined ? '' : String(init.resultingClientId),
         handled,
         handledSettlers,
-        preloadResponse: resolved(undefined),
+        preloadResponse: init.preloadResponse === undefined ? resolved(undefined) : resolved(init.preloadResponse),
         response: null,
         responded: false,
         event: this,
@@ -424,12 +427,36 @@
   tag(ServiceWorkerRegistration, 'ServiceWorkerRegistration');
   const registration = new ServiceWorkerRegistration(token);
   const slots = { installing: null, waiting: null, active: null };
-  const navigationPreload = freeze({
-    enable: () => resolved(undefined),
-    disable: () => resolved(undefined),
-    setHeaderValue: () => resolved(undefined),
-    getState: () => resolved({ enabled: false, headerValue: 'true' }),
-  });
+  // `registration.navigationPreload`: the registration's state lives on the browser thread
+  // (queries), as the page's manager reaches it.
+  const preloadOp = (manager, op, value) => {
+    if (manager !== navigationPreload) return PromiseC.reject(new TypeErrorC('Illegal invocation'));
+    return query('preload', op, value).then((state) => state);
+  };
+  class NavigationPreloadManager {
+    constructor(t) {
+      if (t !== token) throw illegal('NavigationPreloadManager');
+    }
+    enable() { return preloadOp(this, 'enable'); }
+    disable() { return preloadOp(this, 'disable'); }
+    setHeaderValue(value) {
+      if (arguments.length === 0) {
+        return PromiseC.reject(new TypeErrorC("Failed to execute 'setHeaderValue' on 'NavigationPreloadManager': 1 argument required, but only 0 present."));
+      }
+      // ByteString, and a header value: no NUL, CR or LF.
+      const v = String(value);
+      for (let i = 0; i < v.length; i++) {
+        const c = v.charCodeAt(i);
+        if (c > 0xff || c === 0 || c === 10 || c === 13) {
+          return PromiseC.reject(new TypeErrorC("Failed to execute 'setHeaderValue' on 'NavigationPreloadManager': The provided value is not a valid header value."));
+        }
+      }
+      return preloadOp(this, 'setHeaderValue', v);
+    }
+    getState() { return preloadOp(this, 'getState'); }
+  }
+  tag(NavigationPreloadManager, 'NavigationPreloadManager');
+  const navigationPreload = new NavigationPreloadManager(token);
 
   // This worker's state, as the browser thread moves it.
   function state(value) {
@@ -569,15 +596,44 @@
 
   // The `fetch` event for `job`, dispatched; null when it cannot be made (the request
   // then goes to the network). The record returned is the event's `fetchData`.
-  function fire(job) {
+  function fire(job, preloadResponse) {
     let event;
     try {
-      event = new FetchEvent('fetch', { request: job.request, clientId: job.clientId, resultingClientId: job.resultingClientId, cancelable: true });
+      event = new FetchEvent('fetch', { request: job.request, clientId: job.clientId, resultingClientId: job.resultingClientId, preloadResponse, cancelable: true });
     } catch (e) {
       return null;
     }
     dispatch(event);
     return fetchData.get(event);
+  }
+
+  // The navigation preload (https://w3c.github.io/ServiceWorker/#navigation-preload): `job.preload`
+  // is the header value when the registration has it enabled for this GET navigation, and then the
+  // network request starts now, beside the handler (`native.startPreload`); `preloadResponse` is the
+  // promise of its Response (a network error rejects it), undefined when there is no preload.
+  const preloads = new Map();
+  function startPreload(job) {
+    if (typeof job.preload !== 'string' || !native.hasFetchHandler()) return resolved(undefined);
+    const promise = new PromiseC((resolve, reject) => { preloads.set(job.id, { resolve, reject }); });
+    if (!native.startPreload(job.id)) {
+      preloads.delete(job.id);
+      return resolved(undefined);
+    }
+    // A preload nobody asked for that failed is not the worker's unhandled rejection.
+    promise.then(undefined, () => {});
+    return promise;
+  }
+  function preloadDone(id, response) {
+    const entry = preloads.get(id);
+    if (entry === undefined) return;
+    preloads.delete(id);
+    entry.resolve(response);
+  }
+  function preloadFailed(id, message) {
+    const entry = preloads.get(id);
+    if (entry === undefined) return;
+    preloads.delete(id);
+    entry.reject(new DOMExceptionC(message, 'NetworkError'));
   }
 
   // `FetchEvent.handled`: resolved when the event's outcome is known and good, rejected for a
@@ -636,7 +692,7 @@
     // 'race': the network request starts before the handler runs (it may run long); the native
     // side answers with the first good response, and `passthrough` below means "the network's".
     if (source.type === 'race') native.startRace(job.id);
-    const d = fire(job);
+    const d = fire(job, startPreload(job));
     if (d === null) {
       native.passthrough(job.id);
       return;
@@ -663,6 +719,7 @@
     ['ExtendableEvent', ExtendableEvent], ['InstallEvent', InstallEvent], ['FetchEvent', FetchEvent],
     ['ExtendableMessageEvent', ExtendableMessageEvent], ['Client', Client], ['WindowClient', WindowClient],
     ['Clients', Clients], ['ServiceWorker', ServiceWorker], ['ServiceWorkerRegistration', ServiceWorkerRegistration],
+    ['NavigationPreloadManager', NavigationPreloadManager],
   ]) {
     global(name, C);
   }
@@ -683,6 +740,8 @@
     dispatchFetch,
     closeDispatch,
     cancelFetch,
+    preloadDone,
+    preloadFailed,
     dispatchMessage,
     dispatchMessageError,
     reply,

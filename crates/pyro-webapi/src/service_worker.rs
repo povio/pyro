@@ -50,7 +50,7 @@
 //!
 //! Gaps (explicit): no persistence (registrations live as long as the
 //! context); requests of workers a controlled page starts do not go through
-//! the worker; no Push, Background Sync, navigation preload or
+//! the worker; no Push, Background Sync or
 //! `Clients.openWindow`; a worker does not stop when idle;
 //! `clients.matchAll` and `claim` see the context's documents that are
 //! clients (above), not every document; templates of `serve --fork` refuse
@@ -111,6 +111,9 @@ pub(crate) enum QueryKind {
     Get(String),
     Unregister,
     Update,
+    /// The registration's `NavigationPreloadManager`: `enable`, `disable`, `setHeaderValue` (with
+    /// `value`) or `getState`.
+    Preload { op: String, value: String },
 }
 
 /// What a worker's thread tells the browser thread.
@@ -128,6 +131,8 @@ pub(crate) enum SwUp {
     },
     /// The page cancelled the response a `fetch` event streams (the worker's job key).
     CancelFetch(u64),
+    /// The navigation preload request of the worker's job `key` ended.
+    PreloadDone(u64),
     PostToClient {
         client: String,
         message: WireMessage,
@@ -301,6 +306,11 @@ pub(crate) struct Registration {
     jobs: RefCell<VecDeque<(Weak<PageDom>, pyro_net::Url, Settle)>>,
     /// The version whose script runs for the first time (before `installing`).
     evaluating: RefCell<Option<Rc<Version>>>,
+    /// Navigation preload (`NavigationPreloadManager`): whether a navigation the active worker
+    /// handles starts a preload request, and the value of its `Service-Worker-Navigation-Preload`
+    /// header. They belong to the registration, not to a version.
+    preload_enabled: Cell<bool>,
+    preload_header: RefCell<String>,
 }
 
 pub(crate) struct Version {
@@ -630,6 +640,9 @@ pub struct LoadRoute {
     version: Rc<Version>,
     client_id: String,
     resulting_client_id: String,
+    /// A navigation of a registration with navigation preload enabled: the value of the
+    /// `Service-Worker-Navigation-Preload` header its preload request carries.
+    preload: Option<String>,
 }
 
 impl LoadRoute {
@@ -659,6 +672,7 @@ impl LoadRoute {
             head_sent: false,
             sent: 0,
             race: None,
+            preload: self.preload,
         };
         // A worker that is gone drops the job, which then goes to the network.
         self.version.run(move |s, _| crate::service_worker_scope::fetch(s, job));
@@ -704,7 +718,7 @@ pub fn subresource_route(document: &PageDom, request: &Request) -> Option<LoadRo
     if version.state.get() == State::Redundant {
         return None;
     }
-    Some(LoadRoute { version, client_id: client.id.clone(), resulting_client_id: String::new() })
+    Some(LoadRoute { version, client_id: client.id.clone(), resulting_client_id: String::new(), preload: None })
 }
 
 /// A navigation request of a frame of `services`' context (mode `navigate`,
@@ -727,15 +741,19 @@ pub fn navigation_route(services: &ContextServices, request: &Request) -> Option
     } else {
         SiteContext::CrossSite
     };
-    let version = registry.matching(request.url.as_str(), partition.as_deref(), site)?.active.borrow().clone()?;
+    let registration = registry.matching(request.url.as_str(), partition.as_deref(), site)?;
+    let version = registration.active.borrow().clone()?;
     if version.state.get() == State::Redundant {
         return None;
     }
+    // "Handle Fetch": a GET navigation of a registration with navigation preload enabled.
+    let preload = (registration.preload_enabled.get() && request.method == pyro_net::http::Method::GET && request.mode == RequestMode::Navigate)
+        .then(|| registration.preload_header.borrow().clone());
     let resulting_client_id = match request.frame_id.as_deref() {
         Some(frame) => registry.reserve(frame),
         None => random_id(),
     };
-    Some(LoadRoute { version, client_id: String::new(), resulting_client_id })
+    Some(LoadRoute { version, client_id: String::new(), resulting_client_id, preload })
 }
 
 /// Runs on the browser thread, as a task of its loop.
@@ -754,6 +772,7 @@ pub(crate) fn deliver(version: u64, up: SwUp) {
         }
         SwUp::PostToClient { client, message, queued } => post_to_client(&version, &client, message, queued),
         SwUp::CancelFetch(key) => version.run(move |s, _| crate::service_worker_scope::fetch_cancelled(s, key)),
+        SwUp::PreloadDone(key) => version.run(move |s, _| crate::service_worker_scope::preload_ready(s, key)),
     }
 }
 
@@ -843,7 +862,31 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
         QueryKind::Unregister => Ok(unregister(&registration).to_string()),
         // A worker's own update() changes nothing: its script is what it runs.
         QueryKind::Update => Ok(String::new()),
+        QueryKind::Preload { op, value } => preload_op(&registration, &op, &value),
     }
+}
+
+/// `NavigationPreloadManager` of `registration` (https://w3c.github.io/ServiceWorker/#navigation-preload-manager):
+/// `getState` answers the state as JSON; `enable`, `disable` and `setHeaderValue` (`value`: a
+/// ByteString, one char per byte) change it and need an active worker ("InvalidStateError").
+fn preload_op(registration: &Registration, op: &str, value: &str) -> Result<String, (String, String)> {
+    if op == "getState" {
+        return Ok(format!(
+            "{{\"enabled\":{},\"headerValue\":{}}}",
+            registration.preload_enabled.get(),
+            quote(&registration.preload_header.borrow())
+        ));
+    }
+    if registration.active.borrow().is_none() {
+        return reply_error("InvalidStateError", "The registration has no active worker.");
+    }
+    match op {
+        "enable" => registration.preload_enabled.set(true),
+        "disable" => registration.preload_enabled.set(false),
+        "setHeaderValue" => *registration.preload_header.borrow_mut() = value.to_owned(),
+        other => return reply_error("TypeError", &format!("unknown navigation preload operation {other}")),
+    }
+    Ok(String::new())
 }
 
 fn post_to_client(
@@ -1186,6 +1229,8 @@ fn register(
                 updating: Cell::new(false),
                 jobs: RefCell::new(VecDeque::new()),
                 evaluating: RefCell::new(None),
+                preload_enabled: Cell::new(false),
+                preload_header: RefCell::new("true".to_owned()),
             });
             registry.registrations.borrow_mut().push(registration.clone());
             registration
@@ -1704,6 +1749,24 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     native.set_atom("update", f.value())?;
+    let f = s.function("preload", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let id = a.get(0).to_number()? as u64;
+        let settle = Settle { page: Rc::downgrade(&page), id, realm: s.realm().downgrade() };
+        let op = a.get(2).to_string()?;
+        let value = if a.get(3).is_undefined() { String::new() } else { a.get(3).to_string()? };
+        let registration = same_origin_registration(&page, a.get(1).to_number()? as u64).filter(|r| !r.uninstalling.get());
+        let result = match registration {
+            Some(registration) => preload_op(&registration, &op, &value).map(|json| {
+                // A settled promise's value rides in `value` (see the page glue's `settle`).
+                if op == "getState" { format!("{{\"value\":{json}}}") } else { "{}".to_owned() }
+            }),
+            None => reply_error("InvalidStateError", "The registration is gone."),
+        };
+        settle.done(result);
+        Ok(s.undefined())
+    })?;
+    native.set_atom("preload", f.value())?;
     let f = s.function("postMessage", |s, _, a| {
         let page = crate::target::page_of(s)?;
         let version = a.get(0).to_number()? as u64;

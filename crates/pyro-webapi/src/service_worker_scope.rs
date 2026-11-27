@@ -65,6 +65,19 @@ pub(crate) struct FetchJob {
     /// The static router's `race-network-and-fetch-handler` source: the network request runs
     /// beside the fetch event and `sink` is the worker's side of the race.
     pub race: Option<Arc<Race>>,
+    /// A navigation with navigation preload enabled: the `Service-Worker-Navigation-Preload`
+    /// header value its preload request carries (`startPreload`).
+    pub preload: Option<String>,
+}
+
+/// What a navigation preload request has delivered so far; the net thread fills it, and the
+/// worker's thread reads it once the request ended (`preload_ready`).
+#[derive(Default)]
+struct PreloadBuffer {
+    head: Option<ResponseHead>,
+    body: Vec<Bytes>,
+    /// The end: `Err` is the failure's text.
+    done: Option<Result<(), String>>,
 }
 
 /// Which of the two answers of a race goes to the page.
@@ -189,6 +202,8 @@ thread_local! {
     /// Fetch events waiting for their answer, by key.
     static PENDING: RefCell<FxHashMap<u64, FetchJob>> = RefCell::default();
     static NEXT_KEY: Cell<u64> = const { Cell::new(1) };
+    /// Navigation preload requests under way, by the key of the fetch job they belong to.
+    static PRELOADS: RefCell<FxHashMap<u64, Arc<Mutex<PreloadBuffer>>>> = RefCell::default();
     /// Queries sent to the browser thread and not answered yet.
     static QUERIES: Cell<usize> = const { Cell::new(0) };
 }
@@ -221,6 +236,7 @@ impl Drop for Queued {
 pub(crate) fn tear_down() {
     drop(GLUE.with(|g| g.take()));
     drop(PENDING.with(|p| std::mem::take(&mut *p.borrow_mut())));
+    drop(PRELOADS.with(|p| std::mem::take(&mut *p.borrow_mut())));
 }
 
 fn next_key() -> u64 {
@@ -316,6 +332,7 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
             "get" => QueryKind::Get(a.get(1).to_string()?),
             "unregister" => QueryKind::Unregister,
             "update" => QueryKind::Update,
+            "preload" => QueryKind::Preload { op: a.get(1).to_string()?, value: a.get(2).to_string()? },
             other => return Err(JsError::Type(format!("unknown query {other}").into())),
         };
         QUERIES.with(|q| q.set(q.get() + 1));
@@ -428,6 +445,50 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         Ok(s.undefined())
     })?;
     native.set_atom("startRace", race_fn.value())?;
+    let p = poster.clone();
+    let start_preload = s.function("startPreload", move |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        let started = PENDING.with(|pending| {
+            let pending = pending.borrow();
+            let Some(job) = pending.get(&key) else { return false };
+            let (Some(header), Some(request)) = (job.preload.as_deref(), job.request.as_ref()) else { return false };
+            let Some(request) = preload_request(request, header) else { return false };
+            let buffer = Arc::new(Mutex::new(PreloadBuffer::default()));
+            let (sink_buffer, poster) = (buffer.clone(), p.clone());
+            let sink: ResponseSink = Box::new(move |event| {
+                let finished = {
+                    let mut buffer = sink_buffer.lock().unwrap_or_else(PoisonError::into_inner);
+                    match event {
+                        ResponseEvent::Redirect { .. } => false,
+                        ResponseEvent::Response(head) => {
+                            buffer.head = Some(head);
+                            false
+                        }
+                        ResponseEvent::Data(bytes) => {
+                            buffer.body.push(bytes);
+                            false
+                        }
+                        ResponseEvent::Finished { .. } => {
+                            buffer.done = Some(Ok(()));
+                            true
+                        }
+                        ResponseEvent::Failed(error) => {
+                            buffer.done = Some(Err(error.to_string()));
+                            true
+                        }
+                    }
+                };
+                if finished {
+                    poster(Box::new(move || deliver(version, SwUp::PreloadDone(key))));
+                }
+            });
+            PRELOADS.with(|preloads| preloads.borrow_mut().insert(key, buffer));
+            job.net.fetch_with_id(job.net.next_request_id(), request, sink);
+            true
+        });
+        Ok(s.boolean(started))
+    })?;
+    native.set_atom("startPreload", start_preload.value())?;
     let has_fetch = s.function("hasFetchHandler", |s, _, _| {
         let page = crate::target::page_of(s)?;
         let has = page.window_target().is_some_and(|window| page.dom.try_borrow().is_ok_and(|dom| dom.has_listener_for(window, "fetch")));
@@ -474,6 +535,61 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
     let glue = factory.call(None, &[roots.0.get(s), roots.1.get(s)])?;
     GLUE.with(|g| *g.borrow_mut() = Some(Persistent::new(s, glue)));
     Ok(())
+}
+
+/// The request a navigation preload sends for `navigation` (the navigation's own, as the page
+/// sent it): "Handle Fetch" adds `Service-Worker-Navigation-Preload` (the registration's header
+/// value, a ByteString); the redirect mode is manual, so a redirect is the preload response
+/// (an opaque-redirect one) and not followed. Chrome's navigations carry
+/// `Upgrade-Insecure-Requests`, which the preload then does too. `None` for a value that is not
+/// a header value.
+fn preload_request(navigation: &Request, header: &str) -> Option<Request> {
+    let bytes: Vec<u8> = header.chars().map(|c| c as u32 as u8).collect();
+    let value = HeaderValue::from_bytes(&bytes).ok()?;
+    let mut request = navigation.clone();
+    request.headers.insert(HeaderName::from_static("service-worker-navigation-preload"), value);
+    request.headers.insert(HeaderName::from_static("upgrade-insecure-requests"), HeaderValue::from_static("1"));
+    request.redirect = pyro_net::RedirectMode::Manual;
+    Some(request)
+}
+
+/// The navigation preload request of job `key` ended (the browser thread told the worker): its
+/// `Response` (a network error rejects `preloadResponse`) goes to the glue.
+pub(crate) fn preload_ready(s: &Scope<'_>, key: u64) {
+    let Some(buffer) = PRELOADS.with(|p| p.borrow_mut().remove(&key)) else { return };
+    let (head, body, done) = {
+        let mut buffer = buffer.lock().unwrap_or_else(PoisonError::into_inner);
+        (buffer.head.take(), std::mem::take(&mut buffer.body), buffer.done.take())
+    };
+    let failure = |message: &str| call(s, "preloadFailed", &[s.number(key as f64), s.string(message)]);
+    let (Some(head), Some(Ok(()))) = (head, done.clone()) else {
+        failure(&match done {
+            Some(Err(error)) => format!("The service worker navigation preload request failed with network error: {error}"),
+            _ => "The service worker navigation preload request failed with network error: no response".to_owned(),
+        });
+        return;
+    };
+    let kind = match head.kind {
+        ResponseKind::Basic => "basic",
+        ResponseKind::Cors => "cors",
+        ResponseKind::Opaque => "opaque",
+        ResponseKind::OpaqueRedirect => "opaqueredirect",
+    };
+    // What script sees of the response: no cookies, and nothing of an opaque one's headers.
+    let headers: Vec<(String, String)> = if matches!(head.kind, ResponseKind::Opaque | ResponseKind::OpaqueRedirect) {
+        Vec::new()
+    } else {
+        head.headers
+            .iter()
+            .filter(|(name, _)| !matches!(name.as_str(), "set-cookie" | "set-cookie2"))
+            .map(|(name, value)| (name.as_str().to_owned(), value.as_bytes().iter().map(|b| char::from(*b)).collect()))
+            .collect()
+    };
+    let body = (!matches!(head.kind, ResponseKind::OpaqueRedirect)).then_some(body);
+    match crate::response::stored(s, kind, head.url.as_str(), head.status.as_u16(), head.status_text.clone(), headers, head.redirected, body) {
+        Ok(response) => call(s, "preloadDone", &[s.number(key as f64), response]),
+        Err(_) => failure("The service worker navigation preload response could not be made"),
+    }
 }
 
 /// The page cancelled the response job `key` streams: the job goes (its sink hears an abort) and
@@ -706,6 +822,7 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
         Err(_) => return,
     };
     let is_navigation = request.mode == pyro_net::RequestMode::Navigate;
+    let preload = job.preload.clone();
     let key = next_key();
     let (client, resulting) = (job.client_id.clone(), job.resulting_client_id.clone());
     job.dispatched = true;
@@ -718,7 +835,7 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
         job.set_atom("clientId", s.string(&client))?;
         job.set_atom("resultingClientId", s.string(&resulting))?;
         job.set_atom("isNavigation", s.boolean(is_navigation))?;
-        job.set_atom("preload", s.null())?;
+        job.set_atom("preload", preload.map_or_else(|| s.null(), |header| s.string(&header)))?;
         Ok::<_, JsError>(job)
     })();
     match described {
