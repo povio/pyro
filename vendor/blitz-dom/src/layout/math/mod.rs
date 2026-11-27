@@ -246,15 +246,37 @@ pub(crate) fn math_kind(doc: &BaseDocument, node_id: NodeId) -> Option<MathKind>
     }
     let kind = kind_by_name(&element.name.local)?;
     let Some(required) = required_children(kind) else { return Some(kind) };
-    let count = doc.nodes[node_id]
+    let in_flow: Vec<&Node> = doc.nodes[node_id]
         .children
         .iter()
-        .filter(|&&child| {
-            let child = &doc.nodes[child];
-            matches!(child.data, NodeData::Element(_)) && !child.display_style().is_some_and(|display| display.is_none())
-        })
-        .count();
-    Some(if required.contains(&count) { kind } else { MathKind::Row })
+        .map(|&child| &doc.nodes[child])
+        .filter(|child| matches!(child.data, NodeData::Element(_)) && !child.display_style().is_some_and(|display| display.is_none()))
+        .collect();
+    let valid = required.contains(&in_flow.len()) && (kind != MathKind::Multiscripts || valid_multiscripts(&in_flow));
+    Some(if valid { kind } else { MathKind::Row })
+}
+
+/// Whether the in-flow element children of an `mmultiscripts` are valid (MathML Core § 3.4.7): a
+/// base, then pairs of post-scripts, then optionally an `mprescripts` followed by pairs of
+/// pre-scripts. A first child that is an `mprescripts`, a second `mprescripts`, or an odd number
+/// of scripts on either side makes it an `mrow` (as Chromium).
+fn valid_multiscripts(children: &[&Node]) -> bool {
+    let is_prescripts = |node: &Node| {
+        node.element_data().is_some_and(|e| e.name.ns == ns!(mathml) && &*e.name.local == "mprescripts")
+    };
+    if children.first().is_some_and(|first| is_prescripts(first)) {
+        return false;
+    }
+    let mut prescripts = children.iter().enumerate().filter(|(_, child)| is_prescripts(child)).map(|(i, _)| i);
+    let first = prescripts.next();
+    if prescripts.next().is_some() {
+        return false;
+    }
+    match first {
+        // The base and the post-script pairs, then the pre-script pairs.
+        Some(at) => (at - 1) % 2 == 0 && (children.len() - at - 1) % 2 == 0,
+        None => (children.len() - 1) % 2 == 0,
+    }
 }
 
 /// Whether `element` is an atomic inline when inline-level (`replaced::is_inline_box`): the `math`
