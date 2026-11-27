@@ -60,6 +60,13 @@ fn platform() -> &'static str {
     }
 }
 
+/// The Permissions Policy feature that controls a hint: `ch-` and the name without `sec-`
+/// (`sec-ch-ua-arch` is `ch-ua-arch`, `dpr` is `ch-dpr`).
+pub fn policy_feature(name: &str) -> String {
+    let name = name.strip_prefix("sec-").unwrap_or(name);
+    if name.starts_with("ch-") { name.to_owned() } else { format!("ch-{name}") }
+}
+
 /// The three hints sent without an `Accept-CH` opt-in.
 pub(crate) fn low_entropy() -> [(HeaderName, HeaderValue); 3] {
     [
@@ -178,8 +185,17 @@ impl Store {
 
     /// Adds the hints `url`'s origin asked for to `h` (a header the request has keeps its value).
     pub(crate) fn add_to(&self, url: &Url, ua: bool, h: &mut HeaderMap) {
+        self.add_to_unless(url, ua, &[], h)
+    }
+
+    /// [`Store::add_to`] without the hints whose Permissions Policy feature (`ch-device-memory` for
+    /// `sec-ch-device-memory` and `device-memory`) is in `denied`.
+    pub(crate) fn add_to_unless(&self, url: &Url, ua: bool, denied: &[String], h: &mut HeaderMap) {
         let Some(hints) = self.by_origin.get(&url.origin().ascii_serialization()) else { return };
         for &name in hints {
+            if denied.iter().any(|f| *f == policy_feature(name)) {
+                continue;
+            }
             if let Some(v) = value(name, ua) {
                 h.entry(HeaderName::from_static(name)).or_insert(v);
             }

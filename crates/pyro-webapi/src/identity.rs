@@ -30,6 +30,8 @@ impl UserAgentOverride {
             cookie_blocking: None,
             corp_report: None,
             ephemeral_cookies: None,
+            no_accept_ch: false,
+            ch_denied: None,
         })
     }
 }
@@ -81,6 +83,8 @@ pub(crate) struct IdentityState {
     /// document the one it inherits; a worker's is its owner's (or its script response's).
     embedder_policy: pyro_net::EmbedderPolicy,
     embedder_reporting: pyro_net::EmbedderReporting,
+    /// A service worker's page: its requests carry no `Accept-CH` hints of their own.
+    no_accept_ch: bool,
 }
 impl PageDom {
     /// Applies atomically to existing navigator wrappers/worlds and future
@@ -150,6 +154,10 @@ impl PageDom {
     pub fn set_embedder_reporting(&self, reporting: pyro_net::EmbedderReporting) {
         self.identity.borrow_mut().embedder_reporting = reporting;
     }
+    /// Marks this page as a service worker's: the requests it makes get no `Accept-CH` hints added.
+    pub(crate) fn set_no_accept_ch(&self, on: bool) {
+        self.identity.borrow_mut().no_accept_ch = on;
+    }
     /// The reporting parts of the embedder policies this context is subject to.
     pub fn embedder_reporting(&self) -> pyro_net::EmbedderReporting {
         self.identity.borrow().embedder_reporting.clone()
@@ -185,6 +193,8 @@ impl PageDom {
             cache_disabled: identity.cache_disabled,
             insecure: self.insecure_policy(),
             embedder_policy: identity.embedder_policy,
+            no_accept_ch: identity.no_accept_ch,
+            ch_denied: crate::permissions_policy::denied_client_hints(self),
             ..identity.defaults.clone()
         };
         drop(identity);

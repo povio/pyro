@@ -811,6 +811,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     page.set_event_clock(Rc::new(move |at| crate::performance::time_since(started, at)));
     page.set_user_agent_override(start.user_agent.clone()).map_err(|e| JsError::Type(e.to_string().into()))?;
     page.set_extra_http_headers(start.extra_headers.clone());
+    page.set_no_accept_ch(start.service.is_some());
     page.set_cache_disabled(start.cache_disabled);
     page.set_creator_insecure(start.insecure);
     page.set_embedder_policy(start.embedder_policy);

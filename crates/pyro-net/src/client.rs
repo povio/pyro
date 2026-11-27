@@ -551,8 +551,9 @@ impl Shared {
                     h.entry(name).or_insert(value);
                 }
             }
-            if (same_origin || req.destination == Destination::Document) && !req.cross_site_prefetch {
-                self.client_hints.lock().unwrap().add_to(&req.url, default_agent, &mut h);
+            if (same_origin || req.destination == Destination::Document) && !req.cross_site_prefetch && !req.defaults.no_accept_ch {
+                let denied = req.defaults.ch_denied.as_deref().map_or(&[][..], |v| v.as_slice());
+                self.client_hints.lock().unwrap().add_to_unless(&req.url, default_agent, denied, &mut h);
             }
         }
         // Fetch: a ranged request asks for the bytes as stored.
@@ -945,6 +946,20 @@ impl NetClient {
     /// browser-loop task. Overflow is explicit and terminates the subscription.
     pub fn subscribe_with(&self, limits: SubscriptionLimits, wake: Option<NetWake>) -> NetSubscription {
         self.inner.shared.observers.subscribe(limits, wake)
+    }
+    /// The `Accept-CH` hints (and the default UA ones with them) a navigation request to its URL would
+    /// carry, for a service worker's `FetchEvent.request.headers` (Client Hints: the worker sees the hints
+    /// the browser added to the request it intercepted).
+    pub fn navigation_client_hints(&self, req: &Request) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        if !crate::cookies::is_trustworthy(&req.url) || req.cross_site_prefetch {
+            return h;
+        }
+        let settings = self.inner.shared.settings.lock().unwrap();
+        let default_agent = req.defaults.user_agent.is_none() && settings.user_agent.is_none() && req.defaults.client_hints.is_none();
+        drop(settings);
+        self.inner.shared.client_hints.lock().unwrap().add_to_unless(&req.url, default_agent, &[], &mut h);
+        h
     }
     pub fn set_interceptor(&self, i: Option<Arc<dyn Interceptor>>) {
         *self.inner.shared.interceptor.lock().unwrap() = i;

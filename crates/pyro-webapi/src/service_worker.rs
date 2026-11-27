@@ -876,6 +876,12 @@ impl LoadRoute {
             sink(ResponseEvent::Failed(pyro_net::NetError::Blocked(pyro_net::csp::BLOCKED_BY_CSP.into())));
             return;
         }
+        let mut request = request;
+        if matches!(request.destination, pyro_net::Destination::Document | pyro_net::Destination::Iframe) && request.origin.is_none() {
+            for (name, value) in net.navigation_client_hints(&request).iter() {
+                request.headers.entry(name.clone()).or_insert_with(|| value.clone());
+            }
+        }
         let job = FetchJob {
             id,
             request: Some(request),

@@ -51,6 +51,27 @@ const FEATURES: &[(&str, DefaultAllowlist)] = {
         ("autoplay", SelfOrigin),
         ("bluetooth", SelfOrigin),
         ("camera", SelfOrigin),
+        // Client Hints: the low-entropy UA hints are open to every origin, the rest are the document's.
+        ("ch-ua", Star),
+        ("ch-ua-mobile", Star),
+        ("ch-ua-platform", Star),
+        ("ch-ua-arch", SelfOrigin),
+        ("ch-ua-bitness", SelfOrigin),
+        ("ch-ua-full-version", SelfOrigin),
+        ("ch-ua-full-version-list", SelfOrigin),
+        ("ch-ua-model", SelfOrigin),
+        ("ch-ua-platform-version", SelfOrigin),
+        ("ch-ua-wow64", SelfOrigin),
+        ("ch-device-memory", SelfOrigin),
+        ("ch-downlink", SelfOrigin),
+        ("ch-dpr", SelfOrigin),
+        ("ch-ect", SelfOrigin),
+        ("ch-prefers-color-scheme", SelfOrigin),
+        ("ch-prefers-reduced-motion", SelfOrigin),
+        ("ch-prefers-reduced-transparency", SelfOrigin),
+        ("ch-rtt", SelfOrigin),
+        ("ch-viewport-height", SelfOrigin),
+        ("ch-viewport-width", SelfOrigin),
         ("clipboard-read", SelfOrigin),
         ("clipboard-write", SelfOrigin),
         ("compute-pressure", SelfOrigin),
@@ -418,6 +439,15 @@ pub fn pack_headers(enforced: Option<String>, report_only: Option<String>) -> Op
 /// policy-controlled is enabled.
 pub fn feature_allowed(page: &PageDom, feature: &str) -> bool {
     page.permissions_policy.borrow().enabled(feature)
+}
+
+/// The `ch-*` features of Client Hints this document's policy refuses its own origin, for the
+/// `Accept-CH` hints its requests would carry (`None`: none refused).
+pub(crate) fn denied_client_hints(page: &PageDom) -> Option<std::sync::Arc<Vec<String>>> {
+    let policy = page.permissions_policy.borrow();
+    let denied: Vec<String> =
+        FEATURES.iter().map(|(name, _)| *name).filter(|name| name.starts_with("ch-") && !policy.enabled(name)).map(str::to_owned).collect();
+    (!denied.is_empty()).then(|| std::sync::Arc::new(denied))
 }
 
 /// [`feature_allowed`] for a use of `feature` by script of the realm `s` of `page`: also queues

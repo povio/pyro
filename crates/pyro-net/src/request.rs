@@ -240,6 +240,14 @@ pub struct RequestDefaults {
     /// The requesting context is credentialless (an anonymous iframe tree): cookies are read from
     /// and stored in this jar instead of the client's.
     pub ephemeral_cookies: Option<crate::cookies::EphemeralCookies>,
+    /// A service worker's own requests: the `Accept-CH` hints of an origin are not added to them
+    /// (Client Hints infrastructure: a request a worker makes of its own is not the document's;
+    /// a request it passes on from a `FetchEvent` has them in its headers).
+    pub no_accept_ch: bool,
+    /// The Permissions Policy features of the requesting document that refuse client hints
+    /// (`ch-device-memory`, ...) to its own origin: the `Accept-CH` hints they name are left off
+    /// its same-origin requests (Client Hints: a hint goes only where its `ch-*` feature allows).
+    pub ch_denied: Option<std::sync::Arc<Vec<String>>>,
 }
 
 #[derive(Clone, Debug)]
