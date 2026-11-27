@@ -27,6 +27,16 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.boolean(pyro_media::mse_buffer::MediaType::parse(&a.get(0).to_string()?).is_some()))
     })?;
     native.set_atom("mseSupported", mse.value())?;
+    // requestAccess(keySystem, configurations): navigator.requestMediaKeySystemAccess (eme.js), for a
+    // keySystemConfiguration of decodingInfo(). Only a window has EME: a worker's answer is undefined.
+    let access = s.function("requestAccess", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        if page.main_world_realm().is_none_or(|r| r.id() != s.realm_id()) {
+            return Ok(s.undefined());
+        }
+        crate::eme::request_access(s, &page, 2, a.get(0), a.get(1))
+    })?;
+    native.set_atom("requestAccess", access.value())?;
     Ok(native)
 }
 

@@ -3,8 +3,9 @@
 // "valid media configuration" steps say; the answer comes from what this build really decodes
 // (`native.canPlay(type)`: the element's canPlayType table, `native.mseSupported(type)`: the
 // MediaSource byte stream formats). There is no encoder behind a `record` or `webrtc` target (no
-// MediaRecorder, no WebRTC), no key system and no hardware decoder: encodingInfo() is unsupported,
-// a keySystemConfiguration makes decodingInfo() unsupported (keySystemAccess null), powerEfficient
+// MediaRecorder, no WebRTC) and no hardware decoder: encodingInfo() is unsupported. A
+// keySystemConfiguration for Clear Key (`org.w3.clearkey`, eme.js) is supported when the media is and
+// the key system grants access (keySystemAccess), any other key system is unsupported; powerEfficient
 // is false (software decoding) and `smooth` is true exactly when the configuration is supported (frames are never dropped).
 (function (native) {
   'use strict';
@@ -141,8 +142,42 @@
   };
 
   const MAX_DIMENSION = 8192;
+  const CLEAR_KEY = 'org.w3.clearkey';
+  // decodingInfo() with a keySystemConfiguration: the media must be decodable, and the key system must
+  // grant access for the MediaKeySystemConfiguration the media configuration implies (the spec's
+  // "create a MediaKeySystemConfiguration"): that access is the result's keySystemAccess.
+  const keyedInfo = (configuration, checked, supported) => {
+    const none = () => ({ supported: false, smooth: false, powerEfficient: false, keySystemAccess: null, configuration: copy(configuration) });
+    if (!supported || checked.keys !== CLEAR_KEY || typeof native.requestAccess !== 'function') return PromiseC.resolve(none());
+    const k = configuration.keySystemConfiguration;
+    const caps = (kind, contentType) => {
+      const t = k[kind] || {};
+      return [{ contentType, robustness: t.robustness === undefined ? '' : String(t.robustness), encryptionScheme: t.encryptionScheme === undefined ? null : t.encryptionScheme }];
+    };
+    const config = {
+      initDataTypes: k.initDataType === undefined || k.initDataType === '' ? [] : [String(k.initDataType)],
+      distinctiveIdentifier: k.distinctiveIdentifier === undefined ? 'optional' : String(k.distinctiveIdentifier),
+      persistentState: k.persistentState === undefined ? 'optional' : String(k.persistentState),
+    };
+    if (k.sessionTypes !== undefined) config.sessionTypes = Array.from(k.sessionTypes, String);
+    if (checked.audio) config.audioCapabilities = caps('audio', checked.audio.contentType);
+    if (checked.video) config.videoCapabilities = caps('video', checked.video.contentType);
+    let request;
+    try {
+      request = native.requestAccess(CLEAR_KEY, [config]);
+    } catch (e) {
+      request = undefined;
+    }
+    if (!request) return PromiseC.resolve(none());
+    return request.then(
+      (keySystemAccess) => {
+        return { supported: true, smooth: true, powerEfficient: false, keySystemAccess, configuration: copy(configuration) };
+      },
+      () => none(),
+    );
+  };
   const decoding = (checked) => {
-    if (checked.keys !== null) return false;
+    if (checked.keys !== null && checked.keys !== CLEAR_KEY) return false;
     if (checked.type === 'webrtc') return false;
     const check = (p) => {
       const type = p.essence + (p.codecs.length ? `; codecs="${p.codecs.join(',')}"` : '');
@@ -186,6 +221,7 @@
         // against), so a supported configuration is smooth by design: no invented pixel-rate threshold. Software
         // decoding is also why powerEfficient is false: no hardware decoder is ever used.
         const smooth = supported;
+        if (checked.keys !== null) return keyedInfo(configuration, checked, supported);
         return PromiseC.resolve({ supported, smooth, powerEfficient: false, keySystemAccess: null, configuration: copy(configuration) });
       } catch (e) {
         return PromiseC.reject(e);
