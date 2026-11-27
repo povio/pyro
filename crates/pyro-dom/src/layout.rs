@@ -4003,7 +4003,8 @@ impl Layout {
             let (left, top) = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
             let (width, height) = self.without_scrollbars(dom, self.window_size());
             // (An absolute box's containing block is inside the document: `positioned`.)
-            return self.anchor_in(dom, flow, self.document(), [left, top, left + width, top + height], true, keep);
+            let (pad_top, pad_bottom) = self.scroll_padding_vertical(dom, root, height);
+            return self.anchor_in(dom, flow, self.document(), [left, top + pad_top, left + width, (top + height - pad_bottom).max(top + pad_top)], true, keep);
         };
         if self.overflow_anchor_none(dom, scroller) {
             return None;
@@ -4012,7 +4013,22 @@ impl Layout {
         let top = sb.rect.y + sb.border[TOP] + self.scroll_top(scroller) as f64;
         let left = sb.rect.x + sb.border[LEFT] + self.scroll_left(scroller) as f64;
         let positioned = self.forms_containing_block(dom, scroller, sb);
-        self.anchor_in(dom, flow, scroller, [left, top, left + sb.client_width, top + sb.client_height], positioned, keep)
+        let (pad_top, pad_bottom) = self.scroll_padding_vertical(dom, scroller, sb.client_height);
+        let port = [left, top + pad_top, left + sb.client_width, (top + sb.client_height - pad_bottom).max(top + pad_top)];
+        self.anchor_in(dom, flow, scroller, port, positioned, keep)
+    }
+
+    /// `scroll-padding-top` and `-bottom` of `el` (CSS px) against a scrollport `height` tall: the
+    /// optimal viewing region the anchor must be inside (CSS Scroll Anchoring 1 § 2.2 refers to
+    /// CSS Scroll Snap 1; WPT `scroll-padding-affects-anchoring`).
+    fn scroll_padding_vertical(&self, dom: &Dom, el: NodeId, height: f64) -> (f64, f64) {
+        use app_units::Au;
+        let Some(style) = self.style.stylo_style(dom, el) else { return (0.0, 0.0) };
+        let padding = style.get_padding();
+        let basis = Au::from_f64_px(height);
+        let [top, bottom] = [&padding.scroll_padding_top, &padding.scroll_padding_bottom]
+            .map(|value| value.to_used_value(basis).map_or(0.0, Au::to_f64_px));
+        (top, bottom)
     }
 
     /// Whether `el` (laid out as `b`) is a containing block for absolutely positioned
