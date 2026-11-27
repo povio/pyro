@@ -157,6 +157,7 @@ pub mod window_message;
 pub mod worker;
 pub(crate) mod shared_worker;
 pub mod svg_use;
+mod svg_text;
 mod worker_scope;
 pub mod xhr;
 pub mod xpath;

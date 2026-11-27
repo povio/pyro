@@ -1677,7 +1677,7 @@ fn layout_text(c: &ContextData, text: &str, state: &State) -> pyro_canvas::text:
 /// loaded faces of the realm's `FontFaceSet` (a document's or a worker's) and, in a document, the
 /// `@font-face` rules whose `url()` source its layout loaded, each only when the list names its
 /// family. The key names the set (no faces: plain layout); the faces are made once per key.
-fn canvas_web_faces(page: &PageDom, family: &str) -> (u64, Rc<Vec<pyro_canvas::text::WebFace>>) {
+pub(crate) fn canvas_web_faces(page: &PageDom, family: &str) -> (u64, Rc<Vec<pyro_canvas::text::WebFace>>) {
     use std::hash::{Hash, Hasher};
     let wanted: Vec<String> = family
         .split(',')

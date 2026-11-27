@@ -4367,6 +4367,16 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
         let animated = collections::SmilGeometry::new(page);
         let dom = page.dom.borrow();
         let layout = page.layout();
+        // A `text` or `tspan` is the union of its characters' glyph cells from the text layout
+        // (`svg_text`: the shaped advances, `x`/`dx`/`text-anchor`/`textLength`), the same
+        // numbers `getExtentOfChar` reports.
+        if dom.element(n.id).is_ok_and(|e| e.name.ns == markup5ever::ns!(svg) && matches!(&*e.name.local, "text" | "tspan")) {
+            let text = crate::svg_text::layout_of(page, &dom, &layout, n.id);
+            let (from, to) = text.range(n.id);
+            if let Some(rect) = text.bbox(from, to) {
+                return crate::canvas::svg_rect_value(s, page, rect);
+            }
+        }
         crate::canvas::svg_rect_value(s, page, pyro_dom::svg_geometry::bbox_animated(&dom, layout.style(), n.id, &animated))
     });
     // The matrices to the outermost viewport and to the screen (client) space.
@@ -4683,7 +4693,96 @@ simple_class!(SvgTextContentElement, "SVGTextContentElement", SvgGraphicsElement
     def.constant("LENGTHADJUST_UNKNOWN", 0.0);
     def.constant("LENGTHADJUST_SPACING", 1.0);
     def.constant("LENGTHADJUST_SPACINGANDGLYPHS", 2.0);
+    // The query methods answer from the layout of the whole `<text>` (`svg_text`): the element's
+    // characters are its range of it.
+    def.method("getNumberOfChars", 0, |s, n, _a| {
+        let (_, range) = svg_text_range(n);
+        Ok(s.number((range.1 - range.0) as f64))
+    });
+    def.method("getComputedTextLength", 0, |s, n, _a| {
+        let (layout, range) = svg_text_range(n);
+        Ok(s.number(layout.length(range.0, range.1)))
+    });
+    def.method("getSubStringLength", 2, |s, n, a| {
+        a.require(2, "SVGTextContentElement.getSubStringLength")?;
+        let (charnum, nchars) = (to_u32(a.get(0))? as usize, to_u32(a.get(1))? as usize);
+        let (layout, range) = svg_text_range(n);
+        let (from, to) = svg_text_substring(range, charnum, nchars)?;
+        Ok(s.number(layout.length(from, to)))
+    });
+    def.method("getStartPositionOfChar", 1, |s, n, a| {
+        a.require(1, "SVGTextContentElement.getStartPositionOfChar")?;
+        let (layout, range) = svg_text_range(n);
+        let i = svg_text_char(range, to_u32(a.get(0))? as usize)?;
+        let (x, y) = layout.start(i);
+        collections::detached_point(s, x, y)
+    });
+    def.method("getEndPositionOfChar", 1, |s, n, a| {
+        a.require(1, "SVGTextContentElement.getEndPositionOfChar")?;
+        let (layout, range) = svg_text_range(n);
+        let i = svg_text_char(range, to_u32(a.get(0))? as usize)?;
+        let (x, y) = layout.end(i);
+        collections::detached_point(s, x, y)
+    });
+    def.method("getExtentOfChar", 1, |s, n, a| {
+        a.require(1, "SVGTextContentElement.getExtentOfChar")?;
+        let (layout, range) = svg_text_range(n);
+        let i = svg_text_char(range, to_u32(a.get(0))? as usize)?;
+        crate::canvas::svg_rect_value(s, n.page(), layout.extent(i))
+    });
+    def.method("getRotationOfChar", 1, |s, n, a| {
+        a.require(1, "SVGTextContentElement.getRotationOfChar")?;
+        let (layout, range) = svg_text_range(n);
+        let i = svg_text_char(range, to_u32(a.get(0))? as usize)?;
+        Ok(s.number(layout.chars[i].rotate))
+    });
+    // `SVGPoint` (or any object with `x` and `y`): the character whose glyph cell holds it, -1 for none.
+    def.method("getCharNumAtPosition", 1, |s, n, a| {
+        a.require(1, "SVGTextContentElement.getCharNumAtPosition")?;
+        let Some(point) = a.get(0).as_object() else {
+            return Err(JsError::Type("Failed to execute 'getCharNumAtPosition' on 'SVGTextContentElement': parameter 1 is not of type 'SVGPoint'.".into()));
+        };
+        let (x, y) = (point.get_atom("x")?.to_number()?, point.get_atom("y")?.to_number()?);
+        let (layout, range) = svg_text_range(n);
+        Ok(s.number(f64::from(layout.char_at(range.0, range.1, x, y))))
+    });
+    def.method("selectSubString", 2, |s, n, a| {
+        a.require(2, "SVGTextContentElement.selectSubString")?;
+        let (charnum, nchars) = (to_u32(a.get(0))? as usize, to_u32(a.get(1))? as usize);
+        let (layout, range) = svg_text_range(n);
+        let (from, to) = svg_text_substring(range, charnum, nchars)?;
+        if from < to {
+            let (first, last) = (&layout.chars[from], &layout.chars[to - 1]);
+            let (anchor, focus) = ((first.node, first.offset), (last.node, last.offset + 1));
+            crate::editing::set_selection(n.page(), anchor, focus);
+        }
+        Ok(s.undefined())
+    });
 });
+/// The layout of the `<text>` the element is in, and the range of it the element holds.
+fn svg_text_range(n: &NodeData) -> (crate::svg_text::TextLayout, (usize, usize)) {
+    let page = n.page();
+    let dom = page.dom.borrow();
+    let layout = page.layout();
+    let text = crate::svg_text::layout_of(page, &dom, &layout, n.id);
+    let range = text.range(n.id);
+    (text, range)
+}
+/// `[from, to)` of the layout's characters for `getSubStringLength(charnum, nchars)`: IndexSizeError
+/// past the last character, `nchars` cut at the end.
+fn svg_text_substring(range: (usize, usize), charnum: usize, nchars: usize) -> JsResult<(usize, usize)> {
+    let count = range.1 - range.0;
+    if charnum >= count {
+        return Err(JsError::dom("IndexSizeError", "The character index provided is out of range."));
+    }
+    Ok((range.0 + charnum, range.0 + charnum + nchars.min(count - charnum)))
+}
+fn svg_text_char(range: (usize, usize), charnum: usize) -> JsResult<usize> {
+    if charnum >= range.1 - range.0 {
+        return Err(JsError::dom("IndexSizeError", "The character index provided is out of range."));
+    }
+    Ok(range.0 + charnum)
+}
 simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement, |def| {
     def.getter("x", |s, n| collections::animated_length_list(s, n, "x"));
     def.getter("y", |s, n| collections::animated_length_list(s, n, "y"));
