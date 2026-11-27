@@ -531,6 +531,16 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
+    // pyro: the frame's scroll offsets reach the layout engine before anything lays the document
+    // out: the layout the steps below force (the visual viewport's scrollbars, the owed clamp)
+    // samples the scroll-driven animations at the offsets it was told, and the animation stamp it
+    // computes is kept for the rest of the task (a view timeline showed the previous frame's
+    // progress; WPT scroll-animations `view-timeline-relative-ancestor`).
+    if let Some(layout) = page.try_layout() {
+        if layout.push_scroll() {
+            layout.set_scroll_pushed_at(crate::event::page_now_ms(page));
+        }
+    }
     // The resize steps for the visual viewport (its classic scrollbars changed).
     page.fire_visual_viewport_resize();
     // HTML "update the rendering": the scroll to the load's fragment is tried again.
