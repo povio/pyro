@@ -3827,6 +3827,18 @@ impl Layout {
                     continue;
                 }
                 let (Some(mut c), Some(t)) = (candidates[axis], target[axis]) else { continue };
+                // A scroller that snaps one axis snaps to the areas visible on the other at the scroll
+                // offset it ends at, not to a nearer one out of sight (CSS Scroll Snap 1 § 6.1; WPT
+                // css-scroll-snap `snap-to-visible-areas-x-axis`, `-y-axis`). An area touching the
+                // snapport counts as visible.
+                if snap_x != snap_y && only.is_none() {
+                    let other = 1 - axis;
+                    let cross = target[other].unwrap_or(from[other]);
+                    let (pad_start, pad_end, size) = if other == 0 { (pl, pr, width) } else { (pt, pb, height) };
+                    if bounds[other].1 < cross + pad_start || bounds[other].0 > cross + size - pad_end {
+                        continue;
+                    }
+                }
                 if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 {
                     let other = 1 - axis;
                     let (start, end) = bounds[axis];
@@ -3934,6 +3946,37 @@ impl Layout {
                 let passed = stops[axis].iter().filter(|(p, _)| p.round() > lo && p.round() < hi);
                 if let Some(&stop) = passed.min_by(|first, second| (first.0 - from[axis]).abs().total_cmp(&(second.0 - from[axis]).abs())) {
                     best[axis] = Some(stop);
+                }
+            }
+        }
+        // A scroller snapping both axes ends on a visible area: when the nearest position of each axis
+        // together show none, the axis nearer its target snaps as it is and the other snaps among the
+        // areas visible there (WPT css-scroll-snap `snap-to-visible-areas-both`).
+        if snap_x && snap_y && dir.is_none() && only.is_none() {
+            if let ([Some((bx, _)), Some((by, _))], [Some(target_x), Some(target_y)]) = (best, target) {
+                let visible = |px: f64, py: f64, bounds: &[(f64, f64); 2]| {
+                    bounds[0].1 >= px + pl && bounds[0].0 <= px + width - pr && bounds[1].1 >= py + pt && bounds[1].0 <= py + height - pb
+                };
+                let any_visible = areas.iter().any(|(_, points, _, _, bounds, _, _)| points[0].is_some() && points[1].is_some() && visible(bx, by, bounds));
+                if !any_visible && !areas.is_empty() {
+                    let first = if (bx - target_x).abs() <= (by - target_y).abs() { 0 } else { 1 };
+                    let second = 1 - first;
+                    let (fixed, aim) = if first == 0 { (bx, target_y) } else { (by, target_x) };
+                    let (pad_start, pad_end, size) = if first == 0 { (pl, pr, width) } else { (pt, pb, height) };
+                    let mut pick: Option<(f64, SnapBox)> = None;
+                    for &(id, points, _, _, bounds, _, _) in &areas {
+                        let Some(point) = points[second] else { continue };
+                        if bounds[first].1 < fixed + pad_start || bounds[first].0 > fixed + size - pad_end {
+                            continue;
+                        }
+                        let point = reachable(second, point);
+                        if pick.is_none_or(|(p, _)| (point - aim).abs() < (p - aim).abs()) {
+                            pick = Some((point, (id, None)));
+                        }
+                    }
+                    if pick.is_some() {
+                        best[second] = pick;
+                    }
                 }
             }
         }
