@@ -509,7 +509,7 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     let detached = s.function("detached", |s, _, _| Ok(s.boolean(crate::target::page_of(s)?.is_detached())))?;
     native.set_atom("detached", detached.value())?;
     // ClipboardItems are shared by same-origin realms: an iframe's clipboard writes its parent's items.
-    native.set_atom("itemSlot", crate::streams::shared_slot(s, &crate::target::page_of(s)?, "ClipboardItem")?)?;
+    native.set_atom("itemSlot", crate::streams::shared_slot(s, &*crate::target::page_of(s)?, "ClipboardItem")?)?;
     let position = s.function("geolocationPosition", |s, _, _| {
         let page = crate::target::page_of(s)?;
         let services = page.context_services();
