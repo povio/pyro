@@ -52,7 +52,7 @@ impl EnvFunction {
         input: &mut Parser,
         context: &mut SubstitutionParserContext,
     ) -> Result<Self, ParseError> {
-        let (name, has_indices) = input.parse_until_before(Delimiter::Comma, |input| {
+        let (name, has_indices) = input.parse_until_before(Delimiter::Comma, |input| -> Result<(EnvName, bool), ParseError> {
             let name = EnvName(Atom::from(input.expect_ident()?.as_ref()));
             let mut has_indices = false;
             while !input.is_exhausted() {
