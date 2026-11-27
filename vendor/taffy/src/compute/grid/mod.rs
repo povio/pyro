@@ -1517,7 +1517,23 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         };
         let last_row_items = || items.iter().filter(|item| item.row_indexes.end == last_row);
         let item = last_row_items().find(|item| last_group(item)).or_else(|| last_row_items().last()).unwrap();
-        let last = item.y_position + item.last_baseline.unwrap_or(item.height);
+        let mut last = item.y_position + item.last_baseline.unwrap_or(item.height);
+        // pyro: a table's last baseline is its LAST row's, found as the first one is in its first row: the lowest
+        // baseline of the baseline-aligned cells of that row that have one, else the bottom of the lowest content
+        // box of its cells (css-tables-3 § 3.10; WPT css-flexbox `flex-align-baseline-table-001`, css-grid
+        // `grid-align-baseline-table-001`). (A cell of the table's last row is not the last item in grid order.)
+        if table_rows {
+            let row_cells = || {
+                items.iter().filter(|item| item.row_indexes.end == last_row && item.span(AbstractAxis::Block) == 1)
+            };
+            let lowest = |values: &mut dyn Iterator<Item = f32>| values.reduce(f32::max);
+            let aligned = lowest(&mut row_cells()
+                .filter(|item| item.table_baseline)
+                .filter_map(|item| item.baseline.map(|baseline| item.y_position + baseline)));
+            if let Some(baseline) = aligned.or_else(|| lowest(&mut row_cells().map(|item| item.y_position + item.content_bottom))) {
+                last = baseline;
+            }
+        }
         (Some(first), Some(last), dominant)
     };
 
