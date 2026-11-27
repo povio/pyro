@@ -476,6 +476,9 @@ pub(crate) struct PendingFragment {
     /// DOMContentLoaded has fired: the document's content is there to search (Chrome waits for
     /// it too; the spec's "search timing" lets the UA).
     armed: bool,
+    /// The DOM's `version` when the last attempt found nothing: until the DOM changes, another
+    /// attempt (a layout flush and a scan) could not find more, so the rendering updates skip it.
+    failed_at: Option<u64>,
 }
 
 /// Starts the scroll of a document committed by a cross-document navigation to `fragment`
@@ -487,7 +490,7 @@ pub fn begin_fragment_scroll(page: &Rc<PageDom>, fragment: Option<&str>, directi
     let fragment = fragment.unwrap_or("");
     let nothing = fragment.is_empty() && directives.is_none();
     *page.pending_fragment.borrow_mut() =
-        (!force_load_at_top && !nothing).then(|| PendingFragment { fragment: fragment.to_owned(), directives, armed: false });
+        (!force_load_at_top && !nothing).then(|| PendingFragment { fragment: fragment.to_owned(), directives, armed: false, failed_at: None });
 }
 
 /// One attempt of the pending fragment scroll, at DOMContentLoaded (`arm`), at each rendering
@@ -499,17 +502,21 @@ pub fn try_fragment_scroll(page: &Rc<PageDom>, arm: bool) {
     if page.is_disposed() {
         return;
     }
-    let (fragment, directives) = match page.pending_fragment.borrow_mut().as_mut() {
+    let (fragment, directives, failed_at) = match page.pending_fragment.borrow_mut().as_mut() {
         Some(p) => {
             p.armed |= arm;
             if !p.armed {
                 return;
             }
-            (p.fragment.clone(), p.directives.clone())
+            (p.fragment.clone(), p.directives.clone(), p.failed_at)
         }
         None => return,
     };
     let last = page.is_completely_loaded();
+    // The last attempt (the document has loaded) always runs: it falls back and drops the fragment.
+    if !last && failed_at.is_some() && failed_at == page.dom.try_borrow().ok().map(|dom| dom.version()) {
+        return;
+    }
     let done = match directives.as_deref() {
         Some(directives) if invoke_text_directives(page, directives) => true,
         Some(_) if !last => false,
@@ -517,6 +524,11 @@ pub fn try_fragment_scroll(page: &Rc<PageDom>, arm: bool) {
     };
     if done {
         page.pending_fragment.borrow_mut().take();
+    } else {
+        let version = page.dom.try_borrow().ok().map(|dom| dom.version());
+        if let Some(p) = page.pending_fragment.borrow_mut().as_mut() {
+            p.failed_at = version;
+        }
     }
 }
 
