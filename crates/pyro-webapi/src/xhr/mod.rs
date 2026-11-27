@@ -284,7 +284,7 @@ fn define_members<C: JsClass<Data = XhrData, Parent = EventTarget>>(def: &mut Cl
         bytes.extend(value.chars().map(|c| c as u8));
         request.headers.insert(
             key,
-            HeaderValue::from_bytes(&bytes).map_err(|_| JsError::dom("SyntaxError", "Invalid header value"))?,
+            crate::headers::request_header_value(bytes).ok_or_else(|| JsError::dom("SyntaxError", "Invalid header value"))?,
         );
         Ok(s.undefined())
     });

@@ -1337,7 +1337,10 @@ fn http_client(
         .enable_http2()
         .wrap_connector(connector);
     let connector = ProbeConnector::new(connector, sessions);
-    Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).build(connector)
+    // HTTP/1 header names go out Title-Case (`Origin`, `Referer`, `X-Empty`), as Chrome writes them and as WPT's echo
+    // handlers compare them (fetch/api/basic/request-headers-case, xhr/setrequestheader-*, xhr/open-referer). `http`
+    // lowercases every `HeaderName`, so without this hyper writes `origin:`; HTTP/2 lowercases on the wire anyway.
+    Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).http1_title_case_headers(true).build(connector)
 }
 
 /// Every client of the process, for [`suspend_for_fork`].

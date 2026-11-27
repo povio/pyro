@@ -30,7 +30,7 @@ fn params_fetch_and_xhr_use_native_serialization_and_snapshot_at_send() {
             .to_ascii_lowercase()
             .contains("content-type: application/x-www-form-urlencoded;charset=utf-8\r\n"));
     }
-    assert!(requests[2].1.contains("content-type: text/custom\r\n"));
+    assert!(requests[2].1.to_ascii_lowercase().contains("content-type: text/custom\r\n"));
 }
 
 #[test]

@@ -630,7 +630,7 @@ pub(crate) fn parse_request<'s>(
         }
         let bytes: Vec<u8> = value.chars().map(|c| c as u8).collect();
         let key = HeaderName::from_bytes(name.as_bytes()).map_err(|_| JsError::Type("Invalid header".into()))?;
-        let value = HeaderValue::from_bytes(&bytes).map_err(|_| JsError::Type("Invalid header value".into()))?;
+        let value = headers::request_header_value(bytes).ok_or_else(|| JsError::Type("Invalid header value".into()))?;
         request.headers.append(key, value);
     }
     let body = option(s, init, "body")?;

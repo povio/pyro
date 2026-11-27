@@ -299,6 +299,18 @@ fn helper<'s>(s: &Scope<'s>, name: &str) -> JsResult<Value<'s>> {
     helpers.get(s).as_object().unwrap().get(name)
 }
 
+/// The wire value of a request header from its bytes. Fetch's "header value" allows every byte but 0x00, CR and LF
+/// (and no leading or trailing HTTP whitespace, which [`validate_value`] trims first); `HeaderValue::from_bytes` is
+/// stricter (it refuses the other C0 controls and 0x7f), and Chrome sends those (fetch/api/headers/header-values*).
+pub(crate) fn request_header_value(bytes: Vec<u8>) -> Option<pyro_net::http::HeaderValue> {
+    if bytes.iter().any(|&b| matches!(b, 0 | b'\r' | b'\n')) {
+        return None;
+    }
+    // SAFETY: no byte is NUL, CR or LF, the only ones that can end or corrupt a header line when hyper writes the value
+    // as it is (`HeaderValue` otherwise only promises a well-formed line for `from_bytes`).
+    Some(unsafe { pyro_net::http::HeaderValue::from_maybe_shared_unchecked(::bytes::Bytes::from(bytes)) })
+}
+
 /// Whether (`name`, `value`) is a CORS-safelisted request header.
 pub(crate) fn cors_safelisted(name: &str, value: &str) -> bool {
     pyro_net::http::HeaderValue::from_str(value).is_ok_and(|v| pyro_net::cors::is_safelisted_header(name, &v))
