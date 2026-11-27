@@ -254,6 +254,7 @@ impl BaseDocument {
         let pos = style.get_position();
         let margin = style.get_margin();
         !pos.position_area.is_none()
+            || matches!(pos.position_anchor.value, style::values::specified::position::PositionAnchorKeyword::Ident(_))
             || !pos.position_try_fallbacks.value.is_none()
             || [pos.justify_self.0, pos.align_self.0].iter().any(|v| v.value() == AlignFlags::ANCHOR_CENTER)
             || [&pos.left, &pos.top, &pos.right, &pos.bottom].iter().any(|v| {

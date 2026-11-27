@@ -182,6 +182,8 @@ pub(crate) struct LayoutPassState<'doc> {
     /// height, size): a parent that hands one back as a known size hands back the result.
     calc_size_results: Vec<(NodeId, u8, f32, Option<f32>)>,
     try_styles: std::collections::HashMap<NodeId, style::servo_arc::Arc<style::properties::ComputedValues>>,
+    /// pyro: the scrollable overflow size of the scroll container whose out-of-flow boxes are being placed.
+    oof_scrollable: Option<(NodeId, taffy::Size<f32>)>,
     try_options: std::cell::RefCell<std::collections::HashMap<(Option<crate::NodeId>, usize), ([usize; 5], usize)>>,
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
     /// its content's percentage heights resolve against (its column height, `layout::multicol`).
@@ -272,6 +274,7 @@ impl<'doc> LayoutPassState<'doc> {
             column_spanners: None,
             calc_size_results: Vec::new(),
             try_styles: Default::default(),
+            oof_scrollable: None,
             try_options: Default::default(),
             multicol_percent_height: None,
             nested_fragmentation: std::collections::HashMap::new(),
@@ -2763,6 +2766,22 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         style
     }
 
+    fn set_oof_scrollable_size(&mut self, id: NodeId, size: Option<taffy::Size<f32>>) {
+        self.oof_scrollable = size.map(|size| (id, size));
+    }
+
+    /// css-position-4 scrollable containing block: a box with a valid default anchor, whose containing
+    /// block is a scroll container, is contained by the container's scrollable overflow rectangle.
+    fn oof_scrollable_area(&self, id: NodeId, container: NodeId, area: taffy::Size<f32>) -> Option<taffy::Size<f32>> {
+        let (owner, size) = self.oof_scrollable?;
+        if owner != container { return None; }
+        let (node, container) = (self.node_from_id(id), self.node_from_id(container));
+        let style = node.primary_styles()?;
+        if !style.get_box().position.is_absolutely_positioned() { return None; }
+        self.default_anchor_rect(node, container, &style)?;
+        Some(taffy::Size { width: size.width.max(area.width), height: size.height.max(area.height) })
+    }
+
     fn position_try_options(&self, id: NodeId) -> ([usize; 5], usize, Option<bool>) {
         use style::values::specified::position::PositionTryOrder::*;
         let node = self.node_from_id(id);
@@ -2894,8 +2913,36 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let inline_basis = basis.width;
         let basis = wm.logical_size(basis);
         let calc = |lp:&style::values::computed::LengthPercentage,h,b| self.anchor_calc_size(lp,node,container,h,&item.style).map(|v|v.resolve(CSSPixelLength::new(b)).px());
-        let size = |v:&Size,h| match v { Size::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Size::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
-        let max = |v:&MaxSize,h| match v { MaxSize::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), MaxSize::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
+        // pyro: an unresolvable anchor-size() continues with its fallback when that is itself an anchor query
+        // (`anchor-size(--none height, anchor-size(--a width))`; WPT `anchor-query-fallback`).
+        let size = |v:&Size,h| {
+            let mut v = v;
+            for _ in 0..64 {
+                match v {
+                    Size::AnchorSizeFunction(f) => {
+                        if let Some(px) = self.anchor_dimension(f,node,container,h,&item.style) { return Some(px); }
+                        match f.fallback.as_ref() { Some(next) if matches!(next, Size::AnchorSizeFunction(_) | Size::AnchorContainingCalcFunction(_)) => v = next, _ => return None }
+                    }
+                    Size::AnchorContainingCalcFunction(lp) => return calc(&lp.0,h,if h {basis.width} else {basis.height}),
+                    _ => return None,
+                }
+            }
+            None
+        };
+        let max = |v:&MaxSize,h| {
+            let mut v = v;
+            for _ in 0..64 {
+                match v {
+                    MaxSize::AnchorSizeFunction(f) => {
+                        if let Some(px) = self.anchor_dimension(f,node,container,h,&item.style) { return Some(px); }
+                        match f.fallback.as_ref() { Some(next) if matches!(next, MaxSize::AnchorSizeFunction(_) | MaxSize::AnchorContainingCalcFunction(_)) => v = next, _ => return None }
+                    }
+                    MaxSize::AnchorContainingCalcFunction(lp) => return calc(&lp.0,h,if h {basis.width} else {basis.height}),
+                    _ => return None,
+                }
+            }
+            None
+        };
         let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,inline_basis), _ => None };
         let sizes = [
             taffy::Size { width:size(&pos.width,true),height:size(&pos.height,false) },

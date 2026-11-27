@@ -257,6 +257,15 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
         crate::Rect::NONE
     }
 
+    /// pyro: the containing block's scrollable overflow size, for the positioning pass of a scroll
+    /// container (`None` for any other): see [`oof_scrollable_area`](Self::oof_scrollable_area).
+    fn set_oof_scrollable_size(&mut self, _node: NodeId, _size: Option<Size<f32>>) {}
+
+    /// pyro: the size of the scrollable containing block (css-position-4) of an out-of-flow box with a
+    /// valid default anchor whose containing block `container` is a scroll container, in place of its
+    /// padding box `area`.
+    fn oof_scrollable_area(&self, _node: NodeId, _container: NodeId, _area: Size<f32>) -> Option<Size<f32>> { None }
+
     /// Resolve the position-area rectangle and its normal alignment in the containing block.
     fn oof_anchor_area(&self, _node: NodeId, _container: NodeId, _size: Size<f32>, _offset: crate::Point<f32>, _trial: bool) -> Option<(Size<f32>, crate::Point<f32>, crate::Point<crate::AlignSelf>)> {
         None
