@@ -1531,7 +1531,7 @@ impl DocumentParser {
         }
         if let Some(xml) = &mut self.xml {
             let Some(load) = &mut xml.load else { return ParseStep::NeedInput };
-            let script = load.step(&mut self.dom.borrow_mut(), &mut self.tok.sink.sink.pins.borrow_mut());
+            let script = load.step(&self.dom, &self.tok.sink.sink.pins);
             // What the insertions left for the document's custom elements
             // runs before the script does (no DOM borrow is held here).
             let hooks = self.dom.borrow().parser_custom_work(self.doc.index());

@@ -472,7 +472,13 @@ impl Load {
     /// once the rest is attached. The elements open at a script get a
     /// reference each, added to `pins` for the caller to release: the script
     /// may remove them, and the nodes that follow still go into them.
-    pub(crate) fn step(&mut self, dom: &mut Dom, pins: &mut Vec<NodeId>) -> Option<NodeId> {
+    ///
+    /// `cell` is borrowed here and released around a custom element's
+    /// constructor (HTML "create an element for the token" runs it
+    /// synchronously, in script).
+    pub(crate) fn step(&mut self, cell: &std::cell::RefCell<Dom>, pins: &std::cell::RefCell<Vec<NodeId>>) -> Option<NodeId> {
+        let mut guard = cell.borrow_mut();
+        let mut dom: &mut Dom = &mut guard;
         let document = self.document.index();
         loop {
             // End tags: of every open element the next node is not a child of.
@@ -486,11 +492,12 @@ impl Load {
                     continue;
                 }
                 self.go_live(dom);
+                let mut pins = pins.borrow_mut();
                 for held in self.open.iter_mut().filter(|held| !held.pinned) {
-                    held.pinned = pin(dom, held.node, pins);
+                    held.pinned = pin(dom, held.node, &mut pins);
                 }
                 if !open.pinned {
-                    pin(dom, open.node, pins);
+                    pin(dom, open.node, &mut pins);
                 }
                 return Some(dom.id_of(open.node));
             }
@@ -512,8 +519,54 @@ impl Load {
                 ),
                 _ => (false, false),
             };
-            let (id, target) = create(dom, node.kind, owner);
-            if self.live {
+            let mut kind = node.kind;
+            // An element of a defined name is constructed as the parser creates it (HTML "create an
+            // element for the token", synchronous custom elements flag): made without its attributes,
+            // which are appended after the constructor ran. Before the first script nothing is defined.
+            let mut custom = None;
+            if self.live && owner == document {
+                if let NodeKind::Element(e) = &mut kind {
+                    if e.is_html() {
+                        let is = e.attrs.iter().find(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == "is").map(|a| crate::LocalName::from(&*a.value));
+                        if let Some(hooks) = dom.parser_custom_elements(document, &e.name, is.as_ref()) {
+                            let attrs: Vec<(QualName, String)> = e.attrs.iter().map(|a| (a.name.clone(), a.value.to_string())).collect();
+                            e.set_attrs(Vec::new());
+                            e.is_value = is;
+                            custom = Some((hooks, attrs));
+                        }
+                    }
+                }
+            }
+            let (id, target) = create(dom, kind, owner);
+            if let Some((hooks, attrs)) = custom {
+                let el = dom.id_of(id);
+                // The constructor runs script: what is open (and the new element) must survive it.
+                {
+                    let mut held_pins = pins.borrow_mut();
+                    for held in self.open.iter_mut().filter(|held| !held.pinned) {
+                        held.pinned = pin(dom, held.node, &mut held_pins);
+                    }
+                    pin(dom, id, &mut held_pins);
+                }
+                drop(guard);
+                let constructed = matches!(hooks.construct(el, &attrs), crate::custom::ParserConstruct::Constructed);
+                guard = cell.borrow_mut();
+                dom = &mut guard;
+                if !constructed {
+                    dom.set_parsed_attributes(id, attrs);
+                }
+                // The constructor may have put the element somewhere: the parser's insertion moves it.
+                if dom.n(id).parent != NIL {
+                    dom.unlink_raw(id);
+                }
+                dom.note_inline_handlers(id);
+                dom.note_inline_style(id);
+                dom.append_parsed(id, parent);
+                drop(guard);
+                hooks.run_reactions();
+                guard = cell.borrow_mut();
+                dom = &mut guard;
+            } else if self.live {
                 dom.note_inline_handlers(id);
                 dom.note_inline_style(id);
                 dom.append_parsed(id, parent);
