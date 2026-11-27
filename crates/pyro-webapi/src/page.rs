@@ -392,6 +392,8 @@ pub struct PageDom {
     /// A deferred hover update after the hovered element was removed is
     /// scheduled (`crate::input::update_hover_after_task`).
     pub(crate) hover_update_queued: Cell<bool>,
+    /// The hovered node's ancestor chain, for boundary events after it was removed.
+    pub(crate) hover_trail: RefCell<crate::input::HoverTrail>,
     press_target: Cell<Option<NodeId>>,
     pub(crate) pressed_pseudo: Cell<Option<pyro_dom::geometry::GeneratedHit>>,
     /// The `pointerdown` of the press in progress was canceled: its
@@ -1186,6 +1188,7 @@ impl PageDom {
             media: Default::default(),
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
+            hover_trail: RefCell::new(Default::default()),
             press_target: Cell::new(None),
             pressed_pseudo: Cell::new(None),
             compat_mouse_suppressed: Cell::new(false),

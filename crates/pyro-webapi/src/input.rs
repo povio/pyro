@@ -2971,13 +2971,20 @@ fn note_buttons(page: &PageDom, m: &MouseInput) {
 
 /// Inclusive ancestors of `node` up to and including its document, innermost
 /// first; empty when it is no longer in the page's document.
+///
+/// Along the flat tree (a shadow tree's elements go up through their host, a slotted one through
+/// its slot), as Chrome's boundary events do: a shadow root receives none.
 fn hover_chain(page: &PageDom, node: NodeId) -> Vec<NodeId> {
     let dom = page.dom.borrow();
-    let mut chain = Vec::new();
-    let mut cur = Some(node);
-    while let Some(c) = cur {
-        chain.push(c);
-        cur = dom.parent(c).ok().flatten();
+    let mut chain = vec![node];
+    let mut cur = node;
+    while let Some(p) = flat_parent_element(&dom, cur) {
+        chain.push(p);
+        cur = p;
+    }
+    // The root element's parent is the document.
+    if let Some(doc) = dom.parent(cur).ok().flatten() {
+        chain.push(doc);
     }
     if chain.last() != Some(&page.document()) {
         chain.clear();
@@ -2985,12 +2992,72 @@ fn hover_chain(page: &PageDom, node: NodeId) -> Vec<NodeId> {
     chain
 }
 
+/// What the page knows of the hovered node's ancestry, for boundary events after the node left
+/// the document (Chrome's BoundaryEventDispatcher keeps the last known ancestor chain).
+#[derive(Default)]
+pub(crate) struct HoverTrail {
+    /// The hovered node's ancestors (inclusive, innermost first, ending at the document) as they
+    /// were when it became hovered; after a removal, only those that survived it.
+    chain: Vec<NodeId>,
+    /// `Dom::removal_count` when the trail was last brought up to date.
+    mark: u64,
+    /// The hovered node was removed from the document since it became hovered (also when it was
+    /// inserted again, e.g. moved): its pointer is no longer over it until a boundary update.
+    removed: bool,
+}
+
+/// Brings the hover trail up to date with the removals since it was last looked at. Whether the
+/// hovered node was removed since it became hovered.
+fn refresh_hover_trail(page: &PageDom) -> bool {
+    let Some(prev) = page.hovered_raw() else { return false };
+    let dom = page.dom.borrow();
+    let mut trail = page.hover_trail.borrow_mut();
+    let now = dom.removal_count();
+    if now == trail.mark {
+        return trail.removed;
+    }
+    let since = std::mem::replace(&mut trail.mark, now);
+    let connected = |n: NodeId| dom.is_connected(n).unwrap_or(false);
+    if trail.removed {
+        trail.chain.retain(|&n| connected(n));
+        return true;
+    }
+    let removed = dom.nodes_removed_since(since);
+    let gone = !connected(prev) || removed.as_ref().is_some_and(|r| r.contains(&prev));
+    if gone {
+        trail.removed = true;
+        match removed {
+            Some(r) => trail.chain.retain(|n| connected(*n) && !r.contains(n)),
+            None => trail.chain.retain(|&n| connected(n) && n != prev),
+        }
+    }
+    gone
+}
+
+/// The target of a compatibility mouse event (or the next pointer event) whose preceding target
+/// `target` left the document in a listener: the nearest ancestor still connected, as Chrome
+/// retargets it. Only for a target that is the hovered one (its trail is known).
+fn live_target(page: &Rc<PageDom>, target: NodeId, tkey: TargetKey) -> (NodeId, TargetKey) {
+    if page.dom.borrow().is_connected(target).unwrap_or(false) || page.hovered_raw() != Some(target) {
+        return (target, tkey);
+    }
+    refresh_hover_trail(page);
+    let dom = page.dom.borrow();
+    let trail = page.hover_trail.borrow();
+    for &n in trail.chain.iter() {
+        if dom.is_connected(n).unwrap_or(false) && dom.element(n).is_ok() {
+            if let Some(k) = dom.node_key(n) {
+                return (n, k);
+            }
+        }
+    }
+    (target, tkey)
+}
+
 /// Nodes that receive leave (innermost first) and enter (innermost first)
-/// when the hovered node changes from `prev` to `next`: each chain up to,
-/// excluding, their common ancestor.
-fn boundary_chains(page: &PageDom, prev: Option<NodeId>, next: NodeId) -> (Vec<NodeId>, Vec<NodeId>) {
-    let mut left = prev.map(|p| hover_chain(page, p)).unwrap_or_default();
-    let mut entered = hover_chain(page, next);
+/// when the hovered node changes from the one whose ancestor chain is `left` to the one whose
+/// chain is `entered`: each chain up to, excluding, their common ancestor.
+fn boundary_chains(mut left: Vec<NodeId>, mut entered: Vec<NodeId>) -> (Vec<NodeId>, Vec<NodeId>) {
     while let (Some(a), Some(b)) = (left.last(), entered.last()) {
         if a != b {
             break;
@@ -3016,8 +3083,23 @@ fn dispatch_boundary_events(
     m: &MouseInput,
     touch: Option<i32>,
 ) {
-    let prev_connected = prev.is_some_and(|p| page.dom.borrow().is_connected(p).unwrap_or(false));
-    let (left, entered) = boundary_chains(page, prev, target);
+    // A `prev` removed from the document since it was hovered (also one inserted again) gets no
+    // out or leave, and the ancestors that survived the removal count as already entered.
+    let prev_removed = refresh_hover_trail(page);
+    let prev_connected = !prev_removed && prev.is_some_and(|p| page.dom.borrow().is_connected(p).unwrap_or(false));
+    let prev_chain = match prev {
+        Some(_) if prev_removed => page.hover_trail.borrow().chain.clone(),
+        Some(p) => hover_chain(page, p),
+        None => Vec::new(),
+    };
+    let target_chain = hover_chain(page, target);
+    *page.hover_trail.borrow_mut() = HoverTrail {
+        chain: target_chain.clone(),
+        mark: page.dom.borrow().removal_count(),
+        removed: false,
+    };
+    let (left, entered) = boundary_chains(prev_chain, target_chain);
+    let connected = |n: NodeId| page.dom.borrow().is_connected(n).unwrap_or(false);
     let prev_key = prev.and_then(|p| key_of(page, p));
     // The new `:hover` state comes first: the boundary events observe it, as in Chrome (WPT
     // css/selectors `hover-boundary-events`: `#a` no longer matches during its `mouseout`).
@@ -3043,13 +3125,14 @@ fn dispatch_boundary_events(
         if let Some(p) = prev_key.filter(|_| prev_connected) {
             boundary(iface, out, p, true, Some(tkey));
         }
-        for &n in &left {
+        for &n in left.iter().filter(|&&n| connected(n)) {
             if let Some(k) = key_of(page, n) {
                 boundary(iface, leave, k, false, Some(tkey));
             }
         }
         boundary(iface, over, tkey, true, prev_key);
-        for &n in entered.iter().rev() {
+        // A node a listener removed in the meantime hears no enter.
+        for &n in entered.iter().rev().filter(|&&n| connected(n)) {
             if let Some(k) = key_of(page, n) {
                 boundary(iface, enter, k, false, prev_key);
             }
@@ -3096,7 +3179,7 @@ fn update_hover_now(page: &Rc<PageDom>) {
     let Some(prev) = page.hovered_raw() else { return };
     let Some(m) = page.pointer.borrow().clone() else { return };
     let Some(target) = pointer_target(page, m.x, m.y, true) else { return };
-    if target == prev {
+    if target == prev && !refresh_hover_trail(page) {
         return;
     }
     let Some(tkey) = key_of(page, target) else { return };
@@ -3317,18 +3400,36 @@ fn dispatch_mouse_inner(
     } else {
         m
     };
+    // The hovered node was removed since it was hovered: Chrome's fake mouse move after the layout
+    // update has re-targeted the pointer before the next real input arrives, so the boundary
+    // events of the content now under the old position come first (the delayed task of
+    // `update_hover_after_task` would run later than a prompt next input).
+    if touch.is_none()
+        && matches!(kind, MouseKind::Moved | MouseKind::Pressed | MouseKind::Released)
+        && page.hovered_raw().is_some()
+        && page.pointer.borrow().is_some()
+        && refresh_hover_trail(page)
+    {
+        update_hover_now(page);
+    }
     if matches!(kind, MouseKind::Moved | MouseKind::Pressed | MouseKind::Released) {
         *page.pointer.borrow_mut() = Some(m.clone());
         let prev = page.hovered();
-        if prev != Some(target) {
+        // (A hovered node that was removed, even if inserted again, is entered anew.)
+        if prev != Some(target) || refresh_hover_trail(page) {
             dispatch_boundary_events(page, prev, target, tkey, m, touch);
         }
     }
+    // A boundary listener may have removed the target (WPT mousemove_after_mouseover_target_removed).
+    let (target, tkey) = live_target(page, target, tkey);
     match kind {
         MouseKind::Moved => {
             if touch.is_none() {
                 fire_pointer_move(page, tkey, m, None, pseudo);
             }
+            // A listener may have removed the target: the compatibility event goes to its
+            // nearest ancestor still in the document, as in Chrome.
+            let (target, tkey) = live_target(page, target, tkey);
             if !(page.compat_mouse_suppressed.get() && m.buttons != 0) {
                 fire_mouse(page, tkey, EventInterface::MouseEvent, "mousemove", m, true, pseudo);
             }
@@ -3366,6 +3467,7 @@ fn dispatch_mouse_inner(
             } else {
                 touch.is_some() || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true, pseudo)
             };
+            let (target, tkey) = live_target(page, target, tkey);
             let md = !pd
                 || in_disabled_control(page, target)
                 || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true, pseudo);
@@ -3495,6 +3597,7 @@ fn dispatch_mouse_inner(
                 page.mouse_capture.set(c);
                 crate::pointer_capture::process_pending_capture(page, m);
             }
+            let (target, tkey) = live_target(page, target, tkey);
             if m.button != MouseButton::Right {
                 crate::popover::light_dismiss(page, target, m.x, m.y, false);
             }
