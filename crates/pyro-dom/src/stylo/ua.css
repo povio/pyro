@@ -905,6 +905,10 @@ canvas {
 /* HTML-in-Canvas (WICG html-in-canvas, Chrome's UA rules): the children of a canvas with
    content=drawable are laid out in flow, and every drawable element in it is an isolated
    group. Only such a canvas matches. */
+canvas[content="drawable" i] {
+    contain: layout;
+}
+
 canvas[content="drawable" i] > * {
     position: static ! important;
 }

@@ -997,13 +997,13 @@ impl LayoutPassState<'_> {
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
         match self.leaf_layout_or_algorithm(node_id, inputs) {
-            ChildLayout::Done(output) => {
+            ChildLayout::Done(mut output) => {
                 // pyro: HTML-in-Canvas: a canvas with content=drawable keeps its replaced box and
                 // lays its children out inside it. Any other leaf returns its output as before.
                 if inputs.run_mode == taffy::RunMode::PerformLayout
                     && self.nodes[dom_node_id(node_id)].element_data().is_some_and(|element| element.is_drawable_canvas())
                 {
-                    self.layout_drawable_canvas_children(node_id, output.size);
+                    self.layout_drawable_canvas_children(node_id, &mut output);
                 }
                 output
             }
@@ -1022,9 +1022,15 @@ impl LayoutPassState<'_> {
     /// pyro: HTML-in-Canvas: lays out the children of a canvas with content=drawable (whose own
     /// box is the replaced one, `size`) in flow inside that box, as a block container (an inline
     /// root for inline content) of exactly that size. They paint only through
-    /// `drawElementImage`, not in place (blitz-paint `render_element_clipped`).
+    /// `drawElementImage`, not in place (blitz-paint `render_element_clipped`). The
+    /// absolutely positioned boxes among them go on `output` as its out-of-flow candidates, with
+    /// the canvas's padding box as their positioning area, so `lay_out_out_of_flow_boxes` (which
+    /// runs on the leaf output next) places them: the canvas claims those whose containing block
+    /// it is (the UA sheet gives it `contain: layout`), the rest bubble up. Their results were
+    /// dropped before, and such a box stayed 0x0.
     #[inline(never)]
-    fn layout_drawable_canvas_children(&mut self, node_id: NodeId, size: taffy::Size<f32>) {
+    fn layout_drawable_canvas_children(&mut self, node_id: NodeId, output: &mut taffy::tree::LayoutOutput) {
+        let size = output.size;
         let inputs = taffy::LayoutInput {
             run_mode: taffy::RunMode::PerformLayout,
             sizing_mode: taffy::SizingMode::InherentSize,
@@ -1038,11 +1044,13 @@ impl LayoutPassState<'_> {
             },
             vertical_margins_are_collapsible: taffy::Line::FALSE,
         };
-        if self.nodes[dom_node_id(node_id)].flags.is_inline_root() {
-            let _ = self.inline_layout(node_id, inputs, None);
+        let inner = if self.nodes[dom_node_id(node_id)].flags.is_inline_root() {
+            self.inline_layout(node_id, inputs, None)
         } else {
-            let _ = compute_block_layout(self, node_id, inputs, None);
-        }
+            compute_block_layout(self, node_id, inputs, None)
+        };
+        output.oof_candidates = inner.oof_candidates;
+        output.oof_positioning_area = inner.oof_positioning_area;
     }
 
     // pyro: the algorithms other than block layout, not inlined into
