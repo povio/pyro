@@ -15,7 +15,7 @@ use pyro_js::{JsError, JsResult, Object, Scope, Value};
 use crate::page::PageDom;
 
 use crate::lazy_module::LazyModule;
-use crate::sanitizer_options::ParserOptions;
+use crate::sanitizer_options::{ParseMode, ParserOptions};
 
 pub(crate) static MODULE: LazyModule = LazyModule {
     key: "lpTrustedTypes",
@@ -444,7 +444,21 @@ impl HtmlInput {
         options: Value<'_>,
         sink: &str,
     ) -> JsResult<(String, ParserOptions)> {
-        let (options, vetted) = parser_options(s, page, options, sink, false)?;
+        self.for_html_insertion_as(s, page, options, sink, ParseMode::Unsafe)
+    }
+
+    /// [`Self::for_html_insertion`] for the method `mode` names: a safe method's (`setHTML`,
+    /// `appendHTML`, ...) options carry no `runScripts` and always filter (the default sanitizer,
+    /// the built-in safe baseline).
+    pub(crate) fn for_html_insertion_as(
+        self,
+        s: &Scope<'_>,
+        page: &Rc<PageDom>,
+        options: Value<'_>,
+        sink: &str,
+        mode: ParseMode,
+    ) -> JsResult<(String, ParserOptions)> {
+        let (options, vetted) = parser_options_with(s, page, options, sink, false, mode)?;
         if vetted {
             return Ok((match self { Self::Trusted(html) | Self::String(html) => html }, options));
         }
@@ -467,19 +481,27 @@ impl HtmlInput {
 pub(crate) fn parser_options(
     s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, sink: &str, streaming: bool,
 ) -> JsResult<(ParserOptions, bool)> {
+    parser_options_with(s, page, value, sink, streaming, ParseMode::Unsafe)
+}
+
+/// [`parser_options`] for the method `mode` names: a safe method does not read `runScripts` and
+/// the built-in safe baseline applies to every sanitizer.
+pub(crate) fn parser_options_with(
+    s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, sink: &str, streaming: bool, mode: ParseMode,
+) -> JsResult<(ParserOptions, bool)> {
     if let Some(wrapper) = s.unwrap::<TrustedValue>(value) {
         if let Some(snapshot) = wrapper.as_ref() {
-            return Ok((snapshot.clone(), true));
+            return Ok((if mode == ParseMode::Safe { snapshot.for_safe_method() } else { snapshot.clone() }, true));
         }
     }
-    let options = ParserOptions::convert(s, value)?;
+    let options = ParserOptions::convert_with(s, value, mode)?;
     if requires_for_script(page) {
         let module = MODULE.module(s, page)?;
         let callback = module.get("defaultParserOptions")?.as_object()
             .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
-        let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), s.boolean(options.filter.is_some())])?;
+        let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), s.boolean(options.has_sanitizer)])?;
         if !result.is_null() && !result.is_undefined() {
-            return Ok((ParserOptions::convert(s, result)?, true));
+            return Ok((ParserOptions::convert_with(s, result, mode)?, true));
         }
         if (streaming || options.needs_vetting || result.is_null()) && sink_violation(s, page, sink, "")? {
             return Err(JsError::Type("This document requires trusted HTML parser options".into()));

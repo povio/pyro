@@ -13,6 +13,7 @@ use pyro_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Scope, Value};
 use crate::collections::{self, CollectionKind};
 use crate::names::NameArg;
 use crate::page::PageDom;
+use crate::sanitizer_options::ParseMode;
 use crate::target::{page_of, EventTarget, EventTargetData};
 use crate::util::*;
 
@@ -1204,7 +1205,7 @@ fn get_html<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>>
     Ok(s.string(&n.page().dom.borrow().get_html(n.id, serializable, &roots).js()?))
 }
 
-/// `setHTMLUnsafe(html)` on `Element` and `ShadowRoot`.
+/// `setHTMLUnsafe(html, options)` on `Element` and `ShadowRoot`.
 fn set_html_unsafe<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(1, "setHTMLUnsafe")?;
     let shadow = n.page().dom.borrow().node(n.id).is_ok_and(|node| matches!(node.kind, pyro_dom::node::NodeKind::Fragment(_)));
@@ -1214,6 +1215,47 @@ fn set_html_unsafe<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Val
     crate::input::blur_before_removal(n.page(), n.id, true);
     pyro_dom::parse::set_html_unsafe_with(&mut n.page().dom.borrow_mut(), n.id, &html, options.run_scripts, options.filter).js()?;
     Ok(s.undefined())
+}
+
+/// `setHTML(html, options)` on `Element` and `ShadowRoot`: "set and filter HTML" with the safe
+/// flag. The options hold only a `sanitizer` (`runScripts` is not read); the default
+/// configuration and the built-in safe baseline apply. On a `script` element (HTML or SVG) it does nothing.
+fn set_html<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(1, "setHTML")?;
+    let shadow = n.page().dom.borrow().node(n.id).is_ok_and(|node| matches!(node.kind, pyro_dom::node::NodeKind::Fragment(_)));
+    let sink = if shadow { "ShadowRoot setHTML" } else { "Element setHTML" };
+    let input = crate::trusted_types::HtmlInput::convert(s, a.get(0))?;
+    let (html, options) = input.for_html_insertion_as(s, n.page(), a.get(1), sink, ParseMode::Safe)?;
+    if crate::positional_html::is_script_element(&n.page().dom.borrow(), n.id) {
+        return Ok(s.undefined());
+    }
+    crate::input::blur_before_removal(n.page(), n.id, true);
+    pyro_dom::parse::set_html_unsafe_with(&mut n.page().dom.borrow_mut(), n.id, &html, false, options.filter).js()?;
+    Ok(s.undefined())
+}
+
+/// `Document.parseHTML(html, options)` and `Document.parseHTMLUnsafe(html, options)`: a new
+/// document, parsed with declarative shadow roots; the safe one filters with the default
+/// sanitizer and the built-in safe baseline.
+fn parse_html_document<'s>(s: &Scope<'s>, a: Args<'s>, safe: bool) -> JsResult<Value<'s>> {
+    let (method, sink) = if safe {
+        ("Document.parseHTML", "Document parseHTML")
+    } else {
+        ("Document.parseHTMLUnsafe", "Document parseHTMLUnsafe")
+    };
+    a.require(1, method)?;
+    // Trusted Types: the markup is a TrustedHTML sink, as `setHTMLUnsafe` is.
+    let input = crate::trusted_types::HtmlInput::convert(s, a.get(0))?;
+    let page = page_of(s)?;
+    let mode = if safe { ParseMode::Safe } else { ParseMode::UnsafeDocument };
+    let (html, options) = input.for_html_insertion_as(s, &page, a.get(1), sink, mode)?;
+    let doc = if safe {
+        let filter = options.filter.unwrap_or_else(|| std::rc::Rc::new(pyro_dom::sanitizer_defaults::safe_default()));
+        pyro_dom::parse::parse_html_with(&page.dom, &html, filter)
+    } else {
+        pyro_dom::parse::parse_html_unsafe_with(&page.dom, &html, options.filter)
+    };
+    Ok(wrap_node(s, &page, doc)?.value())
 }
 
 pub struct ShadowRoot;
@@ -1260,6 +1302,7 @@ impl JsClass for ShadowRoot {
             Ok(s.string(if flags & pyro_dom::shadow_flags::MANUAL_SLOTS != 0 { "manual" } else { "named" }))
         });
         def.method("getHTML", 0, get_html);
+        def.method("setHTML", 1, set_html);
         def.method("setHTMLUnsafe", 1, set_html_unsafe);
         def.method("getAnimations", 0, |s, n, _a| {
             let root = wrap_node(s, n.page(), n.id)?.value();
@@ -1789,6 +1832,7 @@ impl JsClass for Element {
         });
         def.getter("assignedSlot", assigned_slot);
         def.method("getHTML", 0, get_html);
+        def.method("setHTML", 1, set_html);
         def.method("setHTMLUnsafe", 1, set_html_unsafe);
         crate::html::define_element_extras(def);
     }
@@ -1932,15 +1976,8 @@ impl JsClass for Document {
             let id = page.dom.borrow_mut().create_document(DocumentKind::Xml, "about:blank");
             wrap_new_node::<Document>(s, &page, id, nt)
         });
-        def.static_method("parseHTMLUnsafe", 1, |s, a| {
-            a.require(1, "Document.parseHTMLUnsafe")?;
-            // Trusted Types: "Document parseHTMLUnsafe" is a TrustedHTML sink, as `setHTMLUnsafe` is.
-            let input = crate::trusted_types::HtmlInput::convert(s, a.get(0))?;
-            let page = page_of(s)?;
-            let (html, _options) = input.for_html_insertion(s, &page, a.get(1), "Document parseHTMLUnsafe")?;
-            let doc = pyro_dom::parse::parse_html_unsafe(&page.dom, &html);
-            Ok(wrap_node(s, &page, doc)?.value())
-        });
+        def.static_method("parseHTMLUnsafe", 1, |s, a| parse_html_document(s, a, false));
+        def.static_method("parseHTML", 1, |s, a| parse_html_document(s, a, true));
         // `documentElement`, `head` and `body` are kept on the document's
         // data as its tree changes: one load each, on the lean dispatch.
         def.pure_getter_typed("documentElement", pyro_js::GetterResult::ObjectOrNull, |s, n| {
