@@ -329,6 +329,8 @@ where
         tree_counting_caches,
     );
 
+    // pyro: vi and vb of a MathML element read the root's writing mode (see `NoCalcLength`).
+    context.builder.is_mathml_element = pseudo.is_none() && element.is_some_and(|e| e.is_mathml_element());
     context.style().add_flags(cascade_input_flags);
     // Reuse flags from computing registered custom properties initial values, such as
     // whether they depend on viewport units.
