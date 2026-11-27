@@ -989,8 +989,10 @@
         return createImageBitmap(el);
       };
     } else {
-      // An element's audio is not decoded on its own (nothing plays it): no samples to pull.
+      // An element's audio is not decoded on its own (nothing plays it): no samples ever arrive, so a track of
+      // it is `muted` (a live track whose source delivers nothing, per spec) and never unmutes.
       source.pullAudio = () => null;
+      source.noSamples = true;
     }
     return source;
   };
@@ -1027,7 +1029,7 @@
       for (const [kind, bit] of [['video', 2], ['audio', 1]]) {
         if (!(kinds & bit) || live[kind]) continue;
         const source = elementSource(el, kind);
-        const track = createTrack(MediaStreamTrack, kind, source, { muted: source.crossOrigin });
+        const track = createTrack(MediaStreamTrack, kind, source, { muted: source.crossOrigin || !!source.noSamples });
         live[kind] = track;
         uaAddTrack(stream, track);
       }
