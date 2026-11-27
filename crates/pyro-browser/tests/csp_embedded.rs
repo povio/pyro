@@ -295,6 +295,7 @@ fn the_required_policy_is_snapshot_when_the_navigation_starts() {
             last_modified: None,
             reporting_endpoints: None,
             dictionary_links: Vec::new(),
+            speculation_rules: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,

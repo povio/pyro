@@ -1708,6 +1708,7 @@ fn default_accept(d: Destination) -> &'static str {
         Destination::Text => "text/plain,*/*;q=0.5",
         Destination::Image => "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         Destination::EventSource => "text/event-stream",
+        Destination::SpeculationRules => "application/speculationrules+json",
         _ => "*/*",
     }
 }

@@ -508,6 +508,21 @@ fn as_script(page: &Rc<PageDom>, name: &str, f: impl Fn(&Rc<PageDom>) + 'static)
     }
 }
 
+/// A speculation rule set that could not be used (HTML "update speculation rules"): `error`
+/// at its `<script>` and, for text that is no rule set (`message`), a `TypeError` reported at the
+/// window, after the element's listeners. Both run as one script-like call, so a promise the
+/// element's listener resolves continues only once the window has been told too (as in Chrome,
+/// where both happen inside the script that inserted the element).
+pub fn speculation_rules_error(page: &Rc<PageDom>, el: NodeId, message: Option<String>) {
+    as_script(page, "speculationrules", move |page| {
+        fire_simple(page, el, "error", false, false);
+        let Some(message) = &message else { return };
+        let Some(realm) = page.main_world_realm() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        scope.report_exception(&pyro_js::JsError::Type(message.clone().into()));
+    });
+}
+
 /// [`focus_element`] as a script's `el.focus()` runs it (see [`as_script`]):
 /// what a client's bare focus is. A user's focus comes with a pointer or key
 /// event, dispatched by the browser, whose listeners each get a microtask

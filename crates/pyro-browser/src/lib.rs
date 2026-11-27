@@ -21,6 +21,7 @@ mod quiet;
 mod refresh;
 mod responsive_frames;
 mod speculate;
+mod speculation_rules;
 mod stylesheets;
 mod viewport;
 mod window;
@@ -600,6 +601,8 @@ pub struct DocumentState {
     pub(crate) stylesheets: stylesheets::Stylesheets,
     pub(crate) images: images::Images,
     pub(crate) preloads: preload::Preloads,
+    /// The speculation rule sets registered by this document (`speculation_rules`).
+    pub(crate) speculation: speculation_rules::SpeculationRules,
     pub(crate) refresh: refresh::Refresh,
     pub(crate) _owner_pin: Option<loader::ResourceNode>,
     /// CSP Embedded Enforcement: the policy the current document's navigation required (the
@@ -1683,6 +1686,7 @@ impl Browser {
                 stylesheets: Default::default(),
                 images: Default::default(),
                 preloads: Default::default(),
+                speculation: Default::default(),
                 refresh: Default::default(),
                 _owner_pin: None,
                 in_order_scripts: Default::default(),
@@ -2397,6 +2401,7 @@ impl Browser {
             p.stylesheets = Default::default();
             p.images = Default::default();
             p.preloads = Default::default();
+            p.speculation = Default::default();
             p.refresh = Default::default();
             p.required_csp = required_csp;
             p.csp_sandbox = csp_sandbox;

@@ -48,6 +48,8 @@ pub enum Destination {
     Beacon,
     /// `<link rel=compression-dictionary>` (`Sec-Fetch-Dest: empty`).
     CompressionDictionary,
+    /// A `Speculation-Rules` header's rule set (`Sec-Fetch-Dest: speculationrules`, CORS mode).
+    SpeculationRules,
     Other,
 }
 
@@ -82,7 +84,7 @@ impl Destination {
             Destination::EventSource => "EventSource",
             Destination::WebSocket => "WebSocket",
             Destination::Beacon => "Ping",
-            Destination::CompressionDictionary | Destination::Other => "Other",
+            Destination::CompressionDictionary | Destination::SpeculationRules | Destination::Other => "Other",
         }
     }
 }

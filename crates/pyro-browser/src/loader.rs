@@ -97,6 +97,9 @@ pub enum ResourceKind {
     /// `crossorigin` ("same-origin" without one), CSP `connect-src`. Fetched after the document's
     /// load event, never speculated.
     Dictionary,
+    /// A `Speculation-Rules` header's rule set: destination "speculationrules"
+    /// (`Sec-Fetch-Dest: speculationrules`), CORS mode, same-origin credentials, never speculated.
+    SpeculationRules,
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +210,9 @@ pub struct Resource {
     /// A document's `Link: <url>; rel="compression-dictionary"` headers, resolved: fetched after
     /// its `load` event.
     pub dictionary_links: Vec<String>,
+    /// A top-level document's `Speculation-Rules` header values (one per header line), raw;
+    /// `speculation_rules::parse_header_urls` reads them.
+    pub speculation_rules: Vec<String>,
     /// The response's `Referrer-Policy` header (a document's default policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// A document's response asked for an origin-keyed agent cluster
@@ -435,6 +441,7 @@ impl ResourceLoader for NetLoader {
             // Destination "": `Other` sends `Sec-Fetch-Dest: empty` in no-cors mode.
             ResourceKind::Prefetch => pyro_net::Destination::Other,
             ResourceKind::Dictionary => pyro_net::Destination::CompressionDictionary,
+            ResourceKind::SpeculationRules => pyro_net::Destination::SpeculationRules,
         };
         // Resource Timing: the document that gets this fetch's entry.
         let document = requesting_document(browser, &request);
@@ -466,7 +473,7 @@ impl ResourceLoader for NetLoader {
                 req.cross_site_ancestor = document.is_none_or(|d| d.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite);
             }
         }
-        if matches!(request.kind, ResourceKind::ModuleScript | ResourceKind::Dictionary) || request.crossorigin.is_some() {
+        if matches!(request.kind, ResourceKind::ModuleScript | ResourceKind::Dictionary | ResourceKind::SpeculationRules) || request.crossorigin.is_some() {
             req.mode = pyro_net::RequestMode::Cors;
         } else if request.kind == ResourceKind::Track {
             req.mode = pyro_net::RequestMode::SameOrigin;
@@ -591,6 +598,7 @@ impl ResourceLoader for NetLoader {
                 last_modified: None,
                 reporting_endpoints: None,
                 dictionary_links: Vec::new(),
+                speculation_rules: Vec::new(),
                 referrer_policy: None,
                 origin_agent_cluster: false,
                 embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
@@ -684,6 +692,7 @@ impl ResourceLoader for NetLoader {
                     last_modified: None,
                     reporting_endpoints: None,
                     dictionary_links: Vec::new(),
+                    speculation_rules: Vec::new(),
                     referrer_policy: None,
                     origin_agent_cluster: false,
                     embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
@@ -767,6 +776,11 @@ impl ResourceLoader for NetLoader {
                                 h.headers.get_all(http::header::LINK).iter().filter_map(|v| v.to_str().ok()),
                                 &h.url,
                             )
+                        } else {
+                            Vec::new()
+                        },
+                        speculation_rules: if document {
+                            h.headers.get_all("speculation-rules").iter().filter_map(|v| v.to_str().ok().map(str::to_owned)).collect()
                         } else {
                             Vec::new()
                         },
@@ -1058,6 +1072,9 @@ pub(crate) fn csp_dest(request: &FetchRequest) -> Option<pyro_net::csp::RequestD
         // A compression dictionary: connect-src (Fetch's "compression-dictionary" destination).
         ResourceKind::Dictionary => RequestDest::Empty,
         ResourceKind::Document | ResourceKind::Download => return None,
+        // A header-supplied rule set is exempt from the document's CSP (WPT's
+        // `out-of-document-rule-set` CSPExemption case).
+        ResourceKind::SpeculationRules => return None,
     })
 }
 
@@ -1328,6 +1345,7 @@ impl ResourceLoader for StaticLoader {
                         last_modified: None,
                         reporting_endpoints: None,
                         dictionary_links: Vec::new(),
+                        speculation_rules: Vec::new(),
                         referrer_policy,
                         origin_agent_cluster: false,
                         embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
@@ -2308,6 +2326,7 @@ impl Browser {
             last_modified: None,
             reporting_endpoints: None,
             dictionary_links: Vec::new(),
+            speculation_rules: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
@@ -2605,6 +2624,10 @@ impl Browser {
         if !resource.dictionary_links.is_empty() {
             self.dictionary_headers(page, resource.dictionary_links.clone());
         }
+        // Speculation rules are fetched for top-level documents only.
+        if !resource.speculation_rules.is_empty() && page.child.is_none() {
+            self.speculation_header(page, &resource.url, &resource.speculation_rules);
+        }
         if resource.content_language.is_some() {
             let _ = dom.borrow_mut().set_content_language(doc, resource.content_language.as_deref());
         }
@@ -2891,6 +2914,14 @@ impl Browser {
             }
             info
         };
+        if info.kind == ScriptKind::SpeculationRules {
+            let rules_base = {
+                let d = dom.borrow();
+                d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
+            };
+            self.add_speculation_rules(page, &dom, node, &info, rules_base.as_deref().unwrap_or(&base));
+            return;
+        }
         if info.kind == ScriptKind::ImportMap {
             let map_base = {
                 let d = dom.borrow();
@@ -3609,6 +3640,14 @@ impl Browser {
             let _ = d.mark_script_started(node);
             info
         };
+        if info.kind == ScriptKind::SpeculationRules {
+            let rules_base = {
+                let d = dom.borrow();
+                d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
+            };
+            self.add_speculation_rules(page, &dom, node, &info, rules_base.as_deref().unwrap_or(&base));
+            return;
+        }
         if info.kind == ScriptKind::ImportMap {
             let map_base = {
                 let d = dom.borrow();
@@ -4885,6 +4924,7 @@ mod disposition_tests {
             last_modified: None,
             reporting_endpoints: None,
             dictionary_links: Vec::new(),
+            speculation_rules: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,

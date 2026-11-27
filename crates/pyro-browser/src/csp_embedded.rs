@@ -1266,6 +1266,7 @@ mod tests {
             last_modified: None,
             reporting_endpoints: None,
             dictionary_links: Vec::new(),
+            speculation_rules: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,

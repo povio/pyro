@@ -603,7 +603,7 @@ impl Browser {
         done: FetchDone,
     ) -> Option<ResourceCancellation> {
         // A prefetch never takes a speculative fetch (the prescanner never starts one).
-        if matches!(request.kind, ResourceKind::Prefetch | ResourceKind::Dictionary) {
+        if matches!(request.kind, ResourceKind::Prefetch | ResourceKind::Dictionary | ResourceKind::SpeculationRules) {
             return loader.fetch_cancellable(self, request, done);
         }
         match self.claim_speculated(page, &request) {

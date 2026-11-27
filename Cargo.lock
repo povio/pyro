@@ -2798,6 +2798,7 @@ dependencies = [
  "pyro-render",
  "pyro-runtime",
  "pyro-webapi",
+ "serde_json",
  "smallvec",
  "url",
 ]

@@ -2137,7 +2137,7 @@ simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
     );
     def.static_method("supports", 1, |s, a| {
         let t = dom_string(a.get(0))?;
-        Ok(s.boolean(matches!(t.as_str(), "classic" | "module" | "importmap")))
+        Ok(s.boolean(matches!(t.as_str(), "classic" | "module" | "importmap") || (SPECULATION_RULES_SUPPORTED && t == "speculationrules")))
     });
 });
 simple_class!(HtmlDivElement, "HTMLDivElement", HtmlElement, |def| {
@@ -2150,6 +2150,12 @@ simple_class!(HtmlParagraphElement, "HTMLParagraphElement", HtmlElement, |def| {
 simple_class!(HtmlHeadingElement, "HTMLHeadingElement", HtmlElement, |def| {
     reflect_str!(def, "align", "align");
 });
+
+/// Whether `HTMLScriptElement.supports("speculationrules")` is true: the single support switch of
+/// speculation rules (see `pyro-browser/src/speculation_rules.rs`). It stays false until the
+/// behaviour behind rule sets exists (the prefetch lane flips it with that behaviour): pages
+/// feature-detect with it, and a true answer without prefetching would make them test a lie.
+pub const SPECULATION_RULES_SUPPORTED: bool = false;
 
 /// URL decomposition shared by `<a>` and `<area>` (HTMLHyperlinkElementUtils).
 pub(crate) fn hyperlink_url(dom: &Dom, n: &NodeData, svg: bool) -> JsResult<Option<pyro_net::Url>> {

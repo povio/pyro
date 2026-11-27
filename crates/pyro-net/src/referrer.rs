@@ -258,6 +258,7 @@ pub fn fetch_dest(destination: Destination) -> &'static str {
         Destination::Video => "video",
         Destination::Track => "track",
         Destination::WebSocket => "websocket",
+        Destination::SpeculationRules => "speculationrules",
         Destination::Xhr
         | Destination::Fetch
         | Destination::EventSource

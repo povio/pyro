@@ -855,8 +855,13 @@ impl Browser {
                 }
             } else if event.kind == pyro_dom::script::ResourceKind::Script {
                 // Script-inserted (or `src`-changed) scripts: "already
-                // started" makes repeats of one element no-ops.
-                self.script_event(target, event.node);
+                // started" makes repeats of one element no-ops. A removal concerns only a
+                // speculation rules script (the DOM queues no other): its rule set goes.
+                if event.reason == pyro_dom::script::ResourceReason::Removed {
+                    self.speculation_script_removed(target, event.node);
+                } else {
+                    self.script_event(target, event.node);
+                }
             } else if event.kind == pyro_dom::script::ResourceKind::SvgImage {
                 if image_nodes.insert(event.node) {
                     self.svg_image_event(target, event.node);

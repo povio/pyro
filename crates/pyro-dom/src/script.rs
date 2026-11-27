@@ -14,6 +14,9 @@ pub enum ScriptKind {
     Classic,
     Module,
     ImportMap,
+    /// `type="speculationrules"`: a speculation rule set (WICG Speculation Rules). Not executed:
+    /// the loader parses its text and registers the rule set with the document.
+    SpeculationRules,
     /// Unknown type: a data block, never executed.
     Data,
 }
@@ -431,11 +434,27 @@ impl Dom {
         // Only stylesheet owners need removal notifications.
         let mut i = node;
         while i != NIL {
-            if let Some(k @ (ResourceKind::Stylesheet | ResourceKind::StyleText)) = self.resource_kind(i) {
-                self.push_resource(i, k, ResourceReason::Removed);
+            match self.resource_kind(i) {
+                Some(k @ (ResourceKind::Stylesheet | ResourceKind::StyleText)) => {
+                    self.push_resource(i, k, ResourceReason::Removed);
+                }
+                // A speculation rule set leaves the document's list with its element.
+                Some(ResourceKind::Script) if self.is_speculation_rules_script(i) => {
+                    self.push_resource(i, ResourceKind::Script, ResourceReason::Removed);
+                }
+                _ => {}
             }
             i = self.next_shadow_including_rev(i, node);
         }
+    }
+
+    /// Whether `idx` is an HTML `<script type="speculationrules">` (the `type` as
+    /// [`Dom::script_info`] classifies it).
+    fn is_speculation_rules_script(&self, idx: u32) -> bool {
+        self.n(idx).element().is_some_and(|e| {
+            e.is_html()
+                && e.attr_local(&local_name!("type")).is_some_and(|t| t.eq_ignore_ascii_case("speculationrules"))
+        })
     }
 
     /// Called after the attribute `local` of `idx` was set or removed;
@@ -678,6 +697,8 @@ impl Dom {
                     ScriptKind::Module
                 } else if raw == "importmap" {
                     ScriptKind::ImportMap
+                } else if raw == "speculationrules" {
+                    ScriptKind::SpeculationRules
                 } else {
                     ScriptKind::Data
                 }

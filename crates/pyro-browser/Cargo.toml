@@ -19,6 +19,7 @@ bytes = "1"
 percent-encoding = "2.3.2"
 http = "1"
 smallvec = "1"
+serde_json.workspace = true
 
 [dev-dependencies]
 pyro-layout.workspace = true
