@@ -537,6 +537,16 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
     if owed {
         let (checked, _) = page.scroll_clamp.get();
         page.scroll_clamp.set((checked, false));
+        // The frame's scroll offsets reach the layout engine first (scroll timelines, scroll
+        // markers, `position-try` fallbacks that follow a scroller): the clamp lays the document
+        // out, and a layout made with the offsets of before the script scroll left the first frame
+        // after it showing the old fallback and active marker (WPT css-anchor-position
+        // `anchor-scroll-position-try-003`, css-overflow `scroll-marker-controls-scroll-tracking-003`).
+        if let Some(layout) = page.try_layout() {
+            if layout.push_scroll() {
+                layout.set_scroll_pushed_at(crate::event::page_now_ms(page));
+            }
+        }
         clamp_scrolls(page, true);
     }
     crate::smooth_scroll::step(page);
