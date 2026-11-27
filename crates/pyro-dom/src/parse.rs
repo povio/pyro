@@ -1422,6 +1422,12 @@ impl DocumentParser {
         Self::new_text_document(dom, doc, "text/plain", None)
     }
 
+    /// A text document of another MIME type (HTML "plain text file": `text/css`, a JavaScript MIME type,
+    /// `text/vtt`): the same `<pre>` page, reporting the resource's type as `contentType`.
+    pub fn new_text_as(dom: DomRef, doc: NodeId, mime: &str) -> DomResult<Self> {
+        Self::new_text_document(dom, doc, mime, None)
+    }
+
     /// JSON exchanged between systems uses UTF-8 irrespective of the parent
     /// encoding or a Content-Type charset parameter (RFC 8259 §§8.1, 11).
     pub fn new_json(dom: DomRef, doc: NodeId, mime: &str) -> DomResult<Self> {

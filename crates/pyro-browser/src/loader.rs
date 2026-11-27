@@ -3218,6 +3218,9 @@ impl Browser {
             DocumentParser::new_json(dom.clone(), doc, &resource.mime)
         } else if resource.mime == "text/plain" {
             DocumentParser::new_plaintext(dom.clone(), doc)
+        } else if resource.mime == "text/css" || resource.mime == "text/vtt" || pyro_net::is_javascript_mime(&resource.mime) {
+            // HTML "page load processing model for text files": shown as text, with the resource's own type.
+            DocumentParser::new_text_as(dom.clone(), doc, &resource.mime)
         } else if pyro_dom::parse::is_xml_mime(&resource.mime) {
             DocumentParser::new_xml(dom.clone(), doc, &resource.mime)
         } else {
