@@ -46,8 +46,14 @@ pub fn wants_check(headers: &HeaderMap) -> bool {
     headers.contains_key("unencoded-digest")
         || (headers.contains_key("signature-input")
             && header_dictionary(headers, "signature-input").is_some_and(|inputs| {
-                inputs.iter().any(|(_, member)| matches!(member, Member::List(_, params) if param_str(params, "tag") == Some("sri")))
+                inputs.iter().any(|(_, member)| matches!(member, Member::List(_, params) if is_sri_tag(param_str(params, "tag"))))
             }))
+}
+
+/// The `tag` of a Signature-Based SRI signature: `sri`, and `ed25519-integrity`, the name the
+/// request's `Accept-Signature` carries and older servers (WPT integrity-policy/tentative/signature) sign with.
+fn is_sri_tag(tag: Option<&str>) -> bool {
+    matches!(tag, Some("sri" | "ed25519-integrity"))
 }
 
 /// The facts of a response subject to a check, `None` otherwise (no copy of the headers).
@@ -525,7 +531,7 @@ fn verified_keys(url: &Url, status: u16, headers: &HeaderMap) -> Option<Vec<Key>
     let Some(signatures) = header_dictionary(headers, "signature") else { return Some(verified) };
     for (label, member) in &inputs {
         let Member::List(components, params) = member else { continue };
-        if param_str(params, "tag") != Some("sri") {
+        if !is_sri_tag(param_str(params, "tag")) {
             continue;
         }
         let Some(key) = param_str(params, "keyid").and_then(decode_key) else { continue };
