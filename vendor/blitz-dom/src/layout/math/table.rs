@@ -9,9 +9,15 @@ use super::types::{ChildMetrics, MathContext, MathKind, MathLayout};
 use crate::layout::LayoutPassState;
 use crate::{BaseDocument, NodeId};
 
-/// Construction (see the module's documentation): `false`, the element is built as it was.
-pub(crate) fn construct(_doc: &mut BaseDocument, _node_id: NodeId, _kind: MathKind, _children: &mut ThinVec<NodeId>) -> bool {
-    false
+/// Construction (see the module's documentation): a cell lays its children out as an `mrow` does
+/// (MathML Core § 3.6.3: "the `mtd` ... children are laid out with the mrow algorithm"), so that
+/// white space between them takes no width, as in the row it is compared with; the other elements
+/// are built as they were (`false`).
+pub(crate) fn construct(doc: &mut BaseDocument, node_id: NodeId, kind: MathKind, children: &mut ThinVec<NodeId>) -> bool {
+    match kind {
+        MathKind::Table(super::TableKind::Cell) => super::row::construct(doc, node_id, kind, children),
+        _ => false,
+    }
 }
 
 /// Layout of a box `construct` built (see the module's documentation): the row's until filled.
