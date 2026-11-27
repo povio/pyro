@@ -262,7 +262,7 @@ impl Namespace {
             .entry(origin.to_owned())
             .or_insert_with(|| Arc::new(Mutex::new(Tree { bucket: self.bucket.clone(), ..Tree::default() })))
             .clone();
-        Handle::new(tree, Path::new(), Kind::Directory)
+        Handle::new(tree, Path::new(), Kind::Directory, Arc::from(origin))
     }
 
     pub(crate) fn usage(&self, origin: &str) -> u64 {
@@ -284,11 +284,18 @@ pub(crate) struct Handle {
     tree: Arc<Mutex<Tree>>,
     path: Arc<Mutex<Path>>,
     kind: Kind,
+    /// The origin whose file system this is: a structured clone delivers the
+    /// handle only to a secure context of that origin.
+    origin: Arc<str>,
 }
 
 impl Handle {
-    fn new(tree: Arc<Mutex<Tree>>, path: Path, kind: Kind) -> Self {
-        Self { tree, path: Arc::new(Mutex::new(path)), kind }
+    fn new(tree: Arc<Mutex<Tree>>, path: Path, kind: Kind, origin: Arc<str>) -> Self {
+        Self { tree, path: Arc::new(Mutex::new(path)), kind, origin }
+    }
+
+    pub(crate) fn origin(&self) -> &str {
+        &self.origin
     }
 
     pub(crate) fn kind(&self) -> Kind {
@@ -344,7 +351,7 @@ impl Handle {
         } else {
             return Err(Error::Missing);
         }
-        Ok(Self::new(self.tree.clone(), path, kind))
+        Ok(Self::new(self.tree.clone(), path, kind, self.origin.clone()))
     }
 
     pub(crate) fn next(&self, after: Option<&str>) -> Result<Option<(String, Self)>> {
@@ -364,7 +371,7 @@ impl Handle {
         };
         path.push(name.clone());
         let kind = tree.entries[&path].kind();
-        Ok(Some((name, Self::new(self.tree.clone(), path, kind))))
+        Ok(Some((name, Self::new(self.tree.clone(), path, kind, self.origin.clone()))))
     }
 
     pub(crate) fn resolve(&self, other: &Self) -> Result<Option<Vec<String>>> {

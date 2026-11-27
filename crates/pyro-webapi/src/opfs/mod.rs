@@ -14,8 +14,8 @@ use pyro_js::{
 
 use crate::file::{BlobData, File};
 use crate::page::PageDom;
-pub(crate) use store::Namespace;
-use store::{Error, Handle, Kind, Lease, Mode, Mutation};
+pub(crate) use store::{Handle, Namespace};
+use store::{Error, Kind, Lease, Mode, Mutation};
 
 const MODULE: &str = "lpOriginPrivateFileSystem";
 
@@ -114,6 +114,28 @@ fn queue_mutation<'s>(s: &Scope<'s>, mutation: Mutation) -> JsResult<Value<'s>> 
 
 fn wrap_entry<'s>(s: &Scope<'s>, handle: Handle) -> JsResult<Value<'s>> {
     Ok(s.wrap::<Entry>(handle, None)?.value())
+}
+
+/// The locator of a FileSystemFileHandle or FileSystemDirectoryHandle, or
+/// `None` for any other value (the serialization steps of `FileSystemHandle`).
+pub(crate) fn handle_of(s: &Scope<'_>, value: Value<'_>) -> Option<Handle> {
+    s.unwrap::<Entry>(value).map(|handle| (*handle).clone())
+}
+
+/// The deserialization steps of `FileSystemHandle`: a new handle of the same
+/// entry in `s`'s realm. Only a secure context of the handle's own origin
+/// receives it (a cross-origin, opaque-origin or insecure receiver gets a
+/// DataCloneError, which message delivery turns into `messageerror`).
+pub(crate) fn clone_handle<'s>(s: &Scope<'s>, handle: &Handle) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    let receiver = crate::storage::tuple_origin(s, &page);
+    if !crate::secure_context::secure(s, &page) || receiver.as_deref() != Some(handle.origin()) {
+        return Err(JsError::dom("DataCloneError", "The file system handle cannot be cloned into this context."));
+    }
+    let dedicated = s.global_data::<crate::worker_scope::DedicatedWorkerGlobalScope>().is_some();
+    let wrap = module(s, &page, dedicated)?.get_atom("wrapEntry")?.as_object().ok_or_else(invalid_handle)?;
+    let entry = wrap_entry(s, handle.clone())?;
+    wrap.call(None, &[entry])
 }
 
 /// Wrap a named bucket's root through this realm's ordinary OPFS interface
