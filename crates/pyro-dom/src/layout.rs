@@ -1225,6 +1225,65 @@ impl Layout {
         Some(crate::text_metrics::text_width(&value, size, weight) + b.padding[LEFT] + b.padding[RIGHT])
     }
 
+    /// The client rects of the UTF-16 range `[start, end)` of a text control's value (an
+    /// `OpaqueRange`'s geometry): one per line the range covers (the value's lines split at
+    /// `\n`; soft wraps are not modelled), laid out from the control's content box with the
+    /// engine's text metrics; a collapsed range gives its one caret rect (zero width). Empty
+    /// when the control is not rendered (`display: none`, disconnected).
+    pub fn value_range_rects(&self, dom: &Dom, el: NodeId, start: u32, end: u32) -> Vec<Rect> {
+        if !dom.is_connected(el).unwrap_or(false) {
+            return Vec::new();
+        }
+        let Some(rect) = self.client_rect(dom, el) else { return Vec::new() };
+        let Ok(value) = dom.value(el) else { return Vec::new() };
+        let Some(e) = dom.element(el).ok().filter(|e| e.is_html()) else { return Vec::new() };
+        let textarea = &*e.name.local == "textarea";
+        let (ox, oy) = self.content_offset(dom, el).unwrap_or((0.0, 0.0));
+        let size = self.style.computed_font_size(dom, Some(el));
+        let weight = self
+            .style
+            .stylo_style(dom, el)
+            .map(|s| s.get_font().font_weight.value())
+            .filter(|w| w.fract() == 0.0)
+            .map_or(400, |w| w as u16);
+        // A textarea's rows are its line-height (`normal` is about 1.2 em); an input's one row
+        // is its content box.
+        let line_height = if textarea {
+            self.computed_style_value(dom, el, "line-height").strip_suffix("px").and_then(|v| v.parse::<f64>().ok()).filter(|h| *h > 0.0).unwrap_or(size * 1.2)
+        } else {
+            self.content_size(dom, el).map(|(_, h)| h).filter(|h| *h > 0.0).unwrap_or(size * 1.2)
+        };
+        // The width of the first `units` UTF-16 code units of `line`.
+        let width_to = |line: &str, units: u32| {
+            let mut seen = 0u32;
+            let mut at = line.len();
+            for (i, c) in line.char_indices() {
+                if seen >= units {
+                    at = i;
+                    break;
+                }
+                seen += c.len_utf16() as u32;
+            }
+            crate::text_metrics::text_width(&line[..at], size, weight)
+        };
+        let mut rects = Vec::new();
+        let mut base = 0u32;
+        for (row, line) in value.split('\n').enumerate() {
+            let len: u32 = line.chars().map(|c| c.len_utf16() as u32).sum();
+            let (lo, hi) = (start.max(base), end.min(base + len));
+            let covers = if start == end { base <= start && start <= base + len } else { lo < hi };
+            if covers {
+                let (x0, x1) = (width_to(line, lo - base), width_to(line, hi.max(lo) - base));
+                rects.push(Rect { x: rect.x + ox + x0, y: rect.y + oy + row as f64 * line_height, width: x1 - x0, height: line_height });
+                if start == end || !textarea {
+                    break;
+                }
+            }
+            base += len + 1;
+        }
+        rects
+    }
+
     /// `scrollExtent` (Element.zig:1845-1858): how far `el` scrolls on
     /// `axis`; `None` for the root containers (the window scrolls).
     fn scroll_extent(&self, dom: &Dom, el: NodeId, axis: Axis) -> Option<f64> {

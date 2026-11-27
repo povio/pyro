@@ -52,7 +52,7 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
     let natives = s.object();
     let is_range = s.function("isRange", |s, _this, a| {
         let v = a.get(0);
-        Ok(s.boolean(s.unwrap::<crate::range::Range>(v).is_some() || s.unwrap::<crate::range::StaticRange>(v).is_some()))
+        Ok(s.boolean(s.unwrap::<crate::range::Range>(v).is_some() || s.unwrap::<crate::range::StaticRange>(v).is_some() || s.unwrap::<crate::range::OpaqueRange>(v).is_some()))
     })?;
     natives.set_atom("isRange", is_range.value())?;
     let sync = s.function("sync", |s, _this, a| {
@@ -78,6 +78,7 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
                         (crate::collections::NodeHold::new(&page, end)?, to),
                     ));
                 }
+                // An OpaqueRange (a text control's value) is held by the Highlight but not painted.
             }
             highlights.push(CustomHighlight { name, priority, ranges });
         }

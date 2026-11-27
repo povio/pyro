@@ -811,11 +811,41 @@ impl JsClass for OpaqueRange {
         // (WPT dom/ranges/tentative/OpaqueRange-basic.html).
         def.getter("startContainer", |s, _range| Ok(s.undefined()));
         def.getter("endContainer", |s, _range| Ok(s.undefined()));
+        // The control's value text is not a DOM tree: its geometry comes from the layout of the
+        // value (a disconnected range, a removed or `display: none` control has none).
+        def.method("getBoundingClientRect", 0, |s, range, _| {
+            let page = crate::target::page_of(s)?;
+            let rects = opaque_range_rects(&page, range);
+            let bounds = rects.iter().copied().reduce(|a, b| {
+                let (x, y) = (a.left().min(b.left()), a.top().min(b.top()));
+                pyro_dom::layout::Rect { x, y, width: a.right().max(b.right()) - x, height: a.bottom().max(b.bottom()) - y }
+            });
+            crate::canvas::rect_value(s, &page, false, bounds.unwrap_or_default())
+        });
+        def.method("getClientRects", 0, |s, range, _| {
+            let page = crate::target::page_of(s)?;
+            let mut rects = opaque_range_rects(&page, range);
+            // A collapsed range (a caret) has a bounding rect but no client rects.
+            if range.offsets().0 == range.offsets().1 {
+                rects.clear();
+            }
+            let values = rects.iter().map(|r| crate::canvas::rect_value(s, &page, false, *r)).collect::<JsResult<Vec<_>>>()?;
+            crate::canvas::rect_list(s, &page, &values)
+        });
         def.method("disconnect", 0, |s, range, _| {
             range.disconnect();
             Ok(s.undefined())
         });
     }
+}
+
+/// The rects of an `OpaqueRange` in `page`'s document: none once disconnected.
+fn opaque_range_rects(page: &PageDom, range: &pyro_dom::forms::OpaqueRange) -> Vec<pyro_dom::layout::Rect> {
+    let Some(el) = range.element() else { return Vec::new() };
+    let (start, end) = range.offsets();
+    let layout = page.layout();
+    let rects = layout.value_range_rects(&page.dom.borrow(), el, start, end);
+    rects
 }
 
 /// The page and boundary points of a `Range` or `StaticRange` receiver.
