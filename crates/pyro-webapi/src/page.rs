@@ -835,6 +835,11 @@ pub trait PageHooks {
     fn top_level_origin(&self) -> Option<String> {
         None
     }
+    /// HTML-in-Canvas: gives the render snapshot of the top document the documents its frames show
+    /// now (each frame's markup, URL, sheets and scroll position), as a screenshot does before it
+    /// takes one: `drawElementImage` paints an element holding a frame (an `<iframe>`, `<object>`
+    /// or `<embed>` showing a document) from it. Called before the DOM is borrowed.
+    fn refresh_frame_documents(&self) {}
     /// HTML "secure context" for this document, ancestors included (the embedder knows the frame
     /// chain); `None` when it cannot tell (the document's own URL decides then).
     fn is_secure_context(&self) -> Option<bool> {

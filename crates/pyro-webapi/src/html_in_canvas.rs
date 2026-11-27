@@ -295,6 +295,15 @@ fn invalid_state(message: &str) -> pyro_js::JsError {
 /// or is in the top layer below it, or when either is not rendered
 /// (`display: none`).
 pub(crate) fn element_image(page: &Rc<PageDom>, canvas: NodeId, element: NodeId) -> pyro_js::JsResult<ElementImage> {
+    // An element holding a frame (`<iframe>`, `<object>`, `<embed>`) is painted with the document
+    // the frame shows, which the renderer's snapshot has only once the embedder gave it: that is
+    // asked first, with no borrow of the DOM held.
+    let frames = page.dom.borrow().descendants(element).is_ok_and(|mut nodes| {
+        nodes.any(|node| page.dom.borrow().element(node).is_ok_and(|e| e.is_html() && matches!(&*e.name.local, "iframe" | "object" | "embed" | "frame")))
+    });
+    if frames && let Some(hooks) = page.hooks() {
+        hooks.refresh_frame_documents();
+    }
     let layout = page.layout();
     let dom = page.dom.borrow();
     check_painted(page, &layout, &dom, canvas, element)?;

@@ -274,6 +274,13 @@ impl UnvisitedPaint {
     pub fn enter() -> Self {
         Self(UNVISITED_PAINT.replace(true))
     }
+
+    /// Whether a guard lives on this thread: what is being painted is for a canvas a page can read
+    /// back (HTML-in-Canvas privacy), so it must leave out what shows another origin's content
+    /// or whether a link was visited.
+    pub fn active() -> bool {
+        UNVISITED_PAINT.get()
+    }
 }
 
 impl Drop for UnvisitedPaint {

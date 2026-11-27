@@ -215,6 +215,15 @@ impl PageHooks for Hooks {
         (origin != "null").then_some(origin)
     }
 
+    fn refresh_frame_documents(&self) {
+        let Some(host) = self.frames.upgrade() else { return };
+        if !host.matches(self.page, &self.loader) {
+            return;
+        }
+        let top = host.page_dom(FrameKey { page: self.page.page, child: None });
+        crate::update_frame_documents_of(&host, top.as_ref());
+    }
+
     fn frame_detached(&self) -> bool {
         // Only a child frame can leave its page.
         self.page.child.is_some()

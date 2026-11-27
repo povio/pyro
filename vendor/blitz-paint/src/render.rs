@@ -7337,35 +7337,6 @@ impl ElementCx<'_, '_> {
         true
     }
 
-    /// pyro: HTML-in-Canvas privacy: whether this inline `<svg>` references a resource outside the
-    /// document: an `href` that is not a fragment or `data:` URL, or a `url()` in an attribute
-    /// that is not a fragment of this document.
-    #[cfg(feature = "svg")]
-    fn inline_svg_references_resources(&self) -> bool {
-        let tree = self.context.dom.as_ref().tree();
-        let mut stack: Vec<NodeId> = self.node.children.to_vec();
-        while let Some(id) = stack.pop() {
-            let Some(node) = tree.get(id) else { continue };
-            if let Some(element) = node.element_data() {
-                let external = element.attrs().iter().any(|attr| {
-                    let value = attr.value.trim();
-                    if &*attr.name.local == "href" {
-                        return !(value.is_empty() || value.starts_with('#') || value.starts_with("data:"));
-                    }
-                    value.match_indices("url(").any(|(at, _)| {
-                        let rest = value[at + 4..].trim_start().trim_start_matches(['"', '\'']);
-                        !rest.starts_with('#')
-                    })
-                });
-                if external {
-                    return true;
-                }
-            }
-            stack.extend(node.children.iter().copied());
-        }
-        false
-    }
-
     #[cfg(feature = "svg")]
     fn draw_svg(&self, scene: &mut impl PaintScene) {
         use style::properties::generated::longhands::object_fit::computed_value::T as ObjectFit;
@@ -7374,17 +7345,14 @@ impl ElementCx<'_, '_> {
             return;
         };
         // pyro: HTML-in-Canvas privacy: an SVG image from an opaque response (another origin
-        // without CORS, a redirect through one) is left out (`Privacy`). An inline `<svg>` is the
-        // document's own content, unless it references another resource (an `<image>`, `<use>` or
-        // `feImage` href, a `url()` of another document), which it draws as vector paint the scene
-        // scan does not see: that taints.
-        if let Some(privacy) = &self.context.privacy {
-            if blitz_dom::net::is_opaque_image(blitz_dom::net::svg_image_key(svg)) {
-                return;
-            }
-            if self.element.name.local == local_name!("svg") && self.inline_svg_references_resources() {
-                privacy.unclassified.set(true);
-            }
+        // without CORS, a redirect through one) is left out (`Privacy`). An inline `<svg>` is
+        // painted from a source built again for the canvas (`inline_svg_for_privacy`, below):
+        // its colours as for an unvisited link, nothing of other `<svg>`s or sprite files, and
+        // the images of opaque responses left out, so that what it draws is the subtree's and
+        // the document's own.
+        let privacy_inline = self.context.privacy.is_some() && self.element.name.local == local_name!("svg");
+        if self.context.privacy.is_some() && blitz_dom::net::is_opaque_image(blitz_dom::net::svg_image_key(svg)) {
+            return;
         }
         // pyro: its `prefers-color-scheme` blocks and `light-dark()` colours follow this element's
         // used colour scheme (blitz-dom `SvgImageData::for_color_scheme`).
@@ -7426,11 +7394,17 @@ impl ElementCx<'_, '_> {
         // `inline_svg_at_viewport`; WPT css-transforms `transform-percent-010`)
         // pyro: and one with selected text, serialized again with its `::selection` paint
         // (`inline_svg_with_selection`; WPT css-pseudo `svg-text-selection-*`).
-        let with_selection = match self.context.draw_text_context.borrow().runs.is_none() {
+        let with_selection = match self.context.draw_text_context.borrow().runs.is_none() && !privacy_inline {
             true => self.context.dom.as_ref().inline_svg_with_selection(self.node.id, width / units, height / units),
             false => None,
         };
-        let at_viewport = if with_selection.is_some() {
+        let at_viewport = if privacy_inline {
+            // (One that does not parse is left out; the build the page made is not painted for a canvas.)
+            match self.context.dom.as_ref().inline_svg_for_privacy(self.node.id, width / units, height / units) {
+                Some(svg) => Some(svg),
+                None => return,
+            }
+        } else if with_selection.is_some() {
             with_selection
         } else if svg.viewport_dependent {
             self.context.dom.as_ref().inline_svg_at_viewport(self.node.id, width / units, height / units)
@@ -7650,6 +7624,40 @@ impl ElementCx<'_, '_> {
                 }
                 // pyro: with what the document knows of its filters (tainted primitives), and its
                 // `<foreignObject>`s' content painted where usvg draws their images.
+                if let (true, Some(privacy)) = (privacy_inline, &self.context.privacy) {
+                    // pyro: HTML-in-Canvas privacy: painted apart, to note the images it drew as
+                    // the document's own: usvg read only `data:` URLs and the resources
+                    // `inline_svg_for_privacy` left it (no opaque response's, nothing outside the
+                    // subtree), so every image and image-like paint (a pattern, a mask, a filter's
+                    // image) in it is of the subtree's content.
+                    let mut recording = anyrender::recording::Scene::new();
+                    let mut handler = |scene: &mut anyrender::recording::Scene, node: &anyrender_svg::usvg::Node| match anyrender_svg::foreign_object() {
+                        Some(fo) => self.draw_foreign_object(scene, fo),
+                        None => anyrender_svg::draw_error_box(scene, node),
+                    };
+                    match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
+                        Some(notes) => anyrender_svg::render_svg_tree_with_notes_and(&mut recording, &svg.tree, transform, notes, &mut handler),
+                        None => anyrender_svg::render_svg_tree_with(&mut recording, &svg.tree, transform, &mut handler),
+                    }
+                    {
+                        use anyrender::recording::RenderCommand;
+                        let mut allowed = privacy.allowed.borrow_mut();
+                        let mut note = |paint: &anyrender::Paint| {
+                            if let anyrender::Paint::Image(brush) = paint {
+                                allowed.push(brush.image.data.id());
+                            }
+                        };
+                        for command in &recording.commands {
+                            match command {
+                                RenderCommand::Fill(fill) => note(&fill.brush),
+                                RenderCommand::Stroke(stroke) => note(&stroke.brush),
+                                RenderCommand::GlyphRun(run) => note(&run.brush),
+                                _ => {}
+                            }
+                        }
+                    }
+                    scene.append_scene(recording, Affine::IDENTITY);
+                } else {
                 let mut handler = |scene: &mut _, node: &anyrender_svg::usvg::Node| match anyrender_svg::foreign_object() {
                     Some(fo) => self.draw_foreign_object(scene, fo),
                     None => anyrender_svg::draw_error_box(scene, node),
@@ -7659,6 +7667,7 @@ impl ElementCx<'_, '_> {
                         anyrender_svg::render_svg_tree_with_notes_and(scene, &svg.tree, transform, notes, &mut handler)
                     }
                     None => anyrender_svg::render_svg_tree_with(scene, &svg.tree, transform, &mut handler),
+                }
                 }
                 if isolate {
                     scene.pop_layer();
@@ -8091,6 +8100,13 @@ impl ElementCx<'_, '_> {
             if let (Some(outer), Some(inner)) = (&self.context.privacy, painter.privacy.take()) {
                 outer.allowed.borrow_mut().extend(inner.allowed.into_inner());
                 if inner.unclassified.get() {
+                    outer.unclassified.set(true);
+                }
+                // (A visited link in the frame's document with eager pseudo-element styles: as
+                // for the element's own subtree, `subtree_may_taint`.)
+                if let Some(root) = sub_doc.try_root_element()
+                    && crate::visited_pseudos(&sub_doc, root.id)
+                {
                     outer.unclassified.set(true);
                 }
             }

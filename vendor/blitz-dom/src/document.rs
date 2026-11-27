@@ -71,6 +71,12 @@ use style_dom::ElementState;
 use stylo_taffy::CopyStyleGetters;
 use thin_vec::ThinVec;
 use url::Url;
+
+/// pyro: whether a paint for a canvas a page can read back is running on this thread (blitz-paint
+/// `paint_element_subtree`, which holds [`crate::node::UnvisitedPaint`]).
+fn blitz_dom_privacy_paint() -> bool {
+    crate::node::UnvisitedPaint::active()
+}
 use web_time::Instant;
 
 #[cfg(feature = "parallel-construct")]
@@ -407,6 +413,9 @@ pub struct BaseDocument {
     pub svg_sprites: HashMap<String, crate::util::SvgSprite>,
     /// Fetched SVG image resources accessible to this document's href resolver.
     pub svg_images: crate::util::SvgResources,
+    /// pyro: HTML-in-Canvas privacy: [`Self::svg_images`] without the resources of an opaque
+    /// response, with the fingerprint of the map it was taken from ([`Self::svg_images_for_paint`]).
+    pub(crate) privacy_svg_images: std::cell::RefCell<Option<(usize, crate::util::SvgResources)>>,
     /// Changes to the stylist [`Device`] that have been requested since the
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
@@ -984,6 +993,7 @@ impl BaseDocument {
             media_environment: config.media_environment,
             svg_sprites: HashMap::new(),
             svg_images: Default::default(),
+            privacy_svg_images: Default::default(),
             pending_device_changes: DeviceChanges::empty(),
             page_color_scheme: style::values::specified::color::ColorSchemeFlags::empty(),
             meta_nodes: Default::default(),
@@ -4087,7 +4097,7 @@ impl BaseDocument {
         let node = self.get_node(node_id)?;
         let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
         let source = self.with_cross_svg_references(self.with_svg_sprites(source));
-        let svg = crate::util::parse_svg_resources(source.as_bytes(), Some(&self.svg_images), &self.raster_budget).ok().map(|mut svg| {
+        let svg = crate::util::parse_svg_resources(source.as_bytes(), Some(&self.svg_images_for_paint()), &self.raster_budget).ok().map(|mut svg| {
             if svg.intrinsic_dimensions.view_box.is_none() {
                 svg.inline_source = crate::util::SvgSource::copy(&source, &self.raster_budget);
             }
@@ -4097,8 +4107,107 @@ impl BaseDocument {
         svg
     }
 
+    /// pyro: HTML-in-Canvas privacy: an inline `<svg>` painted for a canvas a page can read back
+    /// (`UnvisitedPaint` is active), serialised and parsed again for a content box of `width` x
+    /// `height` CSS px: with the colours of its elements as unvisited (the serialisation reads their
+    /// styles as painted), without the resources of other `<svg>`s or sprite files
+    /// ([`Self::with_cross_svg_references`], [`Self::with_svg_sprites`]) and without the images of
+    /// opaque responses ([`Self::svg_images_for_paint`]). Not kept (the `<svg>` built for the page
+    /// is). `None` when the source does not parse.
+    #[cfg(feature = "svg")]
+    pub fn inline_svg_for_privacy(&self, node_id: NodeId, width: f32, height: f32) -> Option<Arc<crate::node::SvgImageData>> {
+        let node = self.get_node(node_id)?;
+        let (mut source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
+        // A filter with the image of an opaque response is not applied (its `url(#id)` is `none`,
+        // which makes the whole `filter` value invalid).
+        for id in self.opaque_filter_ids(node_id) {
+            for quote in ["", "\"", "'"] {
+                source = source.replace(&format!("url({quote}#{id}{quote})"), "none");
+            }
+        }
+        let source = self.with_cross_svg_references(self.with_svg_sprites(source));
+        let resources = self.svg_images_for_paint();
+        crate::util::parse_svg_resources(source.as_bytes(), Some(&resources), &self.raster_budget).ok().map(|mut svg| {
+            if svg.intrinsic_dimensions.view_box.is_none() {
+                svg.inline_source = crate::util::SvgSource::copy(&source, &self.raster_budget);
+            }
+            Arc::new(svg)
+        })
+    }
+
+    /// pyro: HTML-in-Canvas privacy: whether the `<filter>` `filter` has an `feImage` whose image
+    /// came from an opaque response ([`Self::svg_images`]). A filter that does is not applied
+    /// to what is painted for a canvas a page can read back (Chromium ignores it, it does not
+    /// draw the element without its output).
+    pub fn filter_has_opaque_image(&self, filter: NodeId) -> bool {
+        let Ok(images) = self.svg_images.read() else { return true };
+        let mut stack = vec![filter];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.get_node(id) else { continue };
+            if let Some(element) = node.element_data() {
+                if element.name.ns == markup5ever::ns!(svg) && element.name.local.eq_ignore_ascii_case("feImage") {
+                    let opaque = element.attrs().iter().any(|attr| {
+                        &*attr.name.local == "href" && images.get::<str>(&attr.value).is_some_and(|image| image.is_opaque())
+                    });
+                    if opaque {
+                        return true;
+                    }
+                }
+            }
+            stack.extend(node.children.iter().copied());
+        }
+        false
+    }
+
+    /// pyro: HTML-in-Canvas privacy: the ids of the `<filter>`s in the subtree of `root` that
+    /// [`Self::filter_has_opaque_image`] names.
+    #[cfg(feature = "svg")]
+    fn opaque_filter_ids(&self, root: NodeId) -> Vec<String> {
+        let mut ids = Vec::new();
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.get_node(id) else { continue };
+            if let Some(element) = node.element_data() {
+                if element.name.ns == markup5ever::ns!(svg) && &*element.name.local == "filter" {
+                    let named = element.attrs().iter().find(|attr| &*attr.name.local == "id").map(|attr| attr.value.to_string());
+                    if let Some(named) = named.filter(|_| self.filter_has_opaque_image(id)) {
+                        ids.push(named);
+                    }
+                }
+            }
+            stack.extend(node.children.iter().copied());
+        }
+        ids
+    }
+
+    /// pyro: [`Self::svg_images`], as what is painted for a canvas a page can read back may use it
+    /// (`UnvisitedPaint` is active): without the resources of opaque responses (another origin
+    /// without CORS, a redirect through one), which usvg then finds no image for and leaves out
+    /// (an `<image>`, or an `feImage`, which is then empty). Kept until the map changes.
+    pub fn svg_images_for_paint(&self) -> crate::util::SvgResources {
+        if !blitz_dom_privacy_paint() {
+            return self.svg_images.clone();
+        }
+        let Ok(images) = self.svg_images.read() else { return Default::default() };
+        // (The count, and which resources: a replaced one is another address.)
+        let fingerprint = images.values().fold(images.len(), |hash, image| hash ^ (Arc::as_ptr(image) as usize).rotate_left(7));
+        if let Some((known, kept)) = &*self.privacy_svg_images.borrow()
+            && *known == fingerprint
+        {
+            return kept.clone();
+        }
+        let kept: crate::util::SvgResources = Arc::new(std::sync::RwLock::new(
+            images.iter().filter(|(_, image)| !image.is_opaque()).map(|(href, image)| (href.clone(), image.clone())).collect(),
+        ));
+        *self.privacy_svg_images.borrow_mut() = Some((fingerprint, kept.clone()));
+        kept
+    }
+
     pub(crate) fn with_svg_sprites(&self, mut svg: String) -> String {
-        if self.svg_sprites.is_empty() {
+        // pyro: HTML-in-Canvas privacy: a sprite file is fetched without a record of its origin
+        // (`SvgResource::opaque` is false for all), so none is merged into what a canvas a page
+        // can read back is painted from: the `<use>` of one draws nothing there.
+        if self.svg_sprites.is_empty() || blitz_dom_privacy_paint() {
             return svg;
         }
         let mut defs = String::new();
@@ -4134,6 +4243,14 @@ impl BaseDocument {
     #[cfg(feature = "svg")]
     pub(crate) fn with_cross_svg_references(&self, mut svg: String) -> String {
         if !svg.contains("(#") && !svg.contains("href=\"#") {
+            return svg;
+        }
+        // pyro: HTML-in-Canvas privacy: a resource defined outside the painted subtree (a gradient,
+        // pattern, marker, filter, mask or clip path of another `<svg>`) is not read by it: its
+        // colours (`currentColor` of the link around it) and images are the page's, not the
+        // subtree's. The reference is then unresolved, and drawn as usvg draws one (none, or no
+        // paint).
+        if blitz_dom_privacy_paint() {
             return svg;
         }
         fn referenced(text: &str, out: &mut Vec<String>) {

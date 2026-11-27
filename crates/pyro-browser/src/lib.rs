@@ -732,94 +732,13 @@ impl Page {
         }
     }
 
-    /// The documents of this page's frames (the store may hold other pages' too).
-    fn frame_tree_documents(&self) -> Vec<pyro_dom::NodeId> {
-        let mut docs: Vec<pyro_dom::NodeId> =
-            self.frames.keys().into_iter().filter_map(|k| self.frames.with_frame(k, |f| f.document).flatten()).collect();
-        if let Some(d) = self.main_frame.page_dom.as_ref().map(|p| p.document()) {
-            if !docs.contains(&d) {
-                docs.push(d);
-            }
-        }
-        docs
-    }
-
     /// Gives each iframe of the page the document it shows as the renderer paints it (its render
     /// HTML, URL and scroll position; see [`pyro_dom::FrameDocument`]), innermost frames first so a
     /// frame's HTML holds its own frames' documents. pyro: each frame document carries its own
     /// sheets ([`pyro_dom::FrameDocument::sheets`]), never merged with the page's by URL.
     pub fn update_frame_documents(&self) -> Vec<pyro_dom::geometry::TransitionFrame> {
-        let mut transitions = Vec::new();
-        if !self.frames.has_children() {
-            if let Some(page_dom) = &self.main_frame.page_dom {
-                if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
-                    dom.set_frame_documents(&self.frame_tree_documents(), Vec::new());
-                    dom.frame_animations.clear();
-                }
-            }
-            return transitions;
-        }
-        let depth = |mut key: frames::FrameKey| {
-            let mut depth = 0;
-            while key.child.is_some() && depth < 64 {
-                key = self.frames.parent_key(key);
-                depth += 1;
-            }
-            depth
-        };
-        let mut keys: Vec<(usize, frames::FrameKey)> =
-            self.frames.keys().into_iter().filter(|k| k.child.is_some()).map(|k| (depth(k), k)).collect();
-        keys.sort_by(|a, b| b.0.cmp(&a.0));
-        let mut documents = Vec::new();
-        let mut frame_animations = Vec::new();
-        for (_, key) in keys {
-            let Some((owner, page_dom, base_url, url, client)) = self.frames.with_frame(key, |f| {
-                (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone(), document_client(f))
-            })
-            else {
-                continue;
-            };
-            let (Some(owner), Some(page_dom)) = (owner, page_dom) else { continue };
-            // Each frame's HTML is taken after its own frames' documents are set (deeper first).
-            // (Its animated elements keyed, its animations kept for the renderer.)
-            // pyro: at the frame document's own base (its `<base href>`), as the top document's
-            // capture takes it (`render_base_url`).
-            let frame_base = if base_url.is_empty() { &url } else { &base_url };
-            let base = page_dom.render_base_url(frame_base);
-            // pyro: with its own frames' table (set before, deeper first), which its markup names.
-            let frames = page_dom.dom.try_borrow().map(|dom| dom.frame_table(page_dom.document())).unwrap_or_default();
-            let start = transitions.len();
-            page_dom.transition_frames(&frames.nonce, &mut transitions);
-            let (snapshot, animations) = page_dom.render_snapshot_frame(&base, &transitions[start..]);
-            let document = pyro_dom::FrameDocument {
-                html: snapshot.html,
-                document_url: (url != base).then_some(url),
-                url: base,
-                scroll: (snapshot.scroll_x, snapshot.scroll_y),
-                client,
-                frames,
-                // pyro: its own sheets, with it (never merged into the page's by URL).
-                sheets: snapshot.sheets.into_iter().collect(),
-            };
-            if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
-                dom.set_frame_document(owner, Some(document.clone()));
-            }
-            frame_animations.push((document.client.clone(), animations));
-            documents.push((owner, document));
-        }
-        let store = self.main_frame.page_dom.as_ref().map(|p| p.dom.clone());
-        if let Some(store) = store {
-            if let Ok(mut dom) = store.try_borrow_mut() {
-                dom.set_frame_documents(&self.frame_tree_documents(), documents);
-                dom.frame_animations = frame_animations
-                    .into_iter()
-                    .filter_map(|(client, frame)| Some((client, std::sync::Arc::new(frame?))))
-                    .collect();
-            }
-        }
-        transitions
+        update_frame_documents_of(&self.frames, self.main_frame.page_dom.as_ref())
     }
-
 
     /// Copies the page's own request options (extra headers, cache bypass)
     /// into `defaults`, e.g. those derived from a user agent override.
@@ -827,6 +746,94 @@ impl Page {
         defaults.extra_headers = self.extra_http_headers.clone();
         defaults.cache_disabled = self.cache_disabled;
     }
+}
+
+/// The documents of a page's frames (`frames`'s store may hold other pages' too; `main`: the page's
+/// top document).
+fn frame_tree_documents_of(frames: &frames::FrameHost, main: Option<&Rc<pyro_webapi::PageDom>>) -> Vec<pyro_dom::NodeId> {
+    let mut docs: Vec<pyro_dom::NodeId> =
+        frames.keys().into_iter().filter_map(|k| frames.with_frame(k, |f| f.document).flatten()).collect();
+    if let Some(d) = main.map(|p| p.document()) {
+        if !docs.contains(&d) {
+            docs.push(d);
+        }
+    }
+    docs
+}
+
+/// [`Page::update_frame_documents`] for the frames of `frames` (a page's), whose top document is
+/// `main`: also what a `drawElementImage` of an element holding a frame asks of its document's hooks
+/// (`PageHooks::refresh_frame_documents`), as a screenshot does before its snapshot.
+pub(crate) fn update_frame_documents_of(frames: &frames::FrameHost, main: Option<&Rc<pyro_webapi::PageDom>>) -> Vec<pyro_dom::geometry::TransitionFrame> {
+    let mut transitions = Vec::new();
+    if !frames.has_children() {
+        if let Some(page_dom) = main {
+            if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
+                dom.set_frame_documents(&frame_tree_documents_of(frames, main), Vec::new());
+                dom.frame_animations.clear();
+            }
+        }
+        return transitions;
+    }
+    let depth = |mut key: frames::FrameKey| {
+        let mut depth = 0;
+        while key.child.is_some() && depth < 64 {
+            key = frames.parent_key(key);
+            depth += 1;
+        }
+        depth
+    };
+    let mut keys: Vec<(usize, frames::FrameKey)> =
+        frames.keys().into_iter().filter(|k| k.child.is_some()).map(|k| (depth(k), k)).collect();
+    keys.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut documents = Vec::new();
+    let mut frame_animations = Vec::new();
+    for (_, key) in keys {
+        let Some((owner, page_dom, base_url, url, client)) = frames.with_frame(key, |f| {
+            (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone(), document_client(f))
+        })
+        else {
+            continue;
+        };
+        let (Some(owner), Some(page_dom)) = (owner, page_dom) else { continue };
+        // Each frame's HTML is taken after its own frames' documents are set (deeper first).
+        // (Its animated elements keyed, its animations kept for the renderer.)
+        // pyro: at the frame document's own base (its `<base href>`), as the top document's
+        // capture takes it (`render_base_url`).
+        let frame_base = if base_url.is_empty() { &url } else { &base_url };
+        let base = page_dom.render_base_url(frame_base);
+        // pyro: with its own frames' table (set before, deeper first), which its markup names.
+        let table = page_dom.dom.try_borrow().map(|dom| dom.frame_table(page_dom.document())).unwrap_or_default();
+        let start = transitions.len();
+        page_dom.transition_frames(&table.nonce, &mut transitions);
+        let (snapshot, animations) = page_dom.render_snapshot_frame(&base, &transitions[start..]);
+        let document = pyro_dom::FrameDocument {
+            html: snapshot.html,
+            document_url: (url != base).then_some(url),
+            url: base,
+            scroll: (snapshot.scroll_x, snapshot.scroll_y),
+            client,
+            frames: table,
+            // pyro: its own sheets, with it (never merged into the page's by URL).
+            sheets: snapshot.sheets.into_iter().collect(),
+        };
+        if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
+            dom.set_frame_document(owner, Some(document.clone()));
+        }
+        frame_animations.push((document.client.clone(), animations));
+        documents.push((owner, document));
+    }
+    let store = main.map(|p| p.dom.clone());
+    if let Some(store) = store {
+        if let Ok(mut dom) = store.try_borrow_mut() {
+            dom.set_frame_documents(&frame_tree_documents_of(frames, main), documents);
+            dom.frame_animations = frame_animations
+                .into_iter()
+                .filter_map(|(client, frame)| Some((client, std::sync::Arc::new(frame?))))
+                .collect();
+        }
+    }
+    transitions
 }
 
 /// Browser-thread state: the loop state type for [`EventLoop`].

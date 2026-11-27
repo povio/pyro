@@ -27,6 +27,12 @@ impl SvgResource {
 
     pub fn belongs_to(&self, page: &pyro_raster::PageRasters) -> bool { self.charge.belongs_to(page) }
 
+    /// pyro: HTML-in-Canvas privacy: whether this resource, or one it binds, came from an opaque
+    /// response (another origin without CORS): what a canvas a page can read back must not show.
+    pub fn is_opaque(&self) -> bool {
+        self.opaque || self.bindings.iter().any(|(_, image)| image.is_opaque())
+    }
+
     pub fn retained_bytes(&self) -> usize {
         self.bindings.iter().fold(self.bytes.capacity(), |total, (name, image)| {
             total.saturating_add(name.capacity()).saturating_add(image.bytes.capacity()).saturating_add(std::mem::size_of::<(String, std::sync::Arc<Self>)>())
