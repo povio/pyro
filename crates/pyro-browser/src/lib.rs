@@ -2322,7 +2322,26 @@ impl Browser {
         let requirement = csp_embedded::requirement(self, page, &opts.url);
         let required_csp = requirement.map(|r| r.policy);
         self.prepare_required_csp(page, required_csp.clone(), None);
+        // HTML "determining navigation params policy container": the embedder policy (HTML § 7.1.4) of
+        // an about:blank document is its creator's (a parent frame's, a popup's opener's) or, for a
+        // top-level document that navigated itself, the one it leaves.
+        let embedder = match self.local_scheme_csp(page, &opts.url) {
+            Some(i) => Some((i.embedder_policy, i.embedder_reporting)),
+            None if page.child.is_none()
+                && opts.cdp_request_id.is_none()
+                && !matches!(opts.reason, NavigationReason::AddressBar | NavigationReason::History) =>
+            {
+                self.doc(page).and_then(|d| d.main_frame.page_dom.as_ref().map(|dom| (dom.embedder_policy(), dom.embedder_reporting())))
+            }
+            None => None,
+        };
         self.commit_document(page, &opts, loader_id.clone(), "null", history, None)?;
+        if let Some((policy, reporting)) = embedder {
+            if let Some(dom) = self.doc(page).and_then(|d| d.main_frame.page_dom.clone()) {
+                dom.set_embedder_policy(policy);
+                dom.set_embedder_reporting(reporting);
+            }
+        }
         if let Some(policy) = &required_csp {
             csp_embedded::enforce_on_document(self, page, policy);
         }

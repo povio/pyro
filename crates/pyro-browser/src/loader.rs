@@ -2076,15 +2076,31 @@ pub(crate) fn resolve_url(base: &str, href: &str) -> Option<String> {
 
 /// The object a `blob:` URL names, from the blob URL store of a document of
 /// `page` with the URL's origin: the requesting document's own, or a parent's
-/// or child's for a same-origin frame (a parent's blob as an iframe `src`).
+/// or child's for a same-origin frame (a parent's blob as an iframe `src`), or, for a
+/// popup, its opener's (`window.open(blobURL)`: the popup is a page of its own, and the
+/// store the URL is in belongs to the document that made it).
 fn blob_body(browser: &Browser, page: PageId, url: &str) -> Option<pyro_net::BlobBody> {
     let host = browser.page(page)?.frames.clone();
     let origin = origin_of(url);
-    host.keys().into_iter().find_map(|key| {
-        let page_dom = browser.doc(key).filter(|d| d.main_frame.origin == origin)?.main_frame.page_dom.clone()?;
-        let (bytes, mime) = page_dom.blob_url(url)?;
-        Some(pyro_net::BlobBody { bytes, mime })
-    })
+    let find = |host: &crate::frames::FrameHost| {
+        host.keys().into_iter().find_map(|key| {
+            let page_dom = browser.doc(key).filter(|d| d.main_frame.origin == origin)?.main_frame.page_dom.clone()?;
+            let (bytes, mime) = page_dom.blob_url(url)?;
+            Some(pyro_net::BlobBody { bytes, mime })
+        })
+    };
+    if let Some(found) = find(&host) {
+        return Some(found);
+    }
+    let mut creator = host.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade);
+    for _ in 0..8 {
+        let opener = creator?;
+        if let Some(found) = find(&opener) {
+            return Some(found);
+        }
+        creator = opener.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade);
+    }
+    None
 }
 
 /// The base URL `node`'s document resolves its URLs against: its first
@@ -2822,7 +2838,7 @@ impl Browser {
     /// parent's; for `about:blank`, `blob:` and `data:` its parent's, or in a popup's top-level
     /// frame its creator's (as the document that started the navigation usually is); `None` for
     /// any other URL. What a `javascript:` result set aside is taken only by its own frame.
-    fn local_scheme_csp(&mut self, page: FrameKey, url: &str) -> Option<pyro_webapi::csp::InheritedCsp> {
+    pub(crate) fn local_scheme_csp(&mut self, page: FrameKey, url: &str) -> Option<pyro_webapi::csp::InheritedCsp> {
         if self.csp_inherit_next.as_ref().is_some_and(|(k, _)| *k == page) {
             return self.csp_inherit_next.take().map(|(_, i)| i);
         }
