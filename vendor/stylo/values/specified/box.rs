@@ -2982,7 +2982,7 @@ bitflags! {
 }
 
 impl Parse for ScrollMarkerGroup {
-    fn parse<'i, 't>(_: &ParserContext, input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i>> {
+    fn parse(_: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
             return Ok(Self::NONE);
         }
@@ -2999,7 +2999,7 @@ impl Parse for ScrollMarkerGroup {
             result |= Self::TABS;
         }
         if result == Self::NONE {
-            return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
+            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
         }
         Ok(result)
     }

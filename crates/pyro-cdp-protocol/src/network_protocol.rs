@@ -530,7 +530,7 @@ pub fn fetch_resource_type(destination: pyro_net::Destination) -> ResourceType {
         D::Xhr | D::Fetch | D::EventSource => ResourceType::XHR,
         D::WebSocket => ResourceType::WebSocket,
         D::Beacon => ResourceType::Ping,
-        D::CompressionDictionary | D::Other => ResourceType::Other,
+        D::CompressionDictionary | D::SpeculationRules | D::Other => ResourceType::Other,
     }
 }
 

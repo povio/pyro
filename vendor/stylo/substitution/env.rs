@@ -15,7 +15,7 @@ use crate::parser::{Parse, ParserContext};
 use crate::stylesheets::UrlExtraData;
 use crate::{Atom, derives::*};
 use cssparser::{Delimiter, Parser, Token};
-use style_traits::ParseError;
+use style_traits::{ParseError, StyleParseErrorKind};
 
 /// Environment variable name.
 #[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
@@ -58,10 +58,7 @@ impl EnvFunction {
             while !input.is_exhausted() {
                 match *input.next()? {
                     Token::Number { int_value: Some(v), .. } if v >= 0 => has_indices = true,
-                    ref t => {
-                        let t = t.clone();
-                        return Err(input.new_unexpected_token_error(t));
-                    },
+                    _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
                 }
             }
             Ok((name, has_indices))
