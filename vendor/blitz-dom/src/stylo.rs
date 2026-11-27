@@ -635,7 +635,7 @@ impl crate::document::BaseDocument {
         if pseudo.is_lazy() {
             // pyro: a highlight pseudo inherits from its parent element's same highlight pseudo.
             if Self::inherits_highlight(pseudo) && !only_child {
-                if let Some(style) = self.highlight_pseudo_style(node_id, pseudo) {
+                if let Some(style) = self.inherited_highlight_style(node_id, pseudo) {
                     return Some(style);
                 }
             }
@@ -701,13 +701,13 @@ impl crate::document::BaseDocument {
     /// parent), the originating element's own style being the parent only at the root. `None` when
     /// no rule applies to the pseudo-element on the element or any ancestor (the plain
     /// originating-element inheritance stands then).
-    fn highlight_pseudo_style(&self, node_id: NodeId, pseudo: &style::selector_parser::PseudoElement) -> Option<Arc<ComputedValues>> {
+    fn inherited_highlight_style(&self, node_id: NodeId, pseudo: &style::selector_parser::PseudoElement) -> Option<Arc<ComputedValues>> {
         let node = self.nodes.get(node_id)?;
         if !node.is_element() || !node.flags.is_in_document() {
             return None;
         }
         let parent = node.parent.filter(|&p| self.nodes.get(p).is_some_and(|p| p.is_element()))
-            .and_then(|p| crate::util::ensure_stack(|| self.highlight_pseudo_style(p, pseudo)));
+            .and_then(|p| crate::util::ensure_stack(|| self.inherited_highlight_style(p, pseudo)));
         let primary = match node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| d.styles.get_primary().cloned()) {
             Some(primary) => primary,
             None => self.resolve_undisplayed_styles(node_id, None)?.primary().clone(),
