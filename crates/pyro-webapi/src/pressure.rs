@@ -11,12 +11,14 @@
 //!    once a second, mapped to the four states with Chrome's kind of thresholds and hysteresis. Where the platform has
 //!    no such reading the source is unsupported and `observe()` rejects with NotSupportedError.
 //!
-//! The observers poll the hub from their realm's timers (pressure.js): the hub holds no references into a realm.
+//! The observers poll the hub from one host timer per realm (pressure.js, `native.timer`: the page's media timer, which
+//! uses no page-visible timer id and does not keep the event loop busy, so a page with an observer still goes idle for
+//! automation): the hub holds no references into a realm.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use pyro_js::{ClassDef, JsClass, JsResult, Object, Scope, Value};
+use pyro_js::{ClassDef, JsClass, JsResult, Object, Persistent, Scope, Value};
 
 use crate::lazy_module::LazyModule;
 use crate::window::WindowHost;
@@ -118,6 +120,47 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     native.set_atom(
         "minIntervalMillis",
         s.function("minIntervalMillis", |s, _, args| Ok(s.number(hub_of(s)?.min_interval_millis(&args.get(0).to_string()?) as f64)))?.value(),
+    )?;
+    // timer(ms, fn) -> id: runs `fn` once after `ms` on a host timer that keeps neither the page's event loop busy nor
+    // takes a `setTimeout` id (the media timers' mechanism); -1 when the realm has no event loop to time it. A host
+    // without a way to cancel the timer gives id 0 (nothing to clear).
+    native.set_atom(
+        "timer",
+        s.function("timer", |s, _, args| {
+            let page = crate::target::page_of(s)?;
+            let delay = crate::util::delay_from_ms(args.get(0).to_number()?);
+            let callback = Persistent::new(s, args.get(1));
+            let realm = s.realm().downgrade();
+            let Some(hooks) = page.hooks() else { return Ok(s.number(-1.0)) };
+            let id = hooks.set_media_timer(
+                delay,
+                Box::new(move || {
+                    let Some(realm) = realm.upgrade() else { return };
+                    let Ok(s) = realm.scope() else { return };
+                    if let Some(f) = callback.get(&s).as_object() {
+                        if let Err(e) = f.call(None, &[]) {
+                            s.report_exception(&e);
+                        }
+                    }
+                }),
+            );
+            Ok(s.number(id.map_or(0.0, |id| id as f64)))
+        })?
+        .value(),
+    )?;
+    // clearTimer(id): cancels a timer `timer` returned.
+    native.set_atom(
+        "clearTimer",
+        s.function("clearTimer", |s, _, args| {
+            let id = args.get(0).to_number()?;
+            if id >= 1.0 {
+                if let Some(hooks) = crate::target::page_of(s)?.hooks() {
+                    hooks.clear_media_timer(id as u64);
+                }
+            }
+            Ok(s.undefined())
+        })?
+        .value(),
     )?;
     Ok(native)
 }
@@ -257,7 +300,8 @@ impl PressureHub {
     }
 }
 
-/// Utilisation (0 to 1) at which each state starts: fair, serious, critical.
+/// Utilisation (0 to 1) at which each state starts: fair, serious, critical. These three numbers and the hysteresis
+/// below are Pyro's own choice, not taken from Chromium (whose mapping from load to state is not reproduced here).
 const THRESHOLDS: [f64; 3] = [0.6, 0.8, 0.9];
 /// A state is left downward only once the utilisation is this far below the threshold that entered it, so a load
 /// hovering at a threshold does not flap.
@@ -317,7 +361,7 @@ impl CpuProbe {
     }
 }
 
-/// (busy ticks, all ticks) of every CPU since boot, or `None` where the platform gives none.
+/// (busy ticks, all ticks) of every CPU since the first read, or `None` where the platform gives none.
 #[cfg(target_os = "macos")]
 fn cpu_ticks() -> Option<(u64, u64)> {
     // <mach/host_info.h>: HOST_CPU_LOAD_INFO is flavor 3, a `host_cpu_load_info` of four natural_t tick counts
@@ -328,14 +372,29 @@ fn cpu_ticks() -> Option<(u64, u64)> {
         fn mach_host_self() -> u32;
         fn host_statistics(host: u32, flavor: i32, info: *mut i32, count: *mut u32) -> i32;
     }
+    // `mach_host_self` returns a new send right on every call: asked for once.
+    static HOST: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    // The kernel's counters are 32 bits and wrap (a busy many-core machine in weeks): each one's change is taken
+    // modulo 2^32 and summed into 64-bit totals, which only grow. (Every probe shares them.)
+    static TOTALS: Mutex<Option<([u32; 4], [u64; 4])>> = Mutex::new(None);
     let mut info = [0i32; 4];
     let mut count = HOST_CPU_LOAD_INFO_COUNT;
     // SAFETY: `info` has the `count` integers the flavor writes, and both pointers outlive the call.
-    let status = unsafe { host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, info.as_mut_ptr(), &mut count) };
+    let status = unsafe {
+        let host = *HOST.get_or_init(|| mach_host_self());
+        host_statistics(host, HOST_CPU_LOAD_INFO, info.as_mut_ptr(), &mut count)
+    };
     if status != 0 || count != HOST_CPU_LOAD_INFO_COUNT {
         return None;
     }
-    let [user, system, idle, nice] = info.map(|t| t as u32 as u64);
+    let raw = info.map(|t| t as u32);
+    let mut guard = TOTALS.lock().unwrap_or_else(|e| e.into_inner());
+    let (last, totals) = guard.get_or_insert((raw, [0; 4]));
+    for i in 0..4 {
+        totals[i] += u64::from(raw[i].wrapping_sub(last[i]));
+    }
+    *last = raw;
+    let [user, system, idle, nice] = *totals;
     Some((user + system + nice, user + system + idle + nice))
 }
 

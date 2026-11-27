@@ -6,7 +6,9 @@
 //   native.sample(source)         its state now, or undefined while it has no reading
 //   native.pollMillis(source)     how often observers look at it
 //   native.minIntervalMillis(src) the least time between two records of an observer (the platform's own rate)
-// Observers look at their sources from one timer per realm while any observes; a record is queued for an observer when
+//   native.timer(ms, fn) / native.clearTimer(id)  a host timer that takes no setTimeout id and does not keep the page
+//                                 busy (the page's event loop can go idle with observers)
+// Observers look at their sources from one such timer per realm while any observes; a record is queued for an observer when
 // its source's state changed (or, with a sampleInterval, at every interval), no sooner than its sampleInterval after
 // the observer's previous record, and is delivered to the callback in the same task.
 (function (native) {
@@ -20,8 +22,7 @@
   const SetC = Set;
   const WeakMapC = WeakMap;
   const ReflectC = Reflect;
-  const setTimeoutC = globalThis.setTimeout;
-  const clearTimeoutC = globalThis.clearTimeout;
+  const reportErrorC = globalThis.reportError;
   const perf = globalThis.performance;
   const nowOf = perf.now;
   const now = () => ReflectC.apply(nowOf, perf, []);
@@ -79,7 +80,10 @@
   // ---- the realm's observers
   // The observers that observe something, and the one timer that looks at their sources.
   const active = new SetC();
+  // The pending host timer's id (0: one the host cannot cancel), and which timer is the live one: a callback of an
+  // older one does nothing.
   let timer = null;
+  let generation = 0;
 
   // Whether pressure data may be delivered to this realm's observers now (Compute Pressure "can expose pressure
   // data"): a window's document is visible and has focus (a frame: its page does); a worker has no document of its own.
@@ -97,15 +101,23 @@
 
   const schedule = (delay) => {
     if (timer !== null || active.size === 0) return;
+    const mine = ++generation;
+    let id;
     try {
-      timer = setTimeoutC(tick, delay);
+      id = native.timer(delay, () => { if (mine === generation) tick(); });
     } catch (_) {
-      // The document is no longer fully active: nothing will be delivered.
-      stopAll();
+      id = -1;
     }
+    // No event loop to time it, or the document is no longer fully active: nothing will be delivered.
+    if (id < 0) stopAll();
+    else timer = id;
   };
   const stopAll = () => {
-    if (timer !== null) { try { clearTimeoutC(timer); } catch (_) { /* gone with its document */ } timer = null; }
+    if (timer !== null) {
+      generation++;
+      if (timer > 0) { try { native.clearTimer(timer); } catch (_) { /* gone with its document */ } }
+      timer = null;
+    }
     for (const state of active) state.sources.clear();
     active.clear();
   };
@@ -140,8 +152,8 @@
       try {
         ReflectC.apply(state.callback, state.observer, [records, state.observer]);
       } catch (e) {
-        // "Report the exception": an uncaught error of its own task.
-        setTimeoutC(() => { throw e; }, 0);
+        // "Report the exception" (an uncaught error of this task).
+        if (typeof reportErrorC === 'function') ReflectC.apply(reportErrorC, globalThis, [e]);
       }
     }
     schedule(delay);

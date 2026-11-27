@@ -545,6 +545,23 @@ impl PageHooks for ScopeHooks {
         });
     }
 
+    fn set_media_timer(&self, delay: Duration, task: Box<dyn FnOnce()>) -> Option<u64> {
+        let task = RefCell::new(Some(task));
+        // A host timer for internal polling (Compute Pressure): it does not keep the worker's loop busy.
+        let id = self.sched.set_timer(delay, false, false, move |_| {
+            if let Some(task) = task.borrow_mut().take() {
+                task();
+            }
+        });
+        Some(u64::from(id.0))
+    }
+
+    fn clear_media_timer(&self, id: u64) {
+        if let Ok(id) = u32::try_from(id) {
+            self.sched.clear_timer(TimerId(id));
+        }
+    }
+
     fn navigate(&self, _request: NavigationRequest) {}
 
     fn remote_poster(&self) -> Option<RemotePoster> {
