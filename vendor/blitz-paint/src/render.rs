@@ -2753,7 +2753,13 @@ impl Privacy {
             return false;
         }
         if let blitz_dom::node::ImageData::Raster(raster) = image {
-            self.allowed.borrow_mut().push(raster.data.id());
+            // A video frame of media a page may not read (`RasterImageData::tainting`) is drawn
+            // but taints the canvas, as `drawImage(video)` does: it is never among the allowed.
+            if raster.tainting {
+                self.unclassified.set(true);
+            } else {
+                self.allowed.borrow_mut().push(raster.data.id());
+            }
         }
         true
     }
@@ -8027,8 +8033,9 @@ impl ElementCx<'_, '_> {
         // of any other are allowed (`Privacy`), whichever source (`src`, `srcset`, `<picture>`,
         // generated content) chose it.
         // A canvas's pixels come from the page (a canvas a cross-origin image tainted), not from a
-        // response noted here: they taint. A `<video>`'s image is its poster (a frame the page was
-        // given, which cannot be told from it, is drawn as one), an `<embed>`'s or `<object>`'s
+        // response noted here: they taint. A `<video>`'s image is its poster (classified as an
+        // image response) or the frame the page was given (`RasterImageData::tainting` when its
+        // media is not origin-clean: drawn, and it taints), an `<embed>`'s or `<object>`'s
         // its image: left out when opaque. An inline `<svg>` is the document's own content (`draw_svg`
         // taints for what it references).
         if let Some(privacy) = &self.context.privacy

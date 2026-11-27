@@ -3058,7 +3058,7 @@ impl BaseDocument {
             }
             Resource::Image(_kind, width, height, image_data, orientation) => {
                 // Create the ImageData and cache it
-                let raster = RasterImageData { width, height, data: image_data, orientation };
+                let raster = RasterImageData { width, height, data: image_data, orientation, tainting: false };
                 let image = ImageData::Raster(raster);
 
                 let Some(url) = res.resolved_url.as_ref() else {

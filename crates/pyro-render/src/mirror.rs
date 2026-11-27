@@ -411,7 +411,7 @@ impl Mirror {
                 None => (None, None),
             };
             let same = matches!(&element.special_data, SpecialElementData::Image(image)
-                if matches!(&**image, ImageData::Raster(r) if r.width == canvas.width && r.height == canvas.height)
+                if matches!(&**image, ImageData::Raster(r) if r.width == canvas.width && r.height == canvas.height && r.tainting == canvas.tainting)
                     && ours(image, &canvas.rgba));
             if !same {
                 let replaced = std::mem::take(&mut element.special_data);
@@ -422,7 +422,8 @@ impl Mirror {
                         poster = Some(image);
                     }
                 }
-                let raster = RasterImageData::new(canvas.width, canvas.height, canvas.rgba.clone());
+                let mut raster = RasterImageData::new(canvas.width, canvas.height, canvas.rgba.clone());
+                raster.tainting = canvas.tainting;
                 element.special_data = SpecialElementData::Image(Box::new(ImageData::Raster(raster)));
             }
             self.canvases.push((id, canvas.rgba.clone(), poster));

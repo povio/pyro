@@ -1632,6 +1632,13 @@ impl PageDom {
     /// (not their poster) and have one decoded. Unchanged frames keep their
     /// `Arc`. Documents that never loaded a video pay one map scan.
     pub fn video_bitmaps(&self) -> Vec<crate::canvas::CanvasBitmap> {
+        self.video_frames().into_iter().map(|(bitmap, _)| bitmap).collect()
+    }
+
+    /// [`PageDom::video_bitmaps`], each with whether its pixels may be read back (`current_frame`'s
+    /// `clean`: false for media of another origin without CORS), which the HTML-in-Canvas privacy
+    /// paint needs to taint the canvas.
+    pub fn video_frames(&self) -> Vec<(crate::canvas::CanvasBitmap, bool)> {
         let candidates: Vec<(NodeId, bool)> = {
             let elements = self.media.elements.borrow();
             if elements.is_empty() {
@@ -1658,8 +1665,8 @@ impl PageDom {
             if show_poster && poster {
                 continue;
             }
-            if let Some((frame, _)) = current_frame(self, node) {
-                out.push((node, frame.width, frame.height, frame.rgba));
+            if let Some((frame, clean)) = current_frame(self, node) {
+                out.push(((node, frame.width, frame.height, frame.rgba), clean));
             }
         }
         out

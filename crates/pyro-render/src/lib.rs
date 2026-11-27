@@ -331,6 +331,10 @@ pub struct CanvasImage {
     /// Straight-alpha RGBA rows. The same `Arc` as the previous render's
     /// means the pixels did not change.
     pub rgba: Arc<Vec<u8>>,
+    /// A video frame of media a page must not read back (cross-origin without CORS): the
+    /// HTML-in-Canvas privacy paint draws it and taints the canvas
+    /// (`blitz_dom::node::RasterImageData::tainting`).
+    pub tainting: bool,
 }
 
 /// A snapshot of a page whose Blitz document the renderer keeps between

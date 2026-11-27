@@ -649,6 +649,7 @@ impl EngineHost {
                     width,
                     height,
                     rgba,
+                    tainting: s.tainting_canvases.contains(&node),
                 })
                 .collect(),
             element_scroll: Some(s.element_scroll),

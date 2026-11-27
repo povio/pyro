@@ -1202,6 +1202,11 @@ pub struct RasterImageData {
     /// pyro: the EXIF orientation (1 to 8; 1 is none) the pixels were turned by when decoded
     /// (`image-orientation: from-image`). `image-orientation: none` shows them turned back.
     pub orientation: u8,
+    /// pyro: a decoded `<video>` frame whose pixels a page must not read back (cross-origin media
+    /// without CORS): HTML-in-Canvas privacy paints it but taints the canvas (blitz-paint
+    /// `Privacy::admit`). False for every image from a response (those are classified by
+    /// `net::is_opaque_image`).
+    pub tainting: bool,
 }
 impl RasterImageData {
     pub fn new(width: u32, height: u32, data: Arc<Vec<u8>>) -> Self {
@@ -1210,6 +1215,7 @@ impl RasterImageData {
             height,
             data: Blob::new(data),
             orientation: 1,
+            tainting: false,
         }
     }
 
