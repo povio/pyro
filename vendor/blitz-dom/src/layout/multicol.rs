@@ -644,6 +644,16 @@ impl Breaks {
             // not moved to the next column; WPT css-grid `alignment/grid-item-mixed-baseline-004`).
             let holds_content = |end: &f32| self.break_at(*end).0 > start + EPSILON;
             let (strict, strict_short) = Self::break_before(&self.strict, start, limit);
+            // pyro: a break that leaves the column nothing but margins is none: the column must grow past the
+            // next unbreakable range to hold it (the margin before a monolithic box at the strip's start is
+            // no column of its own; Chromium, WPT css-multicol `multicol-fill-balance-009`).
+            let strict_short = match strict {
+                Some(end) if !holds_content(&end) => {
+                    let next = self.strict.partition_point(|&(a, _)| a < limit - EPSILON);
+                    self.strict.get(next).map(|&(_, b)| b - limit).filter(|&s| s > EPSILON).or(strict_short)
+                }
+                _ => strict_short,
+            };
             let strict = strict.filter(holds_content);
             note(&mut run, strict_short);
             let end = match strict {
@@ -3375,9 +3385,23 @@ impl BaseDocument {
                 // holds them whole, as Chromium does (WPT css-contain `contain-size-breaks-001`).
                 let head = (child_top, child_top + layout.border.top + layout.padding.top);
                 if head.1 > head.0 + EPSILON {
+                    // pyro: and none between them and the content after them: a block's edges are no
+                    // break opportunity of their own (css-break-3 § 4.1: a break between a container's
+                    // content edge and its child needs a gap there), so they stay in the column of the
+                    // content they wrap, and balancing leaves them no column to themselves (Chromium;
+                    // WPT css-multicol `multicol-fill-balance-008`, `-011`..`-013`).
+                    let head = (head.0, head.1 + 2.0 * EPSILON);
                     found.strict.push(head);
                     found.loose.push(head);
                     found.whole.push(head);
+                }
+                // pyro: likewise its block-end border and padding, with the content before them.
+                let tail = (child_bottom - layout.border.bottom - layout.padding.bottom, child_bottom);
+                if tail.1 > tail.0 + EPSILON {
+                    let tail = (tail.0 - 2.0 * EPSILON, tail.1);
+                    found.strict.push(tail);
+                    found.loose.push(tail);
+                    found.whole.push(tail);
                 }
                 // pyro: a box of `box-decoration-break: clone` repeats its borders and padding in
                 // each fragment: one holds them with a pixel of its content at least, at either
