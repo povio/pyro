@@ -1883,8 +1883,21 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     native.set_atom("preload", f.value())?;
+    // Whether the document is detached (its frame was removed): it has no controller then, and
+    // posts nothing.
+    let f = s.function("detached", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        Ok(s.boolean(page.is_detached() || page.is_disposed()))
+    })?;
+    native.set_atom("detached", f.value())?;
     let f = s.function("postMessage", |s, _, a| {
         let page = crate::target::page_of(s)?;
+        if page.is_detached() || page.is_disposed() {
+            return Err(JsError::dom(
+                "InvalidStateError",
+                "Failed to execute 'postMessage' on 'ServiceWorker': Cannot post a message from a detached context.",
+            ));
+        }
         let version = a.get(0).to_number()? as u64;
         let options = crate::structured_clone::transfer_options(s, a.opt(2))?;
         // Serialized (and its errors thrown) even when the worker is gone.

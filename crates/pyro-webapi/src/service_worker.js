@@ -311,7 +311,8 @@
     }
     get controller() {
       if (this !== container) throw new TypeErrorC('Illegal invocation');
-      return controller;
+      // A document whose frame was removed is no client any more (it has no controller).
+      return native.detached() ? null : controller;
     }
     get ready() {
       if (this !== container) return PromiseC.reject(new TypeErrorC('Illegal invocation'));
