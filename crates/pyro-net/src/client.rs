@@ -2460,8 +2460,12 @@ impl Io {
                 && !headers.contains_key(header::AUTHORIZATION)
                 && !req.body_from_stream
                 && !req.cross_site_prefetch;
+            // pyro: a credentialless context (an ephemeral cookie jar) has its own, empty authentication
+            // session: it neither reads nor writes the client's stored Basic credentials, which the
+            // normal partition cached (including from URL userinfo).
+            let ephemeral_session = req.defaults.ephemeral_cookies.is_some();
             let mut preemptive = None;
-            if basic_hop && url_credentials.is_none() {
+            if basic_hop && url_credentials.is_none() && !ephemeral_session {
                 if self.shared.basic_auth_stored.load(std::sync::atomic::Ordering::Relaxed) {
                     preemptive = self.shared.basic_auth.lock().unwrap().preemptive(&url);
                 }
@@ -2658,7 +2662,8 @@ impl Io {
             let basic_retry = basic_hop
                 && auth_interceptor.is_none()
                 && (url_credentials.is_some()
-                    || (self.shared.basic_auth_stored.load(std::sync::atomic::Ordering::Relaxed)
+                    || (!ephemeral_session
+                        && self.shared.basic_auth_stored.load(std::sync::atomic::Ordering::Relaxed)
                         && self.shared.basic_auth.lock().unwrap().knows(&url)));
             // The credentials a retry sent: stored once the server accepts them.
             let mut basic_sent: Option<(String, HeaderValue)> = None;
@@ -2683,7 +2688,9 @@ impl Io {
                             if let Some((scheme, realm)) = challenge.filter(|_| auth_attempts == 0) {
                                 let value = match &url_credentials {
                                     Some((user, password)) if scheme == "basic" => basic_authorization(user, password).ok(),
-                                    None if scheme == "basic" => self.shared.basic_auth.lock().unwrap().for_realm(&url, &realm),
+                                    None if scheme == "basic" && !ephemeral_session => {
+                                        self.shared.basic_auth.lock().unwrap().for_realm(&url, &realm)
+                                    }
                                     _ => None,
                                 };
                                 if let Some(value) = value {
@@ -2792,7 +2799,7 @@ impl Io {
                 }
             };
             // The server took the credentials a challenge was answered with: the session keeps them.
-            if let Some((realm, value)) = basic_sent.take() {
+            if let Some((realm, value)) = basic_sent.take().filter(|_| !ephemeral_session) {
                 let mut sessions = self.shared.basic_auth.lock().unwrap();
                 if resp.status() == StatusCode::UNAUTHORIZED {
                     sessions.evict(&url, &value);
