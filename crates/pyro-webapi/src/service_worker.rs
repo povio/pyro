@@ -173,6 +173,10 @@ pub struct Registry {
     /// client the navigation creates, its `resultingClientId`). Taken when
     /// the frame's next document is created.
     reserved: RefCell<Vec<(String, String)>>,
+    /// Documents created while the context had no registration (or none that covers them), with
+    /// their creation URL: every document is a client, made when a worker first asks for the
+    /// clients (`live_clients`: `claim`, `matchAll`, `get`).
+    unregistered: RefCell<Vec<(Weak<PageDom>, pyro_net::Url)>>,
     /// Registration is blocked in this context
     /// ([`ContextServices::set_service_workers_blocked`]).
     blocked: Cell<bool>,
@@ -184,6 +188,13 @@ impl Registry {
     }
 
     fn live_clients(&self) -> Vec<Rc<ClientInner>> {
+        // The documents that were created before a registration covered them are clients too,
+        // with the URL they were created with.
+        for (page, url) in self.unregistered.take() {
+            if let Some(page) = page.upgrade().filter(|p| !p.is_disposed()) {
+                client_made(&page, None, Some(&url));
+            }
+        }
         let mut clients = self.clients.borrow_mut();
         clients.retain(|c| c.upgrade().and_then(|c| c.page.upgrade()).is_some_and(|p| !p.is_disposed()));
         clients.iter().filter_map(Weak::upgrade).collect()
@@ -556,13 +567,22 @@ fn client_of(page: &Rc<PageDom>) -> Option<Rc<ClientInner>> {
 /// The page's client; a new one takes `reserved` as its id (the
 /// `resultingClientId` of the navigation that made the document).
 fn client_with_id(page: &Rc<PageDom>, reserved: Option<String>) -> Option<Rc<ClientInner>> {
+    client_made(page, reserved, None)
+}
+
+/// [`client_with_id`], with the URL the document was created with when that is known (it is
+/// the client's creation URL, which later `pushState`s and fragment navigations do not change).
+fn client_made(page: &Rc<PageDom>, reserved: Option<String>, created: Option<&pyro_net::Url>) -> Option<Rc<ClientInner>> {
     if let Some(client) = page.sw_client.borrow().clone() {
         return Some(client);
     }
     if opaque_origin(page) {
         return None;
     }
-    let url = page.document_url_parsed()?;
+    let url = match created {
+        Some(url) => url.clone(),
+        None => page.document_url_parsed()?,
+    };
     let origin = tuple_origin(&url)?;
     let client = Rc::new(ClientInner {
         id: reserved.unwrap_or_else(random_id),
@@ -594,18 +614,27 @@ fn set_controller(client: &ClientInner, version: Option<Rc<Version>>) {
 /// active worker, it is controlled by that worker. One emptiness test otherwise.
 pub(crate) fn document_created(page: &Rc<PageDom>) {
     let context = page.context_services();
-    if context.service_workers.registrations.borrow().is_empty() {
-        return;
-    }
-    let reserved = page.request_context().frame_id.and_then(|f| context.service_workers.take_reserved(&f));
+    let registry = &context.service_workers;
+    let none_yet = registry.registrations.borrow().is_empty();
+    let reserved = if none_yet { None } else { page.request_context().frame_id.and_then(|f| registry.take_reserved(&f)) };
     let Some(url) = page.document_url_parsed() else { return };
     if !matches!(url.scheme(), "http" | "https") {
         return;
     }
-    let active = context.service_workers
-        .matching(url.as_str(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
-        .and_then(|r| r.active.borrow().clone());
+    let active = if none_yet {
+        None
+    } else {
+        registry
+            .matching(url.as_str(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
+            .and_then(|r| r.active.borrow().clone())
+    };
     let Some(active) = active else {
+        // Not controlled, but still a client: made when the clients are first asked for.
+        let mut unregistered = registry.unregistered.borrow_mut();
+        if unregistered.len() >= 256 {
+            unregistered.retain(|(page, _)| page.strong_count() > 0);
+        }
+        unregistered.push((Rc::downgrade(page), url));
         return;
     };
     if let Some(client) = client_with_id(page, reserved) {
@@ -832,13 +861,15 @@ fn reply_error(name: &str, message: &str) -> Result<String, (String, String)> {
 fn client_json(client: &ClientInner) -> String {
     let page = client.page.upgrade();
     let hidden = page.as_ref().is_some_and(|p| p.is_hidden());
+    // The document is the selected keyboard frame (`frame.focus()` selects it), in a visible window.
+    let focused = !hidden && page.as_ref().is_some_and(|p| p.hooks().is_none_or(|h| h.is_focused()));
     format!(
         "{{\"id\":{},\"url\":{},\"type\":\"window\",\"frameType\":\"{}\",\"visibilityState\":\"{}\",\"focused\":{}}}",
         quote(&client.id),
-        quote(&page.map(|p| p.document_url()).unwrap_or_else(|| client.url.clone())),
+        quote(&client.url),
         if client.nested { "nested" } else { "top-level" },
         if hidden { "hidden" } else { "visible" },
-        !hidden,
+        focused,
     )
 }
 
