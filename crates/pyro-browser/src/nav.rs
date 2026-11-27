@@ -2877,7 +2877,8 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
     native!("opaque", |s, nav, _a| Ok(s.boolean(nav.has_opaque_origin())));
     native!("initialBlank", |s, nav, _a| Ok(s.boolean(nav.is_initial_blank())));
     native!("inUnload", |s, nav, _a| {
-        Ok(s.boolean(nav.page_dom.borrow().upgrade().is_some_and(|page| page.in_unload())))
+        let unloading = nav.page_dom.borrow().upgrade().is_some_and(|page| page.in_unload());
+        Ok(s.boolean(unloading))
     });
     // entries() -> [index, [key, id, url, sameDocument, stateJSON]...]: the
     // same-origin entries around the current one (none for an opaque origin).
