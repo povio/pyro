@@ -229,7 +229,11 @@
         if (entries === null || ++frames > 4096) { skip(st, abortError('Transition animation limit reached'), true); return; }
         st.runs.sync(entries);
         if (!native.sample(st.root, st.runs.sample())) { skip(st, abortError('Cannot sample transition boxes'), true); return; }
-        if (st.runs.active()) { later(checkAnimations); return; }
+        if (st.runs.active()) { st.idleFrames = 0; later(checkAnimations); return; }
+        // The frame that sees the animations done keeps the pseudo-elements and the active
+        // transition (script in that frame and its tasks still read them); the next frame cleans
+        // up and resolves `finished`, ahead of that frame's animation frame callbacks (Chrome).
+        if (!st.idleFrames++) { later(checkAnimations); return; }
         st.animationDone = true;
         finish(st);
       });
@@ -258,7 +262,7 @@
     const self = Object.create(ViewTransition.prototype);
     const st = {
       self, scope, root, update, phase: 'pending-capture', called: false, readySettled: false, inactive, marked: false,
-      types: typeSet(types), timer: null, waiting: 0, animationDone: false,
+      types: typeSet(types), timer: null, waiting: 0, animationDone: false, idleFrames: 0,
       updateCallbackDone: deferred(), ready: deferred(), finished: deferred(), updateDone: deferred(),
     };
     handled(st.updateDone.promise);
