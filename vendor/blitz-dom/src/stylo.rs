@@ -186,6 +186,7 @@ impl crate::document::BaseDocument {
 
         let mut nodes_needing_style_image_flush = Vec::new();
         let mut style_changes = Vec::new();
+        let mut first_styled = Vec::new();
         if token.should_traverse() {
             // Style the elements, resolving their data
             let mut traverser = RecalcStyle::new(context);
@@ -208,6 +209,7 @@ impl crate::document::BaseDocument {
             self.cis_auto
                 .extend(std::mem::take(traverser.cis_auto_nodes.get_mut().unwrap()));
             style_changes = std::mem::take(traverser.style_changes.get_mut().unwrap());
+            first_styled = std::mem::take(traverser.first_styled.get_mut().unwrap());
             // Sticky: set once an element is styled with a generated
             // `::before` / `::after`, never cleared.
             if traverser.generated_before_after.into_inner() {
@@ -264,6 +266,18 @@ impl crate::document::BaseDocument {
             .extend(nodes_needing_style_image_flush);
         if !style_changes.is_empty() {
             crate::document::note_style_changes(&mut self.style_changes, &mut self.style_change_index, style_changes);
+        }
+        // pyro: an element styled for the first time (parsed, inserted, shown by being attached again)
+        // transitions from its starting style (`@starting-style`, css-transitions-2 §3.2) to its style.
+        for id in first_styled {
+            let Some(after) = self.nodes.get(id).and_then(|node| node.primary_styles().map(|s| (*s).clone())) else { continue };
+            if let Some(before) = self.starting_style(id) {
+                crate::document::note_style_changes(
+                    &mut self.style_changes,
+                    &mut self.style_change_index,
+                    vec![crate::StyleChange { node: id, pseudo: 0, before, after }],
+                );
+            }
         }
 
         for opaque in self.snapshots.keys() {
@@ -2738,6 +2752,9 @@ pub struct RecalcStyle<'a> {
     /// pyro: the elements whose primary style this traversal replaced, with the old
     /// and new style, when `track_style_changes` (`BaseDocument::style_changes`).
     style_changes: Mutex<Vec<crate::StyleChange>>,
+    /// pyro: the elements this traversal styled for the first time whose style has `@starting-style`
+    /// rules (`BaseDocument::starting_style` is their before-change style).
+    first_styled: Mutex<Vec<NodeId>>,
     track_style_changes: bool,
     /// pyro: an element styled in this traversal kept a `::first-letter` style.
     first_letter_styles: std::sync::atomic::AtomicBool,
@@ -2778,6 +2795,7 @@ impl<'a> RecalcStyle<'a> {
             sticky_nodes: Mutex::new(Vec::new()),
             cis_auto_nodes: Mutex::new(Vec::new()),
             style_changes: Mutex::new(Vec::new()),
+            first_styled: Mutex::new(Vec::new()),
             track_style_changes: false,
             first_letter_styles: std::sync::atomic::AtomicBool::new(false),
             first_letter_changed: Mutex::new(Vec::new()),
@@ -3056,6 +3074,10 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
                         before: old.clone(),
                         after: new.clone(),
                     });
+                } else if let (None, Some(new)) = (&old_primary, new_primary)
+                    && style::rule_tree::RuleTree::has_starting_style(new.rules())
+                {
+                    self.first_styled.lock().unwrap().push(el.id);
                 }
             }
             // Stylo diffs the old and new style into `data.damage` (nothing when there was no old
