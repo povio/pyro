@@ -935,6 +935,8 @@ fn run_animation_frame(scope: &Scope<'_>) {
         }));
         return;
     }
+    // The rendering update starts here (long animation frames' `renderStart`).
+    let render_start = w.now_ms();
     // HTML "update the rendering": a document's first rendering update reveals it (`pagereveal`),
     // then autofocus candidates flush before the scroll steps.
     pyro_webapi::lifecycle::reveal(&w.target.page);
@@ -984,6 +986,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
     for ready in native {
         ready.set(true);
     }
+    // Style and layout of the frame start after its callbacks (long animation frames'
+    // `styleAndLayoutStart`).
+    let style_and_layout_start = w.now_ms();
     // The frame's style update: what its callbacks changed starts transitions
     // and animations now (the next frame's callbacks see them running).
     w.target.page.update_animations();
@@ -1002,7 +1007,7 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // The performance-entry modules (`pyro_webapi::perf`): the end of the update is its
     // presentation. A presentation is later than its paint by at least one tick of the clock.
     let presented = w.now_ms().max(paint_time + 0.1);
-    pyro_webapi::perf::rendering_update(&w.target.page, &pyro_webapi::perf::FrameInfo { start: now_ms, paint_time, presented });
+    pyro_webapi::perf::rendering_update(&w.target.page, &pyro_webapi::perf::FrameInfo { start: now_ms, paint_time, presented, render_start, style_and_layout_start });
     // pyro: a smooth scroll still running asks for the next frame (its frame timers were cleared
     // above).
     pyro_webapi::smooth_scroll::request_frames(&w.target.page);

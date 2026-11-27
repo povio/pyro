@@ -58,7 +58,9 @@
 //! rAF timestamp, `paint_time` the time after the rAF callbacks and the style
 //! update (layout is final from there), `presented` the time at the end of
 //! the rendering update ("presentation": nothing is rasterized, the end of
-//! Pyro's own update is the definition). `start <= paint_time <= presented`.
+//! Pyro's own update is the definition). `render_start <= start <= style_and_layout_start <= paint_time <= presented` (`render_start`
+//! is where the update began, `style_and_layout_start` where the rAF callbacks ended; a frame's
+//! `scripts` ran between them, the style and layout the callbacks forced inside them).
 //! Tasks shorter than [`LONG_TASK_MS`] are only delivered while [`TASK_BOOKKEEPING`]
 //! (`loaf`); `longtask::on_task` therefore never sees one, and need not filter.
 //! `TaskInfo`: `start` / `end` of the task in the document clock, `depth`
@@ -150,6 +152,12 @@ pub struct FrameInfo {
     pub start: f64,
     pub paint_time: f64,
     pub presented: f64,
+    /// The rendering update began (before reveal, autofocus, resize and scroll steps and the
+    /// rAF timestamp): long animation frames' `renderStart`.
+    pub render_start: f64,
+    /// The frame's rAF callbacks are done and its style and layout update begins: LoAF's
+    /// `styleAndLayoutStart`. `start`/`render_start` precede it; callbacks run between.
+    pub style_and_layout_start: f64,
 }
 
 /// One event-loop task, in the document's clock. See the module docs.
