@@ -922,11 +922,11 @@ fn stretch(t: Affine) -> f64 {
 /// covered (WPT 2d.line.cross: a 200 px wide bevel-joined stroke filled a corner of the canvas).
 /// Skia joins the inner side through the vertex. Here the stroke is the union of one rectangle per
 /// segment and the outer wedge of each join (bevel triangle, miter quadrilateral within the
-/// limit, a disc for round), all oriented alike so that a nonzero fill unites them. `None` for a
+/// limit, a circular wedge for round), all oriented alike so that a nonzero fill unites them. `None` for a
 /// path with curves, a subpath without length, or when no join overreaches (kurbo's outline is
 /// exact then and stays the one used).
 fn overlapping_polyline_stroke(path: &BezPath, stroke: &Stroke) -> Option<BezPath> {
-    use kurbo::{Circle, Join, Cap};
+    use kurbo::{Join, Cap};
     let radius = stroke.width / 2.0;
     if !(radius.is_finite() && radius > 0.0) {
         return None;
@@ -951,6 +951,11 @@ fn overlapping_polyline_stroke(path: &BezPath, stroke: &Stroke) -> Option<BezPat
             }
             _ => return None,
         }
+    }
+    // The work is linear in the points (a rectangle and a wedge each): past this many the kurbo outline
+    // is used, whose join artifacts only show where a pen overreaches.
+    if subpaths.iter().map(|(points, _)| points.len()).sum::<usize>() > MAX_UNION_POINTS {
+        return None;
     }
     let direction = |a: Point, b: Point| (b - a) / (b - a).hypot();
     // A closed subpath's segments, in order, wrapping around.
@@ -993,7 +998,23 @@ fn overlapping_polyline_stroke(path: &BezPath, stroke: &Stroke) -> Option<BezPat
         bez.close_path();
         bez
     };
-    let disc = |center: Point| Circle::new(center, radius).to_path(0.01);
+    // The wedge of the pen's circle at `center` from `start` (a vector of length `radius`) through the
+    // signed `sweep` (radians): only the part the rectangles do not cover, its straight sides on theirs,
+    // so that no two pieces cover the same antialiased pixels of the boundary (a whole disc would lie
+    // across the rectangles' edges and, summed, darken them).
+    let fan = |center: Point, start: Vec2, sweep: f64| {
+        let step = if radius > ARC_TOLERANCE { 2.0 * (1.0 - ARC_TOLERANCE / radius).acos() } else { std::f64::consts::PI };
+        let n = ((sweep.abs() / step).ceil() as usize).clamp(1, MAX_ARC_SEGMENTS);
+        let a0 = start.atan2();
+        let mut bez = BezPath::new();
+        bez.move_to(center);
+        for k in 0..=n {
+            let a = a0 + sweep * k as f64 / n as f64;
+            bez.line_to(center + Vec2::new(a.cos(), a.sin()) * radius);
+        }
+        bez.close_path();
+        bez
+    };
     let normal = |d: Vec2| Vec2::new(-d.y, d.x) * radius;
     for (points, closed) in &subpaths {
         let n = points.len();
@@ -1008,14 +1029,14 @@ fn overlapping_polyline_stroke(path: &BezPath, stroke: &Stroke) -> Option<BezPat
                 if i == 0 {
                     match stroke.start_cap {
                         Cap::Square => from = a - d * radius,
-                        Cap::Round => add(disc(a)),
+                        Cap::Round => add(fan(a, nm, std::f64::consts::PI)),
                         Cap::Butt => {}
                     }
                 }
                 if i + 1 == count {
                     match stroke.end_cap {
                         Cap::Square => to = b + d * radius,
-                        Cap::Round => add(disc(b)),
+                        Cap::Round => add(fan(b, nm, -std::f64::consts::PI)),
                         Cap::Butt => {}
                     }
                 }
@@ -1029,7 +1050,16 @@ fn overlapping_polyline_stroke(path: &BezPath, stroke: &Stroke) -> Option<BezPat
                 continue;
             }
             match stroke.join {
-                Join::Round => add(disc(b)),
+                Join::Round => {
+                    // The outer side's wedge from one segment's normal to the next's: the pen turns by
+                    // the angle between the directions (a U-turn takes the half circle ahead).
+                    let sweep = cross.abs().atan2(dot);
+                    if cross > 0.0 {
+                        add(fan(b, -normal(d), sweep));
+                    } else {
+                        add(fan(b, normal(d), -sweep));
+                    }
+                }
                 Join::Bevel | Join::Miter => {
                     // The outer side is the right of a left turn, the left of a right turn.
                     let side = if cross > 0.0 { -1.0 } else { 1.0 };
@@ -1047,6 +1077,13 @@ fn overlapping_polyline_stroke(path: &BezPath, stroke: &Stroke) -> Option<BezPat
     }
     Some(out)
 }
+
+/// Chord error (px) of the arcs the polyline stroke adds (round joins and caps), and the most segments
+/// one arc takes.
+const ARC_TOLERANCE: f64 = 0.02;
+const MAX_ARC_SEGMENTS: usize = 256;
+/// Points of a polyline past which [`overlapping_polyline_stroke`] leaves the stroke to kurbo.
+const MAX_UNION_POINTS: usize = 50_000;
 
 /// `path` with its curves flattened to a hundredth of a pixel. vello_cpu flattens at a quarter of
 /// a pixel, which cuts a corner of a curved edge by up to that much: a pixel that lies fully inside
