@@ -4715,10 +4715,13 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
             Some(source) => {
                 info = fresh;
                 info.inline_text = source;
-                // The policy made it empty: nothing to run. Started, so the resource event its
-                // insertion queued does not ask the policy again.
+                // The policy made it empty: prepare returns on an empty source text BEFORE it sets
+                // "already started", so a later text set can still run the script. Stashed as a
+                // data block, as the rejection below, so the resource event its insertion queued
+                // does not ask the policy again.
                 if info.src.is_none() && info.inline_text.is_empty() {
-                    let _ = dom.mark_script_started(node);
+                    info.kind = ScriptKind::Data;
+                    let _ = dom.stash_prepared_script(node, info, bindings.document());
                     return;
                 }
             }
