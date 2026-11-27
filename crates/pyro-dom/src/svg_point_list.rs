@@ -259,6 +259,116 @@ pub type PointLists = ListStorage<Pair>;
 pub type NumberLists = ListStorage<f32>;
 pub type LengthItem = ListItem<(f64, u16)>;
 pub type LengthLists = ListStorage<(f64, u16)>;
+pub type TransformItem = ListItem<TransformValue>;
+pub type TransformLists = ListStorage<TransformValue>;
+
+/// One function of an SVG `transform` list (an `SVGTransform`): its type (1 matrix, 2 translate,
+/// 3 scale, 4 rotate, 5 skewX, 6 skewY), its angle (degrees; rotations and skews) and its matrix
+/// `[a b c d e f]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransformValue {
+    pub kind: u16,
+    pub angle: f64,
+    pub matrix: [f64; 6],
+}
+
+impl TransformValue {
+    pub const IDENTITY: [f64; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+    pub fn from_matrix(matrix: [f64; 6]) -> Self {
+        Self { kind: 1, angle: 0.0, matrix }
+    }
+
+    pub fn translate(x: f64, y: f64) -> Self {
+        Self { kind: 2, angle: 0.0, matrix: [1.0, 0.0, 0.0, 1.0, x, y] }
+    }
+
+    pub fn scale(x: f64, y: f64) -> Self {
+        Self { kind: 3, angle: 0.0, matrix: [x, 0.0, 0.0, y, 0.0, 0.0] }
+    }
+
+    /// A rotation of `angle` degrees about (`cx`, `cy`).
+    pub fn rotate(angle: f64, cx: f64, cy: f64) -> Self {
+        let (sin, cos) = angle.to_radians().sin_cos();
+        Self { kind: 4, angle, matrix: [cos, sin, -sin, cos, cx - cos * cx + sin * cy, cy - sin * cx - cos * cy] }
+    }
+
+    pub fn skew_x(angle: f64) -> Self {
+        Self { kind: 5, angle, matrix: [1.0, 0.0, angle.to_radians().tan(), 1.0, 0.0, 0.0] }
+    }
+
+    pub fn skew_y(angle: f64) -> Self {
+        Self { kind: 6, angle, matrix: [1.0, angle.to_radians().tan(), 0.0, 1.0, 0.0, 0.0] }
+    }
+}
+
+/// The functions of a `transform` list attribute (SVG 1.1 syntax: commas or spaces between
+/// numbers); an attribute that does not parse is an empty list, as in Chromium.
+pub fn parse_transform_list(text: &str) -> Vec<TransformValue> {
+    let mut items = Vec::new();
+    let mut rest = text.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+    while !rest.is_empty() {
+        let Some(open) = rest.find('(') else { return Vec::new() };
+        let name = rest[..open].trim();
+        let Some(close) = rest[open..].find(')') else { return Vec::new() };
+        let args: Option<Vec<f64>> = rest[open + 1..open + close]
+            .split(|c: char| c.is_ascii_whitespace() || c == ',')
+            .filter(|v| !v.is_empty())
+            .map(|v| v.parse::<f64>().ok())
+            .collect();
+        let Some(n) = args else { return Vec::new() };
+        let item = match (name, n.as_slice()) {
+            ("matrix", &[a, b, c, d, e, f]) => TransformValue::from_matrix([a, b, c, d, e, f]),
+            ("translate", &[x]) => TransformValue::translate(x, 0.0),
+            ("translate", &[x, y]) => TransformValue::translate(x, y),
+            ("scale", &[x]) => TransformValue::scale(x, x),
+            ("scale", &[x, y]) => TransformValue::scale(x, y),
+            ("rotate", &[a]) => TransformValue::rotate(a, 0.0, 0.0),
+            ("rotate", &[a, cx, cy]) => TransformValue::rotate(a, cx, cy),
+            ("skewX", &[a]) => TransformValue::skew_x(a),
+            ("skewY", &[a]) => TransformValue::skew_y(a),
+            _ => return Vec::new(),
+        };
+        items.push(item);
+        rest = rest[open + close + 1..].trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+    }
+    items
+}
+
+/// One function of a transform list as the attribute writes it (each type in its own function,
+/// so a list edited by script keeps the types a script set).
+fn write_transform(text: &mut String, t: TransformValue) {
+    let m = t.matrix;
+    let written = match t.kind {
+        2 => write!(text, "translate({} {})", m[4] as f32, m[5] as f32),
+        3 => write!(text, "scale({} {})", m[0] as f32, m[3] as f32),
+        4 => {
+            // The center is what the matrix's translation says: (1 - cos) cx + sin cy = e,
+            // -sin cx + (1 - cos) cy = f.
+            let (sin, cos) = t.angle.to_radians().sin_cos();
+            let det = (1.0 - cos) * (1.0 - cos) + sin * sin;
+            if (m[4] == 0.0 && m[5] == 0.0) || det < 1e-12 {
+                write!(text, "rotate({})", t.angle as f32)
+            } else {
+                let cx = ((1.0 - cos) * m[4] - sin * m[5]) / det;
+                let cy = (sin * m[4] + (1.0 - cos) * m[5]) / det;
+                write!(text, "rotate({} {} {})", t.angle as f32, cx as f32, cy as f32)
+            }
+        }
+        5 => write!(text, "skewX({})", t.angle as f32),
+        6 => write!(text, "skewY({})", t.angle as f32),
+        _ => write!(text, "matrix({} {} {} {} {} {})", m[0] as f32, m[1] as f32, m[2] as f32, m[3] as f32, m[4] as f32, m[5] as f32),
+    };
+    written.expect("writing to String is infallible");
+}
+
+impl TransformLists {
+    pub(crate) fn attribute_changed(&self, text: &str) {
+        if !self.writing.get() {
+            self.sync_attribute(parse_transform_list(text).into_iter());
+        }
+    }
+}
 
 /// Unit suffixes indexed by the internal kind. Kinds 1 through 10 are
 /// SVGLength's public constants; the remaining units report UNKNOWN.
@@ -417,6 +527,19 @@ impl Dom {
         }, Some(unit_factor));
         lists.attribute_changed(self.get_attribute_ns(id, None, attr)?.unwrap_or_default());
         self.svg_lengths.entry(index).or_default().insert(attr, Rc::downgrade(&lists));
+        Ok(lists)
+    }
+
+    /// The `SVGTransformList`s of the transform list attribute `attr` of `id` (`transform`,
+    /// `gradientTransform`, `patternTransform`).
+    pub fn svg_transform_lists(&mut self, id: NodeId, attr: &'static str, write: Writer) -> DomResult<Rc<TransformLists>> {
+        let index = self.check(id)?;
+        if let Some(lists) = self.svg_transforms.get(&index).and_then(|attrs| attrs.get(attr)).and_then(Weak::upgrade) {
+            return Ok(lists);
+        }
+        let lists = TransformLists::new(write, write_transform, None);
+        lists.attribute_changed(self.get_attribute_ns(id, None, attr)?.unwrap_or_default());
+        self.svg_transforms.entry(index).or_default().insert(attr, Rc::downgrade(&lists));
         Ok(lists)
     }
 

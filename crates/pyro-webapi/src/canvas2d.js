@@ -135,6 +135,38 @@
     get width() { return super.width; } set width(value) { setRect(this, 'width', value); }
     get height() { return super.height; } set height(value) { setRect(this, 'height', value); }
   }
+  // ---- SVGRect values --------------------------------------------------
+  // `SVGRect` is DOMRect's legacy window alias (the same interface object), but SVG's own rectangles (`createSVGRect()`, `getBBox()`, the
+  // `viewBox` of an element) take Web IDL `float`s: a TypeError for NaN and the infinities. The
+  // `viewBox` ones are live: `links` gives each its element's `read()` (the four numbers) and
+  // `write(index, number)`, and `animVal` is read only.
+  const svgRectLinks = new WeakMap();
+  function svgRectSet(self, index, name, value) {
+    const n = finite(value, `The provided float value for '${name}'`);
+    const link = svgRectLinks.get(self);
+    if (!link) { setRect(self, name, n); return; }
+    if (link.animated) throw domError('NoModificationAllowedError', 'The object is read-only.');
+    link.write(index, n);
+  }
+  function svgRectGet(self, index, inherited) {
+    const link = svgRectLinks.get(self);
+    return link ? link.read()[index] : inherited;
+  }
+  class SvgRectValue extends DOMRect {
+    get x() { return svgRectGet(this, 0, super.x); }
+    set x(value) { svgRectSet(this, 0, 'x', value); }
+    get y() { return svgRectGet(this, 1, super.y); }
+    set y(value) { svgRectSet(this, 1, 'y', value); }
+    get width() { return svgRectGet(this, 2, super.width); }
+    set width(value) { svgRectSet(this, 2, 'width', value); }
+    get height() { return svgRectGet(this, 3, super.height); }
+    set height(value) { svgRectSet(this, 3, 'height', value); }
+  }
+  function viewBoxRect(read, write, animated) {
+    const rect = new SvgRectValue();
+    svgRectLinks.set(rect, { read, write, animated });
+    return rect;
+  }
   class DOMQuad {
     #points;
     static {
@@ -1036,6 +1068,8 @@
       }
     },
     rectList(rects) { return new DOMRectList(secret, rects); },
+    svgRectValue(x,y,width,height) { return new SvgRectValue(x,y,width,height); },
+    viewBoxRect,
     rectValue(x,y,width,height,readonly) { return readonly ? new DOMRectReadOnly(x,y,width,height) : new DOMRect(x,y,width,height); },
     Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics,
     ImageBitmap, ImageBitmapRenderingContext, OffscreenCanvas, createImageBitmap,

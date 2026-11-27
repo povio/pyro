@@ -760,7 +760,11 @@ pub enum ElClass {
     Unknown,
     Generic,
     Svg,
-    SvgGraphics,
+    SvgG,
+    SvgDefs,
+    SvgSwitch,
+    SvgDesc,
+    SvgMetadata,
     SvgImage,
     SvgForeignObject,
     SvgUse,
@@ -832,7 +836,11 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "circle" => ElClass::SvgCircle,
             "ellipse" => ElClass::SvgEllipse,
             "line" => ElClass::SvgLine,
-            "g" | "switch" | "defs" => ElClass::SvgGraphics,
+            "g" => ElClass::SvgG,
+            "defs" => ElClass::SvgDefs,
+            "switch" => ElClass::SvgSwitch,
+            "desc" => ElClass::SvgDesc,
+            "metadata" => ElClass::SvgMetadata,
             "image" => ElClass::SvgImage,
             "foreignObject" => ElClass::SvgForeignObject,
             "use" => ElClass::SvgUse,
@@ -1058,7 +1066,11 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         Unknown => s.wrap::<HtmlUnknownElement>(d, k),
         Generic => s.wrap::<HtmlElement>(d, k),
         Svg => s.wrap::<SvgElement>(d, k),
-        SvgGraphics => s.wrap::<SvgGraphicsElement>(d, k),
+        SvgG => s.wrap::<SvgGElement>(d, k),
+        SvgDefs => s.wrap::<SvgDefsElement>(d, k),
+        SvgSwitch => s.wrap::<SvgSwitchElement>(d, k),
+        SvgDesc => s.wrap::<SvgDescElement>(d, k),
+        SvgMetadata => s.wrap::<SvgMetadataElement>(d, k),
         SvgImage => s.wrap::<SvgImageElement>(d, k),
         SvgForeignObject => s.wrap::<SvgForeignObjectElement>(d, k),
         SvgUse => s.wrap::<SvgUseElement>(d, k),
@@ -1195,7 +1207,11 @@ pub fn interface_name(class: ElClass) -> &'static str {
         Unknown => HtmlUnknownElement::NAME,
         Generic => HtmlElement::NAME,
         Svg => SvgElement::NAME,
-        SvgGraphics => SvgGraphicsElement::NAME,
+        SvgG => SvgGElement::NAME,
+        SvgDefs => SvgDefsElement::NAME,
+        SvgSwitch => SvgSwitchElement::NAME,
+        SvgDesc => SvgDescElement::NAME,
+        SvgMetadata => SvgMetadataElement::NAME,
         SvgImage => SvgImageElement::NAME,
         SvgForeignObject => SvgForeignObjectElement::NAME,
         SvgUse => SvgUseElement::NAME,
@@ -1349,7 +1365,11 @@ pub(crate) fn wrap_new_html_element<'s>(
         Unknown => crate::node::wrap_new_node::<HtmlUnknownElement>(s, page, el, new_target),
         Generic => crate::node::wrap_new_node::<HtmlElement>(s, page, el, new_target),
         Svg => crate::node::wrap_new_node::<SvgElement>(s, page, el, new_target),
-        SvgGraphics => crate::node::wrap_new_node::<SvgGraphicsElement>(s, page, el, new_target),
+        SvgG => crate::node::wrap_new_node::<SvgGElement>(s, page, el, new_target),
+        SvgDefs => crate::node::wrap_new_node::<SvgDefsElement>(s, page, el, new_target),
+        SvgSwitch => crate::node::wrap_new_node::<SvgSwitchElement>(s, page, el, new_target),
+        SvgDesc => crate::node::wrap_new_node::<SvgDescElement>(s, page, el, new_target),
+        SvgMetadata => crate::node::wrap_new_node::<SvgMetadataElement>(s, page, el, new_target),
         SvgImage => crate::node::wrap_new_node::<SvgImageElement>(s, page, el, new_target),
         SvgForeignObject => crate::node::wrap_new_node::<SvgForeignObjectElement>(s, page, el, new_target),
         SvgUse => crate::node::wrap_new_node::<SvgUseElement>(s, page, el, new_target),
@@ -4221,6 +4241,19 @@ impl JsClass for SvgElement {
             }
             Ok(s.null())
         });
+        // The nearest viewport element: an `<svg>` ancestor (as Chrome; `ownerSVGElement`'s answer).
+        def.getter("viewportElement", |s, n| {
+            let dom = n.page().dom.borrow();
+            let mut p = dom.parent_element(n.id).js()?;
+            while let Some(x) = p {
+                if dom.element(x).is_ok_and(|e| &*e.name.local == "svg") {
+                    drop(dom);
+                    return node_value(s, n.page(), Some(x));
+                }
+                p = dom.parent_element(x).js()?;
+            }
+            Ok(s.null())
+        });
         def.method("focus", 0, focus_element);
         def.method("blur", 0, |s, n, _a| {
             crate::input::blur_element(n.page(), n.id);
@@ -4266,17 +4299,81 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
         let page = n.page();
         let dom = page.dom.borrow();
         let layout = page.layout();
-        crate::canvas::rect_value(s, page, false, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
+        crate::canvas::svg_rect_value(s, page, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
     });
 });
+simple_class!(SvgGElement, "SVGGElement", SvgGraphicsElement);
+simple_class!(SvgDefsElement, "SVGDefsElement", SvgGraphicsElement);
+simple_class!(SvgSwitchElement, "SVGSwitchElement", SvgGraphicsElement);
+// SVG 2: `<desc>` and `<metadata>` have their own interfaces, plain SVGElements (not graphics).
+simple_class!(SvgDescElement, "SVGDescElement", SvgElement);
+simple_class!(SvgMetadataElement, "SVGMetadataElement", SvgElement);
 fn svg_aspect_ratio<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.getter("preserveAspectRatio", |s, n| collections::animated_aspect(s, n));
 }
 
-simple_class!(SvgSymbolElement, "SVGSymbolElement", SvgGraphicsElement, svg_aspect_ratio);
-simple_class!(SvgViewElement, "SVGViewElement", SvgElement, svg_aspect_ratio);
-simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
+/// SVGFitToViewBox: `viewBox` (an `SVGAnimatedRect`), with `preserveAspectRatio`.
+fn svg_fit_to_view_box<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     svg_aspect_ratio(def);
+    svg_view_box(def);
+}
+fn svg_view_box<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("viewBox", |s, n| Ok(collections::animated_rect(s, n.page(), n.id)?.value()));
+}
+
+simple_class!(SvgSymbolElement, "SVGSymbolElement", SvgGraphicsElement, svg_fit_to_view_box);
+simple_class!(SvgViewElement, "SVGViewElement", SvgElement, svg_fit_to_view_box);
+fn svg_rect_list<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, enclosure: bool) -> JsResult<Value<'s>> {
+    a.require(2, "SVGSVGElement.getIntersectionList")?;
+    let rect = svg_rect_argument(a.get(0))?;
+    let reference = a.get(1);
+    let reference = if reference.is_nullish() {
+        None
+    } else {
+        Some(crate::node::node_arg(s, reference, "SVGSVGElement.getIntersectionList")?)
+    };
+    let ids = {
+        let page = n.page();
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        pyro_dom::svg_geometry::intersection_list(&dom, &layout, n.id, reference, rect, enclosure)
+    };
+    Ok(collections::static_node_list(s, n.page(), ids)?.value())
+}
+fn svg_rect_check<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, enclosure: bool) -> JsResult<Value<'s>> {
+    a.require(2, "SVGSVGElement.checkIntersection")?;
+    let element = crate::node::node_arg(s, a.get(0), "SVGSVGElement.checkIntersection")?;
+    let rect = svg_rect_argument(a.get(1))?;
+    let page = n.page();
+    let dom = page.dom.borrow();
+    let layout = page.layout();
+    Ok(s.boolean(pyro_dom::svg_geometry::check_intersection(&dom, &layout, n.id, element, rect, enclosure)))
+}
+simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
+    svg_fit_to_view_box(def);
+    def.method("createSVGRect", 0, |s, _n, _a| collections::detached_rect(s));
+    // Hit-testing of graphics against a rectangle in the user space of this element (SVG 1.1).
+    def.method("getIntersectionList", 2, |s, n, a| svg_rect_list(s, n, a, false));
+    def.method("getEnclosureList", 2, |s, n, a| svg_rect_list(s, n, a, true));
+    def.method("checkIntersection", 2, |s, n, a| svg_rect_check(s, n, a, false));
+    def.method("checkEnclosure", 2, |s, n, a| svg_rect_check(s, n, a, true));
+    def.method("deselectAll", 0, |s, _n, _a| Ok(s.undefined()));
+    def.method("forceRedraw", 0, |s, _n, _a| Ok(s.undefined()));
+    def.method("suspendRedraw", 1, |s, _n, a| {
+        a.require(1, "SVGSVGElement.suspendRedraw")?;
+        Ok(s.number(1.0))
+    });
+    def.method("unsuspendRedraw", 1, |s, _n, a| {
+        a.require(1, "SVGSVGElement.unsuspendRedraw")?;
+        Ok(s.undefined())
+    });
+    def.method("unsuspendRedrawAll", 0, |s, _n, _a| Ok(s.undefined()));
+    def.method("createSVGTransform", 0, |s, _n, _a| collections::detached_transform(s, collections::IDENTITY_MATRIX));
+    def.method("createSVGTransformFromMatrix", 0, |s, _n, a| {
+        let matrix = collections::matrix_init_argument(s, a.get(0))?;
+        collections::detached_transform(s, matrix)
+    });
+    def.method("createSVGMatrix", 0, |s, _n, _a| collections::detached_matrix(s, collections::IDENTITY_MATRIX));
     def.method("createSVGPoint", 0, |s, _, _| collections::detached_point(s, 0.0, 0.0));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -4397,7 +4494,46 @@ simple_class!(SvgGeometryElement, "SVGGeometryElement", SvgGraphicsElement, |def
         collections::detached_point(s, point.x, point.y)
     });
     def.getter("pathLength", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &PATH_LENGTH)?.value()));
+    // `optional DOMPointInit point = {}`: a point whose coordinates are not finite is in nothing.
+    def.method("isPointInFill", 0, |s, n, args| {
+        let Some((x, y)) = dom_point_init(args.get(0))? else { return Ok(s.boolean(false)) };
+        let page = n.page();
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        Ok(s.boolean(pyro_dom::svg_geometry::is_point_in_fill(&dom, &layout, n.id, x, y)))
+    });
+    def.method("isPointInStroke", 0, |s, n, args| {
+        let Some((x, y)) = dom_point_init(args.get(0))? else { return Ok(s.boolean(false)) };
+        let page = n.page();
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        Ok(s.boolean(pyro_dom::svg_geometry::is_point_in_stroke(&dom, &layout, n.id, x, y)))
+    });
 });
+/// A `DOMPointInit` (`x` and `y` default to 0; `null` and `undefined` are `{}`): its coordinates, None
+/// when either is not finite.
+fn dom_point_init(value: Value<'_>) -> JsResult<Option<(f64, f64)>> {
+    if value.is_nullish() {
+        return Ok(Some((0.0, 0.0)));
+    }
+    let Some(init) = value.as_object() else {
+        return Err(JsError::Type("The provided value is not of type 'DOMPointInit'.".into()));
+    };
+    let coordinate = |name: &'static str| -> JsResult<f64> {
+        let v = init.get_atom(name)?;
+        if v.is_undefined() { Ok(0.0) } else { v.to_number() }
+    };
+    let (x, y) = (coordinate("x")?, coordinate("y")?);
+    Ok((x.is_finite() && y.is_finite()).then_some((x, y)))
+}
+/// The `x`, `y`, `width` and `height` of an `SVGRect` argument (TypeError for a non-object).
+fn svg_rect_argument(value: Value<'_>) -> JsResult<pyro_dom::layout::Rect> {
+    let Some(rect) = value.as_object() else {
+        return Err(JsError::Type("The provided value is not of type 'SVGRect'.".into()));
+    };
+    let n = |name: &'static str| -> JsResult<f64> { rect.get_atom(name)?.to_number() };
+    Ok(pyro_dom::layout::Rect { x: n("x")?, y: n("y")?, width: n("width")?, height: n("height")? })
+}
 simple_class!(SvgPathElement, "SVGPathElement", SvgGeometryElement);
 fn svg_animated_points<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.getter("points", |s, n| collections::point_list(s, n, false));
@@ -4563,7 +4699,7 @@ simple_class!(SvgMaskElement, "SVGMaskElement", SvgElement, |def| {
     svg_enum!(def, "maskContentUnits", MASK_CONTENT_UNITS);
 });
 simple_class!(SvgPatternElement, "SVGPatternElement", SvgElement, |def| {
-    svg_aspect_ratio(def);
+    svg_fit_to_view_box(def);
     svg_href(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -4607,7 +4743,7 @@ simple_class!(SvgFilterElement, "SVGFilterElement", SvgElement, |def| {
     svg_enum!(def, "primitiveUnits", PRIMITIVE_UNITS);
 });
 simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
-    svg_aspect_ratio(def);
+    svg_fit_to_view_box(def);
     def.getter("refX", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_366)?.value()));
     def.getter("refY", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_369)?.value()));
     def.getter("markerWidth", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_372)?.value()));
@@ -5676,6 +5812,11 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgElement>();
     engine.register::<MathMlElement>();
     engine.register::<SvgGraphicsElement>();
+    engine.register::<SvgGElement>();
+    engine.register::<SvgDefsElement>();
+    engine.register::<SvgSwitchElement>();
+    engine.register::<SvgDescElement>();
+    engine.register::<SvgMetadataElement>();
     engine.register::<SvgSvgElement>();
     engine.register::<SvgSymbolElement>();
     engine.register::<SvgViewElement>();

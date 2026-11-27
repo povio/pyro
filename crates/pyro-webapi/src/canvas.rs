@@ -154,6 +154,17 @@ pub(crate) fn rect_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, readonly: bool, 
     MODULE.helper(s, page, "rectValue", &[s.number(rect.x), s.number(rect.y), s.number(rect.width), s.number(rect.height), s.boolean(readonly)])
 }
 
+/// A `SVGRect` (`getBBox()`, `createSVGRect()`): a DOMRect whose members take finite numbers only.
+pub(crate) fn svg_rect_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, rect: pyro_dom::layout::Rect) -> JsResult<Value<'s>> {
+    MODULE.helper(s, page, "svgRectValue", &[s.number(rect.x), s.number(rect.y), s.number(rect.width), s.number(rect.height)])
+}
+
+/// The live `SVGRect` of an `SVGAnimatedRect` (`baseVal`, or `animVal` when `animated`): `read` returns
+/// the four numbers and `write(index, number)` sets one.
+pub(crate) fn view_box_rect<'s>(s: &Scope<'s>, page: &Rc<PageDom>, read: Object<'s>, write: Object<'s>, animated: bool) -> JsResult<Value<'s>> {
+    MODULE.helper(s, page, "viewBoxRect", &[read.value(), write.value(), s.boolean(animated)])
+}
+
 pub(crate) fn rect_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, rects: &[Value<'s>]) -> JsResult<Value<'s>> {
     MODULE.helper(s, page, "rectList", &[s.array(rects)?.value()])
 }
