@@ -112,6 +112,9 @@
   def('get_all_cookies');
   def('get_named_cookie');
   def('generate_test_report');
+  def('create_virtual_pressure_source');
+  def('update_virtual_pressure_source');
+  def('remove_virtual_pressure_source');
 
   // WebDriver BiDi (td/bidi.mjs). `subscribe` returns the function that removes the subscription.
   const bidiError = (m) => new Error(`invalid argument: ${m}`);
