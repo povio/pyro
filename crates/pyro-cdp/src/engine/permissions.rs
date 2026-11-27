@@ -37,7 +37,7 @@ fn query_names(permission: &str) -> Option<&'static [&'static str]> {
         "paymentHandler" => &["payment-handler"],
         "periodicBackgroundSync" => &["periodic-background-sync"],
         "pointerLock" => &["pointer-lock"],
-        "sensors" => &["accelerometer", "gyroscope", "magnetometer"],
+        "sensors" => &["accelerometer", "ambient-light-sensor", "gyroscope", "magnetometer"],
         "speakerSelection" => &["speaker-selection"],
         "storageAccess" => &["storage-access"],
         "topLevelStorageAccess" => &["top-level-storage-access"],
@@ -171,6 +171,7 @@ impl EngineHost {
                 };
                 let known = [
                     "accelerometer",
+                    "ambient-light-sensor",
                     "background-fetch",
                     "background-sync",
                     "camera",

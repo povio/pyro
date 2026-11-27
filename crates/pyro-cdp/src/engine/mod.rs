@@ -29,6 +29,7 @@ mod permissions;
 mod pressure;
 mod remote;
 mod runtime;
+mod sensors;
 #[cfg(feature = "render")]
 mod screencast;
 #[cfg(feature = "render")]
@@ -1213,6 +1214,7 @@ impl EngineHost {
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
             "setGeolocationOverride" | "clearGeolocationOverride" => self.geolocation_override(action, cmd),
             "setPressureSourceOverrideEnabled" | "setPressureStateOverride" | "setPressureDataOverride" => self.pressure_override(action, cmd),
+            "setSensorOverrideEnabled" | "setSensorOverrideReadings" | "getOverriddenSensorInformation" => self.sensor_override(action, cmd),
             "setVirtualTimePolicy" => self.set_virtual_time_policy(cmd),
             // Touch input (Input.dispatchTouchEvent) is always accepted, as in
             // Chrome; this sets `navigator.maxTouchPoints` (default 1) and,
