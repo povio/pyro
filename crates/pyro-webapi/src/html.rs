@@ -3739,13 +3739,13 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
     });
     def.method("updateElementGeometry", 2, |s, n, a| {
         a.require(1, "HTMLCanvasElement.updateElementGeometry")?;
-        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        let element = crate::html_in_canvas::geometry_target(s, n.page(), n.id, a.get(0))?;
         crate::html_in_canvas::update_geometry(s, n.page(), n.id, element, a.get(1))?;
         Ok(s.undefined())
     });
     def.method("clearElementGeometry", 1, |s, n, a| {
         a.require(1, "HTMLCanvasElement.clearElementGeometry")?;
-        let element = crate::html_in_canvas::element_of(s, n.page(), a.get(0))?;
+        let element = crate::html_in_canvas::geometry_target(s, n.page(), n.id, a.get(0))?;
         crate::html_in_canvas::clear_geometry(n.page(), n.id, element)?;
         Ok(s.undefined())
     });
