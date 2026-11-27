@@ -170,6 +170,14 @@ impl Images {
 
 impl Browser {
     pub(crate) fn dispatch_image(&mut self, frame: FrameKey, loader: &Rc<dyn ResourceLoader>, request: FetchRequest, done: FetchDone, layout: bool) -> Option<ResourceCancellation> {
+        // An `<img>` whose request CSP blocked and reported (`PageDom::note_blocked_image`) is
+        // asked for again by layout: the same blocked request, a network error without a second
+        // violation report.
+        if layout && self.doc(frame).and_then(|state| state.main_frame.page_dom.clone()).is_some_and(|page| page.take_blocked_image(&request.url)) {
+            let error = format!("{} {}", pyro_webapi::csp::BLOCKED_BY_CSP, request.url);
+            self.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
+            return None;
+        }
         let shape = Shape::of(self, &request).expect("whole image");
         let flights = {
             let mut doc = self.doc_mut(frame)?;
@@ -655,6 +663,9 @@ impl Browser {
                 match pyro_webapi::csp::check_request(&bindings, check, None) {
                     Ok(guard) => guard,
                     Err(_) => {
+                        // Reported once: the layout engine asks for this image again when it
+                        // draws the element (`dispatch_image`), which must not report again.
+                        bindings.note_blocked_image(&url);
                         let error = format!("{} {url}", pyro_webapi::csp::BLOCKED_BY_CSP);
                         self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err(error), None));
                         return;
