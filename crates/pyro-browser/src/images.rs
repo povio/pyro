@@ -135,10 +135,10 @@ pub(crate) struct Images {
     /// the last lazy load check.
     lazy_checked: Option<(((u64, u64, u32, u32), u64), bool)>,
     /// The `<img>`s whose source selection reads the environment (a `srcset`, or a `<picture>`
-    /// parent), and the viewport their last selection saw: HTML "reacting to environment
-    /// changes" selects again for them when it changes.
-    responsive: HashSet<NodeId>,
-    environment: Option<pyro_dom::media::Viewport>,
+    /// parent), each with the viewport its last selection saw: HTML "reacting to environment
+    /// changes" selects again for those whose viewport is not the current one. Ordered by node id
+    /// (creation order), so the updates and their `load` events fire in a fixed order.
+    responsive: BTreeMap<NodeId, pyro_dom::media::Viewport>,
     generation: u64,
     /// Entry count at which those of collected elements are dropped (a
     /// finished request no longer pins its element, and `new Image()`
@@ -451,8 +451,12 @@ impl Browser {
             let viewport = responsive.then(|| bindings.viewport());
             if let Some(mut p) = self.doc_mut(page) {
                 if let Some(viewport) = viewport {
-                    p.images.responsive.insert(node);
-                    p.images.environment.get_or_insert(viewport);
+                    // Removed images leave the set as it doubles (and when the viewport changes).
+                    if p.images.responsive.len().is_power_of_two() {
+                        let dom = bindings.dom.borrow();
+                        p.images.responsive.retain(|n, _| *n == node || dom.is_alive(*n));
+                    }
+                    p.images.responsive.insert(node, viewport);
                 } else {
                     p.images.responsive.remove(&node);
                 }
@@ -1036,13 +1040,18 @@ impl Browser {
         let viewport = bindings.viewport();
         let nodes: Vec<NodeId> = {
             let Some(mut state) = self.doc_mut(page) else { return };
-            if state.images.environment.as_ref() == Some(&viewport) {
+            // (Every checkpoint asks: nothing is walked while each image has seen this viewport.)
+            if state.images.responsive.values().all(|seen| *seen == viewport) {
                 return;
             }
-            state.images.environment = Some(viewport);
             let dom = bindings.dom.borrow();
-            state.images.responsive.retain(|node| dom.is_alive(*node) && dom.node_document(*node).ok() == Some(bindings.document()));
-            let nodes: Vec<NodeId> = state.images.responsive.iter().copied().collect();
+            // (Removed nodes, and those adopted into another document, leave the set here.)
+            state.images.responsive.retain(|node, _| dom.is_alive(*node) && dom.node_document(*node).ok() == Some(bindings.document()));
+            // Each image's own selection viewport is compared: one selected after a change is current.
+            let nodes: Vec<NodeId> = state.images.responsive.iter().filter(|(_, seen)| **seen != viewport).map(|(node, _)| *node).collect();
+            for node in &nodes {
+                state.images.responsive.insert(*node, viewport.clone());
+            }
             nodes
         };
         for node in nodes {
