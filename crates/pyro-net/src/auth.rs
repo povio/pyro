@@ -21,12 +21,18 @@ fn directory(path: &str) -> &str {
 impl BasicSessions {
     /// Whether the origin of `url` has credentials stored (a 401 from it may be answered).
     pub(crate) fn knows(&self, url: &Url) -> bool {
+        if self.entries.is_empty() {
+            return false;
+        }
         self.entries.contains_key(&url.origin().ascii_serialization())
     }
 
     /// The credentials for a request to `url` sent before any challenge: those of the entry whose
     /// directory is the longest prefix of its path.
     pub(crate) fn preemptive(&self, url: &Url) -> Option<HeaderValue> {
+        if self.entries.is_empty() {
+            return None;
+        }
         let path = url.path();
         self.entries
             .get(&url.origin().ascii_serialization())?

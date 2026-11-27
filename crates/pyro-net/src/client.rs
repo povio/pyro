@@ -410,6 +410,8 @@ struct Shared {
     dictionaries: Mutex<crate::dictionary::Dictionaries>,
     /// The session's HTTP Basic credentials (`Authorization` values the servers' realms accepted).
     basic_auth: Mutex<crate::auth::BasicSessions>,
+    /// Set once any Basic credentials were stored: until then requests skip the lock.
+    basic_auth_stored: std::sync::atomic::AtomicBool,
     /// `Accept-CH`: the client hints each origin asked for, for the session.
     client_hints: Mutex<crate::client_hints::Store>,
     epoch: Instant,
@@ -809,6 +811,7 @@ impl NetClient {
             cache: Mutex::new(cache),
             dictionaries: Mutex::default(),
             basic_auth: Mutex::default(),
+            basic_auth_stored: std::sync::atomic::AtomicBool::new(false),
             client_hints: Mutex::default(),
             epoch: Instant::now(),
             ignore_certificate_errors: std::sync::atomic::AtomicBool::new(false),
@@ -2330,7 +2333,9 @@ impl Io {
                 && !req.body_from_stream;
             let mut preemptive = None;
             if basic_hop && url_credentials.is_none() {
-                preemptive = self.shared.basic_auth.lock().unwrap().preemptive(&url);
+                if self.shared.basic_auth_stored.load(std::sync::atomic::Ordering::Relaxed) {
+                    preemptive = self.shared.basic_auth.lock().unwrap().preemptive(&url);
+                }
                 if let Some(value) = &preemptive {
                     headers.insert(header::AUTHORIZATION, value.clone());
                 }
@@ -2518,7 +2523,9 @@ impl Io {
             // the challenge's realm (a stored one for this origin).
             let basic_retry = basic_hop
                 && auth_interceptor.is_none()
-                && (url_credentials.is_some() || self.shared.basic_auth.lock().unwrap().knows(&url));
+                && (url_credentials.is_some()
+                    || (self.shared.basic_auth_stored.load(std::sync::atomic::Ordering::Relaxed)
+                        && self.shared.basic_auth.lock().unwrap().knows(&url)));
             // The credentials a retry sent: stored once the server accepts them.
             let mut basic_sent: Option<(String, HeaderValue)> = None;
             let resp = loop {
@@ -2631,6 +2638,7 @@ impl Io {
                     sessions.evict(&url, &value);
                 } else {
                     sessions.store(&url, &realm, value);
+                    self.shared.basic_auth_stored.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             // pyro: a response to an authentication retry answers the request as last sent, with
