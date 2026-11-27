@@ -581,91 +581,11 @@
   if (native.worker) delete Notification.requestPermission;
   tag(Notification, 'Notification');
 
-  // Keyboard Lock. A headless browser has no operating system shortcuts to
-  // capture, but the state machine is the spec's: lock() from the top-level
-  // frame validates the key codes, goes pending, and settles in a task; a newer
-  // lock() or an unlock() aborts a pending request; the lock is the set of
-  // codes the last settled request named (empty: every key).
-  const KEY_CODES = new Set([
-    'Backquote', 'Backslash', 'BracketLeft', 'BracketRight', 'Comma', 'Equal', 'IntlBackslash', 'IntlRo', 'IntlYen', 'Minus',
-    'Period', 'Quote', 'Semicolon', 'Slash', 'AltLeft', 'AltRight', 'Backspace', 'CapsLock', 'ContextMenu', 'ControlLeft',
-    'ControlRight', 'Enter', 'MetaLeft', 'MetaRight', 'ShiftLeft', 'ShiftRight', 'Space', 'Tab', 'Convert', 'KanaMode',
-    'Lang1', 'Lang2', 'Lang3', 'Lang4', 'Lang5', 'NonConvert', 'Delete', 'End', 'Help', 'Home', 'Insert', 'PageDown', 'PageUp',
-    'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'NumLock', 'Numpad0', 'Numpad1', 'Numpad2', 'Numpad3', 'Numpad4',
-    'Numpad5', 'Numpad6', 'Numpad7', 'Numpad8', 'Numpad9', 'NumpadAdd', 'NumpadBackspace', 'NumpadClear', 'NumpadClearEntry',
-    'NumpadComma', 'NumpadDecimal', 'NumpadDivide', 'NumpadEnter', 'NumpadEqual', 'NumpadHash', 'NumpadMemoryAdd',
-    'NumpadMemoryClear', 'NumpadMemoryRecall', 'NumpadMemoryStore', 'NumpadMemorySubtract', 'NumpadMultiply',
-    'NumpadParenLeft', 'NumpadParenRight', 'NumpadStar', 'NumpadSubtract', 'Escape', 'PrintScreen', 'ScrollLock', 'Pause',
-    'BrowserBack', 'BrowserFavorites', 'BrowserForward', 'BrowserHome', 'BrowserRefresh', 'BrowserSearch', 'BrowserStop',
-    'Eject', 'LaunchApp1', 'LaunchApp2', 'LaunchMail', 'MediaPlayPause', 'MediaSelect', 'MediaStop', 'MediaTrackNext',
-    'MediaTrackPrevious', 'Power', 'Sleep', 'AudioVolumeDown', 'AudioVolumeMute', 'AudioVolumeUp', 'WakeUp', 'Fn', 'FnLock',
-    'Abort', 'Again', 'Copy', 'Cut', 'Find', 'Open', 'Paste', 'Props', 'Select', 'Undo',
-  ]);
-  for (let c = 65; c <= 90; c++) KEY_CODES.add('Key' + fromCharCode(c));
-  for (let d = 0; d <= 9; d++) KEY_CODES.add('Digit' + d);
-  for (let f = 1; f <= 24; f++) KEY_CODES.add('F' + f);
-
-  class Keyboard extends EventTargetC {
-    constructor(t) {
-      if (t !== token) throw illegal('Keyboard');
-      super();
-      ownTag(this, 'Keyboard');
-    }
-    lock(keyCodes = []) {
-      if (!iterable(keyCodes)) {
-        return rejected(new TypeErrorC("Failed to execute 'lock' on 'Keyboard': The provided value cannot be converted to a sequence."));
-      }
-      const codes = Array.from(keyCodes, String);
-      const state = keyboardState;
-      // Only the top-level frame may lock the keyboard.
-      if (globalThis.top !== globalThis) {
-        return rejected(new DOMExceptionC("Failed to execute 'lock' on 'Keyboard': Keyboard lock is only available in the top-level frame.", 'InvalidStateError'));
-      }
-      // Codes the user agent does not know are ignored; a request naming only
-      // unknown codes asks for nothing it could give.
-      const valid = codes.filter((c) => KEY_CODES.has(c));
-      if (codes.length > 0 && valid.length === 0) {
-        return rejected(new DOMExceptionC("Failed to execute 'lock' on 'Keyboard': No valid key codes were provided.", 'InvalidAccessError'));
-      }
-      // A newer request supersedes the pending one.
-      if (state.pending !== null) state.pending.abort();
-      return new PromiseC((resolve, reject) => {
-        const request = {
-          abort() {
-            if (state.pending === request) state.pending = null;
-            request.settled = true;
-            reject(new DOMExceptionC("Failed to execute 'lock' on 'Keyboard': The keyboard lock request was aborted.", 'AbortError'));
-          },
-          settled: false,
-        };
-        state.pending = request;
-        queueTask(() => {
-          if (request.settled) return;
-          request.settled = true;
-          state.pending = null;
-          state.locked = new Set(valid);
-          state.active = true;
-          resolve();
-        });
-      });
-    }
-    unlock() {
-      const state = keyboardState;
-      if (state.pending !== null) state.pending.abort();
-      state.locked = new Set();
-      state.active = false;
-    }
-  }
-  tag(Keyboard, 'Keyboard');
-  const keyboardState = { pending: null, locked: new Set(), active: false };
-
   return {
     geolocation: new Geolocation(token),
     userAgentData: new NavigatorUAData(token),
     permissions: new Permissions(token),
     clipboard: new Clipboard(token),
-    keyboard: new Keyboard(token),
-    Keyboard,
     ClipboardItem,
     Notification,
     Clipboard,

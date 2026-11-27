@@ -215,7 +215,6 @@ where
     );
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
-    def.getter("Keyboard", |s, w| crate::navigator_extras::member(s, w.page(), "Keyboard"));
     def.getter("Clipboard", |s, w| crate::navigator_extras::member(s, w.page(), "Clipboard"));
     def.getter("Permissions", |s, w| crate::navigator_extras::member(s, w.page(), "Permissions"));
     def.getter("PermissionStatus", |s, w| crate::navigator_extras::member(s, w.page(), "PermissionStatus"));
@@ -583,7 +582,6 @@ impl JsClass for Navigator {
         def.getter("geolocation", |s, p| crate::navigator_extras::member(s, p, "geolocation"));
         def.getter("permissions", |s, p| crate::navigator_extras::member(s, p, "permissions"));
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
-        def.getter("keyboard", |s, p| crate::navigator_extras::member(s, p, "keyboard"));
         def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
         def.getter("storageBuckets", |s, p| crate::storage_buckets::manager(s, p));
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));

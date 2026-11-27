@@ -11,7 +11,6 @@ const GLOBALS: &[&str] = &[
     "LockManager",
     "SubtleCrypto",
     "CryptoKey",
-    "Keyboard",
     "Lock",
     "MediaDevices",
     "MediaKeySystemAccess", "MediaKeys", "MediaKeySession", "MediaKeyStatusMap", "MediaKeyMessageEvent",
@@ -52,7 +51,7 @@ const GLOBALS: &[&str] = &[
     "caches",
 ];
 /// `Navigator` members that exist only in a secure context.
-const NAVIGATOR: &[&str] = &["keyboard", "serviceWorker", "locks", "storageBuckets", "mediaDevices", "credentials", "ml", "registerProtocolHandler", "unregisterProtocolHandler", "requestMediaKeySystemAccess"];
+const NAVIGATOR: &[&str] = &["serviceWorker", "locks", "storageBuckets", "mediaDevices", "credentials", "ml", "registerProtocolHandler", "unregisterProtocolHandler", "requestMediaKeySystemAccess"];
 
 /// A secure context (HTML): the document and every ancestor document are potentially trustworthy,
 /// as the embedder reports it (`PageHooks::is_secure_context`); without one, the realm's origin or the
