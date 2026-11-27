@@ -221,6 +221,10 @@ pub(super) fn attach(page: &Rc<PageDom>, node: NodeId, gen: u32, url: &str) -> O
                 buffers.iter().find(|b| b.borrow().track_buffers().iter().any(|t| t.track().sample_rate > 0)).cloned();
             let t = now(&p);
             let mut events = Vec::new();
+            // MSE "end of stream" with an error while the element is at HAVE_NOTHING: the
+            // dedicated media source failure steps (MEDIA_ERR_SRC_NOT_SUPPORTED, then the
+            // source is detached and closes).
+            let mut source_failed = false;
             with(&p, node, |st| {
                 st.fold(t);
                 let m = st.mse.as_mut().unwrap();
@@ -240,8 +244,15 @@ pub(super) fn attach(page: &Rc<PageDom>, node: NodeId, gen: u32, url: &str) -> O
                 // notifications still carry the source's error status.
                 if (status == "decode" || status == "network") && st.error.is_none() {
                     st.error_serial = st.error_serial.wrapping_add(1);
+                    source_failed = st.ready == HAVE_NOTHING;
                     st.error = Some((
-                        if status == "decode" { 3 } else { 2 },
+                        if source_failed {
+                            4
+                        } else if status == "decode" {
+                            3
+                        } else {
+                            2
+                        },
                         "MediaSource end of stream error",
                         st.error_serial,
                     ));
@@ -253,6 +264,14 @@ pub(super) fn attach(page: &Rc<PageDom>, node: NodeId, gen: u32, url: &str) -> O
                 && peek(&p, node, |st| st.ready >= HAVE_METADATA && duration.is_finite() && st.position > duration);
             for event in events {
                 queue_event(&p, node, gen, event);
+            }
+            if source_failed {
+                queue(&p, node, gen, move |p| {
+                    if let Some(attachment) = with(p, node, |st| st.mse.take()) {
+                        attachment.detach();
+                    }
+                });
+                return Ok(s.undefined());
             }
             if truncated {
                 seek(&p, node, duration);
