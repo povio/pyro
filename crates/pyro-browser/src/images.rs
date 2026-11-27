@@ -190,6 +190,21 @@ impl Browser {
             self.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
             return None;
         }
+        // The layout engine's request for the image of a connected `<img>` makes no Resource Timing
+        // entry of its own (it asks as a CSS `url()` does, initiator "css"): the element's own load has
+        // it, and a second one made the document's resource entries count the image twice (WPT
+        // srcset/avoid-reload-on-resize).
+        if layout && matches!(request.initiator, Some(pyro_webapi::resource_timing::Initiator::Css)) {
+            let of_element = self.doc(frame).is_some_and(|state| {
+                let Some(page) = state.main_frame.page_dom.clone() else { return false };
+                let dom = page.dom.borrow();
+                let found = state.images.entries.iter().any(|(node, i)| i.url == request.url && dom.is_alive(*node) && dom.is_connected(*node) == Ok(true));
+                found
+            });
+            if of_element {
+                request.initiator = None;
+            }
+        }
         // The layout engine's request for the image of an `<img>` that already went through its
         // pre-request check (`bind_image`, reported then, at the document) must not report that
         // violation again: with a report-only `img-src` (nothing blocked, so no note above) every
