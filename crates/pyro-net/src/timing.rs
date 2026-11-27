@@ -52,6 +52,9 @@ pub struct NetTiming {
     /// A TAO check ran for the requesting origin. A response with no
     /// requester or no HTTP timing observations does not grant access.
     pub timing_allow_checked: bool,
+    /// The request reached a service worker's `fetch` handling (`workerStart`): when the worker
+    /// was asked, before whatever it did with the request.
+    pub worker_start: Option<Instant>,
 }
 
 /// The phases of opening a connection.

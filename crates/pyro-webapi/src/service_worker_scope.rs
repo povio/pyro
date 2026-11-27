@@ -706,8 +706,9 @@ fn respond_head(s: &Scope<'_>, job: &mut FetchJob, a: &pyro_js::Args<'_>) -> JsR
         kind,
         remote_addr: None,
         protocol: pyro_net::http::Version::HTTP_11,
-        // Made by the worker, not the network: no connection phases.
-        timing: Default::default(),
+        // Made by the worker, not the network: no connection phases, and the head is the
+        // response's start (Resource Timing: a delay in the handler shows at `responseStart`).
+        timing: pyro_net::NetTiming { response_start: Some(std::time::Instant::now()), ..Default::default() },
     };
     sink(ResponseEvent::Response(head));
     job.sink = Some(sink);

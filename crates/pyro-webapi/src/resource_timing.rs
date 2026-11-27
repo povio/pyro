@@ -203,6 +203,8 @@ pub struct ResourceEntry {
     pub start: f64,
     pub redirect_start: f64,
     pub redirect_end: f64,
+    /// A service worker's `fetch` handling began (0: none saw the fetch).
+    pub worker_start: f64,
     pub fetch_start: f64,
     pub domain_lookup_start: f64,
     pub domain_lookup_end: f64,
@@ -273,8 +275,14 @@ fn entry_with_clock(report: &FetchReport, ms: impl Fn(Instant) -> f64) -> Resour
     let t = &r.timing;
     // A step never comes before the one it follows (clamped forward).
     let after = |floor: f64, t: Option<Instant>| t.map_or(floor, |t| ms(t).max(floor));
+    // A service worker's fetch handling: `workerStart` lies between `startTime` and `fetchStart`
+    // (and `redirectStart`), and is exposed whatever the Timing-Allow-Origin check says.
+    if let Some(worker) = t.worker_start {
+        e.worker_start = ms(worker).max(start);
+        e.fetch_start = e.worker_start;
+    }
     if t.redirect_count > 0 {
-        e.redirect_start = start;
+        e.redirect_start = e.worker_start.max(start);
         e.redirect_end = after(start, t.redirect_end);
         e.fetch_start = after(e.redirect_end, t.fetch_start);
         e.redirect_count = t.redirect_count;

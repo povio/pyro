@@ -183,10 +183,10 @@ pub fn redirect_count(n: &NavigationValues) -> f64 {
 
 pub type FetchValue = fn(&ResourceEntry) -> f64;
 
-/// PerformanceResourceTiming's times (no service workers, no interim
-/// responses: those are 0).
+/// PerformanceResourceTiming's times (no interim responses: those are 0;
+/// `workerStart` is 0 for a fetch no service worker saw).
 pub const RESOURCE_TIMES: [(&str, FetchValue); 14] = [
-    ("workerStart", |_| 0.0),
+    ("workerStart", |f| f.worker_start),
     ("redirectStart", |f| f.redirect_start),
     ("redirectEnd", |f| f.redirect_end),
     ("fetchStart", |f| f.fetch_start),

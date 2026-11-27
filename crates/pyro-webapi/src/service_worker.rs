@@ -649,6 +649,18 @@ impl LoadRoute {
     /// Fires the `fetch` event; without `respondWith` (or when the worker is
     /// gone before it ran) the request goes on to `net` with `sink`.
     pub fn dispatch(self, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
+        // Resource and Navigation Timing: the response's `workerStart` is when the worker was asked.
+        let worker_start = std::time::Instant::now();
+        let sink: ResponseSink = {
+            let mut inner = sink;
+            Box::new(move |event| match event {
+                ResponseEvent::Response(mut head) => {
+                    head.timing.worker_start = Some(worker_start);
+                    inner(ResponseEvent::Response(head));
+                }
+                other => inner(other),
+            })
+        };
         // CSP: the response, the worker's included (`respondWith` of another URL's response),
         // is checked against the request's policy by its URL.
         let mut sink = match &request.csp {
