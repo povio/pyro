@@ -444,6 +444,8 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
     realm.set_rejection_hooks(event::REJECTION_HOOKS);
     let helpers = install_helpers(scope)?;
+    // highlights.js's pristine primitives: it is made on first use, after page script ran.
+    scope.set_hidden(scope.global(), "lpHighlightPrimitives", helpers.get_atom("highlightPrimitives")?)?;
     file::install(scope, helpers.get_atom("blobParts")?)?;
     mutation_observer::install(scope, &page, helpers.get_atom("mutationOptions")?)?;
     intersection_observer::install(scope, &page, helpers.get_atom("intersection")?)?;

@@ -554,7 +554,26 @@
     };
   };
 
+  // highlights.js: the realm's pristine Set and Map operations as functions of the receiver, and the
+  // Object functions it defines its interfaces with: the module is made on first use, after page
+  // script may have replaced `Set.prototype.add` (WPT Highlight-setlike-tampered-Set-prototype).
+  const highlightPrimitives = (() => {
+    const S = Set.prototype, M = Map.prototype, Set_ = Set, Map_ = Map;
+    const un = (proto, name) => { const f = proto[name]; return (self, a, b) => apply(f, self, [a, b]); };
+    const size = (proto) => { const g = getOwnPropertyDescriptor(proto, 'size').get; return (self) => apply(g, self, []); };
+    return freeze({
+      __proto__: null,
+      newSet: () => new Set_(), newMap: () => new Map_(),
+      setAdd: un(S, 'add'), setDelete: un(S, 'delete'), setClear: un(S, 'clear'), setHas: un(S, 'has'),
+      setValues: un(S, 'values'), setEntries: un(S, 'entries'), setSize: size(S),
+      mapSet: un(M, 'set'), mapGet: un(M, 'get'), mapDelete: un(M, 'delete'), mapClear: un(M, 'clear'), mapHas: un(M, 'has'),
+      mapKeys: un(M, 'keys'), mapValues: un(M, 'values'), mapEntries: un(M, 'entries'), mapSize: size(M),
+      defineProperty, getOwnPropertyDescriptor,
+    });
+  })();
+
   return {
+    highlightPrimitives,
     blobParts,
     encoding: { __proto__: null, viewBytes, encodeIntoCapacity, fixedByteView, privateDecoderView, chunkTransferList, copyChunkInput, copyChunkTo, webIdlNumber: value => +value },
     mutationOptions,
