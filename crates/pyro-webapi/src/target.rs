@@ -800,7 +800,7 @@ pub(crate) fn unheard_input(page: &PageDom, ty: &str, target: TargetKey, cancela
 
 /// Dispatches `event` at `target` (DOM "dispatch"). Returns false if canceled.
 pub fn fire(page: &PageDom, target: TargetKey, event: &EventData) -> bool {
-    fire_with(page, target, event, &mut |_| {})
+    fire_with(page, target, None, event, &mut |_| {})
 }
 
 /// DOM "dispatch" of `event` at `target` with the legacy target override
@@ -814,25 +814,28 @@ pub fn fire_with_target_override(
     target_override: TargetKey,
     event: &EventData,
 ) -> bool {
-    dispatch_at(page, target, Some(target_override), event, &mut |_| {})
+    dispatch_at(page, target, Some(target_override), None, event, &mut |_| {})
 }
 
-/// [`fire`], calling `before_listeners` with the event's path before any
+/// [`fire`], with the event path cut before `stop_before` when given (an ancestor of `target` that
+/// neither sees the event nor passes it on), calling `before_listeners` with the event's path before any
 /// listener runs (see `pyro_dom::events::dispatch_with`): where the activation
 /// target is picked and its legacy-pre-activation behavior runs.
 pub(crate) fn fire_with(
     page: &PageDom,
     target: TargetKey,
+    stop_before: Option<TargetKey>,
     event: &EventData,
     before_listeners: &mut dyn FnMut(&[PathItem]),
 ) -> bool {
-    dispatch_at(page, target, None, event, before_listeners)
+    dispatch_at(page, target, None, stop_before, event, before_listeners)
 }
 
 fn dispatch_at(
     page: &PageDom,
     target: TargetKey,
     target_override: Option<TargetKey>,
+    stop_before: Option<TargetKey>,
     event: &EventData,
     before_listeners: &mut dyn FnMut(&[PathItem]),
 ) -> bool {
@@ -871,6 +874,11 @@ fn dispatch_at(
             }) {
                 path.truncate(end);
             }
+        }
+    }
+    if let Some(stop) = stop_before {
+        if let Some(end) = path.iter().skip(1).position(|&(observer, _)| observer == stop) {
+            path.truncate(end + 1);
         }
     }
     // SMIL event values (`begin="click"`) begin or end animations at the time the event happens.

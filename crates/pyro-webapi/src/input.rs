@@ -791,7 +791,9 @@ fn dispatch_click(page: &Rc<PageDom>, target: NodeId, ev: &EventData, handled: b
     // only counts when the event bubbles. Its legacy-pre-activation behavior
     // runs before the first listener.
     let mut activation: Option<ActivationTarget> = None;
-    let not_canceled = crate::target::fire_with(page, key, ev, &mut |path| {
+    // A trusted click on a child of a disabled form control stops below the control.
+    let stop = if trusted { disabled_control_of(page, target).and_then(|control| key_of(page, control)) } else { None };
+    let not_canceled = crate::target::fire_with(page, key, stop, ev, &mut |path| {
         if handled {
             return;
         }
@@ -2959,9 +2961,23 @@ fn fire_mouse(
     hit: Option<pyro_dom::geometry::GeneratedHit>,
 ) -> bool {
     if crate::target::unheard_input(page, ty, target, cancelable, None) { return true; }
+    // A trusted mousedown, mouseup or dblclick is not dispatched at a disabled form control; at a
+    // child of one it stops below the control.
+    let mut stop = None;
+    if iface == EventInterface::MouseEvent && matches!(ty, "mousedown" | "mouseup" | "dblclick") {
+        let node = page.dom.borrow().key_node(target);
+        if let Some(node) = node {
+            if let Some(control) = disabled_control_of(page, node) {
+                if control == node {
+                    return true;
+                }
+                stop = key_of(page, control);
+            }
+        }
+    }
     let ev = mouse_event(page, iface, ty, m, cancelable);
     ev.fields.borrow_mut().pseudo_hit = hit.map(|hit| (target, hit));
-    fire(page, target, &ev)
+    crate::target::fire_with(page, target, stop, &ev, &mut |_| {})
 }
 
 /// The trusted `pointermove` of a mouse. `button` is `None` for a plain move (`button` -1) and
@@ -2992,11 +3008,12 @@ fn fire_pointer_move(
     }
 }
 
-/// Whether `node` is a disabled form control or inside one (a button, input, select or
-/// textarea, or a form-associated custom element; not a fieldset, option or optgroup): Chromium
-/// dispatches no trusted `mousedown`, `mouseup`, `click`, `auxclick` or `dblclick` there, while the
-/// pointer events and `mousemove` still fire (WPT html/semantics/disabled-elements).
-fn in_disabled_control(page: &PageDom, node: NodeId) -> bool {
+/// The disabled form control `node` is, or is inside (a button, input, select or textarea, or a
+/// form-associated custom element; not a fieldset, option or optgroup), the nearest one: Chromium
+/// dispatches no trusted `mousedown`, `mouseup`, `click`, `auxclick` or `dblclick` at the control,
+/// and for a child of it the event stops below the control (whatwg/html#5886), while the pointer
+/// events and `mousemove` still fire (WPT html/semantics/disabled-elements).
+fn disabled_control_of(page: &PageDom, node: NodeId) -> Option<NodeId> {
     let dom = page.dom.borrow();
     let mut cur = Some(node);
     while let Some(n) = cur {
@@ -3004,11 +3021,11 @@ fn in_disabled_control(page: &PageDom, node: NodeId) -> bool {
             .element(n)
             .is_ok_and(|e| !(e.is_html() && matches!(&*e.name.local, "fieldset" | "option" | "optgroup")));
         if control && dom.is_disabled(n).unwrap_or(false) {
-            return true;
+            return Some(n);
         }
         cur = flat_parent_element(&dom, n);
     }
-    false
+    None
 }
 
 /// The hit-test target at a viewport point. With `root_fallback`, empty
@@ -3579,7 +3596,6 @@ fn dispatch_mouse_inner(
             };
             let (target, tkey) = live_target(page, target, tkey);
             let md = !pd
-                || in_disabled_control(page, target)
                 || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true, pseudo);
             if !chorded {
                 page.compat_mouse_suppressed.set(!pd);
@@ -3718,9 +3734,7 @@ fn dispatch_mouse_inner(
             // pointerup handler that calls preventDefault does not).
             // (No mouseup, no mouseup default handling: nor a pick.)
             let suppressed = if chorded { page.compat_mouse_suppressed.get() } else { page.compat_mouse_suppressed.replace(false) };
-            let mouseup_ok = !suppressed
-                && (in_disabled_control(page, target)
-                    || fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo));
+            let mouseup_ok = !suppressed && fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo);
             // A release on an option of a customizable select's open picker picks it.
             if mouseup_ok && m.button == MouseButton::Left && !page.is_disposed() {
                 select_picker_option_release(page, target);
@@ -3735,8 +3749,9 @@ fn dispatch_mouse_inner(
                 Some(p) => common_ancestor(&page.dom.borrow(), p, target),
                 None => None,
             };
-            // No click (nor auxclick, dblclick) at a disabled form control or inside one.
-            let click_target = click_target.filter(|&ct| !in_disabled_control(page, ct));
+            // No click (nor auxclick, dblclick) at a disabled form control; one inside it stops
+            // below the control (`dispatch_click`, `fire_mouse`).
+            let click_target = click_target.filter(|&ct| disabled_control_of(page, ct) != Some(ct));
             if let Some(ct) = click_target {
                 let name = match m.button {
                     MouseButton::Left | MouseButton::None => "click",
