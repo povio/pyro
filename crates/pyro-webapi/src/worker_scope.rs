@@ -1579,6 +1579,7 @@ impl JsClass for WorkerGlobalScope {
         crate::observable::define_globals(def);
         crate::scheduler::define_global(def);
         crate::canvas::define_worker_globals(def);
+        crate::media_capabilities::define_globals(def);
         // CSS Font Loading: `FontFace` and the worker's `FontFaceSet`.
         crate::font_loading::define_globals(def);
         crate::typed_om::define_globals(def);
@@ -1890,6 +1891,7 @@ impl JsClass for WorkerNavigator {
         def.getter("storage", |s, _ua| crate::storage_manager::storage(s, &crate::target::page_of(s)?));
         def.getter("permissions", |s, _ua| crate::navigator_extras::member(s, &crate::target::page_of(s)?, "permissions"));
         def.getter("storageBuckets", |s, _ua| crate::storage_buckets::manager(s, &crate::target::page_of(s)?));
+        def.getter("mediaCapabilities", |s, _ua| crate::media_capabilities::media_capabilities(s, &crate::target::page_of(s)?));
     }
 }
 

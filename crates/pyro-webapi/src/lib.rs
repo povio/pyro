@@ -68,6 +68,8 @@ pub mod permissions_policy;
 mod web_locks;
 mod media_devices;
 mod media_stream;
+mod media_session;
+mod media_capabilities;
 pub mod pressure;
 mod credentials;
 mod webauthn;

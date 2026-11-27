@@ -238,6 +238,8 @@ where
     crate::credentials::define_globals(def);
     crate::sensors::define_globals(def);
     crate::media_stream::define_globals(def);
+    crate::media_session::define_globals(def);
+    crate::media_capabilities::define_globals(def);
     crate::paint_worklet::define_globals(def);
     crate::audio_worklet::define_globals(def);
     crate::lazy_module::lazy_globals!(def, crate::pseudo_element::MODULE, "CSSPseudoElement");
@@ -587,6 +589,8 @@ impl JsClass for Navigator {
         def.getter("locks", |s, p| crate::web_locks::locks(s, p));
         def.getter("mediaDevices", |s, p| crate::media_devices::media_devices(s, p));
         def.getter("credentials", |s, p| crate::credentials::credentials(s, p));
+        def.getter("mediaSession", |s, p| crate::media_session::media_session(s, p));
+        def.getter("mediaCapabilities", |s, p| crate::media_capabilities::media_capabilities(s, p));
         def.getter("ml", |s, p| crate::webnn::ml(s, p));
         def.getter("userActivation", |s, p| crate::user_activation::user_activation(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
