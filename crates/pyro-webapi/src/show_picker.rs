@@ -2,16 +2,17 @@
 //! § 4.10.7): the checks and the user-activation consumption of a same-origin call.
 //!
 //! The steps run in the spec's order: the mutability check (`InvalidStateError`, without
-//! consuming activation), the transient-activation check (`NotAllowedError`), for a select the
-//! being-rendered check (`NotSupportedError`), and then the activation is consumed.
+//! consuming activation), the cross-origin check (`SecurityError` in a document whose origin is not
+//! its top-level origin, except for file and color inputs), the transient-activation check
+//! (`NotAllowedError`), for a select the being-rendered check (`NotSupportedError`), and then the
+//! activation is consumed.
 //!
 //! Not done here:
-//! - The cross-origin `SecurityError` step (a document whose origin is not the top-level
-//!   origin, except file and color inputs) is left out: the existing origin and access policy
-//!   is kept as it was.
 //! - "Show the picker, if applicable": this headless browser has no picker UI, so nothing is
 //!   shown and no event, focus or value change follows. A successful call only consumes the
 //!   activation.
+
+use std::rc::Rc;
 
 use pyro_dom::forms::InputType;
 use pyro_dom::NodeId;
@@ -36,6 +37,9 @@ pub(crate) fn input<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
             "Failed to execute 'showPicker' on 'HTMLInputElement': HTMLInputElement::showPicker() cannot be used on immutable controls.",
         ));
     }
+    if !matches!(page.dom.borrow().input_type(n.id).js()?, InputType::File | InputType::Color) {
+        require_top_level_origin(page, "HTMLInputElement")?;
+    }
     require_activation(page, "HTMLInputElement")?;
     page.consume_transient_activation();
     Ok(s.undefined())
@@ -51,6 +55,7 @@ pub(crate) fn select<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
             "Failed to execute 'showPicker' on 'HTMLSelectElement': HTMLSelectElement::showPicker() cannot be used on immutable controls.",
         ));
     }
+    require_top_level_origin(page, "HTMLSelectElement")?;
     require_activation(page, "HTMLSelectElement")?;
     if !being_rendered(page, n.id) {
         return Err(JsError::dom(
@@ -71,6 +76,22 @@ pub(crate) fn select<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
 fn readonly_applies(ty: InputType) -> bool {
     use InputType::*;
     matches!(ty, Text | Search | Url | Tel | Email | Password | Date | Month | Week | Time | DateTimeLocal | Number)
+}
+
+/// "If this's relevant settings object's origin is not same origin with its top-level origin, throw
+/// a `SecurityError`": the picker of a frame of another origin than the top-level document's.
+fn require_top_level_origin(page: &Rc<PageDom>, interface: &str) -> JsResult<()> {
+    let mut top = page.clone();
+    while let Some(crate::page::FrameContainer::Frame(parent, _)) = top.hooks().map(|h| h.container()) {
+        top = parent;
+    }
+    if top.origin_key() == page.origin_key() {
+        return Ok(());
+    }
+    Err(JsError::dom(
+        "SecurityError",
+        format!("Failed to execute 'showPicker' on '{interface}': {interface}::showPicker() called from cross-origin iframe."),
+    ))
 }
 
 /// "If this's relevant global object does not have transient activation, throw a
