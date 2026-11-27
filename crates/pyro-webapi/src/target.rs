@@ -391,6 +391,7 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, obj: Object<'s>, a: Args
     t.page.register_realm(&realm);
     let added = t.page.dom.borrow_mut().add_listener(t.key, &ty, handle, opts);
     if added {
+        crate::smil::listener_added(&t.page, &ty);
         maybe_pin(s, &t.page, t.key, obj);
         if &*ty == "prioritychange" { crate::task_signal::sync_listener(s, obj)?; }
         if &*ty == "change" { crate::layout_api::sync_media_listener(s, obj); }
@@ -1186,6 +1187,7 @@ fn store_event_handler(
         AddOptions { capture: false, once: false, passive: None },
     );
     maybe_pin(s, &target.page, target.key, object);
+    crate::smil::listener_added(&target.page, ty);
     if ty == "prioritychange" { crate::task_signal::sync_listener(s, object)?; }
     if ty == "change" { crate::layout_api::sync_media_listener(s, object); }
     Ok(())

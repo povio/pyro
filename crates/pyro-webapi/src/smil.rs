@@ -12,8 +12,8 @@
 //! What is read: the target (`href`, `xlink:href`, else the parent),
 //! `attributeName`, `values` or `from`, `to` and `by`, `keyTimes`, `calcMode`
 //! (`discrete`, `linear`, `paced` and `spline`, `keySplines` giving each
-//! interval's easing), `additive`, `accumulate`, `begin` (its offset values,
-//! the earliest), `dur`, `repeatCount`, `repeatDur` and `fill="freeze"`. The
+//! interval's easing), `additive`, `accumulate`, `begin` and `end` (below),
+//! `dur`, `repeatCount`, `repeatDur` and `fill="freeze"`. The
 //! document's animation time starts at its load event, as Chrome starts the
 //! SVG time containers of a document. `<set>` is an animation of its `to`
 //! value, with an indefinite simple duration unless `dur` is given.
@@ -555,8 +555,9 @@ fn parse_spec(text: &str) -> Option<Spec> {
         }
     }
     let (id, rest) = match after_dot {
-        Some(at) => (Some(id), &text[at..]),
-        None => (None, text),
+        // (`click-0.5s`: the dot is the offset's decimal point, not an id's end.)
+        Some(at) if !text[at..].starts_with(|c: char| c.is_ascii_digit()) => (Some(id), &text[at..]),
+        _ => (None, text),
     };
     if id.as_deref() == Some("") {
         return None;
@@ -1310,6 +1311,14 @@ pub(crate) fn start(page: &Rc<PageDom>) {
     }
 }
 
+/// A listener or handler for `ty` was added to some target (`target.rs`): one for a timing event
+/// makes the events due worth working out.
+pub(crate) fn listener_added(page: &Rc<PageDom>, ty: &str) {
+    if matches!(ty, "beginEvent" | "endEvent" | "repeatEvent") {
+        start(page);
+    }
+}
+
 /// Checkpoint after a task: a changed document (an animation element inserted, `begin`
 /// mutated) is looked at again in a task of its own.
 pub(crate) fn after_task(page: &Rc<PageDom>) {
@@ -1443,12 +1452,16 @@ pub(crate) fn pump(page: &Rc<PageDom>) {
         let Some(found) = cache.animations(&dom, page.document()) else { return };
         read = found;
         cache.pumped.set(Some(dom.version()));
+        // (Without a listener the events are consumed all the same: one added later hears what
+        // happens from then on.)
+        observed = read.has_events || ["beginEvent", "endEvent", "repeatEvent"].iter().any(|ty| dom.listens_for(ty));
         let seeking = cache.seeked.replace(false);
         let intervals = cache.intervals(&read);
-        observed = read.has_events || ["beginEvent", "endEvent", "repeatEvent"].iter().any(|ty| dom.listens_for(ty));
         let mut fired = cache.fired.borrow_mut();
         // An element that left the document starts afresh when it is inserted again.
-        fired.retain(|node, _| read.timed.iter().any(|t| t.node == *node));
+        if fired.len() > read.timed.len() {
+            fired.retain(|node, _| read.timed.iter().any(|t| t.node == *node));
+        }
         for (i, timed) in read.timed.iter().enumerate() {
             let ivs = &intervals[i];
             if !dom.is_alive(timed.node) {
@@ -1476,15 +1489,13 @@ pub(crate) fn pump(page: &Rc<PageDom>) {
     }
     let plan = cache.plan.get();
     let mut added = false;
-    if observed {
-        for (node, ty, repeat) in due {
-            // (The event values `beginEvent` and `endEvent` are syncbase times: `parse_spec`.)
-            if ty == "repeatEvent" {
-                added |= note_event(page, &read, node, "repeatEvent", false, time);
-                added |= note_event(page, &read, node, &format!("repeat({repeat})"), false, time);
-            }
-            fire_event(page, node, ty);
+    for (node, ty, repeat) in due.into_iter().filter(|_| observed) {
+        // (The event values `beginEvent` and `endEvent` are syncbase times: `parse_spec`.)
+        if ty == "repeatEvent" {
+            added |= note_event(page, &read, node, "repeatEvent", false, time);
+            added |= note_event(page, &read, node, &format!("repeat({repeat})"), false, time);
         }
+        fire_event(page, node, ty);
     }
     // Something a handler did planned the next run already.
     if cache.plan.get() != plan {
@@ -1667,6 +1678,7 @@ mod tests {
         assert_eq!(parse_spec("my-anim.begin - 250ms"), Some(Spec::Sync { id: "my-anim".into(), end: false, offset: -250.0 }));
         assert_eq!(parse_spec("a\\.b.end"), Some(Spec::Sync { id: "a.b".into(), end: true, offset: 0.0 }));
         assert_eq!(parse_spec("click"), Some(Spec::Event { id: None, name: "click".into(), offset: 0.0 }));
+        assert_eq!(parse_spec("click-0.5s"), Some(Spec::Event { id: None, name: "click".into(), offset: -500.0 }));
         assert_eq!(parse_spec("click+0.5s"), Some(Spec::Event { id: None, name: "click".into(), offset: 500.0 }));
         assert_eq!(parse_spec("e.test"), Some(Spec::Event { id: Some("e".into()), name: "test".into(), offset: 0.0 }));
         assert_eq!(parse_spec("anim.repeat(2)"), Some(Spec::Event { id: Some("anim".into()), name: "repeat(2)".into(), offset: 0.0 }));
