@@ -20,7 +20,7 @@
 //! canvases on a full rescan; a drawable canvas made only by `cloneNode` is
 //! not noticed until some element is given `content=drawable`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use pyro_dom::html_in_canvas::Touch;
@@ -367,7 +367,14 @@ impl pyro_js::JsClass for ElementImageClass {
     const NAME: &'static str = "ElementImage";
     type Data = ElementSnapshot;
     type Parent = pyro_js::NoParent;
-    fn define(_def: &mut pyro_js::ClassDef<Self>) {}
+    fn define(def: &mut pyro_js::ClassDef<Self>) {
+        // `close()`: the image is released; drawing it or asking for its size throws
+        // InvalidStateError from then on (the pixels are dropped with the wrapper).
+        def.method("close", 0, |s, image, _a| {
+            image.closed.set(true);
+            Ok(s.undefined())
+        });
+    }
 }
 
 /// The data of an [`ElementImageClass`].
@@ -377,6 +384,8 @@ pub struct ElementSnapshot {
     pub height: f64,
     pub pixels: Option<(u32, u32, Rc<Vec<u8>>)>,
     pub taints: bool,
+    /// `close()` was called.
+    pub closed: Cell<bool>,
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
@@ -425,6 +434,7 @@ pub(crate) fn capture<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, ele
         height,
         pixels: image.pixels.map(|(w, h, data)| (w, h, Rc::new(data))),
         taints: image.taints,
+        closed: Cell::new(false),
     };
     Ok(s.wrap::<ElementImageClass>(snapshot, None)?.value())
 }
@@ -438,6 +448,9 @@ pub(crate) fn default_size<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId
         Some(image) => {
             if !is_drawable_canvas(&dom, canvas) {
                 return Err(invalid_state("The canvas's content is not drawable."));
+            }
+            if image.closed.get() {
+                return Err(invalid_state("The ElementImage is closed."));
             }
             (image.width, image.height)
         }
@@ -539,18 +552,36 @@ pub(crate) fn set_drawn_transform(page: &Rc<PageDom>, canvas: NodeId, element: N
     let (sx, sy) = {
         let layout = page.layout();
         let dom = page.dom.borrow();
-        grid_scale(&layout, &dom, canvas)
+        let (sx, sy) = grid_scale(&layout, &dom, canvas);
+        // The canvas box's rect holds the zoom of the canvas; the grid's scale
+        // per CSS px of the element does not (WPT canvas-transform-update, "not affected by zoom").
+        let zoom = effective_zoom(&layout, &dom, canvas);
+        (sx * zoom, sy * zoom)
     };
     let (sx, sy) = (if sx > 0.0 { sx } else { 1.0 }, if sy > 0.0 { sy } else { 1.0 });
+    // The transform in the element's CSS px: the grid transform conjugated by the grid's scale
+    // (S^-1 * M * S), so an element drawn at its default size, which is its CSS size in grid
+    // units, is not scaled, and a translation is in CSS px.
     let values = if values.len() == 6 {
         let v = &values;
-        vec![v[0] / sx, v[1] / sy, v[2] / sx, v[3] / sy, v[4] / sx, v[5] / sy]
+        vec![v[0], v[1] * sx / sy, v[2] * sy / sx, v[3], v[4] / sx, v[5] / sy]
     } else {
         values
     };
     let mut state = page.html_in_canvas.borrow_mut();
     state.transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
     state.transforms.push((canvas, element, values));
+}
+
+/// The computed `zoom` of `el` (1 where the engine reports none). Not its ancestors': `zoom` is
+/// not inherited.
+fn effective_zoom(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> f64 {
+    layout
+        .style()
+        .computed_value(dom, el, "zoom")
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|z| z.is_finite() && *z > 0.0)
+        .unwrap_or(1.0)
 }
 
 /// HTML-in-Canvas geometry: the client rect `rect` of `el` as its canvas

@@ -1784,8 +1784,9 @@ fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value
     Ok(s.undefined())
 }
 
-/// HTML-in-Canvas `drawElementImage(element, dx, dy)`, `(element, dx, dy, dw, dh)` and
-/// `(element, sx, sy, sw, sh, dx, dy, dw, dh)`: draws a drawable element of this context's
+/// HTML-in-Canvas `drawElementImage(element, dx, dy)`, `(element, dx, dy, dw, dh)`,
+/// `(element, sx, sy, sw, sh, dx, dy)` (the destination as large as the source) and
+/// `(element, sx, sy, sw, sh, dx, dy, dw, dh)`, each with a trailing options dictionary: draws a drawable element of this context's
 /// `<canvas content=drawable>`, painted alone at its CSS size (`crate::html_in_canvas::element_image`,
 /// which throws InvalidStateError for an element it may not draw), as `drawImage` draws a bitmap
 /// (the source rectangle in the element's CSS px). Returns the transform from the element's box to
@@ -1795,7 +1796,7 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
     a.require(3, "CanvasRenderingContext2D.drawElementImage")?;
     let mut n = a.len();
     // A trailing DrawElementImageOptions dictionary ({preserveElementGeometry}).
-    let options = (matches!(n, 4 | 6 | 10) && a.get(n - 1).is_object()).then(|| a.get(n - 1));
+    let options = (matches!(n, 4 | 6 | 8 | 10) && a.get(n - 1).is_object()).then(|| a.get(n - 1));
     if options.is_some() {
         n -= 1;
     }
@@ -1803,10 +1804,11 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
         Some(o) => o.get("preserveElementGeometry")?.to_bool(),
         None => false,
     };
-    if !matches!(n, 3 | 5) && n < 9 {
-        return Err(JsError::Type(format!("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 9], but {n} arguments provided.").into()));
+    if !matches!(n, 3 | 5 | 7) && n < 9 {
+        return Err(JsError::Type(format!("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 7, 9], but {n} arguments provided.").into()));
     }
     // An ElementImage (`captureElementImage`) draws what it captured.
+    let closed = s.unwrap::<crate::html_in_canvas::ElementImageClass>(a.get(0)).is_some_and(|image| image.closed.get());
     let snapshot = s.unwrap::<crate::html_in_canvas::ElementImageClass>(a.get(0)).map(|image| {
         crate::html_in_canvas::ElementImage {
             width: image.width,
@@ -1827,6 +1829,9 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
     let Target::Element(canvas) = c.target else {
         return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The canvas has no drawable content."));
     };
+    if closed {
+        return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The ElementImage is closed."));
+    }
     // WebIDL: the numbers are converted (their valueOf run) before the method's steps can throw.
     let v = finite_args_from(&a, 1, if n >= 9 { 8 } else { n - 1 })?;
     let image = match (snapshot, element) {
@@ -1839,8 +1844,12 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
     let (src, dst) = match v.len() {
         2 => (Rect::new(0.0, 0.0, w, h), Rect::new(v[0], v[1], v[0] + w, v[1] + h)),
         4 => (Rect::new(0.0, 0.0, w, h), Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3])),
+        6 => (Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3]), Rect::new(v[4], v[5], v[4] + v[2], v[5] + v[3])),
         _ => (Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3]), Rect::new(v[4], v[5], v[4] + v[6], v[5] + v[7])),
     };
+    // A negative width or height moves the rectangle's origin instead of mirroring the element
+    // (Chrome; WPT drawElementImage-dest-rect/-src-rect read the element transform back).
+    let (src, dst) = (src.abs(), dst.abs());
     c.sync_size();
     let state = c.state.borrow().clone();
     // Privacy: what the page must not read back (an image of unknown origin, a nested

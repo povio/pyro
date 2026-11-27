@@ -600,6 +600,12 @@ impl Geometry {
     /// arithmetic on them agrees wherever it is done; a 1/100 unit tolerance
     /// keeps f32 layout noise (19.999998) from losing a whole unit.
     pub(crate) fn element_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
+        // The fallback content of a canvas that is not drawable is not rendered: no box, though
+        // an earlier layout (while `content` was `drawable`) may have left one on it (WPT
+        // draw-element-image/layout-canvas-children).
+        if in_canvas_fallback(doc, id) {
+            return None;
+        }
         let mut b = self.adjusted_box(doc, id)?;
         // CSSOM View: an inline box has no client or scroll area (atomic
         // inlines, which `display: inline` controls and replaced elements
@@ -1671,6 +1677,22 @@ pub(crate) fn describe(doc: &BaseDocument, id: NodeId) -> String {
         cur = n.parent;
     }
     out.join("\n  ")
+}
+
+/// Whether `id` is a descendant of a `<canvas>` whose content is not drawable (its fallback
+/// content, which is never laid out).
+fn in_canvas_fallback(doc: &BaseDocument, id: NodeId) -> bool {
+    let mut cur = doc.get_node(id).and_then(|n| n.parent);
+    while let Some(p) = cur {
+        let Some(node) = doc.get_node(p) else { return false };
+        if let Some(element) = node.element_data() {
+            if tag(doc, p) == Some("canvas") && !element.is_drawable_canvas() {
+                return true;
+            }
+        }
+        cur = node.parent;
+    }
+    false
 }
 
 fn tag(doc: &BaseDocument, id: NodeId) -> Option<&str> {
