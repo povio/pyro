@@ -1057,6 +1057,17 @@ impl Hooks {
                 }
             }
         }
+        // HTML "navigate" sets the target navigable's ongoing navigation as it is asked for: a link
+        // or form aimed at another frame of the page (by name) supersedes what that frame was asked
+        // to do before its task runs (a `javascript:` URL set on it by the link's onclick, WPT
+        // navigating-across-documents/007), so that frame's document takes a new number now.
+        if let (Some(name), Some(host)) = (request.target.as_deref(), self.frames.upgrade()) {
+            if !request.url.get(..11).is_some_and(|scheme| scheme.eq_ignore_ascii_case("javascript:")) {
+                if let Some(dom) = host.named_frame(page, name).filter(|key| *key != page).and_then(|key| host.page_dom(key)) {
+                    dom.note_navigation_started();
+                }
+            }
+        }
         let user_gesture = self.frames.upgrade().and_then(|host| host.page_dom(page)).is_some_and(|dom| dom.window_open_user_gesture());
         // CSP: a `javascript:` URL is checked against the policies of the document that made
         // the request (the link's, the form's, `window.open`'s caller's), snapshotted now.
