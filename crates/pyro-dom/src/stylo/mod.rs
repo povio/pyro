@@ -347,6 +347,9 @@ pub fn matrix_from_css_text(text: &str) -> Option<([f64; 16], bool)> {
 /// would be (declarations, `selector()`, `not` / `and` / `or`; unknown
 /// syntax is false).
 pub fn supports_condition(text: &str) -> bool {
+    if let Some(supported) = cue_selector_supported(text) {
+        return supported;
+    }
     use style::stylesheets::supports_rule::SupportsCondition;
     use style::stylesheets::{CssRuleType, Origin};
     ensure_parse_prefs();
@@ -370,6 +373,22 @@ pub fn supports_condition(text: &str) -> bool {
         Some(condition) => condition.eval(&mut context),
         None => parse(&format!("({text})")).is_some_and(|condition| condition.eval(&mut context)),
     }
+}
+
+/// A lone `selector(<selector>)` that names WebVTT's `::cue` or `::cue(...)`: Stylo's selector parser does
+/// not know that pseudo-element, the DOM's own selector parser (the one `querySelector` and style rules
+/// use, `select.rs`) does, so it decides. `None` for any other condition.
+fn cue_selector_supported(text: &str) -> Option<bool> {
+    let text = text.trim();
+    let head = text.get(..9)?;
+    if !head.eq_ignore_ascii_case("selector(") || !text.ends_with(')') {
+        return None;
+    }
+    let arg = &text[9..text.len() - 1];
+    if !arg.to_ascii_lowercase().contains("::cue") {
+        return None;
+    }
+    Some(crate::select::parse_selectors(arg).is_ok())
 }
 
 pub use style::selector_parser::PseudoElement;
