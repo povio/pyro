@@ -740,6 +740,11 @@ fn spline(p: &[f64; 4], x: f64) -> f64 {
 /// The value of the animation function of `c` at its time, over the `under`lying value; `None`
 /// when a value does not parse as the type (the animation then has no effect).
 pub(crate) fn evaluate<S: Space>(space: &S, c: &Contribution, under: &S::V) -> Option<S::V> {
+    // A `by` animation (alone, or with `from`) of a type whose values do not add (a string, a
+    // keyword, a boolean) has no effect (WPT svg/animations `non-additive-type-by-animation`).
+    if !space.additive() && c.values.iter().any(|v| matches!(v, Src::Zero | Src::Sum(..))) {
+        return None;
+    }
     let kind = c.transform_type.as_deref();
     let parsed: Vec<Option<S::V>> = c
         .values
