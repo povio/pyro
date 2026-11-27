@@ -49,6 +49,9 @@ pub(crate) struct Preloads {
     prefetches: HashMap<String, PrefetchEntry>,
     /// Compression dictionary fetches waiting for the document's load event.
     dictionaries: Vec<DeferredFetch>,
+    /// The response URL (after redirects) of each classic script fetched at another URL: the
+    /// script's base URL, which `import()` in it resolves against (HTML "fetch a classic script").
+    script_responses: HashMap<String, String>,
 }
 
 /// A fetch started once the document has loaded.
@@ -287,6 +290,18 @@ impl Preloads {
         if self.module_options.len() < MAX_MODULE_OPTIONS {
             self.module_options.entry(key).or_insert(options);
         }
+    }
+
+    /// Notes that the classic script requested at `request` was answered at `response`.
+    pub(crate) fn note_script_response(&mut self, request: &str, response: &str) {
+        if request != response && (self.script_responses.len() < MAX_MODULE_OPTIONS || self.script_responses.contains_key(request)) {
+            self.script_responses.insert(request.to_owned(), response.to_owned());
+        }
+    }
+
+    /// The URL the classic script requested at `request` was answered at, when it differs.
+    pub(crate) fn script_response_url(&self, request: &str) -> Option<String> {
+        self.script_responses.get(request).cloned()
     }
 
     /// HTML "fetch a single module script": a module response's `Referrer-Policy` becomes the

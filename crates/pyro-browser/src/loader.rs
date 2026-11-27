@@ -3962,6 +3962,10 @@ impl Browser {
                                         bindings.set_script_errors_muted(&request_url, muted);
                                     }
                                 }
+                                // The script's base URL is its response's: where a redirect led.
+                                if let Some(mut doc) = b.doc_mut(page) {
+                                    doc.preloads.note_script_response(&request_url, &r.url);
+                                }
                                 Ok(pyro_net::decode_text_first(
                                     &r.body,
                                     &[r.charset.as_deref(), charset.as_deref(), document_charset],
@@ -4767,6 +4771,9 @@ impl Browser {
                 return;
             }
         }
+        // A redirected script is the response URL's (its base URL, for the `import()`s in it).
+        let redirected = self.doc(page).and_then(|p| p.preloads.script_response_url(url));
+        let url = redirected.as_deref().unwrap_or(url);
         let outer = bindings.as_ref().and_then(|dom| dom.current_script());
         if let Some(dom) = &bindings {
             dom.set_executing_classic_script(element.node);
