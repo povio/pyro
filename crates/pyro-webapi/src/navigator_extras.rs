@@ -390,6 +390,12 @@ impl ContextServices {
         self.webauthn.borrow_mut().run(method, params)
     }
 
+    /// The `WebAuthn.credentialAdded` / `credentialAsserted` / `credentialUpdated` / `credentialDeleted`
+    /// events (method, params) the virtual authenticators raised since the last call.
+    pub fn take_webauthn_events(&self) -> Vec<(&'static str, serde_json::Value)> {
+        self.webauthn.borrow_mut().take_events()
+    }
+
     /// The clipboard's `text/plain` entry (CDP-side inspection and tests).
     pub fn clipboard_text(&self) -> Option<String> {
         self.clipboard.borrow().iter().find(|e| e.0 == "text/plain").map(|e| e.1.clone())

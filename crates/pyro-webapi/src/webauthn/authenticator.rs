@@ -206,12 +206,22 @@ pub(crate) struct Authenticator {
     pub user_verified: bool,
     pub default_backup_eligibility: bool,
     pub default_backup_state: bool,
+    /// `WebAuthn.setResponseOverrideBits`: the signature of an assertion is zeroed, the UV / UP flag
+    /// of a response is cleared.
+    pub bogus_signature: bool,
+    pub bad_uv: bool,
+    pub bad_up: bool,
     pub credentials: Vec<Credential>,
 }
 
 impl Authenticator {
     fn platform(&self) -> bool {
         self.transport == "internal"
+    }
+
+    /// The flag bits `setResponseOverrideBits` leaves set in a response.
+    fn response_mask(&self) -> u8 {
+        (if self.bad_uv { !FLAG_UV } else { 0xff }) & (if self.bad_up { !FLAG_UP } else { 0xff })
     }
 
     fn transports(&self) -> Vec<&'static str> {
@@ -257,6 +267,9 @@ fn failed<T>(message: &str) -> Result<T, CommandError> {
 pub(crate) struct State {
     pub enabled: bool,
     pub authenticators: Vec<Authenticator>,
+    /// The `WebAuthn.credential*` events the authenticators raised, for the embedder to send to the
+    /// sessions that enabled the environment ([`State::take_events`]): method name and params.
+    events: Vec<(&'static str, Value)>,
 }
 
 fn error(name: &str, message: &str) -> Value {
@@ -289,6 +302,36 @@ fn prf_results(secret: &[u8], values: &Value) -> Option<Value> {
 }
 
 impl State {
+    /// The events raised since the last call.
+    pub(crate) fn take_events(&mut self) -> Vec<(&'static str, Value)> {
+        std::mem::take(&mut self.events)
+    }
+
+    /// `credentialAdded` / `credentialAsserted` / `credentialUpdated` for credential `credential` of
+    /// authenticator `authenticator`.
+    fn credential_event(&mut self, name: &'static str, authenticator: usize, credential: usize) {
+        let a = &self.authenticators[authenticator];
+        let params = json!({ "authenticatorId": a.id, "credential": a.credentials[credential].to_cdp() });
+        self.events.push((name, params));
+    }
+
+    /// Removes the credentials of every authenticator that `gone` names, raising `credentialDeleted`.
+    fn remove_credentials(&mut self, mut gone: impl FnMut(&Credential) -> bool) {
+        for a in &mut self.authenticators {
+            let mut removed = Vec::new();
+            a.credentials.retain(|c| {
+                let drop = gone(c);
+                if drop {
+                    removed.push(c.id.clone());
+                }
+                !drop
+            });
+            for id in removed {
+                self.events.push(("credentialDeleted", json!({ "authenticatorId": a.id, "credentialId": b64_std(&id) })));
+            }
+        }
+    }
+
     fn find(&mut self, id: &str) -> Result<&mut Authenticator, CommandError> {
         self.authenticators
             .iter_mut()
@@ -348,7 +391,12 @@ impl State {
             if verified && !a.user_verified {
                 return error("NotAllowedError", "The operation either timed out or was not allowed.");
             }
-            return self.authenticators[index].make(req, &rp_id, resident_key, verified);
+            let response = self.authenticators[index].make(req, &rp_id, resident_key, verified);
+            if response["status"] == "ok" {
+                let added = self.authenticators[index].credentials.len() - 1;
+                self.credential_event("credentialAdded", index, added);
+            }
+            return response;
         }
         if pending || !denied {
             json!({ "status": "pending" })
@@ -398,7 +446,11 @@ impl State {
             if verified && !a.user_verified {
                 return error("NotAllowedError", "The operation either timed out or was not allowed.");
             }
-            return self.authenticators[index].assert(req, &rp_id, credential, verified);
+            let response = self.authenticators[index].assert(req, &rp_id, credential, verified);
+            if response["status"] == "ok" {
+                self.credential_event("credentialAsserted", index, credential);
+            }
+            return response;
         }
         if pending || !(denied || empty) {
             json!({ "status": "pending" })
@@ -416,23 +468,24 @@ impl State {
         match req["kind"].as_str() {
             Some("unknown") => {
                 let id = bytes_of(&req["credentialId"]);
-                for a in &mut self.authenticators {
-                    a.credentials.retain(|c| !(c.resident && c.rp_id == rp_id && Some(&c.id) == id.as_ref()));
-                }
+                self.remove_credentials(|c| c.resident && c.rp_id == rp_id && Some(&c.id) == id.as_ref());
             }
             Some("all") => {
                 let accepted = list_of(&req["accepted"]);
-                for a in &mut self.authenticators {
-                    a.credentials.retain(|c| !(matches_user(c) && !accepted.contains(&c.id)));
-                }
+                self.remove_credentials(|c| matches_user(c) && !accepted.contains(&c.id));
             }
             Some("details") => {
                 let name = req["name"].as_str().unwrap_or_default();
                 let display = req["displayName"].as_str().unwrap_or_default();
-                for a in &mut self.authenticators {
-                    for c in a.credentials.iter_mut().filter(|c| matches_user(c)) {
+                for index in 0..self.authenticators.len() {
+                    for credential in 0..self.authenticators[index].credentials.len() {
+                        let c = &mut self.authenticators[index].credentials[credential];
+                        if !matches_user(c) {
+                            continue;
+                        }
                         c.user_name = Some(name.to_owned());
                         c.user_display_name = Some(display.to_owned());
+                        self.credential_event("credentialUpdated", index, credential);
                     }
                 }
             }
@@ -506,6 +559,14 @@ impl State {
                 }
                 Ok(json!({}))
             }
+            "setResponseOverrideBits" => {
+                let a = self.find(params["authenticatorId"].as_str().unwrap_or_default())?;
+                let bit = |name: &str| params[name].as_bool().unwrap_or(false);
+                a.bogus_signature = bit("isBogusSignature");
+                a.bad_uv = bit("isBadUV");
+                a.bad_up = bit("isBadUP");
+                Ok(json!({}))
+            }
             "clearCredentials" => {
                 self.find(params["authenticatorId"].as_str().unwrap_or_default())?.credentials.clear();
                 Ok(json!({}))
@@ -561,6 +622,9 @@ impl State {
             user_verified: flag("isUserVerified", false),
             default_backup_eligibility: flag("defaultBackupEligibility", false),
             default_backup_state: flag("defaultBackupState", false),
+            bogus_signature: false,
+            bad_uv: false,
+            bad_up: false,
             credentials: Vec::new(),
         });
         Ok(json!({ "authenticatorId": id }))
@@ -685,6 +749,7 @@ impl Authenticator {
         if user_verified {
             flags |= FLAG_UV;
         }
+        flags &= self.response_mask();
         let mut data = sha256(rp_id.as_bytes());
         if !authenticator_extensions.is_empty() {
             flags |= FLAG_ED;
@@ -727,6 +792,7 @@ impl Authenticator {
         let ctap2 = self.protocol.ctap2();
         let (has_cred_blob, has_large_blob, has_prf) = (self.has_cred_blob, self.has_large_blob, self.has_prf);
         let attachment = self.attachment();
+        let (bogus_signature, mask) = (self.bogus_signature, self.response_mask());
         let credential = &mut self.credentials[index];
         let ext = &req["extensions"];
         credential.sign_count = credential.sign_count.wrapping_add(1);
@@ -768,6 +834,7 @@ impl Authenticator {
         if user_verified {
             flags |= FLAG_UV;
         }
+        flags &= mask;
         if !authenticator_extensions.is_empty() {
             flags |= FLAG_ED;
         }
@@ -780,9 +847,12 @@ impl Authenticator {
         let client_data = req["clientData"].as_str().unwrap_or_default().as_bytes();
         let mut signed = data.clone();
         signed.extend_from_slice(&sha256(client_data));
-        let Some(signature) = sign_es256(&credential.private_key, &signed) else {
+        let Some(mut signature) = sign_es256(&credential.private_key, &signed) else {
             return error("NotAllowedError", "The authenticator could not sign the assertion.");
         };
+        if bogus_signature {
+            signature.fill(0);
+        }
         json!({
             "status": "ok",
             "id": b64u(&credential.id),

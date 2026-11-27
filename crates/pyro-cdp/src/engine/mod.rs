@@ -356,6 +356,9 @@ pub(crate) struct Session {
     /// Page.setInterceptFileChooserDialog: file inputs report
     /// Page.fileChooserOpened to this session.
     pub(crate) intercept_file_chooser: bool,
+    /// `WebAuthn.enable` of this session: its commands reach the virtual authenticators and it
+    /// receives their `credential*` events.
+    pub(crate) webauthn_enabled: bool,
     /// Runtime.addBinding names: their calls are reported to this session.
     pub(crate) bindings: Vec<String>,
     fetch: fetch::FetchSession,
@@ -969,6 +972,7 @@ impl EngineHost {
         self.drain_collector();
         self.flush_network();
         self.flush_fetch();
+        self.flush_webauthn();
         self.poll_coverage();
         // `Pyro.run` request steps wait on the log these observations fill.
         if self.waiters.log_changed {
@@ -1685,10 +1689,18 @@ impl Host for EngineHost {
         if state.timezone_override.is_some() && !self.pages.values().any(|s| s.timezone_override.is_some()) {
             let _ = self.apply_timezone(None);
         }
+        let mut webauthn = false;
         for session in &state.sessions {
             self.pending.cancel_session(session);
             if let Some(session) = self.sessions.remove(session) {
+                webauthn |= session.webauthn_enabled;
                 session.handles.borrow_mut().clear();
+            }
+        }
+        if webauthn {
+            let services = self.thread.browser.page(state.id).and_then(|p| self.thread.browser.context_services(p.context));
+            if let Some(services) = services {
+                self.webauthn_release(state.context, &services);
             }
         }
         self.renders.forget(state.id);
@@ -1729,6 +1741,7 @@ impl Host for EngineHost {
                 cache_disabled: false,
                 bypass_service_worker: false,
                 intercept_file_chooser: false,
+                webauthn_enabled: false,
                 bindings: Vec::new(),
                 fetch: fetch::FetchSession::default(),
                 handles: Rc::new(RefCell::new(HandleTable::new(self.handle_budget.clone()))),
@@ -1801,8 +1814,13 @@ impl Host for EngineHost {
         self.disable_fetch(session_id);
         self.screencasts.forget_session(session_id);
         self.coverage_session_detached(page, session_id);
+        let webauthn = self.sessions.get(session_id).is_some_and(|s| s.webauthn_enabled);
         if let Some(session) = self.sessions.remove(session_id) {
             session.handles.borrow_mut().clear();
+        }
+        // A session that goes disables the environment it enabled, as Chrome's handler does.
+        if webauthn {
+            self.webauthn_session_gone(page);
         }
         self.update_runtime_wanted();
         self.update_network_subscriptions();
