@@ -1399,6 +1399,12 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
             if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta) && control_key_action(page, target, &k.key) {
                 return;
             }
+            // Outside editable content a caret command (`moveDown`, `pageDown`, ... which Playwright
+            // sends with the key on macOS) moves nothing: the key scrolls instead, as it does on the
+            // platforms that send no commands. (Shift+arrow, which extends the selection, is no scroll key.)
+            if k.text.is_empty() && !k.commands.is_empty() && space_scrolls(page, target) && keyboard_scroll(page, k) {
+                return;
+            }
             if k.text.is_empty()
                 && !k.commands.is_empty()
                 && crate::edit_commands::run_commands(page, target, &k.commands)
@@ -1591,8 +1597,9 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
 }
 
-/// Whether Space on key target `target` may scroll: not when the target takes it as text (a text
-/// control, editable content, `designMode`). (The DOM borrow ends before the scroll runs.)
+/// Whether a scroll key on key target `target` may scroll: not when the target takes the key itself
+/// (a text control, editable content, `designMode`: Space as text, the arrows as caret movement).
+/// (The DOM borrow ends before the scroll runs.)
 fn space_scrolls(page: &PageDom, target: NodeId) -> bool {
     !is_directional_input_handler(&page.dom.borrow(), target)
 }
