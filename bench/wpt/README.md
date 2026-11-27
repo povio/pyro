@@ -816,8 +816,8 @@ job instead (a few wptserve and testdriver pages on lp-m1).
 `data-pyro-testdriver` attribute held for the call only (pyro's CDP has no Accessibility domain). Presses of the same
 button at the same spot within 500 ms count up (`clickCount`), as Chrome's WebDriver counts a double click.
 `delete_all_cookies` clears the browser context's cookies (`cookies/value/value-ctl.html`: 0 -> 63 of 66).
-Everything else (`get_named_cookie`, BiDi, virtual authenticators, payment and wallet modes, ...) rejects as "not
-implemented", as testdriver.js does with no vendor. At a421f2fe 3,206 of the 3,462 files that load testdriver call
+Commands live in `td/<group>.mjs` (`td/index.mjs` explains how to add a group). Everything else (`get_named_cookie`, BiDi, virtual authenticators, payment and wallet modes, ...) rejects as "not implemented", as testdriver.js does
+with no vendor. At a421f2fe 3,206 of the 3,462 files that load testdriver call
 only `click`, `send_keys`, `Actions` or `bless`; the next by use are all implemented too: `set_permission` (165
 calls), `get_computed_role` (114), `get_computed_label` (77), `delete_all_cookies` (41). A sample of 50 testdriver
 pages (1 in 80, before `delete_all_cookies`): 48 completed, 12 passed every subtest. With `--dirs all --server wptserve --testdriver`: testharness 35,562 pages,
