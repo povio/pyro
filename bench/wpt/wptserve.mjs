@@ -186,13 +186,84 @@ const writable = (raw) => {
   return out;
 };
 
+// Raw forwarding for what Node's HTTP layer cannot carry: `.asis` responses (wptserve writes them verbatim: bare-LF
+// heads, no blank line after the last header, then the connection closes; Node's client parser fails on them) and
+// requests with a method llhttp does not know (`TESTING`). The request goes out as `head` (request line + header
+// lines, written here) plus `body`, with `Connection: close`; the response bytes reach the browser unchanged, and a
+// head the upstream left without its terminating blank line gets one (a chunk-less, close-delimited response).
+function rawForward(sock, port, head, body, { closeAfter = false } = {}) {
+  const up = net.connect(port, '127.0.0.1', () => { up.write(head); if (body?.length) up.write(body); });
+  let seen = Buffer.alloc(0); // the response head so far, until its blank line
+  let headDone = false;
+  let remaining = Infinity; // closeAfter: body bytes still to come (wptserve keeps the connection open for methods it does not know)
+  const finish = () => { if (sock.writable) sock.end(); up.destroy(); };
+  up.on('data', (c) => {
+    if (!headDone) {
+      seen = Buffer.concat([seen, c]);
+      const m = /\r?\n\r?\n/.exec(seen.latin1Slice(0, Math.min(seen.length, 65536)));
+      if (!m) return;
+      headDone = true;
+      let out = seen;
+      if (closeAfter) {
+        // The browser's connection ends with this response: it is told so, and it ends once Content-Length is read.
+        const text = seen.latin1Slice(0, m.index);
+        const length = /^content-length:[ \t]*(\d+)/im.exec(text);
+        remaining = length ? Number(length[1]) - (seen.length - (m.index + m[0].length)) : Infinity;
+        const eol = text.indexOf('\n');
+        if (!/^connection:/im.test(text) && /\r$/.test(text.slice(0, eol))) out = Buffer.concat([seen.subarray(0, eol + 1), Buffer.from('Connection: close\r\n'), seen.subarray(eol + 1)]);
+      }
+      if (sock.writable) sock.write(out);
+      seen = Buffer.alloc(0);
+      if (remaining <= 0) finish();
+      return;
+    }
+    if (sock.writable) sock.write(c);
+    remaining -= c.length;
+    if (remaining <= 0) finish();
+  });
+  up.on('end', () => {
+    if (!headDone && seen.length && sock.writable) sock.write(Buffer.concat([seen, Buffer.from(seen[seen.length - 1] === 0x0a ? '\n' : '\r\n\r\n')]));
+    sock.end();
+  });
+  up.on('error', () => { if (!headDone && sock.writable) sock.end('HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n'); else sock.destroy(); });
+  sock.on('error', () => up.destroy());
+  sock.on('close', () => up.destroy());
+  return up;
+}
+
+const rawHead = (method, target, raw) => {
+  const lines = [`${method} ${target} HTTP/1.1`];
+  for (let i = 0; i < raw.length; i += 2) lines.push(`${raw[i]}: ${raw[i + 1]}`);
+  lines.push('Connection: close');
+  return Buffer.from(lines.join('\r\n') + '\r\n\r\n', 'latin1');
+};
+
 export function startProxy() {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 256 });
-  const server = http.createServer((req, res) => {
+  // insecureHTTPParser for the browser's side only: header values with control characters, and header names as the
+  // browser spelled them (rawHeaders; req.headers lowercases), go through to wptserve, which echoes both
+  // (echo-headers.py, inspect-headers.py read the raw headers). The upstream's responses keep the strict parser: a
+  // response with a NUL in a header must stay a network error (fetch/h1-parsing/resources-with-0x00-in-header).
+  const server = http.createServer({ insecureHTTPParser: true }, (req, res) => {
     let u;
     try { u = new URL(req.url); } catch { res.writeHead(400); res.end(); return; }
-    const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !HOP.has(k)));
-    const up = http.request({ host: '127.0.0.1', port: u.port || 80, method: req.method, path: u.pathname + u.search, headers, agent },
+    const raw = endToEnd(req.rawHeaders);
+    // With a header array Node writes the head at once and so cannot tell an empty body from a chunked one: a POST
+    // the browser sent with neither Content-Length nor Transfer-Encoding is a body-less one, and wptserve (Python)
+    // cannot read a chunked request body.
+    if (req.headers['content-length'] === undefined && req.headers['transfer-encoding'] === undefined && !/^(GET|HEAD|DELETE|OPTIONS|TRACE|CONNECT)$/.test(req.method)) raw.push('Content-Length', '0');
+    const port = Number(u.port) || 80;
+    const target = u.pathname + u.search;
+    const viaRaw = () => {
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => rawForward(req.socket, port, rawHead(req.method, target, raw), Buffer.concat(chunks)));
+    };
+    // `.asis` files (WPT's "send these bytes as they are"): see rawForward.
+    if (u.pathname.endsWith('.asis')) { viaRaw(); return; }
+    let up;
+    try {
+      up = http.request({ host: '127.0.0.1', port, method: req.method, path: target, headers: raw, agent },
       (r) => {
         // WPT pages send status texts and header values Node refuses to write (control characters): such a response
         // goes on with the standard status text, and without the offending headers, never as a throw (an exception
@@ -204,6 +275,12 @@ export function startProxy() {
         }
         pipeline(r, res, () => {});
       });
+    } catch {
+      // Node's client refuses a header value with a control character (the strict parser's rule, and the response
+      // parser is the one that must stay strict): those requests (fetch/api/headers/header-values*) go as bytes.
+      viaRaw();
+      return;
+    }
     // After the head went out the response cannot be ended cleanly while the upstream may still be piped into it.
     up.on('error', () => { if (res.headersSent) res.destroy(); else { res.writeHead(502); res.end(); } });
     // A response that ended (the upstream failed, the browser left) while the upstream still sends: without a
@@ -211,6 +288,26 @@ export function startProxy() {
     res.on('error', () => up.destroy());
     res.on('close', () => up.destroy());
     req.pipe(up);
+  });
+  // A method llhttp does not know (`TESTING`, redirect-method.any.js) never reaches the request handler: the parser
+  // fails with HPE_INVALID_METHOD and the head it read is in rawPacket. The request is rewritten from absolute-URI
+  // form and forwarded as bytes; what the browser sends after the head (a body) follows on the same socket.
+  server.on('clientError', (err, sock) => {
+    const packet = err.code === 'HPE_INVALID_METHOD' && err.rawPacket ? err.rawPacket : null;
+    const end = packet ? packet.indexOf('\r\n\r\n') : -1;
+    const m = end > 0 ? /^([!#$%&'*+.^_`|~0-9A-Za-z-]+) (\S+) HTTP\/1\.1\r\n/.exec(packet.latin1Slice(0, end + 2)) : null;
+    let u;
+    try { u = m && new URL(m[2]); } catch { u = null; }
+    if (!u || !sock.writable) { if (sock.writable) sock.end('HTTP/1.1 400 Bad Request\r\nconnection: close\r\ncontent-length: 0\r\n\r\n'); else sock.destroy(); return; }
+    // Header lines as sent, minus the hop-by-hop ones.
+    const raw = [];
+    for (const line of packet.latin1Slice(m[0].length, end).split('\r\n')) {
+      const c = line.indexOf(':');
+      if (c > 0) raw.push(line.slice(0, c), line.slice(c + 1).trim());
+    }
+    const body = packet.subarray(end + 4);
+    const up = rawForward(sock, Number(u.port) || 80, rawHead(m[1], u.pathname + u.search, endToEnd(raw)), body, { closeAfter: true });
+    sock.on('data', (c) => up.write(c));
   });
   server.on('connect', (req, sock, head) => {
     const port = Number(req.url.split(':').pop()) || 443;

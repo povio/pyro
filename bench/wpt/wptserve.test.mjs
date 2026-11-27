@@ -139,3 +139,41 @@ test('the proxy forwards a response whose status text or header Node cannot writ
     expect(await viaProxy(oddPort)).toEqual({ status: 200, ok: '1', body: 'ok' });
   } finally { proxy.close(); odd.close(); dying.close(); }
 });
+
+// wptserve's `.asis` heads, methods Node's parser does not know and what a browser spells in a request reach wptserve as sent
+// (fetch/api/basic/header-value-combining, redirect-method.any.js, request-headers-case, header-values).
+test('the proxy forwards .asis responses, unknown methods, header name case and control characters as bytes', async () => {
+  const seen = [];
+  const upstream = net.createServer((sock) => {
+    let buf = '';
+    sock.on('data', (c) => {
+      buf += c.toString('latin1');
+      if (!buf.includes('\r\n\r\n')) return;
+      seen.push(buf);
+      // An .asis head: bare LF, no blank line, then the close.
+      if (buf.includes('.asis')) sock.end('HTTP/1.1 280 HELLO\nfoo-test: 1\nfoo-test: 2\n');
+      else sock.end('HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok');
+    });
+    sock.on('error', () => {});
+  });
+  const port = await new Promise((resolve) => upstream.listen(0, '127.0.0.1', () => resolve(upstream.address().port)));
+  const proxy = await startProxy();
+  const exchange = (request) => new Promise((resolve) => {
+    const sock = net.connect(proxy.port, '127.0.0.1', () => sock.write(request));
+    let out = '';
+    sock.on('data', (c) => { out += c.toString('latin1'); });
+    sock.on('close', () => resolve(out));
+    sock.on('error', () => resolve(out));
+  });
+  const via = (method, target, headers) => `${method} http://web-platform.test:${port}${target} HTTP/1.1\r\nHost: web-platform.test:${port}\r\n${headers}\r\n`;
+  try {
+    // The unterminated head gets its blank line, the bare LFs stay.
+    expect(await exchange(via('GET', '/x.asis', ''))).toBe('HTTP/1.1 280 HELLO\nfoo-test: 1\nfoo-test: 2\n\n');
+    expect(await exchange(via('TESTING', '/x?y=1', 'X-Case: 1\r\n'))).toContain('200 OK');
+    expect(seen.at(-1)).toMatch(/^TESTING \/x\?y=1 HTTP\/1\.1\r\n/);
+    expect(seen.at(-1)).toContain('X-Case: 1\r\n');
+    expect(await exchange(via('GET', '/y', 'THIS-is-A-test: a\x01b\r\nX-Empty:\r\n'))).toContain('200 OK');
+    expect(seen.at(-1)).toContain('THIS-is-A-test: a\x01b\r\n');
+    expect(seen.at(-1)).toContain('X-Empty: \r\n');
+  } finally { proxy.close(); upstream.close(); }
+});
