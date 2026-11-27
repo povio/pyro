@@ -1689,6 +1689,14 @@ m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }
  * narrower than its text overflows it instead of wrapping). */
 m|mi, m|mn, m|mo, m|ms, m|mtext { text-wrap-mode: nowrap; }
 
+/* pyro: MathML tables (MathML Core Appendix A, Chromium's mathml.css; `layout::math::table`): an
+ * `mtable` is an inline table that is compact by default, an `mtr` a table row and an `mtd` a
+ * table cell with its content centred and 0.5ex by 0.4em of padding. The cell lays its children
+ * out as a row (`table::construct`); the table's baseline is the math axis. */
+m|mtable { display: inline-table; math-style: compact; }
+m|mtr { display: table-row; }
+m|mtd { display: table-cell; padding: 0.5ex 0.4em; text-align: center; }
+
 /* pyro: MathML attribute-independent UA rules (MathML Core Appendix A, user agent stylesheet; Chromium's
  * mathml.css). The `m|math` and `m|mfrac` rules above belong to the layout; the attribute mappings
  * (`mathcolor`, `mathbackground`, `mathsize`, `scriptlevel`, `displaystyle`) are presentational hints

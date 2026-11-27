@@ -432,6 +432,7 @@ impl LayoutPassState<'_> {
         };
         // An operator stretched along the block axis or large is as `operator` makes it (one
         // measured at a known size, stretched along the inline axis by its parent, is not).
+        let metrics = table::on_axis(self, metrics);
         if known.width.is_none() && known.height.is_none() { operator::stretch(self, metrics) } else { metrics }
     }
 
@@ -509,8 +510,10 @@ impl LayoutPassState<'_> {
 
         let content_box_width = (output.size.width - inset.left - inset.right).max(0.0);
         // `display: block math` centres its content in the box (Chromium's row algorithm).
-        let centred = self.nodes[dom_id].element_data().is_some_and(|element| *element.name.local == *"math")
-            && self.nodes[dom_id].display_style().is_some_and(|display| display.outside() == DisplayOutside::Block);
+        let centred = (self.nodes[dom_id].element_data().is_some_and(|element| *element.name.local == *"math")
+            && self.nodes[dom_id].display_style().is_some_and(|display| display.outside() == DisplayOutside::Block))
+            // A table cell centres its content in the width the column gives it (`text-align: center`).
+            || kind == MathKind::Table(TableKind::Cell);
         let centre = if centred { ((content_box_width - layout.content_width) / 2.0).max(0.0) } else { 0.0 };
         for (order, placement) in layout.children.iter().enumerate() {
             let metrics = &placement.metrics;
