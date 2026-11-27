@@ -2965,6 +2965,12 @@ impl Io {
                     if req.csp.as_ref().is_some_and(|csp| !csp.allows_redirect(&target)) {
                         return Err(NetError::Blocked(crate::csp::BLOCKED_BY_CSP.into()));
                     }
+                    // A speculation prefetch fails at a hop to another site than its initiator's or
+                    // the previous hop's, before that hop is requested (its credentials were decided
+                    // for the first URL only).
+                    if req.prefetch_redirect_stop.as_ref().is_some_and(|stop| stop.crosses_site(&url, &target)) {
+                        return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                    }
                     // A prefetch's hop into a service worker's scope: its fetch event cannot see the
                     // hops, so the prefetch fails here (the navigation fetches normally later).
                     if let Some(stop) = req.prefetch_redirect_stop.as_ref().filter(|stop| stop.stops_at(&target)) {

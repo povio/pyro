@@ -928,7 +928,7 @@ pub fn prefetch_redirect_stop(services: &ContextServices) -> pyro_net::PrefetchR
         .filter(|r| !r.uninstalling.get() && r.site == SiteContext::SameSite && r.active.borrow().is_some())
         .map(|r| (r.partition.clone(), r.scope.clone()))
         .collect();
-    pyro_net::PrefetchRedirectStop { scopes, navigation: false }
+    pyro_net::PrefetchRedirectStop { scopes, navigation: false, site_bound: false, initiator_site: None }
 }
 
 /// The scopes of the context's registrations with an active worker, for the redirects of a
@@ -941,7 +941,7 @@ pub fn navigation_redirect_stop(services: &ContextServices) -> pyro_net::Prefetc
         .filter(|r| !r.uninstalling.get() && r.active.borrow().is_some())
         .map(|r| (r.partition.clone(), r.scope.clone()))
         .collect();
-    pyro_net::PrefetchRedirectStop { scopes, navigation: true }
+    pyro_net::PrefetchRedirectStop { scopes, navigation: true, site_bound: false, initiator_site: None }
 }
 
 /// A request of an `<embed>` or `<object>` (their content, a document included): the browser

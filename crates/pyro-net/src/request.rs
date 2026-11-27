@@ -364,9 +364,27 @@ pub struct PrefetchRedirectStop {
     /// request with the redirect response as an opaque-redirect one (as a `manual` redirect
     /// mode does), and the caller follows it through the scope's service worker.
     pub navigation: bool,
+    /// A prefetch's: no redirect hop may go to a site other than the previous hop's, nor (for a
+    /// same-site prefetch, which sets `initiator_site`, as `cookies::partition_key` spells it) the
+    /// initiator's. The
+    /// prefetch's cookies and credentials were decided for its first URL only, so a hop that left
+    /// the site would be an authenticated, side-effecting request nobody activated: the prefetch
+    /// fails instead, before that hop is sent (the navigation fetches normally later).
+    pub site_bound: bool,
+    pub initiator_site: Option<String>,
 }
 
 impl PrefetchRedirectStop {
+    /// Whether a `site_bound` prefetch may not follow the redirect from `from` to `target`: the
+    /// target is cross-site to the initiator or to the hop that redirected.
+    pub fn crosses_site(&self, from: &Url, target: &Url) -> bool {
+        if !self.site_bound {
+            return false;
+        }
+        let site = crate::cookies::partition_key(target);
+        site != crate::cookies::partition_key(from) || self.initiator_site.as_ref().is_some_and(|initiator| site.as_ref() != Some(initiator))
+    }
+
     /// Whether a navigation to `target` would go through a worker of one of the scopes.
     pub fn stops_at(&self, target: &Url) -> bool {
         let partition = crate::cookies::partition_key(target);

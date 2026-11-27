@@ -124,6 +124,9 @@ pub enum Purpose {
     /// the prefetch reports to the Network domain (`Browser::deliver_prefetched`).
     Prefetch {
         cross_site: bool,
+        /// The initiator document's site (`pyro_net::cookies::partition_key`): no redirect hop of
+        /// the prefetch may leave it (`pyro_net::PrefetchRedirectStop::site_bound`).
+        initiator_site: Option<String>,
         tags: Option<String>,
         cookies: std::sync::Arc<pyro_net::DeferredCookies>,
         head: std::sync::Arc<PrefetchedHead>,
@@ -709,12 +712,22 @@ impl ResourceLoader for NetLoader {
                     None => route,
                 });
                 req.redirect = pyro_net::RedirectMode::Manual;
-            } else if let Some(page) = browser.page(request.page) {
-                let settings = page.frames.settings.borrow();
-                if settings.services.may_route_loads() && !page.bypass_service_worker {
-                    let stop = pyro_webapi::prefetch_redirect_stop(&settings.services);
-                    req.prefetch_redirect_stop = (!stop.scopes.is_empty()).then(|| std::sync::Arc::new(stop));
+            } else {
+                // The scopes a hop may not enter, and (always) the site every hop must stay in:
+                // the client fails the prefetch before sending a hop that leaves it.
+                let mut stop = browser
+                    .page(request.page)
+                    .and_then(|page| {
+                        let settings = page.frames.settings.borrow();
+                        (settings.services.may_route_loads() && !page.bypass_service_worker)
+                            .then(|| pyro_webapi::prefetch_redirect_stop(&settings.services))
+                    })
+                    .unwrap_or_default();
+                if let Some(Purpose::Prefetch { cross_site, initiator_site, .. }) = &request.purpose {
+                    stop.site_bound = true;
+                    stop.initiator_site = initiator_site.clone().filter(|_| !cross_site);
                 }
+                req.prefetch_redirect_stop = Some(std::sync::Arc::new(stop));
             }
         }
         // A preloaded static file: answered here, on the browser thread, with
