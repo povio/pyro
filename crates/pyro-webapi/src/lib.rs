@@ -102,6 +102,7 @@ pub mod navigator_extras;
 pub mod node;
 mod positional_html;
 mod scheduler;
+mod sanitizer;
 mod sanitizer_options;
 mod streaming_html;
 pub mod observable;

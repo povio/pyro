@@ -259,6 +259,7 @@ where
     crate::animations::define_globals(def);
     crate::reporting::define(def);
     crate::audio_decoder::define(def);
+    crate::sanitizer::define(def);
     crate::audio_encoder::define(def);
     crate::video_encoder::define(def);
     crate::image_decoder::define(def);

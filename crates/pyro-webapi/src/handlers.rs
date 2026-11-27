@@ -449,3 +449,25 @@ pub(crate) fn define_touch_handlers(s: &Scope<'_>) -> JsResult<()> {
     }
     Ok(())
 }
+
+/// Every event handler content attribute name (`onclick`, ...): the HTML list of
+/// event handler content attributes, which the Sanitizer API's built-in safe baseline removes.
+pub(crate) fn event_handler_attributes() -> &'static [String] {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let mut names: Vec<String> = GLOBAL
+            .iter()
+            .chain(WINDOW)
+            .chain(DOCUMENT)
+            .chain(FULLSCREEN)
+            .chain(PERMISSION_ELEMENT)
+            .chain(CANVAS_ELEMENT)
+            .copied()
+            .chain(SVG_ANIMATION_ATTRIBUTES.iter().map(|(name, _)| *name))
+            .map(|ty| format!("on{ty}"))
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    })
+}
