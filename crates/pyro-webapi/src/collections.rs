@@ -3058,7 +3058,7 @@ fn view_box_rect<'s>(s: &Scope<'s>, el: &NodeHold, this: Object<'s>, animated: b
     let reader = Rc::new(NodeHold::new(&el.page, el.id)?);
     let writer = reader.clone();
     let read = s.function("read", move |s, _this, _a| {
-        let numbers = read_view_box(&reader.page, reader.id);
+        let numbers = if animated { animated_view_box(&reader.page, reader.id) } else { read_view_box(&reader.page, reader.id) };
         Ok(s.array(&numbers.map(|v| s.number(v)))?.value())
     })?;
     let write = s.function("write", move |s, _this, a| {
@@ -3076,6 +3076,20 @@ fn view_box_rect<'s>(s: &Scope<'s>, el: &NodeHold, this: Object<'s>, animated: b
     let rect = crate::canvas::view_box_rect(s, &page, read, write, animated)?;
     s.set_hidden(this, key, rect)?;
     Ok(rect)
+}
+
+/// The four numbers of `viewBox` under the SMIL animations in effect on it (`animVal`); the attribute's
+/// own when none animates it or the animated value is not a valid rectangle.
+fn animated_view_box(page: &PageDom, id: NodeId) -> [f64; 4] {
+    let base = read_view_box(page, id);
+    let contributions = attribute_contributions(page, id, &["viewBox"]);
+    if contributions.is_empty() {
+        return base;
+    }
+    match crate::smil::fold(&NumberSpace { pair: false }, &contributions, base.to_vec()).as_slice() {
+        &[x, y, w, h] if w >= 0.0 && h >= 0.0 => [x, y, w, h],
+        _ => base,
+    }
 }
 
 /// The element's `SVGAnimatedRect` for `viewBox`, the same object each time.
@@ -3665,6 +3679,18 @@ pub fn point_list<'s>(s: &Scope<'s>, n: &NodeData, animated: bool) -> JsResult<V
         }
     });
     let lists = n.page().dom.borrow_mut().svg_point_lists(n.id, write).js()?;
+    // `animatedPoints` (and `animVal`) is the list under the SMIL animations in effect: the points as one
+    // list of numbers, as an animation's values parse.
+    let animated_hold = NodeHold::new(n.page(), n.id)?;
+    lists.set_animation(Box::new(move |base: &[(f32, f32)]| {
+        let contributions = attribute_contributions(&animated_hold.page, animated_hold.id, &["points"]);
+        if contributions.is_empty() {
+            return None;
+        }
+        let flat: Vec<f64> = base.iter().flat_map(|(x, y)| [f64::from(*x), f64::from(*y)]).collect();
+        let folded = crate::smil::fold(&NumberSpace { pair: false }, &contributions, flat);
+        Some(folded.chunks_exact(2).map(|p| (p[0] as f32, p[1] as f32)).collect::<Vec<(f32, f32)>>())
+    }));
     Ok(s.wrap::<SvgPointList>(SvgListData { lists, animated }, Some(key))?.value())
 }
 
