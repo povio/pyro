@@ -1726,6 +1726,9 @@ fn parse_document_with(dom: &DomRef, url: &str, html: &str, mode: InertDocumentM
         let mut d = dom.borrow_mut();
         let doc = d.create_document(crate::node::DocumentKind::Html, url);
         d.set_allow_declarative_shadow_roots(doc, mode == InertDocumentMode::DeclarativeShadowRoots).expect("fresh document");
+        if mode == InertDocumentMode::DomParser && html.as_bytes().windows(8).any(|w| w.eq_ignore_ascii_case(b"<details")) {
+            d.queue_details_toggles_of_parsed_document(doc);
+        }
         doc
     };
     let mut p = DocumentParser::new(dom.clone(), doc, false).expect("fresh document");

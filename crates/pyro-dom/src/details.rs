@@ -23,6 +23,10 @@ pub(crate) struct DetailsState {
     /// checks exclusivity. Never reset (a page that uses accordions keeps
     /// paying the one subtree check per insertion).
     named: bool,
+    /// `DOMParser` documents: no embedder watches them, but HTML still runs
+    /// their toggle tasks (a parser-set `open` fires `toggle` on the element),
+    /// so the embedder of any page takes their toggles.
+    parsed_docs: Vec<NodeId>,
 }
 
 impl Dom {
@@ -84,6 +88,12 @@ impl Dom {
         !self.details.toggles.is_empty()
     }
 
+    /// Lets the embedder queue the `toggle` events of details elements in
+    /// `document`, a `DOMParser` document ([`Dom::take_details_toggles`]).
+    pub fn queue_details_toggles_of_parsed_document(&mut self, document: NodeId) {
+        self.details.parsed_docs.push(document);
+    }
+
     /// Takes the details toggles of the details now in `document`: each
     /// node with whether it was open before. The caller releases each node
     /// once it is done with it. Toggles of details in documents no embedder
@@ -95,9 +105,11 @@ impl Dom {
     pub fn take_details_toggles(&mut self, document: NodeId) -> Vec<(NodeId, bool)> {
         let mut out = Vec::new();
         let mut keep = Vec::new();
+        let mut parsed = std::mem::take(&mut self.details.parsed_docs);
+        parsed.retain(|&d| self.check(d).is_ok());
         for (node, was_open) in std::mem::take(&mut self.details.toggles) {
             let doc = self.check(node).ok().map(|i| self.id_of(self.n(i).owner_doc));
-            if doc == Some(document) {
+            if doc == Some(document) || doc.is_some_and(|d| parsed.contains(&d)) {
                 out.push((node, was_open));
             } else if doc.is_some_and(|d| self.is_watched_document(d)) {
                 keep.push((node, was_open));
@@ -106,6 +118,7 @@ impl Dom {
             }
         }
         self.details.toggles = keep;
+        self.details.parsed_docs = parsed;
         out
     }
 
