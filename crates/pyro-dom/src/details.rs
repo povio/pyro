@@ -91,7 +91,16 @@ impl Dom {
     /// Lets the embedder queue the `toggle` events of details elements in
     /// `document`, a `DOMParser` document ([`Dom::take_details_toggles`]).
     pub fn queue_details_toggles_of_parsed_document(&mut self, document: NodeId) {
-        self.details.parsed_docs.push(document);
+        // Entries are generation-checked handles; the ones whose document was released since are
+        // dropped here (not only when toggles are pending), once the list has grown past a few.
+        if self.details.parsed_docs.len() >= 32 {
+            let mut parsed = std::mem::take(&mut self.details.parsed_docs);
+            parsed.retain(|&d| self.check(d).is_ok());
+            self.details.parsed_docs = parsed;
+        }
+        if !self.details.parsed_docs.contains(&document) {
+            self.details.parsed_docs.push(document);
+        }
     }
 
     /// Takes the details toggles of the details now in `document`: each
