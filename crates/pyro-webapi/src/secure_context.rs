@@ -9,6 +9,8 @@ use crate::page::PageDom;
 /// Interface objects on the global that exist only in a secure context.
 const GLOBALS: &[&str] = &[
     "LockManager",
+    "SubtleCrypto",
+    "CryptoKey",
     "Keyboard",
     "Lock",
     "MediaDevices",

@@ -202,6 +202,9 @@
     exportKey: map([...ASYMMETRIC, ...AES, CHACHA, 'HMAC'], ''),
     wrapKey: { 'AES-KW': '' },
     unwrapKey: { 'AES-KW': '' },
+    // Key encapsulation: no algorithm of this build supports it (no ML-KEM), so every name is unrecognized.
+    encapsulate: {},
+    decapsulate: {},
     'get key length': { [CHACHA]: '', ...map(AES, 'AesDerivedKeyParams'), HMAC: 'HmacImportParams', HKDF: '', PBKDF2: '' },
   };
   const BS = 1, BS_OPT = 2, HASH = 3, ULONG = 4, ULONG_OPT = 5, USHORT = 6, OCTET = 7, OCTET_OPT = 8, STRING = 9, BIGINT = 10, KEY = 11;
@@ -816,6 +819,36 @@
       const algorithm = k.alg;
       return N.publicOf(asymKind(name), algorithm.namedCurve || '', k.material, material =>
         makeKey('public', true, algorithm, usages, view(material)));
+    },
+    encapsulateKey(args) {
+      required(args, 5, 'encapsulateKey');
+      keyArg(args[1], 'parameter 2');
+      toBoolean(args[3]);
+      keyUsages(args[4]);
+      normalize(args[0], 'encapsulate');
+      throw notSupported('Key encapsulation is not supported');
+    },
+    encapsulateBits(args) {
+      required(args, 2, 'encapsulateBits');
+      keyArg(args[1], 'parameter 2');
+      normalize(args[0], 'encapsulate');
+      throw notSupported('Key encapsulation is not supported');
+    },
+    decapsulateKey(args) {
+      required(args, 6, 'decapsulateKey');
+      keyArg(args[1], 'parameter 2');
+      requireBuffer(args[2], 'parameter 3');
+      toBoolean(args[4]);
+      keyUsages(args[5]);
+      normalize(args[0], 'decapsulate');
+      throw notSupported('Key decapsulation is not supported');
+    },
+    decapsulateBits(args) {
+      required(args, 3, 'decapsulateBits');
+      keyArg(args[1], 'parameter 2');
+      requireBuffer(args[2], 'parameter 3');
+      normalize(args[0], 'decapsulate');
+      throw notSupported('Key decapsulation is not supported');
     },
     encrypt(args) {
       required(args, 3, 'encrypt');
