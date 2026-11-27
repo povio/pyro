@@ -479,6 +479,8 @@
   // The output of `node` (state) for quantum q at frame f0.
   function pull(n, q, f0, output = 0) {
     const bus = renderNode(n, q, f0);
+    // A worklet node has a bus of its own per output port.
+    if (n.outputPorts) return n.outputPorts[output] ?? silentBus(n.blockSize);
     // A splitter exposes each discrete input channel as its own mono output port.
     return n.splitChannels ? (bus[output] ? [bus[output]] : silentBus(n.blockSize)) : bus;
   }
@@ -986,7 +988,10 @@
       analysers.set(this, state);
       this.fftSize = fftSize;
       this.smoothingTimeConstant = smoothingTimeConstant;
-      (ctxOf(context).analyserNodes ??= new Set()).add(new WeakRefC(node));
+      const analysed = ctxOf(context);
+      (analysed.analyserNodes ??= new Set()).add(new WeakRefC(node));
+      // A running real-time context computes samples for it.
+      if (analysed.syncPump) analysed.syncPump();
       node.process = (frame, quantum) => {
         const bus = input(node, quantum, frame) ?? silentBus(node.blockSize);
         const mono = new F32(node.blockSize);
@@ -2037,6 +2042,232 @@
   }
   webidl(ConstantSourceNode, 'ConstantSourceNode');
 
+  // ---- AudioWorkletNode -----------------------------------------------------------------------------
+  // The node's processor lives in the context's AudioWorkletGlobalScope realm (audio_worklet.rs,
+  // audio_worklet_global.js); `process()` runs there once per render quantum, with copies of the
+  // quantum's input channels and fresh output channels the node reads back. Messages travel over a
+  // MessageChannel of this realm whose far end is bridged to the processor's own `port`.
+  const paramMaps = new WeakMap();
+  function paramMapOf(self) {
+    const m = paramMaps.get(self);
+    if (!m) throw invocation();
+    return m;
+  }
+  class AudioParamMap {
+    constructor(token, entries) {
+      if (token !== secret) throw illegal();
+      paramMaps.set(this, new Map(entries));
+    }
+    get size() { return paramMapOf(this).size; }
+    get(key) {
+      const m = paramMapOf(this);
+      if (arguments.length < 1) throw new TypeErrorC("Failed to execute 'get' on 'AudioParamMap': 1 argument required, but only 0 present.");
+      return m.get(`${key}`);
+    }
+    has(key) {
+      const m = paramMapOf(this);
+      if (arguments.length < 1) throw new TypeErrorC("Failed to execute 'has' on 'AudioParamMap': 1 argument required, but only 0 present.");
+      return m.has(`${key}`);
+    }
+    entries() { return paramMapOf(this).entries(); }
+    keys() { return paramMapOf(this).keys(); }
+    values() { return paramMapOf(this).values(); }
+    forEach(callback, thisArg) {
+      const m = paramMapOf(this);
+      if (arguments.length < 1) throw new TypeErrorC("Failed to execute 'forEach' on 'AudioParamMap': 1 argument required, but only 0 present.");
+      if (typeof callback !== 'function') throw new TypeErrorC("Failed to execute 'forEach' on 'AudioParamMap': parameter 1 is not of type 'Function'.");
+      for (const [key, value] of m) apply(callback, thisArg, [value, key, this]);
+    }
+  }
+  AudioParamMap.prototype[Symbol.iterator] = AudioParamMap.prototype.entries;
+  webidl(AudioParamMap, 'AudioParamMap');
+
+  const ErrorEventC = typeof ErrorEvent === 'function' ? ErrorEvent : Ev;
+  const portPost = typeof MessagePort === 'function' ? MessagePort.prototype.postMessage : null;
+  // Registers a node the render loop pulls every quantum, whether or not anything listens to it
+  // (AudioWorkletNode and ScriptProcessorNode run for their side effects).
+  function addPuller(c, n) {
+    (c.pulled ??= new Set()).add(n);
+    if (c.syncPump) c.syncPump();
+  }
+  // The node's processor failed: `processorerror` is queued as an ErrorEvent, and the node outputs
+  // silence from now on.
+  function processorError(n, error) {
+    n.worklet.dead = true;
+    n.outputPorts = null;
+    const c = ctxOf(n.ctx);
+    if (c.pulled) c.pulled.delete(n);
+    let message = '', filename = '', lineno = 0, colno = 0;
+    try {
+      const object = error !== null && (typeof error === 'object' || typeof error === 'function');
+      message = object && typeof error.message === 'string' ? error.message : `${error}`;
+      if (object) {
+        if (typeof error.sourceURL === 'string') filename = error.sourceURL;
+        if (typeof error.line === 'number') lineno = error.line;
+        if (typeof error.column === 'number') colno = error.column;
+      }
+    } catch {}
+    if (message === '') message = 'The AudioWorkletProcessor failed.';
+    setTimer(() => { apply(dispatch, n.self, [new ErrorEventC('processorerror', { message, filename, lineno, colno, error })]); }, 0);
+  }
+  function processWorklet(n, f0, q) {
+    const size = n.blockSize;
+    const w = n.worklet;
+    const rate = ctxOf(n.ctx).rate;
+    // Every input is pulled (the nodes feeding it keep their own state), an input with no active
+    // connection is an empty array of channels.
+    const inputs = [];
+    let anyActive = false;
+    for (let port = 0; port < n.numberOfInputs; port++) {
+      const sources = n.numberOfInputs > 1 ? n.inputs.filter(s => s.input === port) : n.inputs;
+      const bus = input(n, q, f0, port);
+      const active = bus !== null && sources.some(s => s.node.q === q && s.node.active);
+      inputs.push(active ? bus : []);
+      if (active) anyActive = true;
+    }
+    const silence = () => {
+      n.outputPorts = Array.from({ length: n.numberOfOutputs }, () => silentBus(size));
+      return n.outputPorts[0] ?? silentBus(size);
+    };
+    // A processor that returned false runs again only while an input is active.
+    if (w.dead || (!w.processing && !anyActive)) return silence();
+    const counts = n.outputChannelCount ?? (n.numberOfInputs === 1 && n.numberOfOutputs === 1 ? [max(1, inputs[0].length)] : new Array(n.numberOfOutputs).fill(1));
+    const names = [], values = [];
+    for (const [name, p] of n.workletParams) {
+      let v = paramValues(p, f0, rate, q);
+      if (v.length > 1) {
+        // k-rate, and a-rate that holds one value over the quantum without inputs: one sample.
+        let constant = p.rate === 'k-rate';
+        if (!constant && !p.inputs.length) {
+          constant = true;
+          for (let i = 1; i < v.length; i++) if (v[i] !== v[0]) { constant = false; break; }
+        }
+        if (constant) v = v.subarray(0, 1);
+      }
+      names.push(name);
+      values.push(v);
+    }
+    const r = w.host.process(w.handle, f0, inputs, counts, names, values);
+    if (!r.ok) {
+      processorError(n, r.error);
+      return silence();
+    }
+    w.processing = r.active;
+    n.processingFrame = f0;
+    n.outputPorts = counts.map((count, port) => {
+      const bus = [];
+      const produced = r.outputs[port];
+      for (let ch = 0; ch < count; ch++) {
+        const channel = new F32(size);
+        const source = produced === undefined ? undefined : produced[ch];
+        // A channel whose buffer the processor transferred away is silent.
+        if (source !== undefined && source.length === size) channel.set(source);
+        bus.push(channel);
+      }
+      return bus;
+    });
+    return n.outputPorts[0] ?? silentBus(size);
+  }
+  function workletOptions(options) {
+    const o = options;
+    const inputs = o.numberOfInputs === undefined ? 1 : ulong(o.numberOfInputs);
+    const outputs = o.numberOfOutputs === undefined ? 1 : ulong(o.numberOfOutputs);
+    let counts = null;
+    if (o.outputChannelCount !== undefined) {
+      if (o.outputChannelCount === null || typeof o.outputChannelCount[Symbol.iterator] !== 'function') {
+        throw new TypeErrorC("Failed to construct 'AudioWorkletNode': The provided value cannot be converted to a sequence.");
+      }
+      counts = Array.from(o.outputChannelCount, ulong);
+    }
+    let data = null;
+    if (o.parameterData !== undefined) {
+      const given = o.parameterData;
+      if (given === null || (typeof given !== 'object' && typeof given !== 'function')) {
+        throw new TypeErrorC("Failed to construct 'AudioWorkletNode': The provided value is not of type 'record'.");
+      }
+      data = {};
+      for (const key of Object.keys(given)) data[key] = finite(given[key], 'construct', 'AudioWorkletNode', 'double');
+    }
+    let processorOptions;
+    if (o.processorOptions !== undefined) {
+      if (o.processorOptions === null || (typeof o.processorOptions !== 'object' && typeof o.processorOptions !== 'function')) {
+        throw new TypeErrorC("Failed to construct 'AudioWorkletNode': Failed to read the 'processorOptions' property from 'AudioWorkletNodeOptions': The provided value is not of type 'object'.");
+      }
+      processorOptions = o.processorOptions;
+    }
+    return { inputs, outputs, counts, data, processorOptions };
+  }
+  class AudioWorkletNode extends AudioNode {
+    constructor(context, name, options = undefined) {
+      if (arguments.length < 2) throw new TypeErrorC(`Failed to construct 'AudioWorkletNode': 2 arguments required, but only ${arguments.length} present.`);
+      contextArg(context, 'AudioWorkletNode');
+      const nodeName = `${name}`;
+      const inherited = readNodeOptions(options, 'AudioWorkletNode');
+      const { inputs, outputs, counts, data, processorOptions } = workletOptions(options ?? {});
+      const c = ctxOf(context);
+      const host = c.workletHost === undefined ? undefined : c.workletHost();
+      const descriptors = host === undefined ? undefined : host.lookup(nodeName);
+      if (descriptors === undefined) {
+        throw new DE(`Failed to construct 'AudioWorkletNode': The node name '${nodeName}' is not defined in AudioWorkletGlobalScope.`, 'InvalidStateError');
+      }
+      if (inputs === 0 && outputs === 0) {
+        throw new DE("Failed to construct 'AudioWorkletNode': Number of inputs and number of outputs cannot be both zero.", 'NotSupportedError');
+      }
+      if (inputs > MAX_CHANNELS || outputs > MAX_CHANNELS) {
+        throw new DE(`Failed to construct 'AudioWorkletNode': The number of inputs (${inputs}) or outputs (${outputs}) exceeds the maximum of ${MAX_CHANNELS}.`, 'NotSupportedError');
+      }
+      if (counts !== null) {
+        if (counts.length !== outputs) {
+          throw new DE(`Failed to construct 'AudioWorkletNode': Length of specified outputChannelCount (${counts.length}) does not match the given number of outputs (${outputs}).`, 'IndexSizeError');
+        }
+        for (const count of counts) {
+          if (count < 1 || count > MAX_CHANNELS) {
+            throw new DE(`Failed to construct 'AudioWorkletNode': Channel count (${count}) in outputChannelCount is outside the range [1, ${MAX_CHANNELS}].`, 'NotSupportedError');
+          }
+        }
+      }
+      // StructuredSerialize of the options (a DataCloneError for what cannot be cloned).
+      const record = { numberOfInputs: inputs, numberOfOutputs: outputs };
+      if (counts !== null) record.outputChannelCount = counts;
+      if (data !== null) record.parameterData = data;
+      if (processorOptions !== undefined) record.processorOptions = processorOptions;
+      const serialized = structuredCloneC === null ? record : structuredCloneC(record);
+      super(secret, context, { numberOfInputs: inputs, numberOfOutputs: outputs });
+      const n = nodeOf(this);
+      applyNodeOptions(this, inherited);
+      n.outputChannelCount = counts;
+      const entries = [];
+      n.workletParams = [];
+      for (const d of descriptors) {
+        const param = nodeParam(n, d.defaultValue, d.minValue, d.maxValue, d.automationRate);
+        const state = params.get(param);
+        if (data !== null && Object.prototype.hasOwnProperty.call(data, d.name)) setParamValue(state, fround(data[d.name]), 0);
+        n.workletParams.push([d.name, state]);
+        entries.push([d.name, param]);
+      }
+      n.parameters = new AudioParamMap(secret, entries);
+      // The global's `currentFrame` / `currentTime` outside a render are the context's.
+      host.setClock(() => c.currentFrames());
+      const channel = new MessageChannel();
+      n.port = channel.port1;
+      const far = channel.port2;
+      const send = (message, transfer) => { apply(portPost, far, transfer === undefined ? [message] : [message, transfer]); };
+      const created = host.construct(nodeName, serialized, send, () => { far.close(); });
+      n.deliver = created.deliver;
+      far.onmessage = (event) => { n.deliver(event.data); };
+      n.worklet = { host, handle: created.handle, processing: true, dead: false };
+      // Outputs and inputs follow what the processor reports; its tail is its own business.
+      c.trackConvolverActivity = true;
+      n.process = (f0, q) => processWorklet(n, f0, q);
+      addPuller(c, n);
+      if (!created.ok) processorError(n, created.error);
+    }
+    get parameters() { return nodeOf(this).parameters; }
+    get port() { return nodeOf(this).port; }
+  }
+  handler(AudioWorkletNode, 'processorerror');
+  webidl(AudioWorkletNode, 'AudioWorkletNode');
+
   // ---- Contexts ------------------------------------------------------------------
   const contexts = new WeakMap();
   function ctxOf(self) {
@@ -2073,7 +2304,14 @@
     // Its own AudioWorklet (paint_worklet.js, audio_worklet.rs), made on first use.
     get audioWorklet() {
       const c = ctxOf(this);
-      if (c.audioWorklet === undefined) c.audioWorklet = makeAudioWorklet(c.rate);
+      if (c.audioWorklet === undefined) {
+        // [the AudioWorklet, a function returning the worklet global's host once its realm exists]
+        const made = makeAudioWorklet(c.rate, c.quantum);
+        if (made !== undefined) {
+          c.audioWorklet = made[0];
+          c.workletHost = made[1];
+        }
+      }
       return c.audioWorklet;
     }
     get listener() { return contextListener(this); }
@@ -2243,16 +2481,52 @@
         const elapsed = (now() - c.started) / 1000 * c.rate;
         return c.frames + floor(elapsed / quantum) * quantum;
       };
+      // There is no output device: the graph is computed (so that script processors, worklets and
+      // analysers see real samples) for the quanta the clock has passed, but only while one of those
+      // nodes exists (`c.pulled`, `c.analyserNodes`); the destination's result is dropped.
+      c.rendered = 0; // next frame to compute
+      c.pumpOn = false;
+      c.pumpTimer = undefined;
+      c.wantsPump = () => !!(c.pulled?.size || c.analyserNodes?.size);
+      c.catchUp = (target, limit) => {
+        c.graphEpoch = (c.graphEpoch ?? 0) + 1;
+        for (let done = 0; c.rendered <= target && done < limit; done++) {
+          renderBlock(c, c.rendered);
+          c.rendered += quantum;
+        }
+        flushEnded(c);
+      };
+      c.syncPump = () => {
+        if (c.state !== 'running' || !c.wantsPump()) {
+          if (c.pumpTimer !== undefined) { clearClock(c.pumpTimer); c.pumpTimer = undefined; }
+          return;
+        }
+        if (!c.pumpOn) { c.pumpOn = true; c.rendered = max(c.rendered, c.currentFrames()); }
+        if (c.pumpTimer === undefined) {
+          c.pumpTimer = timer(max(1, quantum * 1000 / rate), () => {
+            c.pumpTimer = undefined;
+            if (c.state !== 'running') return;
+            // A node that throws does not stop the clock of the others.
+            try { c.catchUp(c.currentFrames(), 64); } finally { c.syncPump(); }
+          });
+        }
+      };
       c.run = () => {
         if (c.state === 'running' || c.state === 'closed') return;
         c.started = now();
         setState(c, 'running');
         c.scheduleEnds();
+        c.syncPump();
       };
       c.halt = (state) => {
         if (!c.statsLocked) refreshDuration(c);
-        if (c.state === 'running') c.frames = c.currentFrames();
+        if (c.state === 'running') {
+          // What the clock has passed is computed before it stops.
+          if (c.pumpOn) c.catchUp(c.currentFrames(), 2048);
+          c.frames = c.currentFrames();
+        }
         if (c.timer !== undefined) { clearClock(c.timer); c.timer = undefined; }
+        if (c.pumpTimer !== undefined) { clearClock(c.pumpTimer); c.pumpTimer = undefined; }
         setState(c, state);
       };
       // The sources' ends, on the clock.
@@ -2459,13 +2733,48 @@
   handler(OfflineAudioContext, 'complete');
   webidl(OfflineAudioContext, 'OfflineAudioContext');
 
+  // One render quantum of the graph at frame f0: what reaches the destination (returned), and
+  // everything that runs whether or not it feeds the destination: started sources, analysers, the
+  // history of fed convolvers and delays, and the nodes pulled automatically (worklets, script
+  // processors). `take(bus)` gets the destination's quantum before anything else runs.
+  function renderBlock(c, f0, take) {
+    const q = f0 / c.quantum;
+    const bus = pull(nodes.get(c.destination), q, f0);
+    if (take) take(bus);
+    // Started sources nothing pulled still play (and end) on time.
+    for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
+    if (c.analyserNodes) for (const ref of c.analyserNodes) {
+      const node = ref.deref();
+      if (!node) c.analyserNodes.delete(ref);
+      else if (node.q !== q) pull(node, q, f0);
+    }
+    // Preserve a fed convolver's history even while its output is disconnected.
+    if (c.convolverNodes) for (const ref of c.convolverNodes) {
+      const n = ref.deref();
+      if (!n) c.convolverNodes.delete(ref);
+      else if (n.convolve && n.q !== q && (n.inputs.length || n.tail)) pull(n, q, f0);
+    }
+    // A fed delay keeps the signal it will output even while downstream is
+    // disconnected. A weak registration does not keep an unused node alive.
+    if (c.delayNodes) for (const ref of c.delayNodes) {
+      const n = ref.deref();
+      if (!n) c.delayNodes.delete(ref);
+      else if (n.q !== q && (n.inputs.length || n.blocks.size)) pull(n, q, f0);
+    }
+    if (c.pulled) for (const n of c.pulled) if (n.q !== q) pull(n, q, f0);
+    if (c.delayWriters?.size) {
+      for (const n of c.delayWriters) writeDelay(n, q, f0);
+      c.delayWriters.clear();
+    }
+    return bus;
+  }
+
   // Renders quanta until the end or a suspend point.
   function render(c) {
     const chunk = c.chunks[0];
     if (!chunk || c.closing) return;
     setState(c, 'running');
     c.graphEpoch = (c.graphEpoch ?? 0) + 1;
-    const dest = nodes.get(c.destination);
     const sliceEnd = min(chunk.end, c.frames + min(128 * c.quantum, 16384));
     while (c.frames < sliceEnd) {
       const pause = c.suspends.get(c.frames);
@@ -2477,34 +2786,10 @@
         return;
       }
       const f0 = c.frames;
-      const q = f0 / c.quantum;
-      const bus = pull(dest, q, f0);
-      const count = min(c.quantum, chunk.end - f0);
-      for (let ch = 0; ch < c.channels; ch++) chunk.output[ch].set(count === c.quantum ? bus[ch] : bus[ch].subarray(0, count), f0 - chunk.start);
-      // Started sources nothing pulled still play (and end) on time.
-      for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
-      if (c.analyserNodes) for (const ref of c.analyserNodes) {
-        const node = ref.deref();
-        if (!node) c.analyserNodes.delete(ref);
-        else if (node.q !== q) pull(node, q, f0);
-      }
-      // Preserve a fed convolver's history even while its output is disconnected.
-      if (c.convolverNodes) for (const ref of c.convolverNodes) {
-        const n = ref.deref();
-        if (!n) c.convolverNodes.delete(ref);
-        else if (n.convolve && n.q !== q && (n.inputs.length || n.tail)) pull(n, q, f0);
-      }
-      // A fed delay keeps the signal it will output even while downstream is
-      // disconnected. A weak registration does not keep an unused node alive.
-      if (c.delayNodes) for (const ref of c.delayNodes) {
-        const n = ref.deref();
-        if (!n) c.delayNodes.delete(ref);
-        else if (n.q !== q && (n.inputs.length || n.blocks.size)) pull(n, q, f0);
-      }
-      if (c.delayWriters?.size) {
-        for (const n of c.delayWriters) writeDelay(n, q, f0);
-        c.delayWriters.clear();
-      }
+      renderBlock(c, f0, (bus) => {
+        const count = min(c.quantum, chunk.end - f0);
+        for (let ch = 0; ch < c.channels; ch++) chunk.output[ch].set(count === c.quantum ? bus[ch] : bus[ch].subarray(0, count), f0 - chunk.start);
+      });
       c.frames += c.quantum;
     }
     if (c.frames < chunk.end) {
@@ -2545,5 +2830,6 @@
     localImpulseInfo, frameRendered, BaseAudioContext, AudioContext, AudioPlaybackStats, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode, PeriodicWave,
     ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, DynamicsCompressorNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
+    AudioParamMap, AudioWorkletNode,
   };
 })

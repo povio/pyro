@@ -65,6 +65,8 @@ where
         "ChannelMergerNode",
         "ChannelSplitterNode",
         "OfflineAudioCompletionEvent",
+        "AudioParamMap",
+        "AudioWorkletNode",
     );
 }
 
@@ -184,11 +186,12 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     natives.set_atom("clearTimer", clear.value())?;
-    // audioWorklet(sampleRate) -> a new AudioWorklet (crate::audio_worklet) for one context.
+    // audioWorklet(sampleRate, quantum) -> [AudioWorklet, host getter] (crate::audio_worklet) for one context.
     let audio_worklet = s.function("audioWorklet", |s, _this, a| {
         let page = crate::target::page_of(s)?;
         let rate = a.get(0).to_number()?;
-        crate::audio_worklet::make(s, &page, rate)
+        let quantum = a.get(1).to_number()?;
+        crate::audio_worklet::make(s, &page, rate, quantum)
     })?;
     natives.set_atom("audioWorklet", audio_worklet.value())?;
     // BaseAudioContext.audioWorklet is [SecureContext].
