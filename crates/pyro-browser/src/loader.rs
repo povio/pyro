@@ -2453,6 +2453,10 @@ impl Browser {
         error: String,
     ) {
         let Some(frame_id) = self.doc(page).map(|p| p.main_frame.id.clone()) else { return };
+        // The activation this navigation carried dies with it: no later commit may take it.
+        if let Some(state) = self.doc(page) {
+            state.nav.directive_gesture.set(None);
+        }
         self.forget_network_activity(page, &loader_id);
         self.emit(
             page.page,
@@ -4043,6 +4047,10 @@ impl Browser {
     /// document.
     pub(crate) fn stop_loading(&mut self, page: FrameKey) {
         if self.doc(page).is_some_and(|d| d.pending_loader().is_some()) {
+            // The cancelled navigation's activation goes with it.
+            if let Some(state) = self.doc(page) {
+                state.nav.directive_gesture.set(None);
+            }
             self.cancel_pending_document(page);
         }
         if self.document_aborted(page) {
