@@ -17,7 +17,8 @@
 //! document's animation time starts at its load event, as Chrome starts the
 //! SVG time containers of a document. Not read: event and syncbase `begin`
 //! values (an animation with only those never begins), `end`, and the
-//! `<animateMotion>` element.
+//! `<animateMotion>` element. `<set>` is an animation of its `to` value, with
+//! an indefinite simple duration unless `dur` is given.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -33,6 +34,8 @@ use crate::page::PageDom;
 enum Kind {
     Animate,
     Transform,
+    /// `<set>`: its `to` for the whole active duration (an indefinite simple duration without `dur`).
+    Set,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -51,6 +54,8 @@ struct Css {
     /// Each interval's easing (`calcMode="spline"`).
     key_splines: Option<Vec<String>>,
     discrete: bool,
+    /// The values add to the value below (`by` alone).
+    additive: bool,
 }
 
 /// One animation element as its attributes describe it.
@@ -85,6 +90,9 @@ pub(crate) struct Animate {
 impl Animate {
     /// (simple-duration fraction, iteration index) at the end of the active duration.
     fn end_state(&self) -> (f64, f64) {
+        if !self.dur_ms.is_finite() {
+            return (0.0, 0.0);
+        }
         let iterations = self.active_ms / self.dur_ms;
         let fraction = iterations.fract();
         if fraction == 0.0 {
@@ -227,6 +235,7 @@ fn read_animations(dom: &Dom, doc: NodeId) -> Vec<Animate> {
             let kind = match &*e.name.local {
                 "animate" => Kind::Animate,
                 "animateTransform" => Kind::Transform,
+                "set" => Kind::Set,
                 _ => return None,
             };
             read_animate(dom, doc, id, kind)
@@ -275,13 +284,34 @@ fn read_animate(dom: &Dom, doc: NodeId, id: NodeId, kind: Kind) -> Option<Animat
     let mode = attr("calcMode").map(str::trim).unwrap_or("linear");
     let discrete = mode == "discrete";
     // The CSS-property reading: the values as declarations (None where it is invalid).
-    let css = if kind != Kind::Animate || property.contains(':') {
+    let css = if kind == Kind::Transform || property.contains(':') {
         None
     } else {
         (|| -> Option<Css> {
+            if kind == Kind::Set {
+                return Some(Css { values: vec![attr("to")?.trim().to_owned()], key_times: vec![0.0], key_splines: None, discrete: true, additive: false });
+            }
+            let mut additive = false;
             let values: Vec<String> = match attr("values") {
                 Some(list) => list.split(';').map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned).collect(),
-                None => vec![attr("from")?.trim().to_owned(), attr("to")?.trim().to_owned()],
+                None => match (attr("from"), attr("to"), attr("by")) {
+                    (Some(from), Some(to), _) => vec![from.trim().to_owned(), to.trim().to_owned()],
+                    // `from` and `by` of a number with a unit (`10px`): from, and from plus by.
+                    (Some(from), None, Some(by)) => {
+                        let ((f, unit), (b, by_unit)) = (number_unit(from)?, number_unit(by)?);
+                        if unit != by_unit {
+                            return None;
+                        }
+                        vec![from.trim().to_owned(), format!("{}{unit}", f + b)]
+                    }
+                    // `by` alone adds to the underlying value, from zero.
+                    (None, None, Some(by)) => {
+                        let (_, unit) = number_unit(by)?;
+                        additive = true;
+                        vec![format!("0{unit}"), by.trim().to_owned()]
+                    }
+                    _ => return None,
+                },
             };
             if values.is_empty() {
                 return None;
@@ -291,7 +321,8 @@ fn read_animate(dom: &Dom, doc: NodeId, id: NodeId, kind: Kind) -> Option<Animat
             // discrete, `n - 1` between the values otherwise.
             let key_times = match attr("keyTimes") {
                 Some(list) => {
-                    let times: Vec<f64> = list.split(';').map(|t| t.trim().parse::<f64>().ok()).collect::<Option<_>>()?;
+                    // (One trailing empty item is allowed: `"0;1;"`.)
+                    let times = parse_number_list(list)?;
                     // An invalid list disables the animation (SVG's error handling).
                     let ordered = times.windows(2).all(|w| w[0] <= w[1]);
                     let bounded = times.iter().all(|t| (0.0..=1.0).contains(t));
@@ -306,29 +337,16 @@ fn read_animate(dom: &Dom, doc: NodeId, id: NodeId, kind: Kind) -> Option<Animat
             };
             let key_splines = match (mode, attr("keySplines")) {
                 ("spline", Some(list)) => {
-                    let splines: Vec<String> = list
-                        .split(';')
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(|s| {
-                            let p: Vec<f64> = s
-                                .split(|c: char| c == ',' || c.is_whitespace())
-                                .filter(|t| !t.is_empty())
-                                .map(|t| t.parse::<f64>().ok())
-                                .collect::<Option<_>>()?;
-                            (p.len() == 4 && p.iter().all(|v| (0.0..=1.0).contains(v)))
-                                .then(|| format!("cubic-bezier({}, {}, {}, {})", p[0], p[1], p[2], p[3]))
-                        })
-                        .collect::<Option<_>>()?;
+                    let splines = parse_key_splines(list)?;
                     if splines.len() + 1 != n {
                         return None;
                     }
-                    Some(splines)
+                    Some(splines.iter().map(|p| format!("cubic-bezier({}, {}, {}, {})", p[0], p[1], p[2], p[3])).collect::<Vec<String>>())
                 }
                 ("spline", None) => return None,
                 _ => None,
             };
-            Some(Css { values, key_times, key_splines, discrete })
+            Some(Css { values, key_times, key_splines, discrete, additive })
         })()
     };
     // The earliest offset of the begin list; a list of none (only events or
@@ -337,7 +355,11 @@ fn read_animate(dom: &Dom, doc: NodeId, id: NodeId, kind: Kind) -> Option<Animat
         Some(list) => list.split(';').filter_map(clock_ms).reduce(f64::min)?,
         None => 0.0,
     };
-    let dur_ms = clock_ms(attr("dur")?).filter(|d| *d > 0.0)?;
+    let dur_ms = match attr("dur").map(str::trim) {
+        None | Some("indefinite") if kind == Kind::Set => f64::INFINITY,
+        Some(text) => clock_ms(text).filter(|d| *d > 0.0)?,
+        None => return None,
+    };
     let repeat_count = match attr("repeatCount").map(str::trim) {
         Some("indefinite") => Some(f64::INFINITY),
         Some(count) => Some(count.parse::<f64>().ok().filter(|c| *c > 0.0)?),
@@ -357,7 +379,7 @@ fn read_animate(dom: &Dom, doc: NodeId, id: NodeId, kind: Kind) -> Option<Animat
     };
     let freeze = attr("fill").map(str::trim) == Some("freeze");
 
-    let mut valid = true;
+    let mut valid = kind != Kind::Set || attr("to").is_some();
     let calc = match mode {
         "discrete" => CalcMode::Discrete,
         "paced" => CalcMode::Paced,
@@ -421,6 +443,15 @@ fn read_animate(dom: &Dom, doc: NodeId, id: NodeId, kind: Kind) -> Option<Animat
     })
 }
 
+/// `10px` as `(10, "px")`: a number and its unit (`None` for any other text).
+fn number_unit(text: &str) -> Option<(f64, &str)> {
+    let text = text.trim();
+    let end = text.find(|c: char| c.is_ascii_alphabetic() || c == '%').unwrap_or(text.len());
+    let (number, unit) = text.split_at(end);
+    let number = number.trim().parse::<f64>().ok().filter(|v| v.is_finite())?;
+    unit.chars().all(|c| c.is_ascii_alphabetic() || c == '%').then_some((number, unit))
+}
+
 /// A SMIL clock value in ms: `hh:mm:ss.f`, `mm:ss.f`, or a count with `h`,
 /// `min`, `s` or `ms` (seconds without one).
 fn clock_ms(text: &str) -> Option<f64> {
@@ -472,13 +503,16 @@ pub(crate) fn walk(page: &PageDom, now: Option<f64>, visit: &mut dyn FnMut(NodeI
         // The simple time's fraction.
         let progress = match time {
             None if a.active_ms.is_finite() && a.freeze => a.end_state().0,
+            // (A `set` without `dur` holds its value.)
+            None if a.kind == Kind::Set && !a.dur_ms.is_finite() => 0.0,
             None => continue,
             Some(time) => {
                 if time - a.begin_ms < 0.0 {
                     moving |= !paused;
                     continue;
                 }
-                if time - a.begin_ms < a.active_ms {
+                // (A value that does not change over its simple duration does not move.)
+                if time - a.begin_ms < a.active_ms && a.dur_ms.is_finite() {
                     moving |= !paused;
                 }
                 match a.simple_state(time) {
@@ -493,7 +527,8 @@ pub(crate) fn walk(page: &PageDom, now: Option<f64>, visit: &mut dyn FnMut(NodeI
             progress,
             before: false,
             easing: None,
-            composite: Composite::Replace,
+            // `additive="sum"`: the values add to the value below (Web Animations' `add`).
+            composite: if css.additive || (a.additive_sum && a.kind != Kind::Set) { Composite::Add } else { Composite::Replace },
             timeline: None,
         };
         let constant = |v: &str| {
@@ -581,6 +616,20 @@ pub(crate) fn animated(page: &PageDom, target: NodeId, attribute: &str) -> Vec<C
 
 /// SMIL 3.2: the animation function of `a`: `values`, else `from`/`to`, `from`/`by`, `to` or `by`.
 fn contribution(a: &Animate, progress: f64, iteration: f64) -> Option<Contribution> {
+    if a.kind == Kind::Set {
+        // SVG Animations 4.3: `<set>` holds its `to` for the active duration (not additive).
+        return Some(Contribution {
+            values: vec![Src::Text(a.to.clone()?)],
+            key_times: None,
+            splines: None,
+            calc: CalcMode::Discrete,
+            progress,
+            iteration,
+            additive: false,
+            accumulate: false,
+            transform_type: None,
+        });
+    }
     let (values, by_only, to_only): (Vec<Src>, bool, bool) = if let Some(list) = &a.values {
         (list.iter().cloned().map(Src::Text).collect(), false, false)
     } else {
@@ -788,7 +837,18 @@ pub(crate) fn version(page: &PageDom) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::clock_ms;
+    use super::{clock_ms, number_unit, parse_key_splines, parse_number_list};
+
+    #[test]
+    fn lists() {
+        assert_eq!(parse_number_list("0; 0.5;1;"), Some(vec![0.0, 0.5, 1.0]));
+        assert_eq!(parse_number_list("0;;1"), None);
+        assert_eq!(number_unit("10px"), Some((10.0, "px")));
+        assert_eq!(number_unit("red"), None);
+        // x of a control point stays in 0..1, y may leave it.
+        assert_eq!(parse_key_splines("0.5 -1 0.5 2;"), Some(vec![[0.5, -1.0, 0.5, 2.0]]));
+        assert_eq!(parse_key_splines("1.5 0 0.5 1"), None);
+    }
 
     #[test]
     fn clock_values() {
