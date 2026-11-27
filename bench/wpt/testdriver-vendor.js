@@ -4,7 +4,9 @@
 // (window.__pyroTestdriver, a function returning a promise of the runner's JSON answer). Elements cannot cross the
 // binding: they go as their center in this frame's viewport, and the runner adds the offsets of the frames around it.
 // Implemented: click, send_keys, action_sequence (pointer, key, wheel and none sources), and with them bless, and
-// set_permission, get_computed_role, get_computed_label, delete_all_cookies, get_named_cookie and get_all_cookies. The rest keeps testdriver.js's own "not
+// set_permission, get_computed_role, get_computed_label and delete_all_cookies; get_named_cookie and get_all_cookies;
+// bidi.log.entry_added, bidi.permissions.set_permission and the bidi.emulation overrides the browser really has
+// (geolocation, locale, touch, prefers-color-scheme/reduced-motion). The rest keeps testdriver.js's own "not
 // implemented" rejections. A command group is added with one `def` line below (td/index.mjs says how).
 (function () {
   'use strict';
@@ -109,6 +111,36 @@
   // missing cookie (null) into its "no such cookie" error.
   def('get_all_cookies');
   def('get_named_cookie');
+
+  // WebDriver BiDi (td/bidi.mjs). `subscribe` returns the function that removes the subscription.
+  const bidiError = (m) => new Error(`invalid argument: ${m}`);
+  // An entry reaches every listener once however many subscriptions matched it (the runner sends it once per subscription).
+  const seen = new Set(), logListeners = new Set();
+  onEvent('log.entry_added', (e) => {
+    if (seen.has(e.id)) return;
+    seen.add(e.id);
+    if (seen.size > 4096) seen.delete(seen.values().next().value);
+    for (const fn of [...logListeners]) { try { fn(e.entry); } catch (err) { setTimeout(() => { throw err; }); } }
+  });
+  internal.bidi ??= {};
+  internal.bidi.log ??= {};
+  internal.bidi.log.entry_added = {
+    async subscribe(params = {}) {
+      const { id } = await rpc('bidi.log.entry_added.subscribe', [params ?? {}]);
+      return () => rpc('bidi.log.entry_added.unsubscribe', [id]);
+    },
+    on(callback) { return logListeners.add(callback), () => logListeners.delete(callback); },
+  };
+  def('bidi.permissions.set_permission', { check: (p) => { if (!p || !p.descriptor || typeof p.descriptor.name !== 'string' || !['granted', 'denied', 'prompt'].includes(p.state)) throw bidiError('descriptor and state are required'); } });
+  def('bidi.emulation.set_geolocation_override', { check: (p = {}) => {
+    const c = p.coordinates;
+    if (c && p.error) throw bidiError('coordinates and error are mutually exclusive');
+    if (p.error && p.error.type !== 'positionUnavailable') throw bidiError('unknown geolocation error type');
+    if (c && (!Number.isFinite(c.latitude) || Math.abs(c.latitude) > 90 || !Number.isFinite(c.longitude) || Math.abs(c.longitude) > 180 || !(c.accuracy === undefined || c.accuracy >= 0))) throw bidiError('invalid coordinates');
+  } });
+  def('bidi.emulation.set_locale_override', { check: (p = {}) => { if (p.locale != null && typeof p.locale !== 'string') throw bidiError('locale must be a string'); } });
+  def('bidi.emulation.set_touch_override', { check: (p = {}) => { if (p.maxTouchPoints != null && !(Number.isInteger(p.maxTouchPoints) && p.maxTouchPoints >= 1)) throw bidiError('maxTouchPoints must be an integer of at least 1'); } });
+  def('bidi.emulation.set_media_features_override', { check: (p = {}) => { if (p.features != null && (typeof p.features !== 'object' || Array.isArray(p.features))) throw bidiError('features must be an object'); } });
 
   internal.action_sequence = (sources) => {
     // Element origins become this frame's viewport coordinates of the element's center.

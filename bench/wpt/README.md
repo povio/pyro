@@ -816,7 +816,13 @@ job instead (a few wptserve and testdriver pages on lp-m1).
 `data-pyro-testdriver` attribute held for the call only (pyro's CDP has no Accessibility domain). Presses of the same
 button at the same spot within 500 ms count up (`clickCount`), as Chrome's WebDriver counts a double click.
 `delete_all_cookies` clears the browser context's cookies (`cookies/value/value-ctl.html`: 0 -> 63 of 66).
-Commands live in `td/<group>.mjs` (`td/index.mjs` explains how to add a group). Everything else (`get_named_cookie`, BiDi, virtual authenticators, payment and wallet modes, ...) rejects as "not implemented", as testdriver.js does
+`get_all_cookies` and `get_named_cookie` read the cookies the page's URL sees (HttpOnly included) with `context.cookies`
+(`td/cookies.mjs`). BiDi (`td/bidi.mjs`): `log.entry_added` (console and exceptions read from each page's own CDP
+session; subscriptions by window or global, events delivered to the subscribing page), `permissions.set_permission`
+(`Browser.setPermission`) and the emulation overrides Pyro's CDP evaluates: geolocation, locale, touch, and the
+`prefers-color-scheme` / `prefers-reduced-motion` media features. Commands live in `td/<group>.mjs` (`td/index.mjs`
+explains how to add a group). Everything else (screen orientation, scrollbar and viewport-meta overrides, client hints,
+speculation, virtual authenticators, payment and wallet modes, ...) rejects as "not implemented", as testdriver.js does
 with no vendor. At a421f2fe 3,206 of the 3,462 files that load testdriver call
 only `click`, `send_keys`, `Actions` or `bless`; the next by use are all implemented too: `set_permission` (165
 calls), `get_computed_role` (114), `get_computed_label` (77), `delete_all_cookies` (41). A sample of 50 testdriver
