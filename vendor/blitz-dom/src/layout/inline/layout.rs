@@ -2875,7 +2875,12 @@ impl LayoutPassState<'_> {
                     } else {
                         central
                     };
-                    central / scale + line_box_top
+                    // pyro: Blink's central baseline is a whole number of pixels, the half of an odd
+                    // ascent + descent rounded up (measured against Chrome for font sizes 8..40, both
+                    // `vertical-lr` and `-rl`: WPT css-flexbox `flex-align-baseline-001`); a fractional one
+                    // put the item on a half pixel. (The small allowance keeps float noise from
+                    // rounding a whole value up.)
+                    (central / scale + line_box_top - 0.001).ceil()
                 };
                 (
                     inline_layout.layout.lines().next().map(dominant),

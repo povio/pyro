@@ -3029,3 +3029,4 @@ border box, `collapse(prev, top, bottom) - collapse(prev, top)` (after a 300px b
 `scrollable-overflow-*with-flex-item-margin-inline-end*`; tests
 `a_box_empty_in_one_axis_still_extends_its_scrollers_overflow_like_chromium` and
 `only_a_scroll_containers_in_flow_bounds_take_boxes_empty_in_one_axis` (pyro-layout).
+- Round 8 lane csslayoutA, `layout/inline/layout.rs` (`dominant_first`/`dominant_last`): the central baseline a vertical-mode line exports is a whole number of pixels, the half of an odd content extent rounded up, as Blink (measured on Chrome: the item's left edge was `ceil` of Pyro's half-pixel baseline for font sizes 8..40, `vertical-lr` and `-rl`). WPT css-flexbox `flex-align-baseline-001` and the five other "105 vs 106" baseline pages.
