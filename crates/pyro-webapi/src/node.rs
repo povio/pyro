@@ -1360,6 +1360,10 @@ impl JsClass for Element {
     type Parent = Node;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("customElementRegistry", |s, n| crate::custom::node_registry(s, n.page(), n.id));
+        // Element Timing: `elementTiming` reflects the `elementtiming` attribute.
+        if crate::perf::element::ENABLED {
+            crate::perf::element::define_attribute(def);
+        }
         crate::positional_html::define_parent_methods(def);
         define_parent_node(def);
         define_child_node(def);

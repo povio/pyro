@@ -951,7 +951,10 @@ impl Browser {
         if pyro_webapi::perf::paint::ENABLED {
             let Some(bindings) = state.main_frame.page_dom.clone() else { return };
             drop(state);
-            if pyro_webapi::perf::paint::wants_frame(&bindings) && !bindings.is_disposed() {
+            // The modules that must see every paint (not only the first) ask for frames too, while
+            // the document changed since its last scan.
+            let wanted = pyro_webapi::perf::paint::wants_frame(&bindings) || pyro_webapi::perf::element::wants_frame(&bindings);
+            if wanted && !bindings.is_disposed() {
                 let has_body =
                     bindings.dom.try_borrow().is_ok_and(|dom| dom.body(bindings.document()).ok().flatten().is_some());
                 if has_body {

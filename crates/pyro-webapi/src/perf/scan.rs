@@ -193,6 +193,23 @@ pub fn walks(page: &PageDom) -> u64 {
     page.timeline().scan.borrow().walks
 }
 
+/// Whether a scan now could find something the last one did not: the document was never
+/// scanned, changed since (layout's `observation_stamp`: DOM, style, viewport, scroll), an image
+/// finished loading, a canvas was drawn on, or a poster or CSS image is still awaited. What the
+/// modules that must see every paint (`element`, `lcp`) ask after a task, to request the
+/// frame that scans (`Browser::note_first_paint`). Cheap: no layout, no walk.
+pub fn stale(page: &PageDom) -> bool {
+    let state = page.timeline().scan.borrow();
+    if state.last.is_none() || state.dirty || (state.waiting && state.wait_walks < MAX_WAIT_WALKS) {
+        return true;
+    }
+    if state.undrawn.iter().any(|&canvas| canvas_drawn(page, canvas)) {
+        return true;
+    }
+    let (Ok(layout), Ok(dom)) = (page.layout.try_borrow(), page.dom.try_borrow()) else { return true };
+    state.stamp != Some(layout.observation_stamp(&dom))
+}
+
 /// The painted candidates of `page`'s document in `frame`. See the module docs.
 pub fn painted_candidates(page: &Rc<PageDom>, frame: &FrameInfo) -> Rc<FrameScan> {
     // Memo: another module already scanned this frame, or nothing changed since.
