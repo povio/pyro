@@ -822,6 +822,12 @@
     if (options !== undefined && options !== null && !isObj(options)) throw typeError("The provided value is not of type 'CredentialOptions'");
     const d = options === undefined || options === null ? {} : options;
     const out = { kinds: [], mediation: 'optional', signal: undefined, uiMode: undefined };
+    // Digital credentials: the request is converted (a non-empty `requests`), but no wallet answers it.
+    if (d.digital !== undefined) {
+      const requests = sequence(required(dict(d.digital, 'digital').requests, 'digital.requests'), 'digital.requests');
+      if (requests.length === 0) throw typeError('digital.requests must not be empty');
+      out.kinds.push('digital');
+    }
     if (d.federated !== undefined) {
       dict(d.federated, 'federated');
       out.federated = d.federated === null ? {} : d.federated;
@@ -829,7 +835,7 @@
     }
     if (d.mediation !== undefined) out.mediation = enumOf(d.mediation, MEDIATION, 'CredentialMediationRequirement');
     if (get) {
-      for (const unsupported of ['identity', 'otp', 'digital']) if (d[unsupported] !== undefined) out.kinds.push(unsupported);
+      for (const unsupported of ['identity', 'otp']) if (d[unsupported] !== undefined) out.kinds.push(unsupported);
       if (d.password !== undefined && d.password) out.kinds.push('password');
     } else if (d.password !== undefined) {
       out.password = passwordInit(d.password);
@@ -863,12 +869,12 @@
         containerCheck(this);
         const o = readOptions(options, true);
         begin(o.signal);
+        needTuple();
         const kinds = o.kinds;
         const federatedPassword = kinds.length === 2 && kinds.includes('federated') && kinds.includes('password');
         if (kinds.length === 0 || (kinds.length > 1 && !federatedPassword) || kinds.some((k) => k === 'identity' || k === 'otp' || k === 'digital')) {
           throw dom('The options name no credential type this browser can request, or an unsupported combination.', 'NotSupportedError');
         }
-        needTuple();
         if (kinds.includes('publicKey')) return getPublicKey(o.publicKey, o.signal, o.mediation, o.uiMode);
         // Passwords and federated identities: there is no password manager or identity provider to ask. A
         // request that is not silent needs the user's activation first (it would show the account chooser),
@@ -903,9 +909,10 @@
         containerCheck(this);
         const o = readOptions(options, false);
         begin(o.signal);
-        if (o.kinds.length !== 1) throw dom('The options must name exactly one credential type to create.', 'NotSupportedError');
         needTuple();
+        if (o.kinds.length !== 1) throw dom('The options must name exactly one credential type to create.', 'NotSupportedError');
         const kind = o.kinds[0];
+        if (kind === 'digital') throw dom('No wallet can issue a digital credential.', 'NotSupportedError');
         if (kind === 'publicKey') return createPublicKey(o.publicKey, o.signal);
         if (kind === 'password') return resolve(new PasswordCredential(o.password));
         return resolve(new FederatedCredential(federatedInit(o.federated)));
