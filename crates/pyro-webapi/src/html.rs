@@ -2127,10 +2127,12 @@ simple_class!(HtmlHeadingElement, "HTMLHeadingElement", HtmlElement, |def| {
 });
 
 /// Whether `HTMLScriptElement.supports("speculationrules")` is true: the single support switch of
-/// speculation rules (see `pyro-browser/src/speculation_rules.rs`). It stays false until the
-/// behaviour behind rule sets exists (the prefetch lane flips it with that behaviour): pages
-/// feature-detect with it, and a true answer without prefetching would make them test a lie.
-pub const SPECULATION_RULES_SUPPORTED: bool = false;
+/// speculation rules (see `pyro-browser/src/speculation_rules.rs`). True since `prefetch` rules
+/// start real prefetches that a later navigation uses (`pyro-browser/src/prefetch.rs`). Prerender
+/// is not implemented: `document.prerendering` does not exist, so a page that needs it
+/// (`assertSpeculationRulesIsSupported('prerender')`) still finds the feature absent, and a
+/// `prerender` rule starts nothing.
+pub const SPECULATION_RULES_SUPPORTED: bool = true;
 
 /// URL decomposition shared by `<a>` and `<area>` (HTMLHyperlinkElementUtils).
 pub(crate) fn hyperlink_url(dom: &Dom, n: &NodeData, svg: bool) -> JsResult<Option<pyro_net::Url>> {

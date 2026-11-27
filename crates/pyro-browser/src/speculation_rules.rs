@@ -42,11 +42,12 @@
 //!
 //! # The support switch
 //! `HTMLScriptElement.supports('speculationrules')` answers [`SUPPORTED`]
-//! (`pyro_webapi::html::SPECULATION_RULES_SUPPORTED`, the single constant), which stays `false`
-//! until behaviour exists behind the rules: the prefetch lane flips it in the same change that
-//! makes a rule set start real prefetches. Scripts are processed (parsed, registered, events
-//! fired) whatever the switch says, as the registry is what the lanes consume. `document.prerendering`
-//! is not defined by this module: the prerender lane adds it with its behaviour.
+//! (`pyro_webapi::html::SPECULATION_RULES_SUPPORTED`, the single constant), which is `true` since
+//! `prefetch.rs` starts real prefetches from `prefetch` rules (it must not be true for a feature
+//! without behaviour). Scripts are processed (parsed, registered, events fired) whatever the
+//! switch says, as the registry is what the lanes consume. `document.prerendering` is not defined
+//! by this module: the prerender lane adds it with its behaviour, and until then `prerender`
+//! rules start nothing and `'prerendering' in document` stays false.
 //!
 //! Left out here (named so a lane can pick it up): CSP `script-src` / `inline-speculation-rules`
 //! for inline sets, and rule sets in `document.write` markup (the written-markup script path in
