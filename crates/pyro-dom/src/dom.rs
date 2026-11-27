@@ -1750,7 +1750,7 @@ impl Dom {
             local_name!("select") => self.select_seen = true,
             local_name!("input") => self.input_seen = true,
             local_name!("animate") if name.ns == ns!(svg) => self.smil_seen = true,
-            _ if name.ns == ns!(svg) && matches!(&*name.local, "animateTransform" | "set") => self.smil_seen = true,
+            _ if name.ns == ns!(svg) && matches!(&*name.local, "animateTransform" | "set" | "animateMotion") => self.smil_seen = true,
             _ => {}
         }
         self.selectedcontent_seen |= name.ns == ns!(html) && &*name.local == "selectedcontent";

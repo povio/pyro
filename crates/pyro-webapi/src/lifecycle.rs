@@ -204,6 +204,10 @@ pub fn load(page: &Rc<PageDom>, doc: NodeId) {
         page.dispatching_load.set(outer);
         page.note_timing(|t| &mut t.load_end);
         fire_for_document(page, w, doc, &page_transition_event(page, "pageshow"));
+        // The SMIL clock of the document started with `load`: its animations begin.
+        if doc == page.document() {
+            crate::smil::start(page);
+        }
     }
     if doc == page.document() {
         page.set_completely_loaded();

@@ -662,7 +662,7 @@ impl<A: DomAccess> Sink<A> {
             local_name!("select") => d.select_seen = true,
             local_name!("input") => d.input_seen = true,
             local_name!("animate") if name.ns == markup5ever::ns!(svg) => d.smil_seen = true,
-            _ if name.ns == markup5ever::ns!(svg) && matches!(&*name.local, "animateTransform" | "set") => d.smil_seen = true,
+            _ if name.ns == markup5ever::ns!(svg) && matches!(&*name.local, "animateTransform" | "set" | "animateMotion") => d.smil_seen = true,
             _ => {}
         }
         if !d.inline_transitions_seen

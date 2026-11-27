@@ -856,6 +856,17 @@ fn dispatch_at(
             }
         }
     }
+    // SMIL event values (`begin="click"`) begin or end animations at the time the event happens.
+    if page.dom.borrow().smil_seen() {
+        let node = page.dom.borrow().key_node(target);
+        if let Some(node) = node {
+            let (ty, bubbles) = {
+                let state = event.state.borrow();
+                (state.ty.to_string(), state.bubbles)
+            };
+            crate::smil::on_event(&event.page, node, &ty, bubbles);
+        }
+    }
     // No listener for the type on any target: no callback runs, so the path
     // needs no holding and no invocation target is asked about its tree.
     let heard = page.dom.borrow().listens_for(&event.state.borrow().ty);

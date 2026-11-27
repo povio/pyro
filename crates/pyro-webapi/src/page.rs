@@ -2721,6 +2721,7 @@ impl PageDom {
         self.frame_resize_after_task();
         crate::layout_api::schedule_scroll_clamp(self);
         crate::animation_events::after_task(self);
+        crate::smil::after_task(self);
         crate::input::update_hover_after_task(self);
         self.url_params_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
