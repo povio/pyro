@@ -105,11 +105,36 @@ fn the_form_follows_the_row_position() {
 
 #[test]
 fn an_operator_outside_a_row_takes_no_spacing() {
-    // In a fraction the operator lies where an unspaced one does, whatever the fraction's layout.
+    // An operator that is the numerator of a fraction is not in a row: the fraction is the
+    // embellished operator and takes the spacing (MathML Core § 3.2.4.3; Chrome 158 at 36px: `=`
+    // 10px each side of the fraction), the operator itself none.
     let frac = |mo: &str| rects(&format!("<div><math><mfrac>{mo}<mi id=b>y</mi></mfrac></math></div>"), &["o", "b"]);
-    assert_eq!(frac("<mo id=o>=</mo>"), frac("<mo id=o lspace=0px rspace=0px>=</mo>"));
+    let spaced = frac("<mo id=o>=</mo>");
+    let bare = frac("<mo id=o lspace=0px rspace=0px>=</mo>");
+    assert!((spaced[0][0] - bare[0][0] - 10.0).abs() < 0.125, "{spaced:?} {bare:?}");
+    assert!((spaced[1][0] - bare[1][0] - 10.0).abs() < 0.125, "{spaced:?} {bare:?}");
+    // An operator in the denominator is not embellished through the fraction: no spacing at all.
+    let denominator = |mo: &str| rects(&format!("<div><math><mfrac><mi id=b>y</mi>{mo}</mfrac></math></div>"), &["o", "b"]);
+    assert_eq!(denominator("<mo id=o>=</mo>"), denominator("<mo id=o lspace=0px rspace=0px>=</mo>"));
     // A lone operator in its row (the `<math>`) is an infix one.
     let r = rects("<div><math><mo id=p>=</mo></math></div>", &["p"]);
     let alone = rects("<div><math><mi id=q>=</mi></math></div>", &["q"]);
     assert!((r[0][0] - alone[0][0] - 10.0).abs() < 0.125, "{r:?} {alone:?}");
+}
+
+#[test]
+fn spacing_belongs_to_the_embellished_operator() {
+    // `<mrow><mo>=</mo></mrow>` and `<msub><mo>=</mo>..</msub>` are embellished operators: the
+    // spacing lies outside their box, the operator is flush with it; space-like siblings do not
+    // end the embellishment.
+    let (before, after) = gaps("<mrow><mi id=a>x</mi><mrow id=o><mo>=</mo></mrow><mi id=b>y</mi></mrow>");
+    assert_eq!((before, after), (10.0, 10.0));
+    let r = rects("<div><math><mrow><mi id=a>x</mi><mrow id=o><mo id=m>=</mo></mrow><mi id=b>y</mi></mrow></math></div>", &["o", "m"]);
+    assert!((r[0][0] - r[1][0]).abs() < 0.125, "the operator lies flush in its mrow: {r:?}");
+}
+
+#[test]
+fn a_character_with_a_combining_mark_is_spaced_as_the_character() {
+    // `≠` written as `=` U+0338: the `=` entry (`mo-lspace-rspace` in WPT operator-dictionary-combining).
+    assert_eq!(infix("<mo id=o>=\u{338}</mo>"), (10.0, 10.0));
 }

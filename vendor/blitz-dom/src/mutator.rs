@@ -1123,6 +1123,11 @@ impl DocumentMutator<'_> {
     }
 
     fn restyle_for_attribute_change(&mut self, node_id: NodeId, attr: &LocalName) {
+        // pyro: an operator's `lspace`, `rspace` and `form` decide the spacing of its embellished
+        // operator, which may be an ancestor (`mathml_operator`).
+        if matches!(&**attr, "lspace" | "rspace" | "form") {
+            self.respace_operators(node_id);
+        }
         let node = &mut self.doc.nodes[node_id];
         let is_style = *attr == local_name!("style");
         // Attributes that box construction or layout read directly. Any other attribute only
@@ -1187,23 +1192,11 @@ impl DocumentMutator<'_> {
     /// unchanged): they are restyled whenever the parent carries a sibling-dependent flag. The
     /// same conditions inside a `:has()` argument reach their anchors through
     /// `invalidate_relative_selectors_for_ts_state`.
-    /// pyro: an `<mo>`'s spacing follows its text and its position in its row
-    /// (`mathml_operator`): `node_id`'s children or text changed, so its operators, or it when it is
-    /// one, build their presentational hints again.
+    /// pyro: an operator's spacing follows its text, its attributes and its embellished operator's
+    /// position in its row (`mathml_operator`): `node_id`'s children or text changed, so the
+    /// elements whose spacing depends on it build their presentational hints again.
     fn respace_operators(&mut self, node_id: NodeId) {
-        if !crate::mathml_operator::affects_spacing(&self.doc.nodes[node_id]) {
-            return;
-        }
-        let node = &self.doc.nodes[node_id];
-        let is_mo = |n: &crate::node::Node| {
-            n.element_data().is_some_and(|e| e.name.ns == markup5ever::ns!(mathml) && e.name.local == local_name!("mo"))
-        };
-        let operators: Vec<NodeId> = if is_mo(node) {
-            vec![node_id]
-        } else {
-            node.children.iter().copied().filter(|c| is_mo(&self.doc.nodes[*c])).collect()
-        };
-        for id in operators {
+        for id in crate::mathml_operator::respace_targets(&self.doc.nodes[node_id]) {
             let node = &mut self.doc.nodes[id];
             if let Some(element) = node.element_data_mut() {
                 element.attrs.forget_presentational_hints();
