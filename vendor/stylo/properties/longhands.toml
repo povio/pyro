@@ -2305,7 +2305,6 @@ affects = "paint"
 type = "Transform"
 initial = "generics::transform::Transform::none()"
 struct = "box"
-extra_prefixes = ["moz:layout.css.prefixes.transforms"]
 flags = "CAN_ANIMATE_ON_COMPOSITOR SCROLL_LINKED_EFFECTIVE"
 spec = "https://drafts.csswg.org/css-transforms/#propdef-transform"
 servo_restyle_damage = "recalculate_overflow"

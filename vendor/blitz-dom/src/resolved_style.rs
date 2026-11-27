@@ -900,17 +900,23 @@ impl BaseDocument {
                     return format_px(0.0);
                 }
             }
-            "transform" if has_layout_box => {
+            "transform" => {
                 let transform = &styles.get_box().transform;
                 if !transform.0.is_empty() {
                     // Used value: the transform list resolved to a matrix, with
-                    // percentages resolved against the border box
-                    let layout = node.final_layout();
+                    // percentages resolved against the border box (an empty one where there is
+                    // no box: a non-replaced inline, `display: none`; Chrome reports a matrix too)
+                    let (width, height) = if has_layout_box {
+                        let size = node.final_layout().size;
+                        (size.width, size.height)
+                    } else {
+                        (0.0, 0.0)
+                    };
                     let reference_box = euclid::Rect::new(
                         euclid::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
                         euclid::Size2D::new(
-                            CSSPixelLength::new(layout.size.width / zoom),
-                            CSSPixelLength::new(layout.size.height / zoom),
+                            CSSPixelLength::new(width / zoom),
+                            CSSPixelLength::new(height / zoom),
                         ),
                     );
                     use resolved::ToResolvedValue;
