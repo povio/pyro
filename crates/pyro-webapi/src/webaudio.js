@@ -9,7 +9,9 @@
 // AudioParams compute their automation (and connected inputs) per sample
 // (a-rate) or per quantum (k-rate). An OfflineAudioContext renders when
 // startRendering() runs; a real-time AudioContext has no output device, so
-// it only runs its clock and ends its sources on time.
+// it runs its clock, ends its sources on time and computes the quanta the
+// clock passed only while a worklet node, script processor or analyser
+// observes the graph (its destination result is dropped).
 (natives => {
   'use strict';
   const { decode, activated, timer, clearTimer: clearClock, audioWorklet: makeAudioWorklet, secureContext, mediaBlocked, fullyActive, foreignOutputTimestamp } = natives;

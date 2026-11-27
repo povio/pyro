@@ -6,7 +6,9 @@
 //! An `OfflineAudioContext` renders its graph in blocks (128 frames by default) when
 //! `startRendering()` runs. A real-time `AudioContext` has no output device:
 //! its `currentTime` advances on the document clock while it runs and its
-//! sources end on time, but no sample is computed.
+//! sources end on time; the graph is computed for the quanta that clock passed
+//! only while something observes it (a worklet node, a script processor, an
+//! analyser), and what reaches the destination is dropped.
 //!
 //! `decodeAudioData` decodes with pyro-media (Symphonia and opus-pure) on a
 //! thread of its own, made for the call, and resamples to the context's
