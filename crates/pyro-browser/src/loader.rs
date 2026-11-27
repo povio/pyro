@@ -568,24 +568,35 @@ impl ResourceLoader for NetLoader {
                     // Its cross-origin embedder policy: a no-cors subresource's response check, and
                     // for a nested navigation the embedding document's (HTML § 7.1.4).
                     d.apply_embedder_defaults(&mut req.defaults);
-                    // A credentialless document's requests (and its frames' navigations) use the
-                    // cookie jar of its anonymous partition, never the normal one.
-                    req.defaults.ephemeral_cookies = anonymous_cookies(browser, &request, d);
-                    // A credentialless frame's navigation response needs no `Cross-Origin-Resource-Policy`
-                    // of its own under the embedder's `require-corp` (`embedder_policy_blocks`).
-                    if request.kind == ResourceKind::Iframe && req.defaults.ephemeral_cookies.is_some() {
-                        req.defaults.embedder_policy = pyro_net::EmbedderPolicy::UnsafeNone;
-                    }
-                    // Storage Access API: the embedding document's third-party cookie decision (none
-                    // unless its context has a blocking rule), and for a frame's navigation that keeps
-                    // the frame's storage access its grant.
-                    req.defaults.cookie_blocking = d.cookie_blocking().map(|b| {
+                }
+                // A credentialless document's requests (and its frames' navigations) use the
+                // cookie jar of its anonymous partition, never the normal one. Taken from the frame
+                // (its container and ancestors) when the requesting document cannot be resolved: such
+                // a request must not fall back to the normal jar.
+                req.defaults.ephemeral_cookies = anonymous_cookies(browser, &request, document.as_ref());
+                // A credentialless frame's navigation response needs no `Cross-Origin-Resource-Policy`
+                // of its own under the embedder's `require-corp` (`embedder_policy_blocks`, which
+                // checks `Resource::ephemeral_jar`: the navigation really carried the ephemeral jar).
+                if request.kind == ResourceKind::Iframe && req.defaults.ephemeral_cookies.is_some() {
+                    req.defaults.embedder_policy = pyro_net::EmbedderPolicy::UnsafeNone;
+                }
+                // Storage Access API: the embedding document's third-party cookie decision (none
+                // unless its context has a blocking rule), and for a frame's navigation that keeps
+                // the frame's storage access its grant. Without a resolvable document the page's top-level
+                // document decides, with no grant (never "no decision").
+                req.defaults.cookie_blocking = match &document {
+                    Some(d) => d.cookie_blocking().map(|b| {
                         if request.kind != ResourceKind::Iframe {
                             return b;
                         }
                         std::sync::Arc::new(if keeps_storage_access(browser, &request, &req.url) { b.granted_for(&req.url) } else { b.without_grant() })
-                    });
-                }
+                    }),
+                    None => browser
+                        .page(request.page)
+                        .and_then(|p| p.frames.page_dom(crate::frames::FrameKey { page: request.page, child: None }))
+                        .and_then(|root| root.cookie_blocking())
+                        .map(|b| std::sync::Arc::new(b.without_grant())),
+                };
             }
             if request.kind == ResourceKind::Document {
                 req.top_level_site = pyro_net::cookies::partition_key(&req.url);
@@ -1731,20 +1742,38 @@ fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<p
 /// when it is credentialless (its tree is), and for the navigation of a child frame of `d` whose
 /// container has the `credentialless` attribute the partition of `d`'s top-level document (taken as
 /// the navigation began). `None`: the browser context's jar.
-fn anonymous_cookies(browser: &Browser, request: &FetchRequest, d: &Rc<pyro_webapi::PageDom>) -> Option<pyro_net::cookies::EphemeralCookies> {
-    if let Some(anonymous) = d.anonymous() {
+fn anonymous_cookies(browser: &Browser, request: &FetchRequest, d: Option<&Rc<pyro_webapi::PageDom>>) -> Option<pyro_net::cookies::EphemeralCookies> {
+    if let Some(anonymous) = d.and_then(|d| d.anonymous()) {
         return Some(anonymous.cookies);
     }
-    if request.kind != ResourceKind::Iframe {
-        return None;
-    }
     let frames = browser.page(request.page)?.frames.clone();
-    let key = frames.key_of(request.frame_id.as_deref()?)?;
-    if !browser.doc(key)?.main_frame.fullscreen_container.credentialless {
+    let key = request.frame_id.as_deref().and_then(|id| frames.key_of(id));
+    let credentialless = match (d, key) {
+        // The document is known and is not in the partition: only a navigation's own container decides.
+        (Some(_), Some(key)) => request.kind == ResourceKind::Iframe && browser.doc(key)?.main_frame.fullscreen_container.credentialless,
+        (Some(_), None) => false,
+        // No document: the frame's own container and its ancestors' say (a document of the tree is
+        // credentialless iff a container on its path is).
+        (None, Some(mut key)) => loop {
+            if browser.doc(key).is_some_and(|doc| doc.main_frame.fullscreen_container.credentialless) {
+                break true;
+            }
+            let parent = frames.parent_key(key);
+            if parent == key {
+                break false;
+            }
+            key = parent;
+        },
+        (None, None) => false,
+    };
+    if !credentialless {
         return None;
     }
-    let root = frames.page_dom(crate::frames::FrameKey { page: request.page, child: None })?;
-    Some(root.credentialless_partition().anonymous().cookies)
+    match frames.page_dom(crate::frames::FrameKey { page: request.page, child: None }) {
+        Some(root) => Some(root.credentialless_partition().anonymous().cookies),
+        // The tree's root document is gone: an empty jar of its own, never the normal one.
+        None => Some(Default::default()),
+    }
 }
 
 /// Storage Access API: whether the navigation of a child frame that `request` is keeps the storage

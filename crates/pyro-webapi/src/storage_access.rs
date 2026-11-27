@@ -65,7 +65,9 @@ impl PageDom {
         if rules.is_empty() {
             return None;
         }
-        let top_site = self.cookie_partition_key()?;
+        // Fail closed: a top-level site that cannot be named (an opaque or non-web top) is no site any
+        // request is at, so every request is a third party and the rules decide.
+        let top_site = self.cookie_partition_key().unwrap_or_default();
         Some(Arc::new(CookieBlocking::new(
             rules,
             top_site,
