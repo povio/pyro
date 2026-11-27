@@ -370,9 +370,13 @@ impl JsClass for Window {
         });
         def.accessor(
             "location",
-            |s, w| Ok(location_object(s, w)?.value()),
+            |s, w| {
+                pyro_webapi::note_window_access(&w.target.page, "location");
+                Ok(location_object(s, w)?.value())
+            },
             |s, w, v| {
                 // `window.location = url` assigns href.
+                pyro_webapi::note_window_access(&w.target.page, "location");
                 location_object(s, w)?.set("href", v)
             },
         );
@@ -424,13 +428,19 @@ impl JsClass for Window {
         }
         observer_interfaces!("PerformanceObserver", "PerformanceObserverEntryList");
         def.getter("top", |s, w| match (w.frames.upgrade(), w.frame) {
-            (Some(host), Some(key)) => host.relation(s, key, true),
+            (Some(host), Some(key)) => {
+                pyro_webapi::note_window_access(&w.target.page, "top");
+                host.relation(s, key, true)
+            }
             _ => Ok(s.global().value()),
         });
         def.accessor(
             "parent",
             |s, w| match (w.frames.upgrade(), w.frame) {
-                (Some(host), Some(key)) => host.relation(s, key, false),
+                (Some(host), Some(key)) => {
+                    pyro_webapi::note_window_access(&w.target.page, "parent");
+                    host.relation(s, key, false)
+                }
                 _ => Ok(s.global().value()),
             },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "parent", v),
@@ -438,6 +448,7 @@ impl JsClass for Window {
         // HTML `closed`: true once the window's browsing context is gone (its container, or an
         // ancestor's, was removed and the frame detached; or its document was detached).
         def.getter("closed", |s, w| {
+            pyro_webapi::note_window_access(&w.target.page, "closed");
             let gone = match (w.frames.upgrade(), w.frame) {
                 (Some(host), Some(key)) => host.with_frame(key, |_| ()).is_none() || host.container_removed(key),
                 _ => false,
@@ -487,7 +498,10 @@ impl JsClass for Window {
         def.accessor(
             "opener",
             |s, w| match (w.frames.upgrade(), w.frame) {
-                (Some(host), Some(key)) => host.opener_window(s, key),
+                (Some(host), Some(key)) => {
+                    pyro_webapi::note_window_access(&w.target.page, "opener");
+                    host.opener_window(s, key)
+                }
                 _ => Ok(s.null()),
             },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "opener", v),
@@ -495,6 +509,7 @@ impl JsClass for Window {
         def.accessor(
             "length",
             |s, w| {
+                pyro_webapi::note_window_access(&w.target.page, "length");
                 Ok(s.number(match (w.frames.upgrade(), w.frame) {
                     (Some(host), Some(key)) => host.child_keys(key).len() as f64,
                     _ => 0.0,
@@ -511,7 +526,11 @@ impl JsClass for Window {
         );
         def.indexed(|s, w, index| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => {
-                host.child_keys(key).get(index as usize).map(|target| host.window_value(s, key, *target)).transpose()
+                let child = host.child_keys(key).get(index as usize).copied();
+                if child.is_some() {
+                    pyro_webapi::note_window_access(&w.target.page, "indexed");
+                }
+                child.map(|target| host.window_value(s, key, target)).transpose()
             }
             _ => Ok(None),
         });
@@ -522,12 +541,18 @@ impl JsClass for Window {
         }
         def.accessor(
             "self",
-            |s, _w| Ok(s.global().value()),
+            |s, w| {
+                pyro_webapi::note_window_access(&w.target.page, "self");
+                Ok(s.global().value())
+            },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "self", v),
         );
         def.accessor(
             "frames",
-            |s, _w| Ok(s.global().value()),
+            |s, w| {
+                pyro_webapi::note_window_access(&w.target.page, "frames");
+                Ok(s.global().value())
+            },
             |s, w, v| pyro_webapi::window::replace_window_attribute(s, &w.target.page, "frames", v),
         );
         def.getter("isSecureContext", |s, w| Ok(s.boolean(is_secure_context(w))));
@@ -546,6 +571,7 @@ impl JsClass for Window {
         def.method("__lpNow", 0, |s, w, _a| Ok(s.number(w.now_ms())));
         // Window post message steps: from the window whose script is running.
         def.method("postMessage", 1, |s, w, a| {
+            pyro_webapi::note_window_access(&w.target.page, "postMessage");
             match (w.frames.upgrade(), w.frame) {
                 (Some(host), Some(key)) => {
                     crate::frames::post_message(s, &a, crate::frames::incumbent_window(), &host, key)?

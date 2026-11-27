@@ -264,7 +264,7 @@ pub struct Resource {
     /// A document navigation's Cross-Origin-Opener-Policy per response of its redirect chain, in
     /// order, each with the origin of the response's URL; the last is the committed document's.
     /// Empty: the loader does not say (nothing is enforced).
-    pub coop: Vec<(CoopValue, String)>,
+    pub coop: Vec<CoopResponse>,
     /// A navigation's `Referer` as its last hop sent it (`document.referrer`
     /// of the document it commits; empty: none was sent). `None`: the
     /// loader does not say, and it is computed from the navigation.
@@ -692,7 +692,7 @@ impl ResourceLoader for NetLoader {
         let mut head: Option<pyro_net::ResponseHead> = None;
         let mut body: Vec<u8> = Vec::new();
         // A navigation's Cross-Origin-Opener-Policy per redirect response (the final one joins at the end).
-        let mut coop_responses: Vec<(CoopValue, String)> = Vec::new();
+        let mut coop_responses: Vec<CoopResponse> = Vec::new();
         // A navigation's referrer, followed across its redirects as the
         // client sends it: the last hop's is `document.referrer`.
         let mut chain =
@@ -716,7 +716,7 @@ impl ResourceLoader for NetLoader {
             _ if cut => {}
             pyro_net::ResponseEvent::Redirect { from, headers, .. } => {
                 if document {
-                    coop_responses.push((obtain_coop(&headers, &from), origin_of(from.as_str())));
+                    coop_responses.push(coop_response(&headers, &from, true));
                 }
                 if let Some(chain) = chain.as_mut() {
                     chain.redirect(&from, &headers);
@@ -887,7 +887,7 @@ impl ResourceLoader for NetLoader {
                         embedder_policy: if document { obtain_embedder_policy(&h.headers, &h.url) } else { pyro_net::EmbedderPolicy::UnsafeNone },
                         coop: if document {
                             let mut responses = std::mem::take(&mut coop_responses);
-                            responses.push((obtain_coop(&h.headers, &h.url), origin_of(h.url.as_str())));
+                            responses.push(coop_response(&h.headers, &h.url, false));
                             responses
                         } else {
                             Vec::new()
@@ -989,6 +989,47 @@ pub struct CoopState {
     pub value: CoopValue,
     pub origin: String,
     pub initial_blank: bool,
+    /// The `report-to` endpoint name of the enforced policy (HTML "cross-origin opener policy" struct's
+    /// reporting endpoint).
+    pub report_to: Option<String>,
+    /// The document's report-only policy (`Cross-Origin-Opener-Policy-Report-Only`).
+    pub report_only: CoopPolicy,
+    /// The document that owns the reporters: the committed document, or for a popup's initial
+    /// about:blank document its creator's (`crate::coop_report`).
+    pub reporter: Option<std::rc::Weak<pyro_webapi::PageDom>>,
+    /// The virtual browsing context group (`crate::coop_report`); 0: not yet numbered.
+    pub vbcg: u64,
+    /// The URL a popup's first navigation requested (`initialPopupURL` of access reports).
+    pub initial_popup_url: Option<String>,
+    /// Access reports made already: (from the reporter's side, the other page, property).
+    pub reported: Vec<(bool, u64, String)>,
+}
+
+/// A COOP value with the endpoint its reports go to (HTML § 7.1.3 "cross-origin opener policy":
+/// value and reporting endpoint).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CoopPolicy {
+    pub value: CoopValue,
+    pub report_to: Option<String>,
+}
+
+/// One response of a navigation's redirect chain with its two cross-origin opener policies
+/// (enforced and report-only), the origin and URL it came from and, for a redirect (which never
+/// becomes a document), the endpoints its `Reporting-Endpoints` header names.
+#[derive(Clone, Debug, Default)]
+pub struct CoopResponse {
+    pub enforced: CoopPolicy,
+    pub report_only: CoopPolicy,
+    pub origin: String,
+    pub url: String,
+    pub endpoints: Vec<(String, pyro_net::Url)>,
+}
+
+impl CoopState {
+    /// Whether a COOP reporting endpoint is named by this document's policies.
+    pub(crate) fn has_reporting(&self) -> bool {
+        self.report_to.is_some() || self.report_only.report_to.is_some()
+    }
 }
 
 /// The first item of a structured field value that is a bare item (RFC 8941 `sf-item`), when it is
@@ -1091,27 +1132,42 @@ pub(crate) fn obtain_embedder_policy(headers: &http::HeaderMap, url: &pyro_net::
     }
 }
 
-/// HTML "obtain a cross-origin opener policy" of a response for `url` (its COOP value only; the
-/// report-only header and endpoints are not implemented): the `Cross-Origin-Opener-Policy` header
-/// as a structured-field token (parameters allowed), `unsafe-none` when absent, malformed,
-/// unrecognised (the historical `same-site` and `unsafe-allow-outgoing` included) or sent from
-/// a context that is not potentially trustworthy; `same-origin` of a response whose
-/// `Cross-Origin-Embedder-Policy` is `require-corp` or `credentialless` is `same-origin-plus-COEP`.
-pub(crate) fn obtain_coop(headers: &http::HeaderMap, url: &pyro_net::Url) -> CoopValue {
+/// HTML "obtain a cross-origin opener policy" of a response for `url`: the
+/// `Cross-Origin-Opener-Policy` header as a structured-field token (parameters allowed) and its
+/// `report-to` parameter when that is a string; `unsafe-none` when absent, malformed, unrecognised
+/// (the historical `same-site` and `unsafe-allow-outgoing` included) or sent from a context that is
+/// not potentially trustworthy; `same-origin` of a response whose `Cross-Origin-Embedder-Policy` is
+/// `require-corp` or `credentialless` is `same-origin-plus-COEP`.
+pub(crate) fn obtain_coop(headers: &http::HeaderMap, url: &pyro_net::Url) -> CoopPolicy {
+    parse_coop(headers, url, "cross-origin-opener-policy", false)
+}
+
+/// The same for `Cross-Origin-Opener-Policy-Report-Only`, whose `same-origin` is
+/// `same-origin-plus-COEP` also when the response's `Cross-Origin-Embedder-Policy-Report-Only` is
+/// `require-corp` or `credentialless`.
+pub(crate) fn obtain_coop_report_only(headers: &http::HeaderMap, url: &pyro_net::Url) -> CoopPolicy {
+    parse_coop(headers, url, "cross-origin-opener-policy-report-only", true)
+}
+
+fn parse_coop(headers: &http::HeaderMap, url: &pyro_net::Url, name: &str, report_only: bool) -> CoopPolicy {
     let trustworthy = url.scheme() == "https"
         || url.host_str().is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h.ends_with(".localhost"));
     if !trustworthy {
-        return CoopValue::UnsafeNone;
+        return CoopPolicy::default();
     }
     // Repeated headers combine with ", ", which no single structured item parses as.
     let field = |name: &str| -> Option<String> {
         let values: Vec<&str> = headers.get_all(name).iter().map(|v| v.to_str().ok()).collect::<Option<_>>()?;
         (!values.is_empty()).then(|| values.join(", "))
     };
-    let Some(coop) = field("cross-origin-opener-policy") else { return CoopValue::UnsafeNone };
-    match structured_item_token(&coop) {
+    let Some(coop) = field(name) else { return CoopPolicy::default() };
+    let value = match structured_item_token(&coop) {
         Some("same-origin") => {
-            if obtain_embedder_policy(headers, url) != pyro_net::EmbedderPolicy::UnsafeNone {
+            let isolated = obtain_embedder_policy(headers, url) != pyro_net::EmbedderPolicy::UnsafeNone
+                || (report_only
+                    && field("cross-origin-embedder-policy-report-only")
+                        .is_some_and(|v| matches!(structured_item_token(&v), Some("require-corp" | "credentialless"))));
+            if isolated {
                 CoopValue::SameOriginPlusCoep
             } else {
                 CoopValue::SameOrigin
@@ -1119,7 +1175,32 @@ pub(crate) fn obtain_coop(headers: &http::HeaderMap, url: &pyro_net::Url) -> Coo
         }
         Some("same-origin-allow-popups") => CoopValue::SameOriginAllowPopups,
         Some("noopener-allow-popups") => CoopValue::NoopenerAllowPopups,
-        _ => CoopValue::UnsafeNone,
+        Some("unsafe-none") => CoopValue::UnsafeNone,
+        _ => return CoopPolicy::default(),
+    };
+    CoopPolicy { value, report_to: crate::coop_report::report_to_param(&coop) }
+}
+
+/// The COOP policies of one response of a navigation, from `from` (its URL).
+pub(crate) fn coop_response(headers: &http::HeaderMap, from: &pyro_net::Url, redirect: bool) -> CoopResponse {
+    let endpoints = if redirect {
+        // A redirect never becomes a document: the endpoints its own header names are where the
+        // reports about it go.
+        let values: Vec<&str> = headers.get_all("reporting-endpoints").iter().filter_map(|v| v.to_str().ok()).collect();
+        if values.is_empty() || !pyro_net::is_potentially_trustworthy_url(from) {
+            Vec::new()
+        } else {
+            pyro_webapi::csp_report::parse_reporting_endpoints(&values.join(","), from)
+        }
+    } else {
+        Vec::new()
+    };
+    CoopResponse {
+        enforced: obtain_coop(headers, from),
+        report_only: obtain_coop_report_only(headers, from),
+        origin: origin_of(from.as_str()),
+        url: from.to_string(),
+        endpoints,
     }
 }
 
@@ -2417,7 +2498,7 @@ impl Browser {
     /// it) while the navigation is sandboxed: the popup sandboxing flags of its creator or the
     /// response's own CSP `sandbox` (HTML "enforce a response's cross-origin opener policy").
     fn coop_sandbox_blocks(&self, page: FrameKey, resource: &Resource) -> bool {
-        if page.child.is_some() || resource.coop.iter().all(|(value, _)| *value == CoopValue::UnsafeNone) {
+        if page.child.is_some() || resource.coop.iter().all(|r| r.enforced.value == CoopValue::UnsafeNone) {
             return false;
         }
         let Some(p) = self.page(page.page) else { return false };
@@ -2789,6 +2870,19 @@ impl Browser {
             state.committing_csp_sandbox = csp_sandbox;
         }
         let error_document = unreachable.is_some();
+        // COOP navigation reports (HTML "cross-origin opener policy reporting"): the reports about
+        // the document being replaced and about redirects go out now, while that document is the
+        // active one; those the new document receives are queued once it has its endpoints.
+        let coop_reports = if page.child.is_none() && !error_document && !resource.coop.is_empty() {
+            let host = self.page(page.page).map(|p| p.frames.clone());
+            let carrier = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+            let referrer = resource.sent_referrer.clone().or_else(|| opts.referrer.clone()).unwrap_or_default();
+            host.map(|host| {
+                crate::coop_report::queue_navigation_reports(&host, carrier.as_ref(), &resource.coop, &referrer, &opts.url)
+            })
+        } else {
+            None
+        };
         let committed = self.commit_document(page, opts, loader_id.clone(), &origin, history, unreachable);
         if let Some(nav) = &nav {
             nav.set_incoming_fetch(None);
@@ -2812,14 +2906,19 @@ impl Browser {
         if page.child.is_none() && !error_document {
             if let Some(host) = self.page(page.page).map(|p| p.frames.clone()) {
                 let left_group = match resource.coop.last().cloned() {
-                    Some((value, response_origin)) => {
+                    Some(last) => {
                         let switched = host.coop_requires_switch(&resource.coop);
-                        host.coop_committed(value, response_origin, switched)
+                        let left = host.coop_committed(last.enforced.value, last.origin.clone(), switched);
+                        let virtual_switch = switched || coop_reports.as_ref().is_some_and(|r| r.virtual_switch);
+                        host.coop_note_commit(&last, &page_dom, virtual_switch);
+                        left
                     }
                     // A document the loader says nothing of (a local scheme, a cached or embedder
                     // supplied one) has no policy; a popup's initial about:blank keeps its creator's.
                     None if resource.url != "about:blank" => {
-                        host.coop_committed(CoopValue::UnsafeNone, origin.clone(), false)
+                        let left = host.coop_committed(CoopValue::UnsafeNone, origin.clone(), false);
+                        host.coop_note_commit(&CoopResponse::default(), &page_dom, false);
+                        left
                     }
                     None => false,
                 };
@@ -2945,6 +3044,12 @@ impl Browser {
         // The document's Reporting API endpoints (CSP `report-to`); a document without the header
         // has none, and the previous document's report state goes.
         page_dom.set_reporting_endpoints(resource.reporting_endpoints.as_deref());
+        // The COOP navigation reports of this document (to its own endpoints, now known).
+        if let Some(reports) = coop_reports {
+            for report in reports.to_document {
+                pyro_webapi::reporting_store::queue_endpoint_report(&page_dom, report);
+            }
+        }
         // `bindings::create` parses every `about:blank` document from the blank markup (html,
         // head, body). A document made from a body at that URL (a `javascript:` URL's string
         // result replacing an about:blank document keeps its URL) must start empty: the parser

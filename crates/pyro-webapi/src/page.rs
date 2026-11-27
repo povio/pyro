@@ -1037,6 +1037,24 @@ pub trait PageHooks {
     fn coop_forces_noopener(&self) -> bool {
         false
     }
+    /// COOP access reporting (HTML "cross-origin opener policy access reporting"): the script
+    /// of this document, running in `scope`'s realm, reached `property` (a CrossOriginProperties
+    /// name, `indexed` or `named`) of the window of document `target`, which is another window
+    /// (`target_side`: its `coop_side()`).
+    /// Called only while some document names a COOP reporting endpoint ([`crate::popup::note_window_access`]).
+    fn coop_access(
+        &self,
+        _scope: &pyro_js::Scope<'_>,
+        _target: &Rc<PageDom>,
+        _target_side: &dyn std::any::Any,
+        _property: &str,
+    ) {
+    }
+    /// What `coop_access` of another document needs to know of this one as the accessed window:
+    /// an embedder-defined value (`None`: it has none, nothing is reported).
+    fn coop_side(&self) -> Option<Rc<dyn std::any::Any>> {
+        None
+    }
     /// WindowProxy of the child browsing context in `scope`'s realm.
     fn frame_window<'s>(&self, _scope: &pyro_js::Scope<'s>, _iframe: NodeId) -> Option<pyro_js::Value<'s>> {
         None

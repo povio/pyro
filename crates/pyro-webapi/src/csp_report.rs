@@ -520,6 +520,16 @@ fn enqueue_report(page: &Rc<PageDom>, group: &str, report_type: &str, url: &str,
     let Some(endpoint) = from_document.or_else(|| crate::reporting_store::report_to_endpoint(page, group)) else {
         return false;
     };
+    enqueue_to(page, endpoint, report_type, url, body)
+}
+
+/// [`report_to_group`] for an endpoint URL the caller resolved (a redirect response's
+/// `Reporting-Endpoints`, which no document of its own shows).
+pub(crate) fn report_to_url(page: &Rc<PageDom>, endpoint: Url, report_type: &str, url: &str, body: Json) -> bool {
+    page.net.borrow().is_some() && enqueue_to(page, endpoint, report_type, url, body)
+}
+
+fn enqueue_to(page: &Rc<PageDom>, endpoint: Url, report_type: &str, url: &str, body: Json) -> bool {
     let origin = page.document_url_parsed().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|| "null".into());
     let first = {
         let mut state = page.csp_reports.borrow_mut();

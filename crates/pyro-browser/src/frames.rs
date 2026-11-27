@@ -316,6 +316,14 @@ pub(crate) struct PrebuiltPopup {
     pub frame: Frame,
 }
 
+impl Drop for FrameHost {
+    fn drop(&mut self) {
+        if self.coop.get_mut().has_reporting() {
+            pyro_webapi::coop_reporting_documents(-1);
+        }
+    }
+}
+
 impl FrameHost {
     /// HTML "obtain a similar-origin window agent": the first document of `origin` in the browsing
     /// context group decides whether its agent cluster is origin-keyed (`requested`: it asked with
@@ -333,6 +341,16 @@ impl FrameHost {
         keyed
     }
 
+    /// Replaces the top-level document's COOP state, keeping the count of documents that name a
+    /// COOP reporting endpoint (`pyro_webapi::coop_reporting_documents`) right.
+    pub(crate) fn set_coop(&self, new: crate::loader::CoopState) {
+        let now = new.has_reporting();
+        let before = std::mem::replace(&mut *self.coop.borrow_mut(), new).has_reporting();
+        if now != before {
+            pyro_webapi::coop_reporting_documents(if now { 1 } else { -1 });
+        }
+    }
+
     /// This page's top-level document's COOP value (`unsafe-none` before any committed).
     pub(crate) fn coop_value(&self) -> crate::loader::CoopValue {
         self.coop.borrow().value
@@ -342,15 +360,16 @@ impl FrameHost {
     /// chain's, each with the origin that sent it) have these COOPs puts it in a new browsing
     /// context group (HTML "enforce a response's cross-origin opener policy"): each response is
     /// matched against the one before it, the first against the active document's.
-    pub(crate) fn coop_requires_switch(&self, responses: &[(crate::loader::CoopValue, String)]) -> bool {
+    pub(crate) fn coop_requires_switch(&self, responses: &[crate::loader::CoopResponse]) -> bool {
         let state = self.coop.borrow();
         let mut active = (state.value, state.origin.as_str());
         let mut initial_blank = state.initial_blank;
         let mut switch = false;
-        for (value, origin) in responses {
-            switch |= crate::loader::coop_requires_switch(initial_blank, active.0, active.1, *value, origin);
+        for response in responses {
+            let (value, origin) = (response.enforced.value, response.origin.as_str());
+            switch |= crate::loader::coop_requires_switch(initial_blank, active.0, active.1, value, origin);
             // Past the first response the document being navigated to is no initial about:blank.
-            (initial_blank, active) = (false, (*value, origin.as_str()));
+            (initial_blank, active) = (false, (value, origin));
         }
         switch
     }
@@ -360,7 +379,12 @@ impl FrameHost {
     /// closed window from now on, and loses its name (the caller clears the page's own copy):
     /// true then.
     pub(crate) fn coop_committed(&self, value: crate::loader::CoopValue, origin: String, switched: bool) -> bool {
-        *self.coop.borrow_mut() = crate::loader::CoopState { value, origin, initial_blank: false };
+        // (What the popup's creation fixed stays: its virtual group, its initial URL.)
+        let (vbcg, initial_popup_url) = {
+            let old = self.coop.borrow();
+            (old.vbcg, old.initial_popup_url.clone())
+        };
+        self.set_coop(crate::loader::CoopState { value, origin, initial_blank: false, vbcg, initial_popup_url, ..Default::default() });
         if !switched {
             return false;
         }
@@ -448,11 +472,7 @@ impl FrameHost {
             origin_keying: RefCell::new(self.origin_keying.borrow().clone()),
             // The initial about:blank document of a popup: its creator's top-level document's
             // policy, with the creator document's origin.
-            coop: RefCell::new(crate::loader::CoopState {
-                value: self.coop_value(),
-                origin: from.origin.clone(),
-                initial_blank: true,
-            }),
+            coop: RefCell::new(crate::loader::CoopState::default()),
             settings: RefCell::new(settings),
             page: id,
             context: self.context,
@@ -501,6 +521,7 @@ impl FrameHost {
             inherited.apply(&dom);
             *host.creator_csp.borrow_mut() = Some(inherited);
         }
+        host.set_coop(self.coop_for_popup(from.origin.clone()));
         // Nothing loads into it: it is complete as made (as in browsers).
         dom.set_ready_state(dom.document(), "complete");
         nav.commit_document("about:blank", HistoryHandling::Replace, Some((host.dom.clone(), dom.document())));
@@ -1790,7 +1811,7 @@ impl FrameHost {
 /// The cross-origin stand-in for `opener`'s top-level window (one per
 /// realm), as frame `from` (the popup's top-level frame) sees it.
 /// Whether frames `a` and `b` (of any pages) are same origin.
-fn frames_same_origin(a: &Frame, b: &Frame) -> bool {
+pub(crate) fn frames_same_origin(a: &Frame, b: &Frame) -> bool {
     if a.origin == "null" || b.origin == "null" {
         a.origin == b.origin && a.opaque_origin == b.opaque_origin
     } else {
@@ -2001,6 +2022,17 @@ pub(crate) struct CrossWindowData {
 }
 
 impl CrossWindowData {
+    /// The running script reached `property` of this window: COOP access reporting.
+    fn note_access(&self, property: &str) {
+        if !pyro_webapi::coop_reporting_active() {
+            return;
+        }
+        let Some(host) = self.host.upgrade() else { return };
+        if let Some(dom) = host.page_dom(self.target) {
+            pyro_webapi::note_window_access(&dom, property);
+        }
+    }
+
     /// The accessing window: its frame host and frame.
     fn accessor(&self, host: &Rc<FrameHost>) -> Option<(Rc<FrameHost>, FrameKey)> {
         match (self.source, &self.from) {
@@ -2102,6 +2134,11 @@ impl pyro_js::JsClass for CrossWindow {
     fn define(def: &mut pyro_js::ClassDef<Self>) {
         def.not_exposed();
         def.named(true, |s, w, name| {
+            // helpers.js tells which CrossOriginProperty a script reached (COOP access reporting).
+            if let Some(property) = name.strip_prefix(pyro_webapi::ACCESS_NOTE) {
+                w.note_access(property);
+                return Ok(None);
+            }
             let Some(host) = w.host.upgrade() else {
                 return if name == "closed" { Ok(Some(s.boolean(true))) } else { Err(JsError::ContextDestroyed) };
             };

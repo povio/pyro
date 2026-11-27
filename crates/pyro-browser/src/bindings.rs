@@ -673,6 +673,26 @@ impl PageHooks for Hooks {
         }
     }
 
+    fn coop_side(&self) -> Option<Rc<dyn std::any::Any>> {
+        let host = self.frames.upgrade()?;
+        if !host.matches(self.page, &self.loader) {
+            return None;
+        }
+        Some(Rc::new(crate::coop_report::CoopSide { host: Rc::downgrade(&host), key: self.page }))
+    }
+
+    fn coop_access(
+        &self,
+        scope: &pyro_js::Scope<'_>,
+        target: &Rc<pyro_webapi::PageDom>,
+        target_side: &dyn std::any::Any,
+        property: &str,
+    ) {
+        let Some(host) = self.frames.upgrade().filter(|h| h.matches(self.page, &self.loader)) else { return };
+        let Some(side) = target_side.downcast_ref::<crate::coop_report::CoopSide>() else { return };
+        crate::coop_report::access(&host, self.page, scope, target, side, property);
+    }
+
     fn coop_forces_noopener(&self) -> bool {
         match self.frames.upgrade() {
             Some(host) if host.matches(self.page, &self.loader) => host.coop_forces_noopener(self.page),

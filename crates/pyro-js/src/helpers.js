@@ -693,7 +693,14 @@
       const append = (list, value) => { reflectDefine(list, list.length, data(value, true)); };
       const expandos = objectCreate(null);
       let proxy;
-      // Same origin (and before the page): functions of the Window or the
+      // COOP access reporting: telling the stand-in which of the window's CrossOriginProperties a
+      // script reached (the stand-in's native hook reports it when a COOP reporting endpoint is
+      // involved and costs a thread-local read otherwise). A same-origin Window reports its own
+      // natives; this covers what the proxy answers by itself.
+      const NOTED = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1, location: 1, opener: 1, closed: 1, length: 1, close: 1, focus: 1, blur: 1, postMessage: 1 };
+      const note = (k) => { if (typeof k === 'string') reflectGet(standIn, '\0coop:' + k, standIn); };
+      // Same origin (and before the page): functions of the Window or the stand-in, each as one function that calls it with `self()` for the
+      // proxy as `this` (kept per function).
       // stand-in, each as one function that calls it with `self()` for the
       // proxy as `this` (kept per function).
       const wrapped = new WeakMapC();
@@ -761,7 +768,9 @@
       const crossDescriptor = (origin, k) => {
         if (isIndex(k)) {
           const w = child(k);
-          return w !== undefined ? data(w, false) : deny(k);
+          if (w === undefined) return deny(k);
+          note('indexed');
+          return data(w, false);
         }
         if (CROSS_METHODS[k]) return data(crossMethod(origin, k), false);
         if (CROSS_GETTERS[k]) {
@@ -778,7 +787,10 @@
         }
         if (typeof k === 'string') {
           const w = child(k);
-          if (w !== undefined) return data(w, false);
+          if (w !== undefined) {
+            note('named');
+            return data(w, false);
+          }
         }
         if (undefinedNames(k)) return data(undefined, false);
         return deny(k);
@@ -802,6 +814,7 @@
         __proto__: null,
         get(t, k) {
           const w = target();
+          if (NOTED[k] === 1) note(k);
           if (isCross(w)) return crossGet(w, k);
           if (ALWAYS[k]) return fromStandIn(k);
           // A discarded popup has no parent or top (the stand-in answers null).
@@ -813,6 +826,7 @@
         },
         set(t, k, v) {
           const w = target();
+          if (k === 'location') note(k);
           if (isCross(w)) {
             if (k === 'location') {
               const l = reflectGet(standIn, 'location', standIn);
@@ -966,16 +980,24 @@
         if (undefinedNames(k)) return data(undefined, false);
         return deny(k);
       };
+      // COOP access reporting: which CrossOriginProperty a script reached (see `windowProxy`).
+      const note = (k) => {
+        if (typeof k !== 'string') return;
+        if (isIndex(k)) reflectGet(standIn, '\0coop:indexed', standIn);
+        else if (METHODS[k] !== undefined || GETTERS[k]) reflectGet(standIn, '\0coop:' + k, standIn);
+      };
       proxy = new ProxyC(objectCreate(null), {
         __proto__: null,
         get(t, k, receiver) {
           const d = describe(k);
+          note(k);
           if ('value' in d) return d.value;
           return d.get === undefined ? deny(k) : apply(d.get, receiver, []);
         },
         set(t, k, v, receiver) {
           const d = describe(k);
           if ('value' in d || d.set === undefined) return deny(k);
+          if (k === 'location') note(k);
           apply(d.set, receiver, [v]);
           return true;
         },

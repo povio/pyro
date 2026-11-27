@@ -135,6 +135,24 @@ pub fn queue_report(page: &Rc<PageDom>, scope: Option<&Scope<'_>>, r: ReportInpu
     }
 }
 
+/// Queues `r` for the endpoint of `page`'s document named `r.destination` only: no
+/// `ReportingObserver` hears it. For reports the platform does not expose to script, or exposes
+/// under another type than the one the endpoint gets (COOP navigation reports, and COOP access
+/// reports, which observers see as `coop-access-violation`).
+pub fn queue_endpoint_report(page: &Rc<PageDom>, r: ReportInput) {
+    let ReportInput { report_type, url, body, destination } = r;
+    if let Some(group) = destination {
+        csp_report::report_to_group(page, &group, report_type, &url, Json::Object(body));
+    }
+}
+
+/// [`queue_endpoint_report`] for an endpoint URL, sent as a report of `page`'s document (for a
+/// report about a redirect response, which has no document and so no endpoint names of its own).
+pub fn queue_endpoint_report_at(page: &Rc<PageDom>, endpoint: &Url, r: ReportInput) {
+    let ReportInput { report_type, url, body, .. } = r;
+    csp_report::report_to_url(page, endpoint.clone(), report_type, &url, Json::Object(body));
+}
+
 /// [`queue_report`] for the document `page` shows, from code with no scope at hand.
 pub fn queue_report_for_document(page: &Rc<PageDom>, r: ReportInput) {
     queue_report(page, None, r);

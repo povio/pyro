@@ -8,6 +8,7 @@
 
 mod bindings;
 pub mod clock;
+mod coop_report;
 mod csp_embedded;
 mod focus;
 mod frames;
@@ -1890,8 +1891,7 @@ impl Browser {
                 // Cross-Origin-Opener-Policy: its initial about:blank document has its creator's
                 // policy (a popup made ahead, `FrameHost::prebuild_popup`, already does).
                 if !prebuilt {
-                    *p.frames.coop.borrow_mut() =
-                        loader::CoopState { value: opener_host.coop_value(), origin: origin.0.clone(), initial_blank: true };
+                    p.frames.set_coop(opener_host.coop_for_popup(origin.0.clone()));
                 }
             }
             *p.frames.opener.borrow_mut() = Some(frames);

@@ -56,12 +56,17 @@ impl pyro_js::NamedProperties for WindowNamedProperties {
         for (&el, kind) in named.iter().zip(&kinds) {
             if kind.is_some() {
                 if let Some(window) = page.frame_window(s, el)? {
+                    // COOP access reporting: another window read a named property of this one.
+                    crate::popup::note_window_access(page, "named");
                     return Ok(Some(window));
                 }
             }
         }
         let found: Vec<_> =
             named.iter().zip(&kinds).filter(|(_, kind)| kind.unwrap_or(true)).map(|(&el, _)| el).collect();
+        if !found.is_empty() {
+            crate::popup::note_window_access(page, "named");
+        }
         match found[..] {
             [] => Ok(None),
             [el] => Ok(Some(crate::node::wrap_node(s, page, el)?.value())),
@@ -350,11 +355,17 @@ where
         },
         |s, w, value| replace_window_attribute(s, w.page(), "origin", value),
     );
+    // The CrossOriginProperties methods tell COOP access reporting when another window calls them
+    // (`note_window_access`: one thread-local read unless a COOP reporting endpoint exists).
     def.method("focus", 0, |s, w, _a| {
+        crate::popup::note_window_access(w.page(), "focus");
         crate::input::focus_window(w.page());
         Ok(s.undefined())
     });
-    def.method("blur", 0, |s, _w, _a| Ok(s.undefined()));
+    def.method("blur", 0, |s, w, _a| {
+        crate::popup::note_window_access(w.page(), "blur");
+        Ok(s.undefined())
+    });
     def.method("print", 0, |s, _w, _a| Ok(s.undefined()));
     // pyro: css-sizing-4 responsive iframes: a responsively embedded document (one that opted in with
     // `<meta name="responsive-embedded-sizing">`) in a child frame asks its iframe to take its
@@ -410,6 +421,7 @@ where
     // Closes a script-closable top-level browsing context (a popup); the
     // embedder decides and closes the page later. No-op elsewhere.
     def.method("close", 0, |s, w, _a| {
+        crate::popup::note_window_access(w.page(), "close");
         w.page().close_window();
         Ok(s.undefined())
     });

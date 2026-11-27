@@ -40,6 +40,52 @@ use pyro_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value
 use crate::page::PageDom;
 use crate::storage::StorageNamespace;
 
+thread_local! {
+    /// How many top-level documents of this thread name a COOP reporting endpoint
+    /// (`Cross-Origin-Opener-Policy[-Report-Only]: ...; report-to="x"`): while none does, a
+    /// cross-window property access costs this read and nothing else.
+    static COOP_REPORTING_DOCUMENTS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// The embedder's count of documents naming a COOP reporting endpoint changed by `delta` (see
+/// [`note_window_access`]).
+pub fn coop_reporting_documents(delta: isize) {
+    COOP_REPORTING_DOCUMENTS.with(|c| c.set(c.get().saturating_add_signed(delta)));
+}
+
+/// Whether some document names a COOP reporting endpoint.
+#[inline]
+pub fn coop_reporting_active() -> bool {
+    COOP_REPORTING_DOCUMENTS.with(|c| c.get() != 0)
+}
+
+/// The reserved property name through which helpers.js tells a stand-in which property of its window
+/// the script reached (`windowProxy`, `crossOriginWindow`): the rest of the name is the property
+/// (`blur`, `indexed`, `named`, `named:<name>`). Never a name a page can reach: a stand-in is not
+/// handed to page code.
+pub const ACCESS_NOTE: &str = "\0coop:";
+
+/// Script of the running (incumbent) window reached `property` of the window whose document is
+/// `target` (a WindowProxy property of HTML's CrossOriginProperties, `indexed` or `named`): COOP
+/// access reporting (`PageHooks::coop_access`). Nothing happens, at the cost of one thread-local
+/// read, while no document names a COOP reporting endpoint, and when `target` is the running window's
+/// own document.
+pub fn note_window_access(target: &Rc<PageDom>, property: &str) {
+    if !coop_reporting_active() {
+        return;
+    }
+    let Some(realm) = pyro_js::entry_realm() else { return };
+    let Ok(entry) = realm.scope() else { return };
+    let Ok(accessor) = crate::target::page_of(&entry) else { return };
+    if Rc::ptr_eq(&accessor, target) {
+        return;
+    }
+    let (Some(accessor_hooks), Some(target_side)) = (accessor.hooks(), target.hooks().and_then(|h| h.coop_side())) else {
+        return;
+    };
+    accessor_hooks.coop_access(&entry, target, &*target_side, property);
+}
+
 /// The opener's view of a popup.
 pub struct PopupState {
     closed: Cell<bool>,
@@ -326,6 +372,16 @@ impl PopupData {
         Ok(Some(s.rehome(value)))
     }
 
+    /// helpers.js reports that `property` of the popup's window was reached (`ACCESS_NOTE`).
+    fn note_access(&self, property: &str) {
+        if !coop_reporting_active() {
+            return;
+        }
+        if let Some(page) = self.popup.page() {
+            note_window_access(&page, property);
+        }
+    }
+
     /// `popup.fetch(...)`: the popup's own `fetch` once its page exists,
     /// otherwise the opener's (see the module docs).
     fn fetch<'s>(&self, s: &Scope<'s>, a: &Args<'s>) -> JsResult<Value<'s>> {
@@ -569,7 +625,13 @@ impl JsClass for PopupWindow {
         });
         // Everything else reads through to the popup's global once it exists
         // (the WindowProxy, `wrap_popup`, does the rest).
-        def.named(false, |s, d, name| d.forward(s, name));
+        def.named(false, |s, d, name| {
+            if let Some(property) = name.strip_prefix(ACCESS_NOTE) {
+                d.note_access(property);
+                return Ok(None);
+            }
+            d.forward(s, name)
+        });
     }
 }
 

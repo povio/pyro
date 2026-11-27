@@ -186,7 +186,10 @@ pub use page::{AgentClusterGroup, AvailableImage, FrameContainer,
     IframeAttribute, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, Partial,
     RemotePoster,
 };
-pub use popup::{navigate_named_popup, popup_window_proxy, PopupCommand, PopupState, PopupTicket};
+pub use popup::{
+    coop_reporting_active, coop_reporting_documents, navigate_named_popup, note_window_access, popup_window_proxy, PopupCommand,
+    PopupState, PopupTicket, ACCESS_NOTE,
+};
 pub use render_blocking::RenderBlocker;
 pub use service_worker::{navigation_route, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};

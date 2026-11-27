@@ -359,7 +359,8 @@ impl PageDom {
         }
         Some(url)
     }
-    pub(crate) fn document_url(&self) -> String {
+    /// The document's URL as a string (empty when it has none).
+    pub fn document_url(&self) -> String {
         self.dom.borrow().document_data(self.document()).map(|d| d.url.to_string()).unwrap_or_default()
     }
     /// Active network jobs and logical retained body bytes (diagnostics).
