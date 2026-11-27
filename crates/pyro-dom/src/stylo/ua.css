@@ -963,6 +963,34 @@ iframe:fullscreen {
     padding: unset !important;
 }
 
+/* Fullscreen § 6 "User-agent level style sheet defaults": an element in fullscreen fills the
+ * viewport, in the top layer (`overlay`, -servo-top-layer: pyro-dom enters it into its top layer
+ * with the fullscreen flag), its `display: contents` and inline `display` computed to block as any
+ * top-layer element's are. The root element is not moved. `object-fit` is the one that is not
+ * !important, so an author can override it. */
+:not(:root):fullscreen {
+    -servo-top-layer: auto !important;
+    position: fixed !important;
+    inset: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    width: 100% !important;
+    height: 100% !important;
+    transform: none !important;
+    object-fit: contain;
+    overlay: auto;
+}
+
+:fullscreen::backdrop {
+    position: fixed;
+    inset: 0;
+    background: black;
+}
+
 /* Details and summary
  * https://html.spec.whatwg.org/#the-details-and-summary-elements
  *

@@ -157,13 +157,32 @@ impl Dom {
         Ok(())
     }
 
-    /// Sets or clears an element's fullscreen flag (Fullscreen: `:fullscreen` matches it).
+    /// Sets or clears an element's fullscreen flag (Fullscreen: `:fullscreen` matches it). An
+    /// element in fullscreen is in the top layer: it enters on top of everything in it, and a
+    /// request on an element already fullscreen moves it back to the top (WPT fullscreen/api/
+    /// fullscreen-reordering); leaving fullscreen takes it out again.
     pub fn set_fullscreen(&mut self, el: NodeId, fullscreen: bool) -> DomResult<()> {
-        self.check(el)?;
-        let changed =
-            if fullscreen { self.top_layer.fullscreen.insert(el) } else { self.top_layer.fullscreen.remove(&el) };
-        if changed {
-            // Styles that read `:fullscreen` start over.
+        let i = self.check(el)?;
+        // The document element is not moved to the top layer (`:not(:root):fullscreen`).
+        let root = self.n(i).parent != crate::node::NIL && matches!(self.n(self.n(i).parent).kind, crate::node::NodeKind::Document(_));
+        let tl = &mut self.top_layer;
+        let changed = if fullscreen { tl.fullscreen.insert(el) } else { tl.fullscreen.remove(&el) };
+        let moved = if root {
+            false
+        } else if fullscreen {
+            let on_top = tl.order.last() == Some(&el);
+            tl.enter(el);
+            !on_top
+        } else {
+            // (Not one that is also a modal dialog or showing popover: it stays where it is.)
+            let stays = tl.modal.contains(&el) || tl.popovers.contains(&el);
+            if !stays {
+                tl.exit(el);
+            }
+            changed && !stays
+        };
+        if changed || moved {
+            // Styles that read `:fullscreen`, and the paint order, start over.
             self.bump();
         }
         Ok(())
@@ -522,6 +541,11 @@ impl Dom {
                     self.touch_hook();
                 }
                 self.top_layer.fullscreen.remove(&id);
+                // ...and no longer in the top layer (unless it is also a modal dialog or showing
+                // popover, whose own steps below take it out).
+                if !self.top_layer.modal.contains(&id) && !self.top_layer.popovers.contains(&id) {
+                    self.top_layer.exit(id);
+                }
                 self.bump();
             }
             // A removed select's picker closes.
