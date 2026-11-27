@@ -127,7 +127,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     natives.set_atom("decode", decode.value())?;
     let activated = s.function("activated", |s, _this, _a| {
         let page = crate::target::page_of(s)?;
-        Ok(s.boolean(page.has_sticky_activation()))
+        Ok(s.boolean(crate::media::autoplay_allowed(&page)))
     })?;
     natives.set_atom("activated", activated.value())?;
     let can_update_stats = s.function("canUpdatePlaybackStats", |s, _, _| {

@@ -409,9 +409,15 @@ fn muted(page: &PageDom, node: NodeId) -> bool {
 /// a WPT page with `<video autoplay>` otherwise plays only if a client evaluation (a user
 /// gesture) happens to reach the document before its media has enough data.
 fn may_play(page: &PageDom, node: NodeId) -> bool {
+    muted(page, node) || autoplay_allowed(page)
+}
+
+/// A document whose sticky activation is set, or any document under
+/// `PYRO_AUTOPLAY_POLICY=no-user-gesture-required` (shared with Web Audio's `AudioContext`
+/// autoplay check, which Chrome gates by the same flag).
+pub(crate) fn autoplay_allowed(page: &PageDom) -> bool {
     static NO_GESTURE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    muted(page, node)
-        || page.has_sticky_activation()
+    page.has_sticky_activation()
         || *NO_GESTURE
             .get_or_init(|| std::env::var("PYRO_AUTOPLAY_POLICY").is_ok_and(|v| v == "no-user-gesture-required"))
 }
