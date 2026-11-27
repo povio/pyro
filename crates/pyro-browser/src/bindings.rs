@@ -629,6 +629,13 @@ impl PageHooks for Hooks {
         }
     }
 
+    fn coop_forces_noopener(&self) -> bool {
+        match self.frames.upgrade() {
+            Some(host) if host.matches(self.page, &self.loader) => host.coop_forces_noopener(self.page),
+            _ => false,
+        }
+    }
+
     fn target_window<'s>(&self, scope: &pyro_js::Scope<'s>, name: &str) -> Option<pyro_js::Value<'s>> {
         let host = self.frames.upgrade()?;
         if !host.matches(self.page, &self.loader) {
@@ -1139,6 +1146,8 @@ fn run_navigation(b: &mut Browser, task: NavigationTask, stops: Option<u64>, mut
         if let Some(ticket) = request.popup.as_ref() {
             ticket.set_opener_child(page.child);
         }
+        // Cross-Origin-Opener-Policy: a window made opener-less because of it has no name either.
+        let coop_unnamed = b.page(page.page).is_some_and(|p| p.frames.coop_forces_noopener(page));
         if let Some((frame_id, false)) = frame {
             b.emit(
                 page.page,
@@ -1148,7 +1157,7 @@ fn run_navigation(b: &mut Browser, task: NavigationTask, stops: Option<u64>, mut
                     opener: request.opener,
                     ticket: request.popup,
                     window_features: request.window_features,
-                    window_name: request.target.unwrap_or_default(),
+                    window_name: if coop_unnamed { String::new() } else { request.target.unwrap_or_default() },
                     user_gesture,
                     referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
                     referrer_policy: request.referrer_policy.or_else(|| b.doc(page)?.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),

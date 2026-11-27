@@ -214,6 +214,10 @@ pub struct Resource {
     /// context, and only by the first document of its origin in the browsing
     /// context group ([`crate::frames::FrameHost::record_origin_keying`]).
     pub origin_agent_cluster: bool,
+    /// A document navigation's Cross-Origin-Opener-Policy per response of its redirect chain, in
+    /// order, each with the origin of the response's URL; the last is the committed document's.
+    /// Empty: the loader does not say (nothing is enforced).
+    pub coop: Vec<(CoopValue, String)>,
     /// A navigation's `Referer` as its last hop sent it (`document.referrer`
     /// of the document it commits; empty: none was sent). `None`: the
     /// loader does not say, and it is computed from the navigation.
@@ -577,6 +581,7 @@ impl ResourceLoader for NetLoader {
                 dictionary_links: Vec::new(),
                 referrer_policy: None,
                 origin_agent_cluster: false,
+                coop: Vec::new(),
                 sent_referrer: document.then(|| {
                     pyro_net::referrer::ReferrerChain::new(req.referrer.clone(), req.referrer_policy)
                         .header(&req.url)
@@ -605,6 +610,8 @@ impl ResourceLoader for NetLoader {
         }
         let mut head: Option<pyro_net::ResponseHead> = None;
         let mut body: Vec<u8> = Vec::new();
+        // A navigation's Cross-Origin-Opener-Policy per redirect response (the final one joins at the end).
+        let mut coop_responses: Vec<(CoopValue, String)> = Vec::new();
         // A navigation's referrer, followed across its redirects as the
         // client sends it: the last hop's is `document.referrer`.
         let mut chain =
@@ -627,6 +634,9 @@ impl ResourceLoader for NetLoader {
             // failure) is dropped.
             _ if cut => {}
             pyro_net::ResponseEvent::Redirect { from, headers, .. } => {
+                if document {
+                    coop_responses.push((obtain_coop(&headers, &from), origin_of(from.as_str())));
+                }
                 if let Some(chain) = chain.as_mut() {
                     chain.redirect(&from, &headers);
                 }
@@ -663,6 +673,7 @@ impl ResourceLoader for NetLoader {
                     dictionary_links: Vec::new(),
                     referrer_policy: None,
                     origin_agent_cluster: false,
+                    coop: Vec::new(),
                     sent_referrer: None,
                     timing: None,
                     partial: (!whole).then_some(pyro_webapi::Partial { total }),
@@ -749,6 +760,13 @@ impl ResourceLoader for NetLoader {
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
                         origin_agent_cluster: document && origin_agent_cluster_requested(&h.headers),
+                        coop: if document {
+                            let mut responses = std::mem::take(&mut coop_responses);
+                            responses.push((obtain_coop(&h.headers, &h.url), origin_of(h.url.as_str())));
+                            responses
+                        } else {
+                            Vec::new()
+                        },
                         sent_referrer: chain.as_ref().map(|c| c.header(&h.url).unwrap_or_default()),
                         body: std::mem::take(&mut body).into(),
                         immutable_local: false,
@@ -788,6 +806,170 @@ fn origin_agent_cluster_requested(headers: &http::HeaderMap) -> bool {
         .get("origin-agent-cluster")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.split(';').next().is_some_and(|item| item.trim_matches(|c| c == ' ' || c == '\t') == "?1"))
+}
+
+/// A Cross-Origin-Opener-Policy value (HTML § 7.1.3 "cross-origin opener policy value").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CoopValue {
+    #[default]
+    UnsafeNone,
+    SameOriginAllowPopups,
+    SameOrigin,
+    /// `same-origin` of a document that is cross-origin isolated (its COEP is `require-corp` or `credentialless`).
+    SameOriginPlusCoep,
+    NoopenerAllowPopups,
+}
+
+/// The Cross-Origin-Opener-Policy of a top-level browsing context's active document: its value,
+/// the origin of the document, and whether it is a popup's initial about:blank document (which has
+/// its creator's policy, not one of its own).
+#[derive(Clone, Debug, Default)]
+pub struct CoopState {
+    pub value: CoopValue,
+    pub origin: String,
+    pub initial_blank: bool,
+}
+
+/// The first item of a structured field value that is a bare item (RFC 8941 `sf-item`), when it is
+/// a Token: the text of that token. `None` for a string, byte sequence, number or boolean first
+/// item and for a field that does not parse (malformed parameters included).
+fn structured_item_token(value: &str) -> Option<&str> {
+    // Leading and trailing HTTP whitespace is not part of the field value; a structured field
+    // then discards leading and trailing SP only.
+    let value = value.trim_matches(|c| c == ' ' || c == '\t');
+    let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+    let (token, mut rest) = match value.chars().next()? {
+        c if c.is_ascii_alphabetic() || c == '*' => {
+            let end = value.find(|c: char| !(tchar(c) || c == ':' || c == '/')).unwrap_or(value.len());
+            (Some(&value[..end]), &value[end..])
+        }
+        _ => (None, parse_sf_non_token(value)?),
+    };
+    // parameters = *( ";" *SP key [ "=" bare-item ] )
+    while !rest.is_empty() {
+        rest = rest.strip_prefix(';')?.trim_start_matches(' ');
+        let key_end = {
+            let mut chars = rest.char_indices();
+            match chars.next() {
+                Some((_, c)) if c.is_ascii_lowercase() || c == '*' => {}
+                _ => return None,
+            }
+            chars
+                .find(|&(_, c)| !(c.is_ascii_lowercase() || c.is_ascii_digit() || "_-.*".contains(c)))
+                .map_or(rest.len(), |(i, _)| i)
+        };
+        rest = &rest[key_end..];
+        if let Some(after) = rest.strip_prefix('=') {
+            rest = match after.chars().next() {
+                Some(c) if c.is_ascii_alphabetic() || c == '*' => {
+                    let end = after.find(|c: char| !(tchar(c) || c == ':' || c == '/')).unwrap_or(after.len());
+                    &after[end..]
+                }
+                _ => parse_sf_non_token(after)?,
+            };
+        }
+    }
+    token
+}
+
+/// The rest of `value` after a leading bare item that is not a token (string, byte sequence,
+/// number, boolean); `None` if it is none of those.
+fn parse_sf_non_token(value: &str) -> Option<&str> {
+    let mut chars = value.char_indices();
+    match chars.next()? {
+        (_, '"') => {
+            let mut escaped = false;
+            for (i, c) in chars {
+                if !(' '..='~').contains(&c) {
+                    return None;
+                }
+                match (escaped, c) {
+                    (true, '"' | '\\') => escaped = false,
+                    (true, _) => return None,
+                    (false, '\\') => escaped = true,
+                    (false, '"') => return Some(&value[i + 1..]),
+                    (false, _) => {}
+                }
+            }
+            None
+        }
+        (_, ':') => {
+            let end = value[1..].find(':')? + 1;
+            value[1..end].chars().all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c)).then(|| &value[end + 1..])
+        }
+        (_, '?') => value.get(1..2).filter(|b| *b == "0" || *b == "1").map(|_| &value[2..]),
+        (_, c) if c == '-' || c.is_ascii_digit() => {
+            let end = value.find(|c: char| !(c.is_ascii_digit() || c == '-' || c == '.')).unwrap_or(value.len());
+            Some(&value[end..])
+        }
+        _ => None,
+    }
+}
+
+/// HTML "obtain a cross-origin opener policy" of a response for `url` (its COOP value only; the
+/// report-only header and endpoints are not implemented): the `Cross-Origin-Opener-Policy` header
+/// as a structured-field token (parameters allowed), `unsafe-none` when absent, malformed,
+/// unrecognised (the historical `same-site` and `unsafe-allow-outgoing` included) or sent from
+/// a context that is not potentially trustworthy; `same-origin` of a response whose
+/// `Cross-Origin-Embedder-Policy` is `require-corp` or `credentialless` is `same-origin-plus-COEP`.
+pub(crate) fn obtain_coop(headers: &http::HeaderMap, url: &pyro_net::Url) -> CoopValue {
+    let trustworthy = url.scheme() == "https"
+        || url.host_str().is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h.ends_with(".localhost"));
+    if !trustworthy {
+        return CoopValue::UnsafeNone;
+    }
+    // Repeated headers combine with ", ", which no single structured item parses as.
+    let field = |name: &str| -> Option<String> {
+        let values: Vec<&str> = headers.get_all(name).iter().map(|v| v.to_str().ok()).collect::<Option<_>>()?;
+        (!values.is_empty()).then(|| values.join(", "))
+    };
+    let Some(coop) = field("cross-origin-opener-policy") else { return CoopValue::UnsafeNone };
+    match structured_item_token(&coop) {
+        Some("same-origin") => {
+            let isolated = field("cross-origin-embedder-policy")
+                .is_some_and(|coep| matches!(structured_item_token(&coep), Some("require-corp" | "credentialless")));
+            if isolated {
+                CoopValue::SameOriginPlusCoep
+            } else {
+                CoopValue::SameOrigin
+            }
+        }
+        Some("same-origin-allow-popups") => CoopValue::SameOriginAllowPopups,
+        Some("noopener-allow-popups") => CoopValue::NoopenerAllowPopups,
+        _ => CoopValue::UnsafeNone,
+    }
+}
+
+/// HTML "check if COOP values require a browsing context group switch": whether a navigation
+/// whose response has policy `response` from `response_origin` leaves the group of the active
+/// document, which has `current` from `current_origin` (`initial_blank`: it is a popup's initial
+/// about:blank document, whose policy is its creator's).
+pub(crate) fn coop_requires_switch(
+    initial_blank: bool,
+    current: CoopValue,
+    current_origin: &str,
+    response: CoopValue,
+    response_origin: &str,
+) -> bool {
+    use CoopValue::*;
+    // Both `unsafe-none`: nothing isolates either side.
+    if current == UnsafeNone && response == UnsafeNone {
+        return false;
+    }
+    // A popup of a document that allows popups may stay with its opener on its initial document's
+    // way to a document without a policy.
+    if initial_blank && matches!(current, SameOriginAllowPopups | NoopenerAllowPopups) && response == UnsafeNone {
+        return false;
+    }
+    if current == UnsafeNone || response == UnsafeNone {
+        return true;
+    }
+    // `noopener-allow-popups` never matches (it is the policy of a document without openers).
+    if response == NoopenerAllowPopups {
+        return true;
+    }
+    // The same policy and the same (tuple) origin keep the group.
+    !(current == response && current_origin == response_origin && current_origin != "null")
 }
 
 /// The service worker route of a loader fetch: a navigation goes to the
@@ -1111,6 +1293,7 @@ impl ResourceLoader for StaticLoader {
                         dictionary_links: Vec::new(),
                         referrer_policy,
                         origin_agent_cluster: false,
+                        coop: Vec::new(),
                         sent_referrer: sent_referrer.clone(),
                         timing: None,
                         partial,
@@ -1881,6 +2064,11 @@ impl Browser {
                             );
                         }
                     }
+                    Ok(resource) if b.coop_sandbox_blocks(page, &resource) => {
+                        // HTML "enforce a response's cross-origin opener policy": a sandboxed
+                        // top-level navigation whose response has a COOP is a network error.
+                        b.navigation_failed(page, &opts, loader_id, BLOCKED_BY_RESPONSE.into());
+                    }
                     Ok(resource) if b.frame_ancestors_block(page, &resource) => {
                         // CSP `frame-ancestors` refuses this frame's ancestors: Chrome commits
                         // its (opaque-origin) error document instead, and the frame loads.
@@ -1924,6 +2112,22 @@ impl Browser {
             d.pending_cancel = cancel;
         }
         Ok(())
+    }
+
+    /// Whether `resource`, the response of top-level frame `page`'s navigation, is refused for
+    /// having a Cross-Origin-Opener-Policy other than `unsafe-none` (on it or on a redirect before
+    /// it) while the navigation is sandboxed: the popup sandboxing flags of its creator or the
+    /// response's own CSP `sandbox` (HTML "enforce a response's cross-origin opener policy").
+    fn coop_sandbox_blocks(&self, page: FrameKey, resource: &Resource) -> bool {
+        if page.child.is_some() || resource.coop.iter().all(|(value, _)| *value == CoopValue::UnsafeNone) {
+            return false;
+        }
+        let Some(p) = self.page(page.page) else { return false };
+        let csp_sandbox = !p.bypass_csp
+            && resource.header_csp.as_deref().is_some_and(|csp| {
+                crate::frames::Sandbox::from_csp(csp.split_once('\n').map_or(csp, |(enforce, _)| enforce)).is_some()
+            });
+        p.popup_sandbox.is_some() || csp_sandbox
     }
 
     /// Whether CSP `frame-ancestors` blocks `resource`, the response of child frame `page`'s
@@ -2039,6 +2243,7 @@ impl Browser {
             dictionary_links: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
+            coop: Vec::new(),
             sent_referrer: None,
             timing: None,
             partial: None,
@@ -2203,6 +2408,7 @@ impl Browser {
         if let Some(mut state) = self.doc_mut(page) {
             state.committing_csp_sandbox = csp_sandbox;
         }
+        let error_document = unreachable.is_some();
         let committed = self.commit_document(page, opts, loader_id.clone(), &origin, history, unreachable);
         if let Some(nav) = &nav {
             nav.set_incoming_fetch(None);
@@ -2217,6 +2423,33 @@ impl Browser {
                 let requested =
                     resource.origin_agent_cluster && crate::window::frame_chain_secure(&host, page, &resource.url);
                 host.record_origin_keying(&origin, requested);
+            }
+        }
+        // HTML "enforce a response's cross-origin opener policy": a top-level document whose
+        // response (or one of its redirects) does not match the policy of the document it
+        // replaces joins a new browsing context group: a popup is cut from its opener before the
+        // new document runs anything. The document's policy is what the next navigation matches.
+        if page.child.is_none() && !error_document {
+            if let Some(host) = self.page(page.page).map(|p| p.frames.clone()) {
+                let left_group = match resource.coop.last().cloned() {
+                    Some((value, response_origin)) => {
+                        let switched = host.coop_requires_switch(&resource.coop);
+                        host.coop_committed(value, response_origin, switched)
+                    }
+                    // A document the loader says nothing of (a local scheme, a cached or embedder
+                    // supplied one) has no policy; a popup's initial about:blank keeps its creator's.
+                    None if resource.url != "about:blank" => {
+                        host.coop_committed(CoopValue::UnsafeNone, origin.clone(), false)
+                    }
+                    None => false,
+                };
+                if left_group {
+                    // The popup's own copy of its browsing context name.
+                    if let Some(p) = self.page_mut(page.page) {
+                        p.main_frame.name.clear();
+                    }
+                    self.sync_root(page.page);
+                }
             }
         }
         match resource.sent_referrer.take() {
@@ -4525,6 +4758,7 @@ mod disposition_tests {
             dictionary_links: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
+            coop: Vec::new(),
             sent_referrer: None,
             timing: None,
             partial: None,

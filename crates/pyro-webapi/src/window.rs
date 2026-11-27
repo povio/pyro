@@ -1056,6 +1056,9 @@ pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Ar
     let lower = target.to_ascii_lowercase();
     let same_context = matches!(lower.as_str(), "_self" | "_top" | "_parent");
     let named = !same_context && lower != "_blank";
+    // Cross-Origin-Opener-Policy: a window a frame of another origin than its top-level `same-origin`
+    // document creates has no opener and no name (`PageHooks::coop_forces_noopener`).
+    let coop_noopener = !same_context && page.hooks().is_some_and(|h| h.coop_forces_noopener());
     // An existing frame of this page the name chooses (`_parent`, `_top`, a frame's target
     // name): it navigates when there is a URL, and window.open returns its WindowProxy.
     if lower == "_parent" || lower == "_top" || (named && !no_opener) {
@@ -1100,7 +1103,7 @@ pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Ar
     // the embedder's hook the navigation is still asked for (the embedder looks the name up first
     // and blocks only a new window), without a popup ticket.
     let sandboxed = !same_context && page.popups_sandboxed();
-    let (ticket, popup) = if same_context || no_opener || sandboxed {
+    let (ticket, popup) = if same_context || no_opener || coop_noopener || sandboxed {
         (None, None)
     } else {
         let name = if named { target.clone() } else { String::new() };
@@ -1164,6 +1167,7 @@ pub(crate) fn element_popup_ticket(
 ) -> Option<Rc<crate::popup::PopupTicket>> {
     let target = target.filter(|t| !t.is_empty())?;
     let lower = target.to_ascii_lowercase();
+    let noopener = noopener || page.hooks().is_some_and(|h| h.coop_forces_noopener());
     if noopener || matches!(lower.as_str(), "_self" | "_top" | "_parent") {
         return None;
     }

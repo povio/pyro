@@ -218,6 +218,11 @@ pub(crate) struct FrameHost {
     /// similar-origin window agent"): per origin, whether its agent cluster is origin-keyed. Shared
     /// by the pages of the group (a popup takes its opener's), as `cluster_group` is.
     origin_keying: RefCell<OriginKeying>,
+    /// The Cross-Origin-Opener-Policy of this page's top-level document, which the next top-level
+    /// navigation's response is matched against (HTML § 7.1.3 "check if COOP values require a
+    /// browsing context group switch"; `Browser::begin_document_with`). A popup's initial
+    /// about:blank document has its creator's.
+    pub(crate) coop: RefCell<crate::loader::CoopState>,
     pub settings: RefCell<Settings>,
     pub page: PageId,
     pub context: ContextId,
@@ -313,6 +318,61 @@ impl FrameHost {
         keyed
     }
 
+    /// This page's top-level document's COOP value (`unsafe-none` before any committed).
+    pub(crate) fn coop_value(&self) -> crate::loader::CoopValue {
+        self.coop.borrow().value
+    }
+
+    /// Whether navigating this page's top-level frame to a document whose responses (a redirect
+    /// chain's, each with the origin that sent it) have these COOPs puts it in a new browsing
+    /// context group (HTML "enforce a response's cross-origin opener policy"): each response is
+    /// matched against the one before it, the first against the active document's.
+    pub(crate) fn coop_requires_switch(&self, responses: &[(crate::loader::CoopValue, String)]) -> bool {
+        let state = self.coop.borrow();
+        let mut active = (state.value, state.origin.as_str());
+        let mut initial_blank = state.initial_blank;
+        let mut switch = false;
+        for (value, origin) in responses {
+            switch |= crate::loader::coop_requires_switch(initial_blank, active.0, active.1, *value, origin);
+            // Past the first response the document being navigated to is no initial about:blank.
+            (initial_blank, active) = (false, (*value, origin.as_str()));
+        }
+        switch
+    }
+
+    /// A top-level document with COOP `value` and `origin` committed. When its navigation needed
+    /// a browsing context group switch (`switched`) a popup is cut from its opener, which sees a
+    /// closed window from now on, and loses its name (the caller clears the page's own copy):
+    /// true then.
+    pub(crate) fn coop_committed(&self, value: crate::loader::CoopValue, origin: String, switched: bool) -> bool {
+        *self.coop.borrow_mut() = crate::loader::CoopState { value, origin, initial_blank: false };
+        if !switched {
+            return false;
+        }
+        // A popup that kept its opener leaves it (its `window.opener` reads null through the ticket,
+        // `PopupTicket::opener_cleared`) and loses its browsing context name; a page nothing
+        // else is related to stays as it is.
+        let Some(ticket) = self.popup.borrow().clone() else { return false };
+        ticket.sever();
+        self.root.borrow_mut().name.clear();
+        true
+    }
+
+    /// Whether a window the document of frame `key` creates must have no opener: it is a child
+    /// frame whose origin differs from its top-level document's, which has COOP `same-origin` or
+    /// `same-origin-plus-COEP` (a popup of such a frame would otherwise match the top-level
+    /// document's policy with another origin's documents).
+    pub(crate) fn coop_forces_noopener(&self, key: FrameKey) -> bool {
+        use crate::loader::CoopValue;
+        // A sandboxed frame with an opaque origin is left to its sandbox (a popup of it gets the
+        // sandboxing flags and, with a COOP, no document: `Browser::coop_sandbox_blocks`).
+        let opaque = self.with_frame(key, |f| f.origin == "null").unwrap_or(true);
+        key.child.is_some()
+            && !opaque
+            && matches!(self.coop_value(), CoopValue::SameOrigin | CoopValue::SameOriginPlusCoep)
+            && !self.same_origin(key, FrameKey::from(self.page))
+    }
+
     /// Joins `opener`'s browsing context group's key map (a popup adopted with its opener kept).
     pub(crate) fn share_origin_keying(&self, opener: &FrameHost) {
         let map = opener.origin_keying.borrow().clone();
@@ -371,6 +431,13 @@ impl FrameHost {
             dom: self.dom.clone(),
             cluster_group: Cell::new(self.cluster_group.get()),
             origin_keying: RefCell::new(self.origin_keying.borrow().clone()),
+            // The initial about:blank document of a popup: its creator's top-level document's
+            // policy, with the creator document's origin.
+            coop: RefCell::new(crate::loader::CoopState {
+                value: self.coop_value(),
+                origin: from.origin.clone(),
+                initial_blank: true,
+            }),
             settings: RefCell::new(settings),
             page: id,
             context: self.context,
@@ -452,6 +519,7 @@ impl FrameHost {
             dom: Rc::new(RefCell::new(pyro_dom::Dom::new())),
             cluster_group: Cell::default(),
             origin_keying: RefCell::default(),
+            coop: RefCell::default(),
             settings: RefCell::new(Settings {
                 local,
                 services,
@@ -2611,6 +2679,7 @@ impl Browser {
             dictionary_links: Vec::new(),
             referrer_policy: crate::loader::parent_referrer_policy(self, key),
             origin_agent_cluster: false,
+            coop: Vec::new(),
             sent_referrer: None,
             timing: None,
             partial: None,
@@ -2687,6 +2756,7 @@ impl Browser {
                 dictionary_links: Vec::new(),
                 referrer_policy: crate::loader::parent_referrer_policy(self, key),
                 origin_agent_cluster: false,
+                coop: Vec::new(),
                 sent_referrer: None,
                 timing: None,
                 partial: None,

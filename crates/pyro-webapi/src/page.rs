@@ -978,6 +978,13 @@ pub trait PageHooks {
     fn opener_window<'s>(&self, scope: &pyro_js::Scope<'s>) -> pyro_js::JsResult<pyro_js::Value<'s>> {
         Ok(scope.null())
     }
+    /// Whether a popup this document creates must have no opener (HTML "obtain a browsing context
+    /// to use for a navigation response", Cross-Origin-Opener-Policy): the document is a frame
+    /// whose origin differs from its top-level document's, whose COOP is `same-origin` (or
+    /// `same-origin-plus-COEP`).
+    fn coop_forces_noopener(&self) -> bool {
+        false
+    }
     /// WindowProxy of the child browsing context in `scope`'s realm.
     fn frame_window<'s>(&self, _scope: &pyro_js::Scope<'s>, _iframe: NodeId) -> Option<pyro_js::Value<'s>> {
         None

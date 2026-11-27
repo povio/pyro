@@ -56,6 +56,11 @@ pub struct PopupState {
     /// The opener set the popup's `opener` to null (`popup.opener = null`,
     /// before the popup's page existed or since): it reads null on both sides.
     opener_cleared: Cell<bool>,
+    /// A navigation of the popup's top-level frame left its browsing context group (HTML
+    /// "check if COOP values require a browsing context group switch", `PopupTicket::sever`): the
+    /// opener sees a closed window (`closed`, no `length`, no `name`, no document, no messages)
+    /// and the popup's `opener` is null.
+    severed: Cell<bool>,
     /// The popup's initial about:blank document, made by the embedder when
     /// `window.open` ran (HTML creates it synchronously), until the embedder
     /// turns it into the popup page (`PopupTicket::take_prebuilt`).
@@ -79,12 +84,16 @@ impl std::fmt::Debug for PopupState {
 }
 
 impl PopupState {
+    /// Closed, or no longer in the opener's browsing context group: a closed window to the opener.
     pub(crate) fn is_closed(&self) -> bool {
-        self.closed.get()
+        self.closed.get() || self.severed.get()
     }
 
-    /// The popup's live document, if the page exists.
+    /// The popup's live document, if the page exists (and the opener may still reach it).
     fn page(&self) -> Option<Rc<PageDom>> {
+        if self.severed.get() {
+            return None;
+        }
         self.page.borrow().upgrade().filter(|p| !p.is_disposed())
     }
 }
@@ -102,6 +111,7 @@ impl PopupTicket {
             session,
             page: RefCell::new(Weak::new()),
             opener_cleared: Cell::new(false),
+            severed: Cell::new(false),
             prebuilt: RefCell::new(None),
             sandbox: Cell::new(0),
             opener_child: Cell::new(None),
@@ -144,10 +154,22 @@ impl PopupTicket {
         self.0.session.clone()
     }
 
-    /// Whether the opener set `popup.opener = null`: the popup's own
-    /// `window.opener` reads null too.
+    /// Whether the popup's `window.opener` reads null: the opener set `popup.opener = null`, or
+    /// the popup left the opener's browsing context group (`sever`).
     pub fn opener_cleared(&self) -> bool {
-        self.0.opener_cleared.get()
+        self.0.opener_cleared.get() || self.0.severed.get()
+    }
+
+    /// The popup's top-level frame navigated to a document in a new browsing context group
+    /// (Cross-Origin-Opener-Policy): the opener's WindowProxy for it reports a closed window from
+    /// now on, and the popup has no opener.
+    pub fn sever(&self) {
+        self.0.severed.set(true);
+    }
+
+    /// Whether the popup left its opener's browsing context group (`sever`).
+    pub fn is_severed(&self) -> bool {
+        self.0.severed.get()
     }
 
     /// The popup page's current document (each navigation attaches the new
@@ -220,7 +242,7 @@ impl PopupData {
             .map_err(|_| JsError::dom("SyntaxError", format!("'{url}' is not a valid URL.")))?;
         // A javascript: URL would run the opener's script in the popup's
         // document, which the popup's origin may not allow.
-        if parsed.scheme() != "javascript" && !self.popup.closed.get() {
+        if parsed.scheme() != "javascript" && !self.popup.is_closed() {
             self.page.popup_command(self.popup.clone(), PopupCommand::Navigate(resolved));
         }
         Ok(())
@@ -452,10 +474,11 @@ impl JsClass for PopupWindow {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.not_exposed();
-        def.getter("closed", |s, d| Ok(s.boolean(d.popup.closed.get())));
+        def.getter("closed", |s, d| Ok(s.boolean(d.popup.is_closed())));
         def.method("close", 0, |s, d, _a| {
             // `closed` reads true from here on, before the page is gone.
-            if !d.popup.closed.replace(true) {
+            // A popup in another browsing context group is a closed window to its former opener.
+            if !d.popup.severed.get() && !d.popup.closed.replace(true) {
                 d.page.popup_command(d.popup.clone(), PopupCommand::Close);
             }
             Ok(s.undefined())
@@ -481,7 +504,7 @@ impl JsClass for PopupWindow {
         def.accessor(
             "opener",
             |s, d| {
-                if d.popup.opener_cleared.get() {
+                if d.popup.opener_cleared.get() || d.popup.severed.get() {
                     return Ok(s.null());
                 }
                 // Cross origin (readable there): the popup's opener is this
@@ -514,7 +537,13 @@ impl JsClass for PopupWindow {
             };
             Ok(length.unwrap_or_else(|| s.number(0.0)))
         });
-        def.getter("name", |s, d| Ok(d.forward(s, "name")?.unwrap_or_else(|| s.string(&d.popup.name))));
+        def.getter("name", |s, d| {
+            // A popup that left the group lost its browsing context name.
+            if d.popup.severed.get() {
+                return Ok(s.string(""));
+            }
+            Ok(d.forward(s, "name")?.unwrap_or_else(|| s.string(&d.popup.name)))
+        });
         def.getter("document", |s, d| Ok(d.forward(s, "document")?.unwrap_or_else(|| s.undefined())));
         def.getter("localStorage", |s, d| d.storage(s, false));
         def.getter("sessionStorage", |s, d| d.storage(s, true));

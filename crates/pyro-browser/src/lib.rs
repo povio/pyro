@@ -1808,6 +1808,12 @@ impl Browser {
             if let Some(opener_host) = frames.upgrade() {
                 p.frames.cluster_group.set(opener_host.cluster_group.get());
                 p.frames.share_origin_keying(&opener_host);
+                // Cross-Origin-Opener-Policy: its initial about:blank document has its creator's
+                // policy (a popup made ahead, `FrameHost::prebuild_popup`, already does).
+                if !prebuilt {
+                    *p.frames.coop.borrow_mut() =
+                        loader::CoopState { value: opener_host.coop_value(), origin: origin.0.clone(), initial_blank: true };
+                }
             }
             *p.frames.opener.borrow_mut() = Some(frames);
             if let Some(child) = ticket.opener_child() {
