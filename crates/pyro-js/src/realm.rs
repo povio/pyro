@@ -3292,8 +3292,11 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
             realm.global_members_on_instance.set(true);
         }
         if !global_accessors.is_empty() {
-            let accessor = realm.helper(scope, "accessor")?;
+            // One helper call defines all of them (a window has ~100 `on*` handlers).
+            let accessors = realm.helper(scope, "accessors")?;
             let function_proto = scope.function_prototype()?;
+            // (Rooted: the collector may run while the next functions are made.)
+            let (mut names, mut getters, mut setters) = (crate::RootedVec::new(), crate::RootedVec::new(), crate::RootedVec::new());
             for (name, call, set) in global_accessors {
                 let getter = make_member_fn(scope.ctx, &realm.engine, member_class, call, None, name, 0, &keys)?;
                 if let Some(proto) = function_proto {
@@ -3306,8 +3309,14 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
                 } else {
                     scope.undefined()
                 };
-                accessor.call(None, &[global.value(), scope.string(name), getter.value(), setter])?;
+                names.push(scope, scope.string(name));
+                getters.push(scope, getter.value());
+                setters.push(scope, setter);
             }
+            accessors.call(
+                None,
+                &[global.value(), rooted_array(scope, &names)?.value(), rooted_array(scope, &getters)?.value(), rooted_array(scope, &setters)?.value()],
+            )?;
         }
     }
     Ok(())

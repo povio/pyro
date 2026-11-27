@@ -451,6 +451,10 @@
       return P;
     },
     accessor: defineAccessor,
+    // `accessor` for lists: one call defines every pair (a window's ~100 `on*` handlers at realm creation).
+    accessors(proto, names, gets, sets) {
+      for (let i = 0; i < names.length; i++) defineAccessor(proto, names[i], gets[i], sets[i]);
+    },
     // The global class's members, on the global since its creation, onto
     // its interface prototype object when a script first reaches it: the
     // same functions and attributes (realm.rs `copy_global_members`).
