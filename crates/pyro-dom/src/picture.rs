@@ -242,13 +242,13 @@ impl Dom {
         while child != NIL && child != i {
             if html(child, "source") {
                 let e = self.n(child).element().expect("source element");
-                let media_ok = e
-                    .attr_local(&markup5ever::local_name!("media"))
-                    .is_none_or(|m| m.trim().is_empty() || crate::media::matches(m, viewport));
-                let type_ok = e.attr_local(&markup5ever::local_name!("type")).is_none_or(|t| {
-                    let t = t.trim().to_ascii_lowercase();
-                    t.is_empty() || t.starts_with("image/")
+                // The media query list through the style engine, as `sizes` conditions are: an
+                // invalid query, or one with an unknown condition, matches nothing, also negated
+                // (`not all and (!)`).
+                let media_ok = e.attr_local(&markup5ever::local_name!("media")).is_none_or(|m| {
+                    m.trim().is_empty() || crate::cssom::MediaQueryList::parse(m).matches(&sizes_device(viewport))
                 });
+                let type_ok = e.attr_local(&markup5ever::local_name!("type")).is_none_or(supported_image_type);
                 if media_ok && type_ok {
                     if let Some(srcset) = e.attr_local(&markup5ever::local_name!("srcset")) {
                         let candidates = parse_srcset(
@@ -281,6 +281,22 @@ impl Dom {
         }
         pick_candidate(&candidates, viewport.device_scale_factor).cloned()
     }
+}
+
+/// HTML "update the source set" step: a `<source type>` that is empty (after trimming) or whose
+/// MIME type's essence (parameters dropped; anything else, a list, `image/*`, spaces inside,
+/// is no MIME type essence) names an image format the browser supports.
+pub fn supported_image_type(t: &str) -> bool {
+    let t = t.trim_matches(|c: char| c.is_ascii_whitespace());
+    if t.is_empty() {
+        return true;
+    }
+    let essence = t.split(';').next().unwrap_or("").trim_matches(|c: char| c.is_ascii_whitespace()).to_ascii_lowercase();
+    matches!(
+        essence.as_str(),
+        "image/gif" | "image/png" | "image/apng" | "image/jpeg" | "image/jpg" | "image/pjpeg" | "image/webp" | "image/avif" | "image/svg+xml"
+            | "image/x-icon" | "image/vnd.microsoft.icon" | "image/bmp"
+    )
 }
 
 /// Whether a candidate of `srcset` has a width descriptor.
