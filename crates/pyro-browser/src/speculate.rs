@@ -17,7 +17,8 @@
 //! vain (as in other browsers). A `<base href>` in scanned markup resolves
 //! the URLs after it when the document has none yet; a `<meta
 //! name=referrer>` sets the policy of the requests after it (the elements'
-//! own `referrerpolicy` first). Nonces (CSP is not enforced) and `integrity` do not
+//! own `referrerpolicy` first), a `<meta http-equiv=Content-Security-Policy>`
+//! blocks the requests after it that it disallows. Nonces (CSP is not enforced) and `integrity` do not
 //! change a request; `crossorigin` (CORS mode and credentials) is part of
 //! the key.
 //!
@@ -72,6 +73,10 @@ pub(crate) struct Speculation {
     /// The policy of the last scanned `<meta name=referrer>`: the document's, once the
     /// parser reaches it, for the requests after it.
     referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// The `content` of the scanned `<meta http-equiv=Content-Security-Policy>`s, in order: the
+    /// policies the requests after them are subject to (the document has them once the parser
+    /// reaches the element; the scan, like Chrome's preload scanner, applies them at once).
+    meta_csp: Vec<String>,
     /// By URL (one speculative request per URL: the first found).
     entries: HashMap<String, Entry>,
     /// Requests not started yet, in document order.
@@ -222,7 +227,7 @@ impl Browser {
     /// The parser stopped at a blocking script: scans the input it has not
     /// reached for the document's next requests and starts them.
     pub(crate) fn speculate_ahead(&mut self, page: FrameKey) {
-        let requests = {
+        let (requests, meta_csp) = {
             let Some(mut load) = self.load_mut(page) else { return };
             let load = &mut *load;
             let spec = &mut load.speculation;
@@ -293,6 +298,11 @@ impl Browser {
                             }
                         }
                     }
+                    Prescanned::ContentSecurityPolicy(content) => {
+                        if spec.meta_csp.len() < 16 {
+                            spec.meta_csp.push(content);
+                        }
+                    }
                     Prescanned::ReferrerPolicy(content) => {
                         // An invalid value leaves the policy as it was.
                         if let Some(policy) = pyro_net::ReferrerPolicy::from_meta(&content) {
@@ -308,20 +318,21 @@ impl Browser {
                             _ => unreachable!("handled above"),
                         };
                         if let Some(url) = base.as_ref().and_then(|b| b.join(href).ok()) {
-                            resolved.push((url.to_string(), item, spec.referrer_policy));
+                            resolved.push((url.to_string(), item, spec.referrer_policy, spec.meta_csp.len()));
                         }
                     }
                 }
             }
-            resolved
+            (resolved, spec.meta_csp.clone())
         };
         if requests.is_empty() {
             return;
         }
         let Some(requester) = self.requester(page) else { return };
+        let document_url = url::Url::parse(&requester.url).ok();
         let requests = requests
             .into_iter()
-            .filter_map(|(url, item, document_policy)| {
+            .filter_map(|(url, item, document_policy, meta_policies)| {
                 // The request carries its element's `referrerpolicy`, else the policy a scanned
                 // <meta name=referrer> gave the document (the element's own request reads it
                 // from the document once the parser has reached the <meta>).
@@ -329,7 +340,7 @@ impl Browser {
                     request.referrer_policy = pyro_net::ReferrerPolicy::from_attribute(own.as_deref()).or(document_policy);
                     Some(request)
                 };
-                match item {
+                let request = match item {
                     Prescanned::Script { module: true, crossorigin, referrer_policy, .. } => with_policy(
                         requester.request(url, ResourceKind::ModuleScript, crossorigin, Some(ModuleType::JavaScript)),
                         referrer_policy,
@@ -364,8 +375,22 @@ impl Browser {
                         request.initiator = Some(pyro_webapi::resource_timing::Initiator::Other);
                         with_policy(request, None)
                     }
-                    Prescanned::Base { .. } | Prescanned::ReferrerPolicy(_) => None,
+                    Prescanned::Base { .. } | Prescanned::ReferrerPolicy(_) | Prescanned::ContentSecurityPolicy(_) => None,
+                }?;
+                // The <meta> policies scanned before the element: a request they block is the
+                // element's (its own check reports the violation once the parser gets there).
+                if meta_policies > 0 {
+                    let mut list = pyro_net::csp::PolicyList::new(document_url.as_ref());
+                    for content in &meta_csp[..meta_policies.min(meta_csp.len())] {
+                        list.add_meta(content);
+                    }
+                    let dest = crate::loader::csp_dest(&request)?;
+                    let parsed = url::Url::parse(&request.url).ok()?;
+                    if list.pre_request(&pyro_net::csp::CspRequest::new(parsed, dest)).blocked {
+                        return None;
+                    }
                 }
+                Some(request)
             })
             .collect();
         self.speculate(page, requests);

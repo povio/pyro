@@ -51,6 +51,9 @@ pub enum Prescanned {
     /// `<meta name=referrer content>`: the `content` as written; later
     /// requests without a `referrerpolicy` carry the policy it names.
     ReferrerPolicy(String),
+    /// `<meta http-equiv=Content-Security-Policy content>`: the `content` as written; the
+    /// requests after it are subject to the policy.
+    ContentSecurityPolicy(String),
 }
 
 /// Scanner state carried across the chunks of one document's input (the
@@ -433,9 +436,13 @@ impl Prescan {
             }
         } else if is("meta") {
             // Not in a declarative shadow root: its policy is no part of the document's.
-            if self.templates.is_empty() && attr(attrs, "name").is_some_and(|n| n.trim().eq_ignore_ascii_case("referrer")) {
+            if self.templates.is_empty() {
                 if let Some(content) = attr(attrs, "content") {
-                    emit(Prescanned::ReferrerPolicy(content.to_owned()));
+                    if attr(attrs, "name").is_some_and(|n| n.trim().eq_ignore_ascii_case("referrer")) {
+                        emit(Prescanned::ReferrerPolicy(content.to_owned()));
+                    } else if attr(attrs, "http-equiv").is_some_and(|h| h.trim().eq_ignore_ascii_case("content-security-policy")) {
+                        emit(Prescanned::ContentSecurityPolicy(content.to_owned()));
+                    }
                 }
             }
         } else if is("img") || is("image") {
@@ -994,6 +1001,16 @@ mod tests {
                 script("/late.js"),
             ]
         );
+    }
+
+    #[test]
+    fn meta_content_security_policy_is_reported_outside_declarative_shadow_roots() {
+        let found = scan(
+            r#"<meta http-equiv="Content-Security-Policy" content="img-src 'none'"><img src="/a.png">
+            <template shadowrootmode=open><meta http-equiv="Content-Security-Policy" content="img-src 'self'"></template>
+            <meta http-equiv=content-security-policy>"#,
+        );
+        assert_eq!(found, [Prescanned::ContentSecurityPolicy("img-src 'none'".into()), img("/a.png")]);
     }
 
     #[test]
