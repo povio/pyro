@@ -286,7 +286,9 @@ impl Parse for SpecifiedFontStyle {
             "italic" => generics::FontStyle::Italic,
             "oblique" => {
                 // pyro: `oblique` and `oblique 14deg` are distinct values that serialize apart
-                // (Chrome); the explicit default angle is kept as `explicit_default_angle`.
+                // (Chrome); the explicit default angle is kept as `explicit_default_angle`: an explicit
+                // `oblique 14deg` is stored one fixed-point step (1/256 degree) above the keyword's 14,
+                // so the two serialize apart, and compare unequal by construction.
                 let angle = input.try_parse(|input| Self::parse_angle(context, input))
                     .map(|angle| if angle.degrees() == Some(computed::FontStyle::DEFAULT_OBLIQUE_DEGREES as f32) {
                         Self::explicit_default_angle()

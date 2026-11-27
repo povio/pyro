@@ -1249,6 +1249,8 @@ impl FontStyle {
 
     /// pyro: an explicit `oblique 14deg` is stored one fixed-point step (1/256 degree) above the
     /// keyword `oblique`, so the two serialize apart as in Chrome (`oblique` and `oblique 14deg`).
+    /// The two therefore compare unequal (`==`) by construction, though they select the same face
+    /// (the step is far below what font matching can tell apart).
     pub const EXPLICIT_DEFAULT_OBLIQUE_DEGREES: f32 = 14.0 + 1.0 / 256.0;
 
     /// The `oblique` keyword with the default degrees.
