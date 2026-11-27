@@ -54,58 +54,6 @@ fn policy_name(value: CoopValue) -> &'static str {
     }
 }
 
-/// The `report-to` parameter of a COOP header value that has parsed (`structured_item_token`
-/// accepted it): its string, `None` when it is absent or not a string (a token or byte sequence
-/// is ignored). The last of a repeated parameter counts.
-pub(crate) fn report_to_param(value: &str) -> Option<String> {
-    let mut rest = &value[value.find(';')?..];
-    let mut found = None;
-    while let Some(after) = rest.strip_prefix(';') {
-        let after = after.trim_start_matches(' ');
-        let key_end = after.find(|c: char| c == '=' || c == ';').unwrap_or(after.len());
-        let key = &after[..key_end];
-        rest = &after[key_end..];
-        let Some(after) = rest.strip_prefix('=') else {
-            // A boolean parameter: no value.
-            if key == "report-to" {
-                found = None;
-            }
-            continue;
-        };
-        if let Some(string) = after.strip_prefix('"') {
-            // sf-string: `\"` and `\\` are the escapes.
-            let mut out = String::new();
-            let mut chars = string.char_indices();
-            let mut end = string.len();
-            while let Some((i, c)) = chars.next() {
-                match c {
-                    '\\' => {
-                        if let Some((_, escaped)) = chars.next() {
-                            out.push(escaped);
-                        }
-                    }
-                    '"' => {
-                        end = i + 1;
-                        break;
-                    }
-                    c => out.push(c),
-                }
-            }
-            if key == "report-to" {
-                found = Some(out);
-            }
-            rest = &string[end..];
-        } else {
-            let end = after.find(';').unwrap_or(after.len());
-            if key == "report-to" {
-                found = None;
-            }
-            rest = &after[end..];
-        }
-    }
-    found
-}
-
 /// What [`queue_navigation_reports`] decided.
 pub(crate) struct NavigationReports {
     /// Some response of the chain would have switched the browsing context group under the

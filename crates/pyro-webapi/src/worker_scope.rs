@@ -68,6 +68,15 @@ const STACK_BYTES: usize = 8 * 1024 * 1024;
 /// each level waits its own, so a chain of them can take this once per level.
 const NESTED_JOIN: Duration = Duration::from_secs(1);
 
+/// The embedder policies of a dedicated worker's owner, which its script's response must be
+/// compatible with (HTML "run a worker": "check a global object's embedder policy"). `Send`.
+pub(crate) struct OwnerEmbedder {
+    policy: pyro_net::EmbedderPolicy,
+    report_only: pyro_net::EmbedderPolicy,
+    /// Where the owner's reports of a refused worker go (its `report-to` endpoints, by disposition).
+    report: Option<pyro_net::CorpReport>,
+}
+
 /// What a worker's thread needs from the page side. `Send`.
 pub(crate) struct WorkerStart {
     id: u64,
@@ -89,6 +98,11 @@ pub(crate) struct WorkerStart {
     /// owner whose policy is not `unsafe-none` requires to be the same or stronger, and a `blob:` or
     /// `data:` worker inherits the owner's. The worker's requests are subject to it.
     embedder_policy: pyro_net::EmbedderPolicy,
+    /// The owner's policies when a dedicated worker's script must be compatible with them: none
+    /// for a service worker, a shared worker, or an owner without a (report-only) policy.
+    owner_embedder: Option<OwnerEmbedder>,
+    /// The creator's reporting parts of it: a `blob:` or `data:` worker inherits them with the policy.
+    embedder_reporting: pyro_net::EmbedderReporting,
     cookie_partition_key: Option<String>,
     cookie_site_context: pyro_net::cookies::SiteContext,
     user_agent: Option<UserAgentOverride>,
@@ -141,6 +155,11 @@ impl WorkerStart {
         let net = page.net.borrow().clone()?;
         let poster = page.remote_poster()?;
         let script = (url.scheme() == "blob").then(|| page.blob_url(url.as_str()).map(|(bytes, _)| bytes)).flatten();
+        let owner_embedder = {
+            let mut owner = pyro_net::RequestDefaults::default();
+            page.apply_embedder_defaults(&mut owner);
+            owner.corp_report.map(|report| OwnerEmbedder { policy: owner.embedder_policy, report_only: report.report_only, report: Some(report) })
+        };
         Some(WorkerStart {
             id,
             url,
@@ -156,6 +175,8 @@ impl WorkerStart {
             cookie_site_context: page.cookie_site_context(),
             insecure: page.insecure_policy(),
             embedder_policy: page.embedder_policy(),
+            owner_embedder,
+            embedder_reporting: page.embedder_reporting(),
             creator_secure: s.global_data::<WorkerGlobalScope>()
                 .map_or_else(|| crate::secure_context::secure(s, page), |parent| parent.secure),
             user_agent: page.identity.borrow().value.clone(),
@@ -212,6 +233,8 @@ impl WorkerStart {
             creator_secure: true,
             insecure: page.insecure_policy(),
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+            owner_embedder: None,
+            embedder_reporting: Default::default(),
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
@@ -734,6 +757,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     page.set_cache_disabled(start.cache_disabled);
     page.set_creator_insecure(start.insecure);
     page.set_embedder_policy(start.embedder_policy);
+    page.set_embedder_reporting(start.embedder_reporting.clone());
     page.set_storage_namespaces(
         crate::storage::StorageNamespace::with_shared(
             start.indexed_db.clone(), start.caches.clone(), start.opfs.clone(), start.buckets.clone(),
@@ -892,7 +916,15 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
             if let Some(guard) = &start.csp.guard {
                 post_violations(start.id, &start.poster, guard.take_violations());
             }
-            let (bytes, mime, _) = fetched.ok()?;
+            let (bytes, mime, response_url) = fetched.ok()?;
+            // HTML "run a worker": a dedicated worker whose script's embedder policy is not
+            // compatible with its owner's is a failure to load (the owner's `require-corp` or
+            // `credentialless` needs the worker's own), and the owner reports it.
+            if let Some(owner) = start.owner_embedder.as_ref().filter(|_| !start.shared_worker && start.service.is_none()) {
+                if matches!(response_url.scheme(), "http" | "https") && !owner_accepts_worker(owner, start, page.embedder_policy()) {
+                    return None;
+                }
+            }
             // A module worker's script is a module script: strict MIME
             // checking (HTML "fetch a single module script").
             if start.module && crate::module_script::mime_error(pyro_js::ModuleType::JavaScript, &mime, "").is_some() {
@@ -902,6 +934,32 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
         }
     };
     Some(bytes)
+}
+
+/// HTML "check a global object's embedder policy" for a dedicated worker whose script response has the
+/// embedder policy `worker`: a policy that is not `unsafe-none` needs the worker's to be one too. The
+/// owner reports a mismatch of its report-only policy (`reporting`) and one of its enforced policy
+/// (`enforce`, which fails the worker); whether the worker may run is the second.
+fn owner_accepts_worker(owner: &OwnerEmbedder, start: &WorkerStart, worker: pyro_net::EmbedderPolicy) -> bool {
+    let compatible = |owner: pyro_net::EmbedderPolicy| owner == pyro_net::EmbedderPolicy::UnsafeNone || worker != pyro_net::EmbedderPolicy::UnsafeNone;
+    let report = |report_only: bool| {
+        if let Some(report) = &owner.report {
+            (report.sink)(pyro_net::CorpViolation {
+                kind: "worker initialization",
+                blocked_url: start.url.as_str().to_owned(),
+                destination: None,
+                report_only,
+            });
+        }
+    };
+    if !compatible(owner.report_only) {
+        report(true);
+    }
+    let accepted = compatible(owner.policy);
+    if !accepted {
+        report(false);
+    }
+    accepted
 }
 
 /// The credentials mode of a worker's main script and module fetches.
@@ -1376,6 +1434,12 @@ fn fetch_script(
                     *main_request.response_url.borrow_mut() = Some(head.url.clone());
                 }
                 if main {
+                    // The worker global's embedder policy is its script response's (HTML "run a
+                    // worker"); a `data:` script's stays its owner's.
+                    if matches!(head.url.scheme(), "http" | "https") {
+                        page.set_embedder_policy(crate::coep_report::obtain_embedder_policy(&head.headers, &head.url));
+                        page.set_embedder_reporting(crate::coep_report::obtain_embedder_reporting(&head.headers, &head.url));
+                    }
                     page.set_referrer_policy_header(pyro_net::ReferrerPolicy::from_header(
                         head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                     ));

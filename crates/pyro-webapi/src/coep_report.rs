@@ -107,3 +107,174 @@ fn report_url(page: &PageDom) -> String {
         strip_url_for_report(&url)
     }
 }
+
+/// HTML "obtain an embedder policy" of a response for `url`: the `Cross-Origin-Embedder-Policy` header as a
+/// structured-field token (parameters allowed, so `require-corp; report-to="x"` is `require-corp`;
+/// a repeated header, a string or byte-sequence item or a malformed field is none), `unsafe-none` when
+/// it is absent, unrecognised or sent from a context that is not potentially trustworthy.
+pub fn obtain_embedder_policy(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Url) -> pyro_net::EmbedderPolicy {
+    embedder_policy_field(headers, url, "cross-origin-embedder-policy").0
+}
+
+/// The embedder policy header `name` (the enforced one or its `-report-only` twin) as
+/// [`obtain_embedder_policy`] reads it, and its `report-to` parameter when that is a string.
+fn embedder_policy_field(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Url, name: &str) -> (pyro_net::EmbedderPolicy, Option<String>) {
+    let none = (pyro_net::EmbedderPolicy::UnsafeNone, None);
+    let trustworthy = url.scheme() == "https"
+        || url.host_str().is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h.ends_with(".localhost"));
+    if !trustworthy {
+        return none;
+    }
+    // Repeated headers combine with ", ", which no single structured item parses as.
+    let Some(values) = headers.get_all(name).iter().map(|v| v.to_str().ok()).collect::<Option<Vec<&str>>>() else {
+        return none;
+    };
+    if values.is_empty() {
+        return none;
+    }
+    let joined = values.join(", ");
+    let value = match structured_item_token(&joined) {
+        Some("require-corp") => pyro_net::EmbedderPolicy::RequireCorp,
+        Some("credentialless") => pyro_net::EmbedderPolicy::Credentialless,
+        _ => return none,
+    };
+    (value, report_to_param(&joined))
+}
+
+/// The reporting parts of a response's embedder policies: HTML "obtain an embedder policy" of
+/// `Cross-Origin-Embedder-Policy` for its `report-to`, and of `Cross-Origin-Embedder-Policy-Report-Only`
+/// for the report-only value and its own `report-to`.
+pub fn obtain_embedder_reporting(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Url) -> pyro_net::EmbedderReporting {
+    let (_, report_to) = embedder_policy_field(headers, url, "cross-origin-embedder-policy");
+    let (report_only, report_only_report_to) = embedder_policy_field(headers, url, "cross-origin-embedder-policy-report-only");
+    pyro_net::EmbedderReporting { report_to, report_only, report_only_report_to }
+}
+
+/// The first item of a structured field value that is a bare item (RFC 8941 `sf-item`), when it is
+/// a Token: the text of that token. `None` for a string, byte sequence, number or boolean first
+/// item and for a field that does not parse (malformed parameters included).
+pub fn structured_item_token(value: &str) -> Option<&str> {
+    // Leading and trailing HTTP whitespace is not part of the field value; a structured field
+    // then discards leading and trailing SP only.
+    let value = value.trim_matches(|c| c == ' ' || c == '\t');
+    let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+    let (token, mut rest) = match value.chars().next()? {
+        c if c.is_ascii_alphabetic() || c == '*' => {
+            let end = value.find(|c: char| !(tchar(c) || c == ':' || c == '/')).unwrap_or(value.len());
+            (Some(&value[..end]), &value[end..])
+        }
+        _ => (None, parse_sf_non_token(value)?),
+    };
+    // parameters = *( ";" *SP key [ "=" bare-item ] )
+    while !rest.is_empty() {
+        rest = rest.strip_prefix(';')?.trim_start_matches(' ');
+        let key_end = {
+            let mut chars = rest.char_indices();
+            match chars.next() {
+                Some((_, c)) if c.is_ascii_lowercase() || c == '*' => {}
+                _ => return None,
+            }
+            chars
+                .find(|&(_, c)| !(c.is_ascii_lowercase() || c.is_ascii_digit() || "_-.*".contains(c)))
+                .map_or(rest.len(), |(i, _)| i)
+        };
+        rest = &rest[key_end..];
+        if let Some(after) = rest.strip_prefix('=') {
+            rest = match after.chars().next() {
+                Some(c) if c.is_ascii_alphabetic() || c == '*' => {
+                    let end = after.find(|c: char| !(tchar(c) || c == ':' || c == '/')).unwrap_or(after.len());
+                    &after[end..]
+                }
+                _ => parse_sf_non_token(after)?,
+            };
+        }
+    }
+    token
+}
+
+/// The rest of `value` after a leading bare item that is not a token (string, byte sequence,
+/// number, boolean); `None` if it is none of those.
+fn parse_sf_non_token(value: &str) -> Option<&str> {
+    let mut chars = value.char_indices();
+    match chars.next()? {
+        (_, '"') => {
+            let mut escaped = false;
+            for (i, c) in chars {
+                if !(' '..='~').contains(&c) {
+                    return None;
+                }
+                match (escaped, c) {
+                    (true, '"' | '\\') => escaped = false,
+                    (true, _) => return None,
+                    (false, '\\') => escaped = true,
+                    (false, '"') => return Some(&value[i + 1..]),
+                    (false, _) => {}
+                }
+            }
+            None
+        }
+        (_, ':') => {
+            let end = value[1..].find(':')? + 1;
+            value[1..end].chars().all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c)).then(|| &value[end + 1..])
+        }
+        (_, '?') => value.get(1..2).filter(|b| *b == "0" || *b == "1").map(|_| &value[2..]),
+        (_, c) if c == '-' || c.is_ascii_digit() => {
+            let end = value.find(|c: char| !(c.is_ascii_digit() || c == '-' || c == '.')).unwrap_or(value.len());
+            Some(&value[end..])
+        }
+        _ => None,
+    }
+}
+
+/// The `report-to` parameter of a COOP header value that has parsed (`structured_item_token`
+/// accepted it): its string, `None` when it is absent or not a string (a token or byte sequence
+/// is ignored). The last of a repeated parameter counts.
+pub fn report_to_param(value: &str) -> Option<String> {
+    let mut rest = &value[value.find(';')?..];
+    let mut found = None;
+    while let Some(after) = rest.strip_prefix(';') {
+        let after = after.trim_start_matches(' ');
+        let key_end = after.find(|c: char| c == '=' || c == ';').unwrap_or(after.len());
+        let key = &after[..key_end];
+        rest = &after[key_end..];
+        let Some(after) = rest.strip_prefix('=') else {
+            // A boolean parameter: no value.
+            if key == "report-to" {
+                found = None;
+            }
+            continue;
+        };
+        if let Some(string) = after.strip_prefix('"') {
+            // sf-string: `\"` and `\\` are the escapes.
+            let mut out = String::new();
+            let mut chars = string.char_indices();
+            let mut end = string.len();
+            while let Some((i, c)) = chars.next() {
+                match c {
+                    '\\' => {
+                        if let Some((_, escaped)) = chars.next() {
+                            out.push(escaped);
+                        }
+                    }
+                    '"' => {
+                        end = i + 1;
+                        break;
+                    }
+                    c => out.push(c),
+                }
+            }
+            if key == "report-to" {
+                found = Some(out);
+            }
+            rest = &string[end..];
+        } else {
+            let end = after.find(';').unwrap_or(after.len());
+            if key == "report-to" {
+                found = None;
+            }
+            rest = &after[end..];
+        }
+    }
+    found
+}
+

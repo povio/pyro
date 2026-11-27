@@ -35,6 +35,7 @@
 
 use crate::frames::FrameKey;
 use crate::{Browser, HistoryHandling, LoaderId, NavigateOpts, PageEvent, PageId};
+use pyro_webapi::coep_report::{obtain_embedder_policy, obtain_embedder_reporting};
 use pyro_dom::parse::{DocumentParser, DomRef, ParseStep};
 use pyro_dom::script::ScriptKind;
 use pyro_dom::NodeId;
@@ -1136,124 +1137,6 @@ impl CoopState {
     }
 }
 
-/// The first item of a structured field value that is a bare item (RFC 8941 `sf-item`), when it is
-/// a Token: the text of that token. `None` for a string, byte sequence, number or boolean first
-/// item and for a field that does not parse (malformed parameters included).
-fn structured_item_token(value: &str) -> Option<&str> {
-    // Leading and trailing HTTP whitespace is not part of the field value; a structured field
-    // then discards leading and trailing SP only.
-    let value = value.trim_matches(|c| c == ' ' || c == '\t');
-    let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
-    let (token, mut rest) = match value.chars().next()? {
-        c if c.is_ascii_alphabetic() || c == '*' => {
-            let end = value.find(|c: char| !(tchar(c) || c == ':' || c == '/')).unwrap_or(value.len());
-            (Some(&value[..end]), &value[end..])
-        }
-        _ => (None, parse_sf_non_token(value)?),
-    };
-    // parameters = *( ";" *SP key [ "=" bare-item ] )
-    while !rest.is_empty() {
-        rest = rest.strip_prefix(';')?.trim_start_matches(' ');
-        let key_end = {
-            let mut chars = rest.char_indices();
-            match chars.next() {
-                Some((_, c)) if c.is_ascii_lowercase() || c == '*' => {}
-                _ => return None,
-            }
-            chars
-                .find(|&(_, c)| !(c.is_ascii_lowercase() || c.is_ascii_digit() || "_-.*".contains(c)))
-                .map_or(rest.len(), |(i, _)| i)
-        };
-        rest = &rest[key_end..];
-        if let Some(after) = rest.strip_prefix('=') {
-            rest = match after.chars().next() {
-                Some(c) if c.is_ascii_alphabetic() || c == '*' => {
-                    let end = after.find(|c: char| !(tchar(c) || c == ':' || c == '/')).unwrap_or(after.len());
-                    &after[end..]
-                }
-                _ => parse_sf_non_token(after)?,
-            };
-        }
-    }
-    token
-}
-
-/// The rest of `value` after a leading bare item that is not a token (string, byte sequence,
-/// number, boolean); `None` if it is none of those.
-fn parse_sf_non_token(value: &str) -> Option<&str> {
-    let mut chars = value.char_indices();
-    match chars.next()? {
-        (_, '"') => {
-            let mut escaped = false;
-            for (i, c) in chars {
-                if !(' '..='~').contains(&c) {
-                    return None;
-                }
-                match (escaped, c) {
-                    (true, '"' | '\\') => escaped = false,
-                    (true, _) => return None,
-                    (false, '\\') => escaped = true,
-                    (false, '"') => return Some(&value[i + 1..]),
-                    (false, _) => {}
-                }
-            }
-            None
-        }
-        (_, ':') => {
-            let end = value[1..].find(':')? + 1;
-            value[1..end].chars().all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c)).then(|| &value[end + 1..])
-        }
-        (_, '?') => value.get(1..2).filter(|b| *b == "0" || *b == "1").map(|_| &value[2..]),
-        (_, c) if c == '-' || c.is_ascii_digit() => {
-            let end = value.find(|c: char| !(c.is_ascii_digit() || c == '-' || c == '.')).unwrap_or(value.len());
-            Some(&value[end..])
-        }
-        _ => None,
-    }
-}
-
-/// HTML "obtain an embedder policy" of a response for `url`: the `Cross-Origin-Embedder-Policy` header as a
-/// structured-field token (parameters allowed, so `require-corp; report-to="x"` is `require-corp`;
-/// a repeated header, a string or byte-sequence item or a malformed field is none), `unsafe-none` when
-/// it is absent, unrecognised or sent from a context that is not potentially trustworthy.
-pub(crate) fn obtain_embedder_policy(headers: &http::HeaderMap, url: &pyro_net::Url) -> pyro_net::EmbedderPolicy {
-    embedder_policy_field(headers, url, "cross-origin-embedder-policy").0
-}
-
-/// The embedder policy header `name` (the enforced one or its `-report-only` twin) as
-/// [`obtain_embedder_policy`] reads it, and its `report-to` parameter when that is a string.
-fn embedder_policy_field(headers: &http::HeaderMap, url: &pyro_net::Url, name: &str) -> (pyro_net::EmbedderPolicy, Option<String>) {
-    let none = (pyro_net::EmbedderPolicy::UnsafeNone, None);
-    let trustworthy = url.scheme() == "https"
-        || url.host_str().is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h.ends_with(".localhost"));
-    if !trustworthy {
-        return none;
-    }
-    // Repeated headers combine with ", ", which no single structured item parses as.
-    let Some(values) = headers.get_all(name).iter().map(|v| v.to_str().ok()).collect::<Option<Vec<&str>>>() else {
-        return none;
-    };
-    if values.is_empty() {
-        return none;
-    }
-    let joined = values.join(", ");
-    let value = match structured_item_token(&joined) {
-        Some("require-corp") => pyro_net::EmbedderPolicy::RequireCorp,
-        Some("credentialless") => pyro_net::EmbedderPolicy::Credentialless,
-        _ => return none,
-    };
-    (value, crate::coop_report::report_to_param(&joined))
-}
-
-/// The reporting parts of a response's embedder policies: HTML "obtain an embedder policy" of
-/// `Cross-Origin-Embedder-Policy` for its `report-to`, and of `Cross-Origin-Embedder-Policy-Report-Only`
-/// for the report-only value and its own `report-to`.
-pub(crate) fn obtain_embedder_reporting(headers: &http::HeaderMap, url: &pyro_net::Url) -> pyro_net::EmbedderReporting {
-    let (_, report_to) = embedder_policy_field(headers, url, "cross-origin-embedder-policy");
-    let (report_only, report_only_report_to) = embedder_policy_field(headers, url, "cross-origin-embedder-policy-report-only");
-    pyro_net::EmbedderReporting { report_to, report_only, report_only_report_to }
-}
-
 /// HTML "obtain a cross-origin opener policy" of a response for `url`: the
 /// `Cross-Origin-Opener-Policy` header as a structured-field token (parameters allowed) and its
 /// `report-to` parameter when that is a string; `unsafe-none` when absent, malformed, unrecognised
@@ -1283,12 +1166,12 @@ fn parse_coop(headers: &http::HeaderMap, url: &pyro_net::Url, name: &str, report
         (!values.is_empty()).then(|| values.join(", "))
     };
     let Some(coop) = field(name) else { return CoopPolicy::default() };
-    let value = match structured_item_token(&coop) {
+    let value = match pyro_webapi::coep_report::structured_item_token(&coop) {
         Some("same-origin") => {
             let isolated = obtain_embedder_policy(headers, url) != pyro_net::EmbedderPolicy::UnsafeNone
                 || (report_only
                     && field("cross-origin-embedder-policy-report-only")
-                        .is_some_and(|v| matches!(structured_item_token(&v), Some("require-corp" | "credentialless"))));
+                        .is_some_and(|v| matches!(pyro_webapi::coep_report::structured_item_token(&v), Some("require-corp" | "credentialless"))));
             if isolated {
                 CoopValue::SameOriginPlusCoep
             } else {
@@ -1300,7 +1183,7 @@ fn parse_coop(headers: &http::HeaderMap, url: &pyro_net::Url, name: &str, report
         Some("unsafe-none") => CoopValue::UnsafeNone,
         _ => return CoopPolicy::default(),
     };
-    CoopPolicy { value, report_to: crate::coop_report::report_to_param(&coop) }
+    CoopPolicy { value, report_to: pyro_webapi::coep_report::report_to_param(&coop) }
 }
 
 /// The COOP policies of one response of a navigation, from `from` (its URL).
