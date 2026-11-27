@@ -342,6 +342,9 @@ pub(crate) fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend
                 pending.iter().position(|(_, _, entry)| Rc::ptr_eq(entry, &token)).map(|i| pending.remove(i).1)
             };
             let Some(end) = pending else { return };
+            if scroll_back_where_reported(&p, doc, target) {
+                return;
+            }
             dispatch_scroll(&p, doc, target, "scroll");
             if end {
                 fire_snap_events(&p);
@@ -544,12 +547,29 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
 pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     let pending = std::mem::take(&mut *page.pending_scrolls.borrow_mut());
     for ((doc, target), end, _) in pending {
+        if scroll_back_where_reported(page, doc, target) {
+            continue;
+        }
         dispatch_scroll(page, doc, target, "scroll");
         if end {
             fire_snap_events(page);
             dispatch_scroll(page, doc, target, "scrollend");
         }
     }
+}
+
+/// pyro: whether the scroller is where its last `scroll` event left it: an adjustment that was
+/// made and undone before the rendering update (scroll anchoring over a toggled `display`, as
+/// WPT scroll-anchoring `infinite-scroll-event`) is no scroll, and Chromium reports none; its
+/// handler would otherwise toggle again, every frame.
+fn scroll_back_where_reported(page: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>) -> bool {
+    let Some(reported) = page.scroll_reported.borrow().get(&(doc, target)).copied() else { return false };
+    let Ok(layout) = page.layout.try_borrow() else { return false };
+    let now = match target {
+        Some(el) => (layout.scroll_left(el), layout.scroll_top(el)),
+        None => (layout.scroll_x(), layout.scroll_y()),
+    };
+    now == reported
 }
 
 /// pyro: CSS Scroll Snap 2 § 5.1: `scrollsnapchanging`, then `scrollsnapchange`, at each scroller
@@ -598,6 +618,15 @@ fn deliver_scroll_group_moves(page: &Rc<PageDom>) {
 fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &str) {
     if p.is_disposed() || p.document() != doc {
         return;
+    }
+    if kind == "scroll" {
+        if let Ok(layout) = p.layout.try_borrow() {
+            let now = match target {
+                Some(el) => (layout.scroll_left(el), layout.scroll_top(el)),
+                None => (layout.scroll_x(), layout.scroll_y()),
+            };
+            p.scroll_reported.borrow_mut().insert((doc, target), now);
+        }
     }
     match target {
         Some(el) => {
@@ -657,6 +686,9 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
         };
         if !now {
             queue_scroll(page, node, true);
+        } else if scroll_back_where_reported(page, doc, node) {
+            // (A queued `scroll` finds the same at its flush.)
+            continue;
         } else if page.pending_scrolls.borrow().iter().any(|(key, _, _)| *key == (doc, node)) {
             // Its queued `scroll` is still to come: let it carry the `scrollend`.
             queue_scroll(page, node, true);

@@ -260,6 +260,10 @@ pub struct PageDom {
     /// block the next document's events. The value: whether a `scrollend`
     /// follows (a scroll that ran to completion, not a layout clamp).
     pub(crate) pending_scrolls: RefCell<Vec<((NodeId, Option<NodeId>), bool, Rc<()>)>>,
+    /// pyro: the offset each scroller (document, None: the viewport) had when its last `scroll`
+    /// event fired: a layout adjustment that brings it back there before the next event is no
+    /// scroll to report (`layout_api::scroll_back_where_reported`).
+    pub(crate) scroll_reported: RefCell<std::collections::HashMap<(NodeId, Option<NodeId>), (i32, i32)>>,
     /// pyro: whether each `content-visibility: auto` element skipped its contents when its
     /// `contentvisibilityautostatechange` last fired (`layout_api::content_visibility_events`).
     pub(crate) cv_auto_states: RefCell<std::collections::HashMap<NodeId, bool>>,
@@ -1148,6 +1152,7 @@ impl PageDom {
             timeline: Default::default(),
             resizes: Default::default(),
             pending_scrolls: Default::default(),
+            scroll_reported: Default::default(),
             cv_auto_states: Default::default(),
             cv_auto_check: Default::default(),
             scroll_clamp: Default::default(),
