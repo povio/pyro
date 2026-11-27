@@ -162,12 +162,18 @@
 
   // An easing's canonical text and function; a TypeError for anything else.
   function parseEasing(value) {
-    const text = String(value).trim();
+    // CSS escapes in the keyword/function name ('Ease\2d in-out').
+    const text = String(value).trim().replace(/\\([0-9a-f]{1,6})[ \t\n\r\f]?|\\([^0-9a-f\n])/gi, (_, hex, ch) => {
+      if (ch !== undefined) return ch;
+      const cp = parseInt(hex, 16);
+      return cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) ? '\ufffd' : String.fromCodePoint(cp);
+    });
     const lower = text.toLowerCase();
     if (lower === 'linear') return { text: 'linear', fn: x => x };
     if (lower in KEYWORDS) {
       const parsed = parseEasing(KEYWORDS[lower]);
-      return { text: lower, fn: parsed.fn };
+      // Chrome serializes the step keywords as their steps() equivalents.
+      return { text: lower === 'step-start' || lower === 'step-end' ? parsed.text : lower, fn: parsed.fn };
     }
     let m = BEZIER.exec(text);
     if (m) {
@@ -335,7 +341,11 @@
     }
     const directed = forwards ? simple : 1 - simple;
     out.directed = directed;
-    const before = (out.phase === 'before' && !backwards) || (out.phase === 'after' && backwards);
+    let before = (out.phase === 'before' && !backwards) || (out.phase === 'after' && backwards);
+    // The limit side follows the current direction: when the directed progress runs backwards the
+    // before/after phases approach from the other side.
+    if (!forwards && out.phase !== 'active') before = !before;
+    out.before = before;
     out.progress = t.easing.fn(directed, before);
     return out;
   }
@@ -391,6 +401,7 @@
     if (!isObject(input)) throw new TypeError('Keyframes must be an object or an array');
     const iterator = input[Symbol.iterator];
     let frames = [];
+    let easingError = null;
     if (iterator !== undefined && iterator !== null) {
       if (typeof iterator !== 'function') throw new TypeError('@@iterator is not callable');
       for (const kf of { [Symbol.iterator]: () => apply(iterator, input, []) }) {
@@ -400,13 +411,16 @@
         const obj = kf || {};
         const values = new Map();
         const offset = offsetValue(obj.offset);
-        const easing = parseEasing(obj.easing === undefined ? 'linear' : obj.easing);
+        // An invalid easing is reported only after every keyframe and property was read.
+        let easing = LINEAR;
+        try { easing = parseEasing(obj.easing === undefined ? 'linear' : obj.easing); } catch (e) { easingError ??= e; }
         const composite = compositeValue(obj.composite);
         for (const { key, prop } of propertyMembers(obj)) {
           values.set(key, { prop, value: stringValue(obj[key]) });
         }
         frames.push({ offset, easing, composite, values });
       }
+      if (easingError !== null) throw easingError;
       let last = -Infinity;
       for (const f of frames) {
         if (f.offset === null) continue;
@@ -541,7 +555,7 @@
       }
       const span = end.offset - start.offset;
       const local = span === 0 ? 0 : (p - start.offset) / span;
-      out.set(prop, interpolate(start.value, end.value, start.easing.fn(local, false), prop));
+      out.set(prop, interpolate(start.value, end.value, start.easing.fn(local, timing.before === true), prop));
     }
     return out;
   }
@@ -554,6 +568,11 @@
     get currentTime() {
       const st = brand(timelines, this, 'an AnimationTimeline');
       return now() - st.origin;
+    }
+    // A time-based timeline has no fixed duration (progress timelines override this).
+    get duration() {
+      brand(timelines, this, 'an AnimationTimeline');
+      return null;
     }
   }
   class DocumentTimeline extends AnimationTimeline {
@@ -1058,10 +1077,10 @@
   }
 
   function currentTimeOf(a) {
-    if (a.holdTime !== null) return a.holdTime;
+    if (a.holdTime !== null) return a.holdTime + 0;
     const t = timelineTime(a.timeline);
     if (t === null || a.startTime === null) return null;
-    return (t - a.startTime) * a.rate;
+    return (t - a.startTime) * a.rate + 0;
   }
   const effectiveRate = a => (a.pendingRate !== null ? a.pendingRate : a.rate);
   const endOf = a => (a.effect ? endTime(timingOn(a.effect)) : 0);
@@ -1075,7 +1094,7 @@
     const ct = currentTimeOf(a);
     if (ct === null && a.startTime === null && a.pending === null) return 'idle';
     if (a.pending === 'pause' || (a.startTime === null && a.pending !== 'play')) return 'paused';
-    if (ct !== null && ((a.rate > 0 && ct >= endOf(a)) || (a.rate < 0 && ct <= 0))) return 'finished';
+    if (ct !== null && ((effectiveRate(a) > 0 && ct >= endOf(a)) || (effectiveRate(a) < 0 && ct <= 0))) return 'finished';
     return 'running';
   }
 
@@ -1276,7 +1295,7 @@
       if (a.rate > 0 && unconstrained >= end) {
         a.holdTime = didSeek ? unconstrained : (a.previousTime === null ? end : Math.max(a.previousTime, end));
       } else if (a.rate < 0 && unconstrained <= 0) {
-        a.holdTime = didSeek ? unconstrained : (a.previousTime === null ? 0 : Math.min(a.previousTime, 0));
+        a.holdTime = (didSeek ? unconstrained : (a.previousTime === null ? 0 : Math.min(a.previousTime, 0))) + 0;
       } else if (a.rate !== 0 && timelineTime(a.timeline) !== null) {
         if (didSeek && a.holdTime !== null) a.startTime = timelineTime(a.timeline) - a.holdTime / a.rate;
         a.holdTime = null;
@@ -1287,13 +1306,13 @@
     if (finished && !a.finished.settled) {
       if (sync) {
         a.finishGen++;
-        finishNotification(a);
+        finishNotification(a, didSeek);
       } else if (!a.finishQueued) {
         a.finishQueued = true;
         const gen = ++a.finishGen;
         microtask(() => {
           a.finishQueued = false;
-          if (a.finishGen === gen) finishNotification(a);
+          if (a.finishGen === gen) finishNotification(a, didSeek);
         });
       }
     }
@@ -1369,11 +1388,27 @@
     ]);
   }
 
-  function finishNotification(a) {
+  function finishNotification(a, seeked) {
     if (playStateOf(a) !== 'finished') return;
     settle(a.finished, a.self, false);
     queueEvent(a, 'finish', currentTimeOf(a));
-    removeReplaced(a);
+    // (A finish the timeline's ticking reached replaces right here; one a seek or a timing change
+    // caused waits for the next "update animations and send events".)
+    if (seeked) replaceAtNextFrame(a); else removeReplaced(a);
+  }
+
+  const replaceTriggers = new Set();
+  function replaceAtNextFrame(a) {
+    if (!a.effect) return;
+    if (replaceTriggers.size === 0) {
+      const run = () => {
+        const list = [...replaceTriggers];
+        replaceTriggers.clear();
+        for (const t of list) if (t.effect) removeReplaced(t);
+      };
+      if (requestFrame !== null) apply(requestFrame, globalThis, [run]); else schedule(16, run);
+    }
+    replaceTriggers.add(a);
   }
 
   // Events are dispatched as tasks of their own, after the promise
@@ -1408,6 +1443,8 @@
 
   function timingChanged(a) {
     updateFinished(a, false, false);
+    if (a.effect && playStateOf(a) === 'finished') replaceAtNextFrame(a);
+
   }
 
   function track(a) {
@@ -1455,18 +1492,26 @@
     if (!target) return;
     const list = [...live].map(o => animations.get(o)).filter(a =>
       a.effect && a.effect.target === target && a.replaceState === 'active' && playStateOf(a) === 'finished' &&
-      computedTimingOf(a.effect).activeTime !== null);
+      computedTimingOf(a.effect).activeTime !== null).sort((x, y) => x.seq - y.seq);
     const propsOf = a => new Set(a.effect.frames.flatMap(f => [...f.values.values()].map(v => v.prop)));
     const covered = new Set();
+    const removed = [];
     for (let i = list.length - 1; i >= 0; i--) {
       const a = list[i];
       const props = propsOf(a);
       if (i < list.length - 1 && props.size && [...props].every(p => covered.has(p))) {
         a.replaceState = 'removed';
         live.delete(a.self);
-        queueEvent(a, 'remove', currentTimeOf(a));
+        report(a);
+        removed.push(a);
       }
       for (const p of props) covered.add(p);
+    }
+    // The remove events go out in composite order, after the finish events of the same tick (one
+    // more task hop, so the finishes of animations ending together are dispatched first).
+    for (let i = removed.length - 1; i >= 0; i--) {
+      const a = removed[i], ct = currentTimeOf(a);
+      schedule(0, () => queueEvent(a, 'remove', ct));
     }
   }
 
@@ -1649,7 +1694,7 @@
       const a = override(scripted(brand(animations, this, 'an Animation')), 'playState');
       if (timelineTime(a.timeline) === null) throw invalidState('Cannot reverse an animation with no active timeline');
       const original = a.pendingRate;
-      a.pendingRate = -effectiveRate(a);
+      a.pendingRate = effectiveRate(a) === 0 ? 0 : -effectiveRate(a);
       try {
         play(a, true);
       } catch (e) {
@@ -1679,8 +1724,10 @@
     }
     persist() {
       const a = brand(animations, this, 'an Animation');
-      if (a.replaceState === 'removed') track(a);
+      const wasRemoved = a.replaceState === 'removed';
+      if (wasRemoved) track(a);
       a.replaceState = 'persisted';
+      if (wasRemoved) report(a);
     }
     commitStyles() {
       const a = brand(animations, this, 'an Animation');
