@@ -260,6 +260,7 @@ where
     crate::reporting::define(def);
     crate::audio_decoder::define(def);
     crate::sanitizer::define(def);
+    crate::pressure::define(def);
     crate::audio_encoder::define(def);
     crate::video_encoder::define(def);
     crate::image_decoder::define(def);

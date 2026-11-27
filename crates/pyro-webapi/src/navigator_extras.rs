@@ -212,6 +212,8 @@ pub(crate) struct PermissionTable(Arc<RwLock<FxHashMap<Option<String>, OriginPer
 pub struct ContextServices {
     pub(crate) permissions: PermissionTable,
     pub(crate) web_locks: crate::web_locks::LockService,
+    /// The context's Compute Pressure sources (`crate::pressure`).
+    pressure: crate::pressure::PressureHub,
     clipboard: RefCell<Vec<ClipboardEntry>>,
     /// Documents with PermissionStatus change listeners.
     watchers: RefCell<Vec<std::rc::Weak<PageDom>>>,
@@ -238,8 +240,13 @@ pub struct GeolocationFix {
 }
 
 impl ContextServices {
-    pub(crate) fn for_worker(permissions: PermissionTable, web_locks: crate::web_locks::LockService) -> Self {
-        Self { permissions, web_locks, ..Self::default() }
+    pub(crate) fn for_worker(permissions: PermissionTable, web_locks: crate::web_locks::LockService, pressure: crate::pressure::PressureHub) -> Self {
+        Self { permissions, web_locks, pressure, ..Self::default() }
+    }
+
+    /// The context's pressure sources: what `PressureObserver` reads and `Emulation.setPressure*Override` drives.
+    pub fn pressure(&self) -> &crate::pressure::PressureHub {
+        &self.pressure
     }
 
     /// Whether loads of this context's frames may go through a service

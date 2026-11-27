@@ -179,6 +179,7 @@ These are sent with the `sessionId` of an attached page.
 | `Emulation.setLocaleOverride` | partial | `navigator.language(s)` and `Accept-Language` only. `Intl` and `Date` keep the process locale. |
 | `Emulation.setTimezoneOverride` | partial | Per connection (`Date`, `Intl`, `Temporal`). Two pages on one connection cannot hold different zones ("Cannot set timezone"). |
 | `Emulation.setGeolocationOverride` / `clearGeolocationOverride` | implemented | Per browser context. Needs the geolocation permission. |
+| `Emulation.setPressureSourceOverrideEnabled` / `setPressureStateOverride` / `setPressureDataOverride` | implemented | Virtual Compute Pressure source `cpu` (replaces the host's CPU load for `PressureObserver`). Per browser context. |
 | `Emulation.setTouchEmulationEnabled` | implemented | `navigator.maxTouchPoints` (1–16), `(pointer: coarse)`, `(hover: none)`. |
 | `Emulation.setDefaultBackgroundColorOverride` | implemented | Screenshot background. `a: 0` gives transparent PNGs. |
 | `Emulation.setVirtualTimePolicy` | partial | Freezes `Date` and `performance.now()` and holds timers. `advance` and `pauseIfNetworkFetchesPending` with `budget` (emits `Emulation.virtualTimeBudgetExpired`). Thread-wide and owned by one page. Cannot be turned off. |

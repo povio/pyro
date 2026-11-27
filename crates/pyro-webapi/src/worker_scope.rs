@@ -102,6 +102,7 @@ pub(crate) struct WorkerStart {
     buckets: crate::storage_buckets::catalog::Catalog,
     permissions: crate::navigator_extras::PermissionTable,
     web_locks: crate::web_locks::LockService,
+    pressure: crate::pressure::PressureHub,
     /// `new Worker(url, {type: 'module'})`: the script is a module.
     pub(crate) module: bool,
     /// `WorkerOptions.credentials`: a module worker's main script and every
@@ -166,6 +167,7 @@ impl WorkerStart {
             buckets: page.local_storage.borrow().buckets(),
             permissions: page.context_services().permissions.clone(),
             web_locks: page.context_services().web_locks.clone(),
+            pressure: page.context_services().pressure().clone(),
             module: false,
             credentials: Credentials::SameOrigin,
             referrer: None,
@@ -219,6 +221,7 @@ impl WorkerStart {
             buckets: page.local_storage.borrow().buckets(),
             permissions: page.context_services().permissions.clone(),
             web_locks: page.context_services().web_locks.clone(),
+            pressure: page.context_services().pressure().clone(),
             module,
             credentials: Credentials::SameOrigin,
             referrer: None,
@@ -697,7 +700,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     let cookie_site = if start.url.scheme() == "data" { pyro_net::cookies::SiteContext::CrossSite } else { start.cookie_site_context };
     page.set_cookie_context(start.cookie_partition_key.clone(), cookie_site);
     page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(
-        start.permissions.clone(), start.web_locks.clone(),
+        start.permissions.clone(), start.web_locks.clone(), start.pressure.clone(),
     )));
     // The worker's time origin: `performance.now()`, `Event.timeStamp` and
     // its Resource Timing entries count from here.
@@ -2000,6 +2003,10 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
             crate::image_decoder::install_worker(s)?;
         }
         crate::storage_buckets::install_worker(s)?;
+        // `[Exposed=(DedicatedWorker,SharedWorker,Window)]`.
+        if s.global_data::<DedicatedWorkerGlobalScope>().is_some() || s.global_data::<SharedWorkerGlobalScope>().is_some() {
+            crate::pressure::install_worker(s)?;
+        }
     } else if let Some(class) = s.global().get_atom("WorkerNavigator")?.as_object() {
         if let Some(proto) = class.get_atom("prototype")?.as_object() {
             proto.delete("locks")?;

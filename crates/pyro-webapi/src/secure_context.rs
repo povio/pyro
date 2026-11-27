@@ -32,6 +32,8 @@ const GLOBALS: &[&str] = &[
     "MLGraphBuilder",
     "MLOperand",
     "MLTensor",
+    "PressureObserver",
+    "PressureRecord",
     // `[SecureContext] readonly attribute CacheStorage caches`: absent rather than an accessor
     // reading undefined, so a page's own `var caches = ...` (fetch/api/request/request-init-001)
     // gets a plain global variable, as in Chrome.

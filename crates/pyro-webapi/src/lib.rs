@@ -66,6 +66,7 @@ pub mod formdata;
 pub mod fullscreen;
 mod web_locks;
 mod media_devices;
+pub mod pressure;
 mod paint_worklet;
 mod audio_worklet;
 /// Hooks only tests use (feature `test-hooks`, enabled by test builds through dev-dependencies).

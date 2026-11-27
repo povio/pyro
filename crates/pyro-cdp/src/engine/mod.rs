@@ -26,6 +26,7 @@ mod network;
 mod network_delivery;
 mod page;
 mod permissions;
+mod pressure;
 mod remote;
 mod runtime;
 #[cfg(feature = "render")]
@@ -1209,6 +1210,7 @@ impl EngineHost {
             // Headless pages always behave as focused; there is no window focus to emulate.
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
             "setGeolocationOverride" | "clearGeolocationOverride" => self.geolocation_override(action, cmd),
+            "setPressureSourceOverrideEnabled" | "setPressureStateOverride" | "setPressureDataOverride" => self.pressure_override(action, cmd),
             "setVirtualTimePolicy" => self.set_virtual_time_policy(cmd),
             // Touch input (Input.dispatchTouchEvent) is always accepted, as in
             // Chrome; this sets `navigator.maxTouchPoints` (default 1) and,

@@ -499,6 +499,8 @@ pub struct PageDom {
     pub(crate) fullscreen_exit_pending: Cell<bool>,
     /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
     fullscreen_allowed: Cell<bool>,
+    /// The document's permissions policy allows `compute-pressure` (`crate::pressure`).
+    compute_pressure_allowed: Cell<bool>,
     /// The document's permissions policy allows `media-playback-while-not-visible` (default
     /// allowed; false: its media is paused and its audio contexts interrupted while its frame is
     /// not rendered, `crate::media::frame_rendered`).
@@ -1244,6 +1246,7 @@ impl PageDom {
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_exit_pending: Cell::new(false),
             fullscreen_allowed: Cell::new(true),
+            compute_pressure_allowed: Cell::new(true),
             media_while_hidden_allowed: Cell::new(true),
             media_frame_rendered: Cell::new(true),
             media_audio_blocked: Cell::new(false),
@@ -1347,6 +1350,14 @@ impl PageDom {
     }
     pub fn fullscreen_allowed(&self) -> bool {
         self.fullscreen_allowed.get()
+    }
+    /// Whether the document's permissions policy allows `compute-pressure`: true for a top-level document; the
+    /// browser sets a child frame's ([`crate::pressure::allowed_in_frame`]).
+    pub fn compute_pressure_allowed(&self) -> bool {
+        self.compute_pressure_allowed.get()
+    }
+    pub fn set_compute_pressure_allowed(&self, allowed: bool) {
+        self.compute_pressure_allowed.set(allowed);
     }
     /// Whether the document's permissions policy allows `media-playback-while-not-visible`.
     pub fn media_while_hidden_allowed(&self) -> bool {
