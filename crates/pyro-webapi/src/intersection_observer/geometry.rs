@@ -29,7 +29,14 @@ fn clip_by_ancestors(dom: &pyro_dom::Dom, layout: &pyro_dom::layout::Layout, nod
                 // An overflow clip is the padding box: the border box inset by the border widths.
                 let b = layout.bounding_client_rect(dom, node);
                 let (bl, bt) = (layout.client_left(dom, node), layout.client_top(dom, node));
-                let b = Rect { x: b.x + bl, y: b.y + bt, width: layout.client_width(dom, node), height: layout.client_height(dom, node) };
+                // (A table's overflow applies to its wrapper box, which has no border: CSS Tables "global style
+                // overrides"; its clip is the table's border box, WPT root-is-table-with-overflow-scroll.)
+                let table = matches!(layout.computed_style_value(dom, node, "display").trim(), "table" | "inline-table");
+                let b = if table {
+                    b
+                } else {
+                    Rect { x: b.x + bl, y: b.y + bt, width: layout.client_width(dom, node), height: layout.client_height(dom, node) }
+                };
                 let b = options::expand(b, margin);
                 intersection = clip(rect, b, axes.x, axes.y);
             }
@@ -44,16 +51,24 @@ fn clip_by_ancestors(dom: &pyro_dom::Dom, layout: &pyro_dom::layout::Layout, nod
 /// positioned box skips to its nearest positioned (or transformed) ancestor; a fixed one
 /// has the viewport as its containing block.
 fn in_containing_block_chain(dom: &pyro_dom::Dom, layout: &pyro_dom::layout::Layout, root: NodeId, target: NodeId) -> bool {
-    let positioned = |el: NodeId| {
-        layout.computed_style_value(dom, el, "position").trim() != "static" || !matches!(layout.computed_style_value(dom, el, "transform").trim(), "" | "none")
-    };
+    // The containing block of an absolute box: a positioned ancestor or one that contains fixed boxes
+    // (a transform, perspective, filter, `contain: layout | paint`, or `will-change` of those: a table
+    // root with `will-change: transform` is one though its transform computes to none).
+    let contains_absolute = |el: NodeId| layout.style().computed(dom, el).is_some_and(|c| c.contains_absolute);
+    let contains_fixed = |el: NodeId| layout.style().computed(dom, el).is_some_and(|c| c.contains_fixed);
     let mut current = target;
     loop {
         let Some(mut parent) = dom.parent_element(current).ok().flatten() else { return false };
         match layout.computed_style_value(dom, current, "position").trim() {
-            "fixed" => return false,
+            // A fixed box's containing block is the viewport unless an ancestor contains fixed boxes.
+            "fixed" => {
+                while !contains_fixed(parent) {
+                    let Some(next) = dom.parent_element(parent).ok().flatten() else { return false };
+                    parent = next;
+                }
+            }
             "absolute" => {
-                while !positioned(parent) {
+                while !contains_absolute(parent) {
                     let Some(next) = dom.parent_element(parent).ok().flatten() else { return false };
                     parent = next;
                 }
