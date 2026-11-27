@@ -513,6 +513,9 @@ pub struct PageDom {
     /// The document's permissions policy (`crate::permissions_policy`): the one source of every
     /// feature gate (fullscreen, compute-pressure, media-playback-while-not-visible, ...).
     pub(crate) permissions_policy: RefCell<crate::permissions_policy::PermissionsPolicy>,
+    /// Elements on `fullscreen_stack` that a descendant document's request pushed (a frame owner made
+    /// fullscreen for its content's sake): exiting that content takes them out, a directly requested one stays.
+    pub(crate) fullscreen_implicit: RefCell<Vec<NodeId>>,
     /// For a document whose policy does not allow it: whether its frame was rendered at the last
     /// checkpoint (`crate::media::refresh_frame_rendered`).
     pub(crate) media_frame_rendered: Cell<bool>,
@@ -1285,6 +1288,7 @@ impl PageDom {
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_exit_pending: Cell::new(false),
             permissions_policy: RefCell::default(),
+            fullscreen_implicit: RefCell::new(Vec::new()),
             media_frame_rendered: Cell::new(true),
             media_audio_blocked: Cell::new(false),
             paint_worklet: RefCell::new(None),

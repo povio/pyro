@@ -226,9 +226,15 @@ fn leave_containers(page: &Rc<PageDom>) -> Vec<(Rc<PageDom>, NodeId)> {
     let mut cur = page.clone();
     while element(&cur).is_none() {
         let FrameContainer::Frame(parent, owner) = cur.container() else { break };
-        if element(&parent) != Some(owner) || parent.fullscreen_stack.borrow().len() != 1 {
+        // Only a container that went fullscreen for its content's sake leaves with it: one requested
+        // directly stays (WPT fullscreen/api/document-exit-fullscreen-nested-in-direct-fullscreen-iframe).
+        if element(&parent) != Some(owner)
+            || parent.fullscreen_stack.borrow().len() != 1
+            || !parent.fullscreen_implicit.borrow().contains(&owner)
+        {
             break;
         }
+        parent.fullscreen_implicit.borrow_mut().retain(|&e| e != owner);
         parent.fullscreen_stack.borrow_mut().pop();
         let _ = parent.dom.borrow_mut().set_fullscreen(owner, false);
         left.push((parent.clone(), owner));
@@ -317,6 +323,8 @@ pub(crate) fn request<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsRe
                 stack.retain(|&e| e != el);
                 stack.push(el);
             }
+            // Requested for itself, not for the sake of a frame below.
+            page.fullscreen_implicit.borrow_mut().retain(|&e| e != el);
             let _ = page.dom.borrow_mut().set_fullscreen(el, true);
             // Each ancestor document goes fullscreen with its frame: the container is pushed on
             // its document's stack, unless it is already that document's fullscreen element. The
@@ -331,6 +339,7 @@ pub(crate) fn request<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsRe
                     stack.retain(|&e| e != owner);
                     stack.push(owner);
                 }
+                parent.fullscreen_implicit.borrow_mut().push(owner);
                 let _ = parent.dom.borrow_mut().set_fullscreen(owner, true);
                 events.push((parent, owner));
             }
