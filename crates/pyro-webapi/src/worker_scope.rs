@@ -719,6 +719,17 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     let window = page.create_window_target(document);
     *page.net.borrow_mut() = Some(start.net.clone());
     page.set_hooks(Some(Rc::new(ScopeHooks { sched: event_loop.scheduler(), handle: event_loop.handle() })));
+    // A synchronous request parks this thread: `terminate()` must still end it.
+    let closing = start.shared.clone();
+    crate::xhr::set_sync_watch(&page, Box::new(move || closing.closing.load(Ordering::Acquire)));
+    let (script, response_url) = load_main_script(&page, &start);
+    // HTML "run a worker" step: the worker global's URL (`location`, the base URL of its
+    // `importScripts`, XHR and nested workers, the name of its script) is the main script
+    // response's URL, so after a redirect the final one, not the one `new Worker` asked for.
+    let url = response_url.clone().unwrap_or_else(|| start.url.clone());
+    if url.as_str() != start.url.as_str() {
+        let _ = page.dom.borrow_mut().set_document_url(document, url.as_str());
+    }
     let worker_origin = if start.url.scheme() == "data" {
         Some(start.url.origin().ascii_serialization())
     } else {
@@ -731,8 +742,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         id: start.id,
         shared: start.shared.clone(),
         poster: start.poster.clone(),
-        url: start.url.clone(),
-        secure: pyro_net::is_potentially_trustworthy_url(&start.url)
+        url: url.clone(),
+        secure: pyro_net::is_potentially_trustworthy_url(&url)
             && (start.creator_secure || start.shared_worker || start.service.is_some()),
         name: start.name.clone(),
         user_agent: crate::window::user_agent(&page),
@@ -743,7 +754,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         started,
         origin_wall_ms,
         performance: Cell::new(None),
-        response_url: RefCell::new(None),
+        // The URL its nested workers' requests are sent with as their referrer.
+        response_url: RefCell::new(response_url),
     };
     if start.service.is_some() {
         realm.set_global_data::<ServiceWorkerGlobalScope>(scope)?;
@@ -764,7 +776,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         credentials: script_credentials(&start),
         origin: worker_origin,
         outside_origin: start.origin.clone(),
-        url: start.url.to_string(),
+        url: url.to_string(),
         sched: event_loop.scheduler(),
         in_flight: Rc::default(),
         service_graph: start.service.is_some().then(|| starting.clone()),
@@ -772,6 +784,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         graph: graph.clone(),
         id: start.id,
         poster: start.poster.clone(),
+        owner_policy: start.referrer.as_ref().map(|(_, policy)| *policy),
     })));
     {
         let s = realm.scope()?;
@@ -787,16 +800,6 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
             crate::service_worker_scope::install(&s, service, start.poster.clone(), start.shared.clone())?;
             crate::cookie_store::bind_environment(&s, &page)?;
             crate::cookie_store::exposure::install(&s, true)?;
-        }
-    }
-    // A synchronous request parks this thread: `terminate()` must still end it.
-    let closing = start.shared.clone();
-    crate::xhr::set_sync_watch(&page, Box::new(move || closing.closing.load(Ordering::Acquire)));
-    let (script, response_url) = load_main_script(&page, &start);
-    // The URL its nested workers' requests are sent with as their referrer.
-    if let Some(url) = response_url {
-        if let Some(g) = realm.scope()?.global_data::<WorkerGlobalScope>() {
-            *g.response_url.borrow_mut() = Some(url);
         }
     }
     let state = WorkerLoop {
@@ -816,7 +819,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         let id = start.id;
         (start.poster)(Box::new(move || deliver_up(id, Up::LoadFailed)));
     }
-    Ok((state, script.map(|text| (text, start.url.to_string()))))
+    Ok((state, script.map(|text| (text, url.to_string()))))
 }
 
 /// The main script request's referrer, in; its response's URL (after
@@ -1056,6 +1059,10 @@ struct WorkerModuleFetcher {
     graph: Rc<GraphPhase>,
     id: u64,
     poster: RemotePoster,
+    /// The referrer policy of the worker's creator (its `new Worker` or `new SharedWorker` call's
+    /// document): the top-level graph's static imports are fetched under it, an `import()`
+    /// under the worker script's own `Referrer-Policy`.
+    owner_policy: Option<pyro_net::ReferrerPolicy>,
 }
 
 /// Violations of the owner's CSP found on the worker's thread go to the owner's document.
@@ -1152,6 +1159,11 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
         let (page, net, shared, in_flight, credentials) =
             (self.page.clone(), self.net.clone(), self.shared.clone(), self.in_flight.clone(), self.credentials);
         let (csp, id, poster) = (self.csp.clone(), self.id, self.poster.clone());
+        // HTML "fetch the descendants of a module script" / HostLoadImportedModule: the request's
+        // referrer is the importing script's URL; its policy the creator's for a static import
+        // and the worker script's own for an `import()`.
+        let referrer_url = request.referrer_url().and_then(|u| pyro_net::Url::parse(&u).ok());
+        let owner_policy = self.owner_policy;
         let request = RefCell::new(Some(request));
         self.sched.post(TaskSource::Networking, move |_| {
             // Every request of the fetch, taken out before any completes: one
@@ -1190,6 +1202,13 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                                 pyro_js::ModuleType::Text => Destination::Text,
                                                 _ => Destination::Script,
                                             };
+                                            let policy = match graph_request {
+                                                GraphRequest::Dynamic => page.referrer_policy(),
+                                                _ => owner_policy.unwrap_or_else(|| page.referrer_policy()),
+                                            };
+                                            let import = referrer_url
+                                                .clone()
+                                                .map(|url| MainRequest { referrer: Some((url, policy)), response_url: RefCell::new(None) });
                                             fetch_script(
                                                 &page,
                                                 &net,
@@ -1200,7 +1219,7 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                                 RequestMode::Cors,
                                                 credentials,
                                                 false,
-                                                None,
+                                                import.as_ref(),
                                                 guard.clone(),
                                             )
                                             .map(|(bytes, mime, _)| (bytes, mime))

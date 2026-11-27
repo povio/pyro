@@ -373,6 +373,9 @@ impl JsClass for SharedWorker {
                         start.module = module;
                         start.credentials = credentials;
                         start.csp = csp;
+                        // The script request's referrer: the creating document, under its policy
+                        // (HTML "fetch a classic/module worker script graph" uses the outside settings).
+                        start.referrer = page.client_referrer().map(|r| (r, page.referrer_policy()));
                         start
                     });
                     // A template process (`serve --fork`) starts no thread.

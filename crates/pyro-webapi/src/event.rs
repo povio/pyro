@@ -2350,9 +2350,24 @@ impl JsClass for MessageEvent {
         def.getter("userActivation", |s, e| {
             Ok(e.fields.borrow().message_user_activation.as_ref().map_or(s.null(), |p| s.rehome(p.get(s))))
         });
-        def.getter("ports", |s, e| match e.fields.borrow().message_ports.as_ref() {
-            Some(ports) => Ok(s.rehome(ports.get(s))),
-            None => Ok(s.array(&[])?.value()),
+        // [SameObject], a FrozenArray<MessagePort>: `evt.ports.push(...)` throws a TypeError, and the
+        // empty list of an event without ports is one array too.
+        def.getter("ports", |s, e| {
+            let current = e.fields.borrow().message_ports.as_ref().map(|p| s.rehome(p.get(s)));
+            let ports = match current {
+                Some(ports) => ports,
+                None => {
+                    let ports = s.array(&[])?.value();
+                    let held = Persistent::new(s, ports);
+                    e.fields.borrow_mut().message_ports = Some(held);
+                    ports
+                }
+            };
+            if let Some(list) = ports.as_object() {
+                let freeze = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("freeze")?;
+                freeze.as_object().expect("Object.freeze").call(None, &[list.value()])?;
+            }
+            Ok(ports)
         });
         // `initMessageEvent(type, bubbles, cancelable, data, origin, lastEventId, source, ports)`
         // (legacy): like the constructor's dictionary, ignored while the event is dispatched.
