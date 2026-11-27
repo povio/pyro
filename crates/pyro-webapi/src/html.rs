@@ -4783,7 +4783,7 @@ simple_class!(SvgTextContentElement, "SVGTextContentElement", SvgGraphicsElement
     });
 });
 /// The layout of the `<text>` the element is in, and the range of it the element holds.
-fn svg_text_range(n: &NodeData) -> (crate::svg_text::TextLayout, (usize, usize)) {
+fn svg_text_range(n: &NodeData) -> (std::rc::Rc<crate::svg_text::TextLayout>, (usize, usize)) {
     let page = n.page();
     let dom = page.dom.borrow();
     let layout = page.layout();

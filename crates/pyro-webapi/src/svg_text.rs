@@ -205,9 +205,49 @@ fn text_root(dom: &Dom, el: NodeId) -> Option<NodeId> {
     None
 }
 
-/// The layout of the `<text>` that `el` is part of (empty when it is not in one).
-pub(crate) fn layout_of(page: &PageDom, dom: &Dom, layout: &Layout, el: NodeId) -> TextLayout {
-    let Some(root) = text_root(dom, el) else { return TextLayout::default() };
+/// What a cached text layout depends on: the DOM version (nodes, attributes, text and the styles they
+/// select), the layout viewport (percentages, viewport units) and the faces the shaper can use (the
+/// realm's `FontFaceSet` generation and which CSS faces have their bytes). Hover and focus do not
+/// change the DOM version, so a `:hover` rule that restyles the text is seen at the next change.
+fn cache_key(page: &PageDom, dom: &Dom, layout: &Layout) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    dom.version().hash(&mut h);
+    let v = layout.viewport();
+    (v.width, v.height).hash(&mut h);
+    page.canvas_faces().0.hash(&mut h);
+    for face in page.css_font_faces().iter() {
+        for source in &face.sources {
+            if let pyro_dom::font_face::FontSource::Url(url, _) = source {
+                page.font_url_bytes(url).is_some().hash(&mut h);
+            }
+        }
+    }
+    h.finish()
+}
+
+/// The layout of the `<text>` that `el` is part of (empty when it is not in one), computed once per
+/// [`cache_key`] and `<text>`.
+pub(crate) fn layout_of(page: &PageDom, dom: &Dom, layout: &Layout, el: NodeId) -> Rc<TextLayout> {
+    let Some(root) = text_root(dom, el) else { return Rc::default() };
+    let key = cache_key(page, dom, layout);
+    if let Ok(mut cache) = page.svg_text_cache.try_borrow_mut() {
+        if cache.0 != key {
+            *cache = (key, Default::default());
+        } else if let Some(hit) = cache.1.get(&root) {
+            return hit.clone();
+        }
+    }
+    let built = Rc::new(build_layout(page, dom, layout, root));
+    if let Ok(mut cache) = page.svg_text_cache.try_borrow_mut() {
+        if cache.0 == key {
+            cache.1.insert(root, built.clone());
+        }
+    }
+    built
+}
+
+fn build_layout(page: &PageDom, dom: &Dom, layout: &Layout, root: NodeId) -> TextLayout {
     // A text that is not rendered has no characters.
     if layout.style().has_display_none(dom, root) {
         return TextLayout::default();
@@ -243,6 +283,18 @@ fn joins(prev: char, c: char) -> bool {
             | 0x1F3FB..=0x1F3FF | 0xE0020..=0xE007F | 0xE0100..=0xE01EF)
 }
 
+/// A computed `font-weight` as a number: the keywords (`normal` 400, `bold` 700; `bolder` and `lighter`
+/// are resolved by the cascade, the fallbacks here are their usual results) as well as numbers.
+fn font_weight(v: &str) -> f32 {
+    let v = v.trim();
+    match v.to_ascii_lowercase().as_str() {
+        "normal" => 400.0,
+        "bold" | "bolder" => 700.0,
+        "lighter" => 100.0,
+        n => n.parse::<f32>().ok().filter(|w| w.is_finite() && *w >= 1.0).map_or(400.0, |w| w.min(1000.0)),
+    }
+}
+
 fn px_value(v: &str) -> f32 {
     v.trim().strip_suffix("px").and_then(|n| n.trim().parse().ok()).unwrap_or(0.0)
 }
@@ -270,7 +322,7 @@ impl<'a> Builder<'a> {
         let s = Rc::new(ElStyle {
             family: if family.trim().is_empty() { "serif".to_string() } else { family },
             size: if size.is_finite() { size.max(0.0) } else { 0.0 },
-            weight: prop("font-weight").trim().parse().unwrap_or(400.0),
+            weight: font_weight(&prop("font-weight")),
             italic: style.starts_with("italic") || style.starts_with("oblique"),
             letter_spacing: px_value(&prop("letter-spacing")),
             word_spacing: px_value(&prop("word-spacing")),

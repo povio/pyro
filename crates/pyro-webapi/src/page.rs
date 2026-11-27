@@ -496,6 +496,10 @@ pub struct PageDom {
     /// pyro: the web faces canvas text last drew with, by the key of what made them
     /// (canvas.rs `canvas_web_faces`): their bytes are not copied or decompressed per draw.
     canvas_face_cache: RefCell<Option<(u64, Rc<Vec<pyro_canvas::text::WebFace>>)>>,
+    /// pyro: the computed layouts of this document's SVG `<text>` elements, valid for one key (the DOM
+    /// version, the viewport and the loaded faces: `svg_text::layout_of`), so repeated `getBBox` /
+    /// text queries do not lay the text out again.
+    pub(crate) svg_text_cache: RefCell<(u64, FxHashMap<NodeId, Rc<crate::svg_text::TextLayout>>)>,
     /// Tasks queued through [`PageDom::post_task`] so far.
     posted_tasks: Cell<u64>,
     pub(crate) web_tasks: crate::scheduler::PendingTasks,
@@ -1280,6 +1284,7 @@ impl PageDom {
             css_font_faces: RefCell::new(None),
             canvas_faces: RefCell::new((0, Rc::default())),
             canvas_face_cache: RefCell::new(None),
+            svg_text_cache: RefCell::new((0, FxHashMap::default())),
             posted_tasks: Cell::new(0),
             web_tasks: Default::default(),
             completely_loaded: Cell::new(false),
