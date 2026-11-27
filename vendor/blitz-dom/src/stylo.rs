@@ -633,6 +633,12 @@ impl crate::document::BaseDocument {
         }
         .and_then(|parent| self.pseudo_element_style(node_id, &parent, false));
         if pseudo.is_lazy() {
+            // pyro: a highlight pseudo inherits from its parent element's same highlight pseudo.
+            if Self::inherits_highlight(pseudo) && !only_child {
+                if let Some(style) = self.highlight_pseudo_style(node_id, pseudo) {
+                    return Some(style);
+                }
+            }
             let _layout_thread_scope = LayoutThreadScope::enter();
             let guard = &self.guard;
             let guards = StylesheetGuards {
@@ -679,6 +685,69 @@ impl crate::document::BaseDocument {
             )
             .build(),
         )
+    }
+
+    /// Whether `pseudo` is a highlight pseudo-element, whose style inherits from the parent's own
+    /// highlight style (css-pseudo-4 § 3 highlight inheritance).
+    fn inherits_highlight(pseudo: &style::selector_parser::PseudoElement) -> bool {
+        pseudo.is_selection()
+            || pseudo.is_highlight()
+            || pseudo.is_target_text()
+            || matches!(*pseudo, PseudoElement::SearchText | PseudoElement::SpellingError | PseudoElement::GrammarError)
+    }
+
+    /// The style of a highlight pseudo-element of `node_id` that inherits from the parent element's
+    /// highlight style (through `display: contents` and shadow and slot boundaries: the flat tree's
+    /// parent), the originating element's own style being the parent only at the root. `None` when
+    /// no rule applies to the pseudo-element on the element or any ancestor (the plain
+    /// originating-element inheritance stands then).
+    fn highlight_pseudo_style(&self, node_id: NodeId, pseudo: &style::selector_parser::PseudoElement) -> Option<Arc<ComputedValues>> {
+        let node = self.nodes.get(node_id)?;
+        if !node.is_element() || !node.flags.is_in_document() {
+            return None;
+        }
+        let parent = node.parent.filter(|&p| self.nodes.get(p).is_some_and(|p| p.is_element()))
+            .and_then(|p| crate::util::ensure_stack(|| self.highlight_pseudo_style(p, pseudo)));
+        let primary = match node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| d.styles.get_primary().cloned()) {
+            Some(primary) => primary,
+            None => self.resolve_undisplayed_styles(node_id, None)?.primary().clone(),
+        };
+        let _layout_thread_scope = LayoutThreadScope::enter();
+        let guard = &self.guard;
+        let guards = StylesheetGuards {
+            author: &guard.read(),
+            ua_or_user: &guard.read(),
+        };
+        // `::highlight(<name>)` rules share one map; the name must match.
+        let wanted = pseudo.clone();
+        let matches = move |pe: &PseudoElement| wanted.matches_transition_selector(pe)
+            || (wanted.is_highlight() && *pe == PseudoElement::Highlight(style::selector_parser::ANY_HIGHLIGHT));
+        let lazy = self.stylist.lazily_compute_pseudo_element_style_in_tree(
+            &guards,
+            node,
+            &pseudo.rule_map_key(),
+            RuleInclusion::All,
+            &primary,
+            false,
+            pseudo.is_highlight().then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
+            false,
+        );
+        match (lazy, parent) {
+            (None, None) => None,
+            (Some(style), None) => Some(style),
+            (None, Some(parent)) => Some(
+                style::properties::StyleBuilder::for_inheritance(self.stylist.device(), Some(&self.stylist), Some(&parent), Some(pseudo)).build(),
+            ),
+            (Some(style), Some(parent)) => {
+                // Only the rules carry over: the visited style is never exposed.
+                let inputs = style::context::CascadeInputs {
+                    rules: Some(style.rules().clone()),
+                    flags: style.flags.for_cascade_inputs(),
+                    ..Default::default()
+                };
+                Some(self.stylist.compute_pseudo_element_style_with_inputs(inputs, pseudo, &guards, Some(&parent), Some(node)))
+            }
+        }
     }
 
     /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly
