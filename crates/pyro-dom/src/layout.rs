@@ -5352,6 +5352,19 @@ impl Layout {
             }
         }
         let value = crate::stylo::serialize(&style, &name).unwrap_or_default();
+        // An `anchor()` / `anchor-size()` of a `::before` / `::after` resolves like the element's does
+        // (`resolved_value`): the used value from its box in the layout engine (render key: pseudo 1 / 2).
+        if value.contains("anchor(") || value.contains("anchor-size(") {
+            let key = match pseudo {
+                style::selector_parser::PseudoElement::Before => Some(crate::snapshot::pseudo_render_key(el, 1)),
+                style::selector_parser::PseudoElement::After => Some(crate::snapshot::pseudo_render_key(el, 2)),
+                _ => None,
+            };
+            let used = key.zip(self.synced_geometry_source(dom)).and_then(|(key, source)| source.resolved_style_value(key, &name));
+            if let Some(used) = used.filter(|used| !used.is_empty() && !used.contains("anchor")) {
+                return used;
+            }
+        }
         if name == "content" && pseudo.is_before_or_after() && value == "normal" {
             return "none".into();
         }
