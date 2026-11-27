@@ -305,6 +305,20 @@ impl BaseDocument {
         taffy::round_layout(&mut state, root);
     }
 
+    /// pyro: the keyframes of `name` on a view-transition pseudo-element of the transition rooted at
+    /// `origin` (`pseudo` as script spells it: `::view-transition-group(x)`): the author's
+    /// `@keyframes` or, for a group's UA `-ua-view-transition-group-anim-*`, the old state's
+    /// declarations (the `to` keyframe is the group's own style, implicit).
+    pub fn transition_animation_frames(&self, origin: NodeId, pseudo: &str, name: &str) -> Option<Vec<(f64, Option<String>, Option<String>, Vec<(String, String, String)>)>> {
+        let tree = self.transition_trees.as_ref()?.get(&origin)?;
+        let item = tree.nodes.iter().find(|item| item.public_pseudo == pseudo)?;
+        let node = self.nodes.get(origin)?;
+        let style = self.nodes.get(item.id)?.primary_styles()?.clone();
+        let parent = self.nodes.get(self.nodes.get(item.id)?.parent?)?.primary_styles()?.clone();
+        let generated = tree.group_frames.get(&item.id).filter(|(expected, _)| &**expected == name).map(|(_, css)| css.as_str());
+        self.animation_frames_in(node, style, name, Some((&item.pseudo, &parent)), generated)
+    }
+
     pub(crate) fn transition_group_from(&self, group: NodeId, name: &style::Atom) -> Option<&str> {
         let trees = self.transition_trees.as_ref()?;
         let root = self.nodes.get(group)?.parent?;

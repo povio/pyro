@@ -1273,6 +1273,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.css_animation_frames(self.page, key, name))
     }
 
+    fn transition_animation_frames(&self, root: u64, pseudo: &str, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.transition_animation_frames(self.page, root, pseudo, name))
+    }
+
     fn sampled_font_style(
         &self, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
         size: Option<&style::properties::ComputedValues>, line_height: Option<&style::properties::ComputedValues>,

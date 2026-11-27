@@ -125,7 +125,13 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let name = args.get(1).to_string()?;
         let dom = page.dom.borrow();
         let layout = page.layout();
-        let Some(steps) = layout.synced_geometry_source(&dom).and_then(|g| g.css_animation_frames(pyro_dom::snapshot::render_key(el), &name)) else {
+        // (A view-transition pseudo-element's keyframes: its transition root's.)
+        let pseudo = args.get(2).as_string().filter(|p| p.starts_with("::view-transition"));
+        let key = pyro_dom::snapshot::render_key(el);
+        let Some(steps) = layout.synced_geometry_source(&dom).and_then(|g| match &pseudo {
+            Some(pseudo) => g.transition_animation_frames(key, pseudo, &name),
+            None => g.css_animation_frames(key, &name),
+        }) else {
             return Ok(s.null());
         };
         let mut frames = Vec::with_capacity(steps.len());

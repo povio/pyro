@@ -940,6 +940,9 @@ pub trait GeometrySource {
 
     fn css_animation_frames(&self, _key: u64, _name: &str) -> Option<Vec<crate::animation::CssKeyframeStep>> { None }
 
+    /// The keyframes of `name` on the view-transition pseudo-element `pseudo` (as script spells it) of the transition rooted at `root`.
+    fn transition_animation_frames(&self, _root: u64, _pseudo: &str, _name: &str) -> Option<Vec<crate::animation::CssKeyframeStep>> { None }
+
     /// Recompute same-element properties with sampled font-size or line-height values.
     fn sampled_font_style(
         &self, _key: u64, _pseudo: Option<&style::selector_parser::PseudoElement>,

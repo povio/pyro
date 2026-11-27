@@ -596,6 +596,16 @@ impl crate::document::BaseDocument {
                 ));
             }
         }
+        // pyro: a view-transition pseudo-element inherits from its parent pseudo-element (group from
+        // `::view-transition`, image pair from the group, old and new from the pair), not from the
+        // root element, as the UA sheet's `animation-duration: inherit` expects.
+        let view_transition_parent = match pseudo {
+            PseudoElement::ViewTransitionGroup(_) => Some(PseudoElement::ViewTransition),
+            PseudoElement::ViewTransitionPair(arg) => Some(PseudoElement::ViewTransitionGroup(arg.clone())),
+            PseudoElement::ViewTransitionOld(arg) | PseudoElement::ViewTransitionNew(arg) => Some(PseudoElement::ViewTransitionPair(arg.clone())),
+            _ => None,
+        }
+        .and_then(|parent| self.pseudo_element_style(node_id, &parent, false));
         if pseudo.is_lazy() {
             let _layout_thread_scope = LayoutThreadScope::enter();
             let guard = &self.guard;
@@ -620,6 +630,14 @@ impl crate::document::BaseDocument {
                 if let Some(style) = self.animated_marker_style(node, &primary, lazy.as_ref()) {
                     return Some(style);
                 }
+            }
+            if let (Some(style), Some(parent)) = (lazy.as_ref(), view_transition_parent.as_ref()) {
+                let inputs = style::context::CascadeInputs {
+                    rules: Some(style.rules().clone()),
+                    flags: style.flags.for_cascade_inputs(),
+                    ..Default::default()
+                };
+                return Some(self.stylist.compute_pseudo_element_style_with_inputs(inputs, pseudo, &guards, Some(parent), Some(node)));
             }
             if lazy.is_some() {
                 return lazy;

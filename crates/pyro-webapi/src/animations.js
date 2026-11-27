@@ -1025,8 +1025,8 @@
 
   function exposedFrames(st) {
     if (!st.cssFrameSource) return st.cssFrames ?? st.frames;
-    const { target, name, easing } = st.cssFrameSource;
-    const steps = native.animationFrames(target, name);
+    const { target, name, easing, pseudo } = st.cssFrameSource;
+    const steps = native.animationFrames(target, name, pseudo);
     if (!steps) return st.cssFrames ?? [];
     const frames = [];
     const underlying = new Map();
@@ -2082,7 +2082,9 @@
     if (scrollDriven && timing.duration === 0) timing.duration = 'auto';
     const [timelineValue, rangeStartText, rangeEndText] = scrollDriven ? timelineText : [null, 'normal', 'normal'];
     const effect = new KeyframeEffect(target, null, timing);
-    if (!transition && id != null && !pseudo) effects.get(effect).cssFrameSource = { target, name, easing: keyframeEasing };
+    // (A view-transition pseudo-element's run has no id: its transition root keeps its keyframes.)
+    const viewPseudo = typeof pseudo === 'string' && pseudo.startsWith('::view-transition');
+    if (!transition && (viewPseudo || (id != null && !pseudo))) effects.get(effect).cssFrameSource = { target, name, easing: keyframeEasing, pseudo: viewPseudo ? pseudo : undefined };
     if (transition && id != null) {
       const frames = native.transitionFrames(id).map(([offset, property, value]) => {
         const member = keyframeMember(property);

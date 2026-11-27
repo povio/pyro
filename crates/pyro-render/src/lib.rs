@@ -2409,6 +2409,11 @@ impl Renderer {
         mirror.doc.css_animation_frames(mirror.node(key)?, name)
     }
 
+    pub fn transition_animation_frames(&self, page: u64, root: u64, pseudo: &str, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
+        let mirror = self.mirrors.get(&page)?;
+        mirror.doc.transition_animation_frames(mirror.node(root)?, pseudo, name)
+    }
+
     pub fn sampled_font_style(
         &self, page: u64, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
         size: Option<&style::properties::ComputedValues>, line_height: Option<&style::properties::ComputedValues>,
