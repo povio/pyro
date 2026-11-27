@@ -7780,7 +7780,7 @@ impl ElementCx<'_, '_> {
     /// over the radicand and the sign's glyph at the start of the content box (its end when
     /// `rtl`), both in the element's `color` (Chromium's `MathMLPainter::PaintRadicalSymbol`).
     fn draw_math_radical(&self, scene: &mut impl PaintScene) {
-        let Some(radical) = self.element.math_radical.as_ref() else { return };
+        let Some(radical) = self.element.math_radical.as_deref() else { return };
         if self.style.get_inherited_box().visibility != StyloVisibility::Visible {
             return;
         }

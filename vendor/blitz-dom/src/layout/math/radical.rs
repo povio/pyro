@@ -160,7 +160,7 @@ pub(crate) fn layout(state: &mut LayoutPassState<'_>, node_id: NodeId, kind: Mat
     };
     if let Some(element) = state.nodes[node_id].element_data_mut() {
         if element.name.ns == ns!(mathml) {
-            element.math_radical = Some(radical);
+            element.math_radical = Some(Box::new(radical));
         }
     }
     MathLayout { content_width, ascent, descent, children: placements, italic_correction: 0.0 }

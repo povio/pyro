@@ -167,7 +167,7 @@ pub struct ElementData {
     /// border box's top) and thickness, CSS px (`layout::math`). `None` without one.
     pub math_fraction_bar: Option<[f32; 2]>,
     /// pyro: a MathML radical's bar and sign, as its last layout placed them (`layout::math::radical`).
-    pub math_radical: Option<MathRadical>,
+    pub math_radical: Option<Box<MathRadical>>,
     /// pyro: the glyphs a stretched or large MathML operator paints in place of its text, as its
     /// last layout placed them (`layout::math::operator`). `None` for a text operator.
     pub math_stretch: Option<MathStretch>,
