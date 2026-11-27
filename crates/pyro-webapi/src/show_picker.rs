@@ -87,7 +87,7 @@ fn require_activation(page: &PageDom, interface: &str) -> JsResult<()> {
 
 /// HTML "being rendered": the element has a box (not in a `display: none` subtree), and, as in
 /// Chromium, no ancestor skips its contents with `content-visibility: hidden`.
-fn being_rendered(page: &PageDom, el: NodeId) -> bool {
+pub(crate) fn being_rendered(page: &PageDom, el: NodeId) -> bool {
     let layout = page.layout();
     let dom = page.dom.borrow();
     if !dom.is_connected(el).unwrap_or(false) || !layout.is_visible(&dom, el) {

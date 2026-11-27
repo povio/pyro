@@ -547,6 +547,10 @@ fn control_replace(
     data: Option<&str>,
 ) -> bool {
     let doc = page.document();
+    // A control that became display:none (a keydown listener hid it) takes no edit.
+    if !crate::show_picker::being_rendered(page, el) {
+        return false;
+    }
     if !editing::input_event(page, el, "beforeinput", input_type, data, true)
         || page.document() != doc
         || !editing::connected(page, el)
@@ -565,6 +569,12 @@ fn apply_control_replace(
     input_type: &str,
     data: Option<&str>,
 ) -> bool {
+    // Chrome edits nothing in a control that is not being rendered: its
+    // editor has no frame to act in (a zombie editor, also after a
+    // beforeinput listener hid it).
+    if !crate::show_picker::being_rendered(page, el) {
+        return false;
+    }
     record_control_edit(page, el, input_type);
     let changed = {
         let mut dom = page.dom.borrow_mut();
