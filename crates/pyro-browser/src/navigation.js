@@ -11,7 +11,8 @@
 //   navigate(url, replace, stateJSON) -> whether it stayed in the document
 //   commit(url, type, stateJSON): an intercepted navigation's commit
 //   reload(); traverse(key) -> 'missing' | 'current' | 'queued';
-//   updateState(stateJSON); reportException(error).
+//   updateState(stateJSON); reportException(error);
+//   activation() -> null | [type, entryKey, entryId, entryUrl, null | [key, id, url, stateJSON]].
 // Navigation API state is kept as JSON, as history.state is. Events are made
 // by this script, so their isTrusted is false.
 (function (native) {
@@ -517,6 +518,36 @@
     return apiResult(result);
   };
 
+  // HTML `navigation.activation`: how this document's navigation came about, fixed when the
+  // document committed (same-document navigations leave it). `entry` and `from` are the objects of
+  // the entries of `entries()` while those are in it, and keep their last object once they left
+  // it (index -1).
+  const activationInfo = native.activation();
+  let activationObject = null;
+  const activationEntries = { entry: null, from: null };
+  const activationEntry = (slot, row) => {
+    snapshot();
+    const live = entryObjects.get(row.id);
+    if (live !== undefined) {
+      activationEntries[slot] = live;
+      return live;
+    }
+    if (activationEntries[slot] === null) activationEntries[slot] = new NavigationHistoryEntry(token, row);
+    return activationEntries[slot];
+  };
+  const makeActivation = () => {
+    const [type, entryKey, entryId, entryUrl, fromRow] = activationInfo;
+    return new NavigationActivation(token, {
+      get entry() {
+        return activationEntry('entry', { key: entryKey, id: entryId, url: entryUrl, same: true, state: undefined });
+      },
+      get from() {
+        return fromRow === null ? null : activationEntry('from', { key: fromRow[0], id: fromRow[1], url: fromRow[2], same: false, state: fromRow[3] });
+      },
+      type,
+    });
+  };
+
   const navigationData = { handlers: {} };
   class Navigation extends EventTargetC {
     constructor(t) {
@@ -540,6 +571,9 @@
     }
     get transition() {
       return transition;
+    }
+    get activation() {
+      return activationInfo === null ? null : (activationObject ??= makeActivation());
     }
     updateCurrentEntry(options) {
       if (options === null || typeof options !== 'object' || !('state' in options)) {

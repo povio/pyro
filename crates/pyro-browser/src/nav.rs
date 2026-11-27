@@ -180,6 +180,20 @@ struct NavState {
     /// `window.stop()` calls (HTML "stop loading" aborts the document): a
     /// document load begun before one fires no DOMContentLoaded or load.
     aborts: u64,
+    /// HTML `navigation.activation` of the active document: how its navigation came to be
+    /// (`None` for the initial about:blank document). Fixed when the document commits;
+    /// same-document navigations leave it alone.
+    activation: Option<Activation>,
+}
+
+/// A document's NavigationActivation data: its navigation type, the document's first session
+/// history entry as (key, id, url), and the entry the navigation left as (key, id, url, Navigation
+/// API state) when the Navigation API exposes it (same origin as the new document), else `None`.
+#[derive(Clone)]
+struct Activation {
+    ty: &'static str,
+    entry: (u64, u64, String),
+    from: Option<(u64, u64, String, Option<String>)>,
 }
 
 impl NavState {
@@ -339,6 +353,7 @@ impl PageNav {
                 first_blank: false,
                 stops: 0,
                 aborts: 0,
+                activation: None,
             }),
             document: RefCell::new(None),
             page_dom: RefCell::new(std::rc::Weak::new()),
@@ -483,10 +498,22 @@ impl PageNav {
         document: Option<(DomRef, NodeId)>,
     ) {
         self.pending_frame_url.borrow_mut().take();
-        self.traversal_from.set(None);
+        let traversal_from = self.traversal_from.take();
         self.container_policy.set(self.container_policy_pending.take());
         self.ancestor_origins.borrow_mut().clear();
         let mut st = self.state.borrow_mut();
+        // The entry this navigation leaves (HTML `navigation.activation.from`): a traversal's is
+        // the one it started from (the index is already the target's), any other the current one.
+        // The initial about:blank document has none.
+        let left = if st.entries.is_empty() {
+            None
+        } else {
+            let i = match (history, traversal_from) {
+                (HistoryHandling::Traverse, Some((i, ..))) => i,
+                _ => st.index,
+            };
+            st.entries.get(i).cloned()
+        };
         st.doc_seq += 1;
         let id = st.next_entry_id();
         // A push to the current entry's URL replaces it (HTML navigate step:
@@ -549,6 +576,33 @@ impl PageNav {
             }
         }
         st.url = url.to_string();
+        // `from` is null across origins (and for an opaque origin such as about:blank's): the
+        // Navigation API shows only the same-origin entries around the current one.
+        let activation = st.entries.get(st.index).and_then(|entry| {
+            // A push the initial about:blank document or a same-URL entry takes is a replace.
+            let ty = match history {
+                HistoryHandling::Push if initial || same_url => "replace",
+                HistoryHandling::Push => "push",
+                HistoryHandling::Replace => "replace",
+                HistoryHandling::Traverse => "traverse",
+                HistoryHandling::Reload => "reload",
+            };
+            let origin = |url: &str| Url::parse(url).ok().map(|u| u.origin());
+            let here = origin(&entry.url);
+            let from = left.as_ref().filter(|left| {
+                here.as_ref().is_some_and(|o| o.is_tuple()) && origin(&left.url) == here
+            });
+            // The frame's own initial about:blank document is not a navigation's result.
+            if left.is_none() && url == "about:blank" {
+                return None;
+            }
+            Some(Activation {
+                ty,
+                entry: (entry.key, entry.id, entry.url.clone()),
+                from: from.map(|left| (left.key, left.id, left.url.clone(), left.nav_state.clone())),
+            })
+        });
+        st.activation = activation;
         drop(st);
         if let Some(from) = pushed_from {
             self.joint.prune_forward(self, from);
@@ -2557,6 +2611,27 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
             values.push(s.array(&row)?.value());
         }
         Ok(s.array(&values)?.value())
+    });
+    // activation() -> null | [type, entryKey, entryId, entryUrl, from], from being null or
+    // [key, id, url, stateJSON]: HTML `navigation.activation` of the document.
+    native!("activation", |s, nav, _a| {
+        let st = nav.state.borrow();
+        let Some(act) = st.activation.as_ref() else { return Ok(s.null()) };
+        let from = match &act.from {
+            None => s.null(),
+            Some((key, id, url, state)) => {
+                let state = state.as_deref().map_or(s.undefined(), |j| s.string(j));
+                s.array(&[s.string(&key.to_string()), s.string(&id.to_string()), s.string(url), state])?.value()
+            }
+        };
+        let row = [
+            s.string(act.ty),
+            s.string(&act.entry.0.to_string()),
+            s.string(&act.entry.1.to_string()),
+            s.string(&act.entry.2),
+            from,
+        ];
+        Ok(s.array(&row)?.value())
     });
     // active() -> whether the document is fully active (its frame not
     // removed, not navigated away): the methods reject InvalidStateError
