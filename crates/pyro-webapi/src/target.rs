@@ -894,7 +894,10 @@ fn dispatch_at(
         }
     };
     let mut inv = Invoker { page, event, in_shadow };
+    // Event Timing and Soft Navigations see the listeners of trusted events run (`perf`).
+    let perf_tokens = crate::perf::dispatch_begin(page, event);
     let result = dispatch_on_path(&page.dom, target, &path, &event.state, &mut inv, before_listeners);
+    crate::perf::dispatch_end(page, event, perf_tokens);
     // The relatedTarget stays as the outermost invocation target saw it, or
     // is reset with the target ("clearTargets").
     event.fields.borrow_mut().related_target = event.state.borrow().related_target;

@@ -34,6 +34,10 @@ pub struct PerformanceEntryData {
     pub navigation: Option<Box<NavigationValues>>,
     /// A `resource` entry's values (shared with the document's buffer).
     pub resource: Option<Rc<ResourceEntry>>,
+    /// A `paint` entry's `paintTime` (PaintTimingMixin); `None` for other entries.
+    pub paint_time: Option<f64>,
+    /// A `paint` entry's `presentationTime`; `None` reads as null.
+    pub presentation_time: Option<f64>,
 }
 
 impl PerformanceEntryData {
@@ -46,6 +50,8 @@ impl PerformanceEntryData {
             detail: None,
             navigation: None,
             resource: None,
+            paint_time: None,
+            presentation_time: None,
         }
     }
     /// The fetch phases: a resource entry's, or the navigation entry's
@@ -109,6 +115,10 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
     o.set("duration", s.number(e.duration))?;
     if detail {
         o.set("detail", e.detail.as_ref().map_or(s.null(), |d| d.get(s)))?;
+    }
+    if e.entry_type == "paint" {
+        o.set("paintTime", s.number(e.paint_time.unwrap_or(e.start)))?;
+        o.set("presentationTime", e.presentation_time.map_or(s.null(), |t| s.number(t)))?;
     }
     if e.navigation.is_some() || e.resource.is_some() {
         let f = e.fetch();
@@ -230,7 +240,13 @@ impl JsClass for PerformancePaintTiming {
     type Data = PerformanceEntryData;
     type Parent = PerformanceEntry;
 
-    fn define(_def: &mut ClassDef<Self>) {}
+    fn define(def: &mut ClassDef<Self>) {
+        // PaintTimingMixin: `paintTime` is when the frame was painted,
+        // `presentationTime` when it was presented (null when unknown, then
+        // `startTime` is the paint time).
+        def.getter("paintTime", |s, e| Ok(s.number(e.paint_time.unwrap_or(e.start))));
+        def.getter("presentationTime", |s, e| Ok(e.presentation_time.map_or(s.null(), |t| s.number(t))));
+    }
 }
 
 /// Resource Timing: the document's `resource` entries (pyro-webapi
@@ -360,6 +376,8 @@ pub fn mark_data<'s>(s: &Scope<'s>, name: &str, options: Value<'s>, now: f64) ->
         detail,
         navigation: None,
         resource: None,
+        paint_time: None,
+        presentation_time: None,
     })
 }
 
@@ -494,6 +512,8 @@ impl UserTiming {
             detail: clone_detail(s, detail)?,
             navigation: None,
             resource: None,
+            paint_time: None,
+            presentation_time: None,
         };
         let object = s.wrap::<PerformanceMeasure>(data, None)?.value();
         self.entries.borrow_mut().push(UserEntry {
@@ -603,8 +623,13 @@ pub fn observer_module<'s>(
     }
     let unavailable = || JsError::Type("PerformanceObserver is unavailable".into());
     let natives = s.object();
+    let timeline_page = Rc::downgrade(page);
     let watch = s.function("watch", move |s, _this, a| {
         watch(s, a.get(0));
+        // The `perf/` entry types reach the realm's queue function too.
+        if let Some(page) = timeline_page.upgrade() {
+            page.timeline().watch(s, a.get(0));
+        }
         Ok(s.undefined())
     })?;
     natives.set_atom("watch", watch.value())?;
@@ -613,6 +638,7 @@ pub fn observer_module<'s>(
         Ok(s.undefined())
     })?;
     natives.set_atom("reportException", report.value())?;
+    let page_rc = page.clone();
     let page = Rc::downgrade(page);
     let dropped = s.function("droppedResources", move |s, _this, _a| {
         let Some(page) = page.upgrade() else { return Ok(s.number(0.0)) };
@@ -620,6 +646,32 @@ pub fn observer_module<'s>(
         Ok(s.number(page.resource_timings().dropped() as f64))
     })?;
     natives.set_atom("droppedResources", dropped.value())?;
+    // The page's timeline buffers (`perf/timeline.rs`): the entries of the
+    // `perf/` types, their drop counts, and which types observers watch.
+    let weak = Rc::downgrade(&page_rc);
+    let buffered = s.function("buffered", move |s, _this, a| {
+        let Some(page) = weak.upgrade() else { return Ok(s.array(&[])?.value()) };
+        let ty = a.get(0).to_string()?;
+        page.timeline().buffered(s, &ty, a.get(1).to_bool())
+    })?;
+    natives.set_atom("buffered", buffered.value())?;
+    let weak = Rc::downgrade(&page_rc);
+    let dropped_of = s.function("dropped", move |s, _this, a| {
+        let Some(page) = weak.upgrade() else { return Ok(s.number(0.0)) };
+        let ty = a.get(0).to_string()?;
+        Ok(s.number(f64::from(page.timeline().dropped(&ty))))
+    })?;
+    natives.set_atom("dropped", dropped_of.value())?;
+    let weak = Rc::downgrade(&page_rc);
+    let observing = s.function("observing", move |s, _this, a| {
+        let Some(page) = weak.upgrade() else { return Ok(s.undefined()) };
+        // The types, joined by commas (entry type names have none).
+        let joined = a.get(0).to_string()?;
+        let types: Vec<String> = joined.split(',').filter(|t| !t.is_empty()).map(str::to_owned).collect();
+        crate::perf::observing(&page, s, types);
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("observing", observing.value())?;
     let types: Vec<Value<'s>> = supported.iter().map(|t| s.string(t)).collect();
     let types = s.array(&types)?;
     let root = Persistent::new(s, natives.value());

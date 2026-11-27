@@ -105,6 +105,7 @@ mod sanitizer_options;
 mod streaming_html;
 pub mod observable;
 pub mod page;
+pub mod perf;
 pub mod performance;
 pub mod server_timing;
 mod pointer_capture;
@@ -196,6 +197,7 @@ pub fn register(engine: &pyro_js::Engine) {
     trusted_types::register(engine);
     engine.register::<scheduler::WebScheduler>();
     event::register(engine);
+    perf::register(engine);
     popup::register(engine);
     node::register(engine);
     html::register(engine);

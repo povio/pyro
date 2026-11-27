@@ -247,6 +247,8 @@ pub struct PageDom {
     pub net: RefCell<Option<pyro_net::NetClient>>,
     pub(crate) cookie_observers: RefCell<Vec<crate::cookie_store::events::WindowObserver>>,
     pub(crate) intersections: crate::intersection_observer::BindingState,
+    /// Performance timeline buffers and observer queues of the entry types in `perf/`.
+    timeline: crate::perf::timeline::TimelineBuffers,
     pub(crate) resizes: crate::resize_observer::BindingState,
     /// Scroll event targets awaiting the next rendering update, per document
     /// (None: the document itself), each fired once ("pending scroll event
@@ -867,6 +869,12 @@ pub trait PageHooks {
     /// `requestVideoFrameCallback` callbacks run with it,
     /// [`crate::media::run_video_frame_callbacks`]).
     fn request_animation_frame(&self) {}
+    /// Runs a rendering update of the document soon, for the entry types of
+    /// `perf/` (`perf::timeline::request_rendering`): a plain frame timer, not
+    /// one of the client-activity eager frames. Defaults to a frame.
+    fn request_rendering_frame(&self) {
+        self.request_animation_frame();
+    }
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
     /// HTML "plan to navigate" (a submitted form): the navigation `navigate`
@@ -1106,6 +1114,7 @@ impl PageDom {
             mutations: Default::default(),
             current_src: Default::default(),
             intersections: Default::default(),
+            timeline: Default::default(),
             resizes: Default::default(),
             pending_scrolls: Default::default(),
             cv_auto_states: Default::default(),
@@ -2800,6 +2809,10 @@ impl PageDom {
     }
     pub fn hooks_secure_context(&self) -> Option<bool> {
         self.hooks().and_then(|h| h.is_secure_context())
+    }
+    /// The document's performance timeline (`perf/timeline.rs`).
+    pub fn timeline(&self) -> &crate::perf::timeline::TimelineBuffers {
+        &self.timeline
     }
     pub(crate) fn hooks(&self) -> Option<Rc<dyn PageHooks>> {
         self.hooks.borrow().clone()

@@ -7,6 +7,11 @@
 //     type ('paint', 'navigation') whose entries just became available.
 //     Registered while some observer observes, so a realm without one pays
 //     nothing per mark.
+//     Entries of the types in `perf/` (layout-shift, event, ...) arrive as
+//     queue(type, entry, inSoftNavigation) from the native timeline.
+//   observing(types): (comma-joined) the entry types the realm's observers observe now.
+//   buffered(type, includeSoftNavigation): the native buffer of a type.
+//   dropped(type): entries of a native type the full buffer dropped.
 //   reportException(error): HTML "report an exception" (a callback threw).
 //   droppedResources(): resource entries the buffer dropped so far.
 // A worker's timeline has no `paint` or `navigation` entries.
@@ -23,6 +28,11 @@
   const setTimeoutC = setTimeout;
   const getEntriesByType = performance.getEntriesByType;
   const SUPPORTED = freeze(supported);
+  // Types whose entries live in the page's `perf/` timeline buffers; the
+  // others are read through performance.getEntriesByType.
+  const BASE = ['mark', 'measure', 'navigation', 'paint', 'resource'];
+  const isNative = (t) => !BASE.includes(t);
+  const DEFAULT_THRESHOLD = 104;
   const tag = (C, name) => defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
   // Web IDL operations: enumerable prototype methods whose length counts the
   // required arguments only.
@@ -93,7 +103,9 @@
       const options = {};
       if (d.requiresDropped) {
         // Only the resource timing buffer drops entries.
-        options.droppedEntriesCount = d.types.has('resource') ? native.droppedResources() : 0;
+        let dropped = 0;
+        for (const t of d.types) dropped += t === 'resource' ? native.droppedResources() : isNative(t) ? native.dropped(t) : 0;
+        options.droppedEntriesCount = dropped;
         d.requiresDropped = false;
       }
       try {
@@ -109,17 +121,31 @@
       setTimeoutC(deliver, 0);
     }
   };
-  const queue = (type, entry) => {
+  // Event Timing: an observer's durationThreshold (default 104, at least 16,
+  // a multiple of 8) filters `event` entries.
+  const passes = (d, type, entry) => type !== 'event' || entry.duration >= d.threshold;
+  const queue = (type, entry, soft) => {
     let entries = null;
     for (const observer of registered) {
       const d = data.get(observer);
       if (!d.types.has(type)) continue;
+      if (soft === true && !d.soft) continue;
       if (entries === null) entries = entry !== undefined ? [entry] : getEntriesByType.call(performance, type);
-      for (const e of entries) d.buffer.push(e);
-      if (entries.length) schedule();
+      let queued = false;
+      for (const e of entries) {
+        if (!passes(d, type, e)) continue;
+        d.buffer.push(e);
+        queued = true;
+      }
+      if (queued) schedule();
     }
   };
-  const update = () => native.watch(registered.size ? queue : null);
+  const update = () => {
+    native.watch(registered.size ? queue : null);
+    const types = new Set();
+    for (const observer of registered) for (const t of data.get(observer).types) types.add(t);
+    native.observing(ArrayFrom(types).join(','));
+  };
 
   class PerformanceObserver {
     constructor(callback) {
@@ -129,7 +155,7 @@
       if (typeof callback !== 'function') {
         throw new TypeErrorC("Failed to construct 'PerformanceObserver': parameter 1 is not of type 'Function'.");
       }
-      data.set(this, { callback, mode: null, types: new Set(), buffer: [], requiresDropped: false });
+      data.set(this, { callback, mode: null, types: new Set(), buffer: [], requiresDropped: false, threshold: DEFAULT_THRESHOLD, soft: false });
     }
     static get supportedEntryTypes() {
       return SUPPORTED;
@@ -171,10 +197,21 @@
         if (!SUPPORTED.includes(t)) return;
         d.mode = mode;
         d.types.add(t);
+        if (t === 'event' && options.durationThreshold !== undefined) {
+          // Event Timing: at least 16, rounded to a multiple of 8.
+          const threshold = Number(options.durationThreshold);
+          d.threshold = Math.max(16, Math.round((Number.isNaN(threshold) ? 0 : threshold) / 8) * 8);
+        }
+        if (options.includeSoftNavigationObservations !== undefined) d.soft = Boolean(options.includeSoftNavigationObservations);
         if (options.buffered) {
-          const entries = getEntriesByType.call(performance, t);
-          for (const e of entries) d.buffer.push(e);
-          if (entries.length) schedule();
+          const entries = isNative(t) ? native.buffered(t, d.soft) : getEntriesByType.call(performance, t);
+          let queued = false;
+          for (const e of entries) {
+            if (!passes(d, t, e)) continue;
+            d.buffer.push(e);
+            queued = true;
+          }
+          if (queued) schedule();
         }
       }
       registered.add(this);
@@ -187,6 +224,8 @@
       d.buffer = [];
       d.types = new Set();
       d.mode = null;
+      d.threshold = DEFAULT_THRESHOLD;
+      d.soft = false;
       update();
     }
     takeRecords() {

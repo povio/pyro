@@ -864,6 +864,24 @@ pub(crate) fn request_frame(realm: &Realm) {
     schedule_animation_frame(&scope, window, &mut frame);
 }
 
+/// Runs a rendering update of the realm's window soon for the performance-entry modules
+/// (`pyro_webapi::perf::timeline::request_rendering`): a plain frame timer, never one of the
+/// client-activity eager frames, and none when a frame is already waiting.
+pub(crate) fn request_rendering_frame(realm: &Realm) {
+    let Ok(scope) = realm.scope() else { return };
+    let Some(w) = scope.global_data::<Window>() else { return };
+    let mut frame = w.animation.borrow_mut();
+    if frame.timer.is_some() {
+        return;
+    }
+    let realm_weak = realm.downgrade();
+    frame.timer = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |_browser: &mut Browser| {
+        let Some(realm) = realm_weak.upgrade() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        run_animation_frame(&scope);
+    }));
+}
+
 /// Forgets the frame's timers (the one that fired, and the other of an eager frame's pair).
 fn clear_frame_timers(w: &WindowData) {
     let mut frame = w.animation.borrow_mut();
@@ -903,7 +921,8 @@ fn run_animation_frame(scope: &Scope<'_>) {
             // no callback asks for one: it would stall otherwise.)
             if frame.timer.is_none()
                 && (!(frame.callbacks.is_empty() && frame.native_callbacks.is_empty())
-                    || pyro_webapi::smooth_scroll::running(&w.target.page))
+                    || pyro_webapi::smooth_scroll::running(&w.target.page)
+                    || w.target.page.timeline().wants_rendering())
             {
                 let realm_weak = realm.downgrade();
                 frame.timer = Some(w.sched.set_timer(Duration::ZERO, false, true, move |_browser: &mut Browser| {
@@ -967,6 +986,8 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // The frame's style update: what its callbacks changed starts transitions
     // and animations now (the next frame's callbacks see them running).
     w.target.page.update_animations();
+    // Layout is final from here: the frame's paint time.
+    let paint_time = w.now_ms();
     // pyro: the frame's ResizeObserver step: last remembered sizes (CSS Sizing 4 § 5.1) are
     // recorded after its callbacks, on the layout they leave (WPT css-sizing
     // `contain-intrinsic-size/auto-006`: two frames, then skipping uses the size).
@@ -977,6 +998,10 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // HTML-in-Canvas: the `paint` events of `<canvas content=drawable>` (none without one).
     pyro_webapi::html_in_canvas::run_paint_step(&w.target.page);
     w.target.page.sync_frame_resources();
+    // The performance-entry modules (`pyro_webapi::perf`): the end of the update is its
+    // presentation. A presentation is later than its paint by at least one tick of the clock.
+    let presented = w.now_ms().max(paint_time + 0.1);
+    pyro_webapi::perf::rendering_update(&w.target.page, &pyro_webapi::perf::FrameInfo { start: now_ms, paint_time, presented });
     // pyro: a smooth scroll still running asks for the next frame (its frame timers were cleared
     // above).
     pyro_webapi::smooth_scroll::request_frames(&w.target.page);

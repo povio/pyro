@@ -21,7 +21,7 @@ use pyro_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope,
 use pyro_runtime::{Scheduler, TaskSource};
 use pyro_webapi::performance::{
     self as perf, navigation_fields, resource_object, NavigationValues, PerformanceEntryData,
-    PerformanceNavigationTiming, PerformancePaintTiming, UserTiming, RESOURCE_TIMES, TIMING_ATTRIBUTES,
+    PerformanceNavigationTiming, UserTiming, RESOURCE_TIMES, TIMING_ATTRIBUTES,
 };
 use pyro_webapi::resource_timing::ResourceEntry;
 use std::cell::{Cell, RefCell};
@@ -2305,11 +2305,29 @@ fn timeline_entries<'s>(
             }
         }
     }
-    if let Some(start) = p.nav.first_paint().filter(|_| entry_type.is_none_or(|t| t == "paint")) {
-        for entry_name in ["first-paint", "first-contentful-paint"] {
-            if name.is_none_or(|n| n == entry_name) {
-                let data = PerformanceEntryData::new(entry_name, "paint", start, 0.0);
-                entries.push((start, s.wrap::<PerformancePaintTiming>(data, None)?.value()));
+    if entry_type.is_none_or(|t| t == "paint") {
+        use pyro_webapi::perf::timeline::{wrap_paint, PaintRecord};
+        // With the paint module the entries were reported from frames; without it
+        // both come from the first rendering opportunity (no presentation time).
+        let records: Vec<PaintRecord> = if pyro_webapi::perf::paint::ENABLED {
+            p.target.page.timeline().paint_records()
+        } else {
+            p.nav
+                .first_paint()
+                .into_iter()
+                .flat_map(|start| {
+                    ["first-paint", "first-contentful-paint"].map(|name| PaintRecord {
+                        name,
+                        start,
+                        paint_time: start,
+                        presentation_time: None,
+                    })
+                })
+                .collect()
+        };
+        for (slot, record) in records.iter().enumerate() {
+            if name.is_none_or(|n| n == record.name) {
+                entries.push((record.start, wrap_paint(s, slot as u64, record)?));
             }
         }
     }
@@ -2521,6 +2539,11 @@ impl JsClass for Performance {
         );
         def.getter("timing", timing_object);
         def.getter("navigation", navigation_object);
+        // Event Timing's counters exist once the module is real.
+        if pyro_webapi::perf::event::ENABLED {
+            def.getter("eventCounts", |s, p| pyro_webapi::perf::event::event_counts(s, &p.target.page));
+            def.getter("interactionCount", |s, p| Ok(s.number(f64::from(pyro_webapi::perf::event::interaction_count(&p.target.page)))));
+        }
         def.method("toJSON", 0, |s, p, _a| {
             let o = s.object();
             o.set("timeOrigin", s.number(p.origin_wall_ms))?;
@@ -2551,9 +2574,6 @@ fn navigation_object<'s>(s: &Scope<'s>, p: &PerformanceData) -> JsResult<Value<'
 const KEY_TIMING: u64 = 0x5065_7254_696d_6e00;
 const KEY_NAVIGATION: u64 = 0x5065_724e_6176_6900;
 
-/// Entry types a Window's observers take.
-const WINDOW_ENTRY_TYPES: &[&str] = &["mark", "measure", "navigation", "paint", "resource"];
-
 /// This realm's performance_observer.js module (`PerformanceObserver`,
 /// `PerformanceObserverEntryList`), made on first use and kept on the
 /// realm's `performance` object.
@@ -2572,7 +2592,8 @@ pub(crate) fn observer_module<'s>(
             nav.watch_timeline(s, queue);
         }
     };
-    perf::observer_module(s, performance, &page, watch, WINDOW_ENTRY_TYPES)
+    // `perf/`: the base types and those of the modules that are really implemented.
+    perf::observer_module(s, performance, &page, watch, &pyro_webapi::perf::supported_entry_types())
 }
 
 /// The realm's Navigation API module (navigation.js): `navigation` and

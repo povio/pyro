@@ -865,6 +865,24 @@ impl LoopState for Browser {
     fn after_task(&mut self) {
         self.checkpoint();
     }
+
+    fn task_finished(&mut self, start: std::time::Instant, end: std::time::Instant) {
+        if !pyro_webapi::perf::TASK_HOOKS {
+            return;
+        }
+        // Every document of every page: the entry types of long tasks are per document and
+        // the modules filter on the duration themselves.
+        let pages: Vec<_> = self.pages.iter().map(|p| p.id).collect();
+        for id in pages {
+            let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };
+            for key in host.keys() {
+                let Some(dom) = host.page_dom(key) else { continue };
+                let Some(nav) = self.doc(key).map(|state| state.nav.clone()) else { continue };
+                let task = pyro_webapi::perf::TaskInfo { start: nav.time_at(start), end: nav.time_at(end) };
+                pyro_webapi::perf::task_finished(&dom, &task);
+            }
+        }
+    }
 }
 
 impl Browser {
@@ -893,6 +911,10 @@ impl Browser {
     /// the first safe point at which it has a body and is not render-blocked
     /// (HTML: a render-blocked document has no rendering opportunity).
     fn note_first_paint(&mut self, key: frames::FrameKey) {
+        // The paint module reports the paint entries from frames instead.
+        if pyro_webapi::perf::paint::ENABLED {
+            return;
+        }
         let Some(state) = self.doc(key) else { return };
         if state.nav.first_paint().is_some() {
             return;
