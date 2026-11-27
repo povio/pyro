@@ -750,6 +750,81 @@ fn path_hit(path: &kurbo::BezPath, p: kurbo::Point, evenodd: bool) -> bool {
         || path.segments().any(|s| s.nearest(p, 0.001).distance_sq < 1e-12)
 }
 
+/// The SVG elements from `el` up to the outermost one (`el` first): below the first ancestor that
+/// is not in the SVG namespace (an HTML parent of an inline `<svg>`, `foreignObject` content).
+fn svg_chain(dom: &Dom, el: NodeId) -> Vec<NodeId> {
+    let mut chain = Vec::new();
+    let mut current = Some(el);
+    while let Some(id) = current.filter(|&id| local_name(dom, id).is_some()) {
+        chain.push(id);
+        current = dom.parent_element(id).ok().flatten();
+        if chain.len() > 4096 {
+            break;
+        }
+    }
+    chain
+}
+
+/// `SVGGraphicsElement.getCTM()`: the matrix from `el`'s user space (its own `transform` included)
+/// to the coordinate system of the outermost `<svg>`'s viewport: the `transform`s, nested viewports'
+/// positions and `viewBox` mappings on the way up. The outermost `<svg>` contributes its `viewBox`
+/// only (its `transform` and position are CSS boxes: [`screen_ctm`]). An element outside any `<svg>`
+/// has the product of the `transform`s above it.
+pub fn ctm(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> [f64; 6] {
+    let chain = svg_chain(dom, el);
+    let outermost = chain.last().copied().filter(|&id| local_name(dom, id).as_deref() == Some("svg"));
+    let mut matrix = kurbo::Affine::IDENTITY;
+    for &id in &chain {
+        let is_svg = local_name(dom, id).as_deref() == Some("svg");
+        let is_outermost = Some(id) == outermost;
+        let mut local = kurbo::Affine::IDENTITY;
+        if is_svg {
+            let viewport = if is_outermost {
+                layout.content_size(dom, id)
+            } else {
+                attr(dom, id, "width").zip(attr(dom, id, "height"))
+            };
+            if let Some(m) = viewport.and_then(|v| view_box_transform(dom, id, v)) {
+                local = kurbo::Affine::new(m);
+            }
+            if !is_outermost {
+                local = kurbo::Affine::translate((num(dom, id, "x"), num(dom, id, "y"))) * local;
+            }
+        }
+        if !is_outermost {
+            local = affine_of(dom, id) * local;
+        }
+        matrix = local * matrix;
+    }
+    matrix.as_coeffs()
+}
+
+/// The matrix from the content box of the outermost `<svg>` to the client (viewport) coordinates: its
+/// border box's quad, which carries the CSS transforms of it and of its containing blocks, then the
+/// border and padding. None when it has no box.
+fn svg_content_to_client(dom: &Dom, layout: &crate::layout::Layout, svg: NodeId) -> Option<[f64; 6]> {
+    let (ox, oy) = layout.content_offset(dom, svg)?;
+    if let Some(q) = layout.box_quads(dom, svg).filter(|q| q.width > 0.0 && q.height > 0.0) {
+        let b = q.border;
+        let (a, bb) = ((b[2] - b[0]) / q.width, (b[3] - b[1]) / q.width);
+        let (c, d) = ((b[6] - b[0]) / q.height, (b[7] - b[1]) / q.height);
+        return Some([a, bb, c, d, b[0] + a * ox + c * oy, b[1] + bb * ox + d * oy]);
+    }
+    let rect = layout.bounding_client_rect(dom, svg);
+    Some([1.0, 0.0, 0.0, 1.0, rect.x + ox, rect.y + oy])
+}
+
+/// `SVGGraphicsElement.getScreenCTM()`: [`ctm`] followed by the outermost `<svg>`'s content box in the
+/// viewport (its position and the CSS transforms on it and its ancestors).
+pub fn screen_ctm(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> [f64; 6] {
+    let inner = ctm(dom, layout, el);
+    let outermost = svg_chain(dom, el).last().copied().filter(|&id| local_name(dom, id).as_deref() == Some("svg"));
+    match outermost.and_then(|svg| svg_content_to_client(dom, layout, svg)) {
+        Some(outer) => multiply(outer, inner),
+        None => inner,
+    }
+}
+
 /// The `stroke-*` properties of `computed` as a kurbo stroke; `dash_scale` converts `pathLength`
 /// units to user units. None when the stroke is not wider than zero.
 fn stroke_style(computed: &style::properties::ComputedValues, dash_scale: f64) -> Option<kurbo::Stroke> {

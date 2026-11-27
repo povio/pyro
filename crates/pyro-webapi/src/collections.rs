@@ -2820,19 +2820,86 @@ impl JsClass for SvgTransform {
     }
 }
 
-/// `SVGMatrix`: `a` .. `f`.
+/// Sets component `index` of the matrix (`a` .. `f`).
+fn set_matrix_component(m: &Cell<[f64; 6]>, index: usize, v: Value<'_>) -> JsResult<()> {
+    let n = transform_number(v)?;
+    let mut matrix = m.get();
+    matrix[index] = n;
+    m.set(matrix);
+    Ok(())
+}
+
+/// A new `SVGMatrix`: `m` followed by `next` (the matrix the operation multiplies by).
+fn matrix_then<'s>(s: &Scope<'s>, m: &Cell<[f64; 6]>, next: [f64; 6]) -> JsResult<Value<'s>> {
+    detached_matrix(s, pyro_dom::svg_geometry::multiply(m.get(), next))
+}
+
+/// `SVGMatrix`: `a` .. `f` and the operations, each returning a new matrix (the receiver is not changed).
 pub struct SvgMatrix;
 impl JsClass for SvgMatrix {
     const NAME: &'static str = "SVGMatrix";
     type Data = Cell<[f64; 6]>;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("a", |s, m| Ok(s.number(m.get()[0])));
-        def.getter("b", |s, m| Ok(s.number(m.get()[1])));
-        def.getter("c", |s, m| Ok(s.number(m.get()[2])));
-        def.getter("d", |s, m| Ok(s.number(m.get()[3])));
-        def.getter("e", |s, m| Ok(s.number(m.get()[4])));
-        def.getter("f", |s, m| Ok(s.number(m.get()[5])));
+        def.accessor("a", |s, m| Ok(s.number(m.get()[0])), |_s, m, v| set_matrix_component(m, 0, v));
+        def.accessor("b", |s, m| Ok(s.number(m.get()[1])), |_s, m, v| set_matrix_component(m, 1, v));
+        def.accessor("c", |s, m| Ok(s.number(m.get()[2])), |_s, m, v| set_matrix_component(m, 2, v));
+        def.accessor("d", |s, m| Ok(s.number(m.get()[3])), |_s, m, v| set_matrix_component(m, 3, v));
+        def.accessor("e", |s, m| Ok(s.number(m.get()[4])), |_s, m, v| set_matrix_component(m, 4, v));
+        def.accessor("f", |s, m| Ok(s.number(m.get()[5])), |_s, m, v| set_matrix_component(m, 5, v));
+        def.method("multiply", 1, |s, m, a| {
+            a.require(1, "SVGMatrix.multiply")?;
+            let other = matrix_argument(s, a.get(0))?;
+            matrix_then(s, m, other)
+        });
+        def.method("inverse", 0, |s, m, _a| {
+            let [a, b, c, d, e, f] = m.get();
+            let det = a * d - b * c;
+            if det == 0.0 || !det.is_finite() {
+                return Err(JsError::dom("InvalidStateError", "The matrix is not invertible."));
+            }
+            detached_matrix(s, [d / det, -b / det, -c / det, a / det, (c * f - d * e) / det, (b * e - a * f) / det])
+        });
+        def.method("translate", 2, |s, m, a| {
+            a.require(2, "SVGMatrix.translate")?;
+            let (x, y) = (transform_number(a.get(0))?, transform_number(a.get(1))?);
+            matrix_then(s, m, TransformValue::translate(x, y).matrix)
+        });
+        def.method("scale", 1, |s, m, a| {
+            a.require(1, "SVGMatrix.scale")?;
+            let factor = transform_number(a.get(0))?;
+            matrix_then(s, m, TransformValue::scale(factor, factor).matrix)
+        });
+        def.method("scaleNonUniform", 2, |s, m, a| {
+            a.require(2, "SVGMatrix.scaleNonUniform")?;
+            let (x, y) = (transform_number(a.get(0))?, transform_number(a.get(1))?);
+            matrix_then(s, m, TransformValue::scale(x, y).matrix)
+        });
+        def.method("rotate", 1, |s, m, a| {
+            a.require(1, "SVGMatrix.rotate")?;
+            let angle = transform_number(a.get(0))?;
+            matrix_then(s, m, TransformValue::rotate(angle, 0.0, 0.0).matrix)
+        });
+        def.method("rotateFromVector", 2, |s, m, a| {
+            a.require(2, "SVGMatrix.rotateFromVector")?;
+            let (x, y) = (transform_number(a.get(0))?, transform_number(a.get(1))?);
+            if x == 0.0 || y == 0.0 {
+                return Err(JsError::dom("InvalidAccessError", "The vector has a zero component."));
+            }
+            matrix_then(s, m, TransformValue::rotate(y.atan2(x).to_degrees(), 0.0, 0.0).matrix)
+        });
+        def.method("flipX", 0, |s, m, _a| matrix_then(s, m, [-1.0, 0.0, 0.0, 1.0, 0.0, 0.0]));
+        def.method("flipY", 0, |s, m, _a| matrix_then(s, m, [1.0, 0.0, 0.0, -1.0, 0.0, 0.0]));
+        def.method("skewX", 1, |s, m, a| {
+            a.require(1, "SVGMatrix.skewX")?;
+            let angle = transform_number(a.get(0))?;
+            matrix_then(s, m, TransformValue::skew_x(angle).matrix)
+        });
+        def.method("skewY", 1, |s, m, a| {
+            a.require(1, "SVGMatrix.skewY")?;
+            let angle = transform_number(a.get(0))?;
+            matrix_then(s, m, TransformValue::skew_y(angle).matrix)
+        });
     }
 }
 
