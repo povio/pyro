@@ -842,6 +842,7 @@ impl ResourceLoader for NetLoader {
                     cut = true;
                     let resource = Resource {
                         embedder_reporting: Default::default(),
+                        isolation_policy: 0,
                         url: h.url.to_string(),
                         status: h.status.as_u16(),
                         mime: h.mime,

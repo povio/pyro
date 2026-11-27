@@ -1480,7 +1480,7 @@ impl Browser {
         let layout_bodies = self.layout_bodies_for(own_identity, &config);
         let client = pyro_net::NetClient::new(config)?;
         client.set_ignore_certificate_errors(self.ignore_certificate_errors);
-        client.set_reporting_sink(Some(std::sync::Arc::new(ContextReporting { handle: self.handle(), context: id })));
+        client.set_reporting_sink(Some(std::sync::Arc::new(ContextReporting { handle: self.loop_handle(), context: id })));
         if let Some(c) = self.contexts.iter_mut().find(|c| c.id == id) {
             c.loader = Some(Rc::new(NetLoader::new(client.clone())));
             c.net = Some(client);
