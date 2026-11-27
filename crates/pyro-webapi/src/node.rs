@@ -1429,7 +1429,17 @@ impl JsClass for Element {
                 })
             },
         );
-        def.getter("part", |s, n| Ok(collections::token_list(s, n.page(), n.id, "part")?.value()));
+        def.pure_accessor_typed(
+            "part",
+            pyro_js::GetterResult::ObjectOrNull,
+            |s, n| Ok(collections::token_list(s, n.page(), n.id, "part")?.value()),
+            // [PutForwards=value]
+            |_s, n, v| {
+                with_str(v, |value| {
+                    n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("part"), value).js()
+                })
+            },
+        );
         def.getter("attributes", |s, n| Ok(collections::named_node_map(s, n.page(), n.id)?.value()));
         def.pure_method("hasAttributes", 0, |s, n, _a| {
             Ok(s.boolean(!n.page().dom.borrow().attributes(n.id).js()?.is_empty()))
