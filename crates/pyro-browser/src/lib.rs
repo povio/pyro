@@ -664,6 +664,9 @@ pub struct Page {
     /// URL (origin, opaque-origin token, base URL), as a child frame's do
     /// from its parent.
     opener_origin: Option<(String, u64, String)>,
+    /// The page whose `window.open` made this popup, also when it has no opener handle
+    /// (`noopener`): the page whose speculation-rules prefetches its first navigations may use.
+    popup_creator: Option<PageId>,
     /// A popup's sandboxing flags from the sandboxed document that opened it (HTML "popup
     /// sandboxing flag set"): its top-level documents take them.
     popup_sandbox: Option<frames::Sandbox>,
@@ -1773,6 +1776,7 @@ impl Browser {
             popup: None,
             script_closable: false,
             opener_origin: None,
+            popup_creator: None,
             popup_sandbox: None,
             user_agent_override: None,
             max_touch_points: 0,
@@ -1874,7 +1878,10 @@ impl Browser {
     /// requested browsing context name, and the opener's object reaches its
     /// documents. Without one (`noopener`) only the context is shared.
     pub fn adopt_popup(&mut self, page: PageId, opener: PageId, ticket: Option<Rc<pyro_webapi::PopupTicket>>) {
-        if let Some(p) = self.page_mut(page) { p.script_closable = true; }
+        if let Some(p) = self.page_mut(page) {
+            p.script_closable = true;
+            p.popup_creator = Some(opener);
+        }
         let Some(ticket) = ticket else { return };
         let opener_state = self.page(opener).map(|p| {
             let frame = &p.main_frame;

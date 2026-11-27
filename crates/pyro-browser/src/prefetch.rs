@@ -65,7 +65,8 @@
 //!
 //! # The cache and the claim
 //! One cache per [`Browser`], entries tagged with their browsing context; an entry is usable
-//! once, by a navigation of the same context started by the document that asked for it (matched
+//! once, by a navigation of the same context started by the document that asked for it, in the
+//! page that asked or in a popup its `window.open` made (another tab at the same URL cannot) (matched
 //! by the document's URL: the `Referer` source of the navigation, which for a traversal is the
 //! document of the frame that called `history.go()`), of the top-level frame, with GET, to the
 //! requested URL (the first one of a redirect chain: a navigation to a URL in the middle of the
@@ -569,8 +570,13 @@ impl Browser {
         // same-site prefetch (made through the worker) may stand in for that.
         let controlled = self.navigation_service_worker_controls(page.page, &target);
         let site = |u: &Url| pyro_net::cookies::partition_key(u);
+        // The page that asked: the navigating page itself, or the page whose `window.open` made it
+        // (a popup navigates with its creator's document as the source). Another tab at the
+        // initiator's URL is not.
+        let creator = self.page(page.page).and_then(|p| p.popup_creator);
         let matching = |e: &Entry| {
             e.context == context
+                && (e.page == page.page || creator == Some(e.page))
                 && e.initiator == initiator
                 && !e.state.claimed()
                 && e.nvs.equivalent(&e.url, &target)
