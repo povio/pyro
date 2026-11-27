@@ -271,6 +271,9 @@ pub(crate) struct FrameHost {
     pub(crate) lazy_frames: RefCell<Vec<(FrameKey, Option<LazyFrameStamp>)>>,
     /// Lazy iframes the check let go: their next attribute processing navigates.
     pub(crate) lazy_approved: RefCell<Vec<FrameKey>>,
+    /// Some document of this page was made with `media-playback-while-not-visible` disabled by its
+    /// container's `allow`: the checkpoint pass `refresh_media_visibility` has work. Never reset.
+    pub(crate) media_policy_frames: Cell<bool>,
     /// Lazy iframes navigated by something else (a link, `location`, a reload) while their
     /// lazy load was pending: HTML clears their lazy load resumption steps, so it never runs.
     pub(crate) lazy_cancelled: RefCell<Vec<FrameKey>>,
@@ -392,6 +395,7 @@ impl FrameHost {
             hidden_objects: RefCell::new(Vec::new()),
             lazy_frames: RefCell::new(Vec::new()),
             lazy_approved: RefCell::new(Vec::new()),
+            media_policy_frames: Cell::new(false),
             lazy_cancelled: RefCell::new(Vec::new()),
             attribute_navigation: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
@@ -485,6 +489,7 @@ impl FrameHost {
             hidden_objects: RefCell::new(Vec::new()),
             lazy_frames: RefCell::new(Vec::new()),
             lazy_approved: RefCell::new(Vec::new()),
+            media_policy_frames: Cell::new(false),
             lazy_cancelled: RefCell::new(Vec::new()),
             attribute_navigation: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
@@ -509,6 +514,19 @@ impl FrameHost {
     /// The frame's document bindings, if any (an `Rc` clone, not a `Frame` clone).
     pub fn page_dom(&self, key: FrameKey) -> Option<Rc<pyro_webapi::PageDom>> {
         self.with_frame(key, |f| f.page_dom.clone()).flatten()
+    }
+    /// The checkpoint pass of iframe media pausing (WICG iframe-media-pausing): for each document
+    /// whose permissions policy disables `media-playback-while-not-visible`, notices its frame
+    /// becoming rendered or not rendered. One `Cell` read for a page without such a frame.
+    pub(crate) fn refresh_media_visibility(&self) {
+        if !self.media_policy_frames.get() {
+            return;
+        }
+        for key in self.keys() {
+            if let Some(page) = self.page_dom(key) {
+                pyro_webapi::media::refresh_frame_rendered(&page);
+            }
+        }
     }
     /// Whether this page has any child frames.
     pub fn has_children(&self) -> bool {

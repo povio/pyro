@@ -484,6 +484,17 @@ pub struct PageDom {
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
     /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
     fullscreen_allowed: Cell<bool>,
+    /// The document's permissions policy allows `media-playback-while-not-visible` (default
+    /// allowed; false: its media is paused and its audio contexts interrupted while its frame is
+    /// not rendered, `crate::media::frame_rendered`).
+    pub(crate) media_while_hidden_allowed: Cell<bool>,
+    /// For a document whose policy does not allow it: whether its frame was rendered at the last
+    /// checkpoint (`crate::media::refresh_frame_rendered`).
+    pub(crate) media_frame_rendered: Cell<bool>,
+    /// An audio context was interrupted (or made interrupted) by a lazy not-rendered check
+    /// before a checkpoint pass saw the frame not rendered: the pass owes it a resume once the
+    /// frame is rendered again.
+    pub(crate) media_audio_blocked: Cell<bool>,
     /// The paint worklet global (`crate::paint_worklet`), made on the first `addModule()`.
     pub(crate) paint_worklet: RefCell<Option<Rc<pyro_js::Realm>>>,
     /// That worklet's module map (every module of its graphs: entries and imports).
@@ -1184,6 +1195,9 @@ impl PageDom {
             debugger_gesture: Cell::new(false),
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_allowed: Cell::new(true),
+            media_while_hidden_allowed: Cell::new(true),
+            media_frame_rendered: Cell::new(true),
+            media_audio_blocked: Cell::new(false),
             paint_worklet: RefCell::new(None),
             paint_worklet_modules: Default::default(),
             audio_worklets: RefCell::new(Vec::new()),
@@ -1284,6 +1298,15 @@ impl PageDom {
     }
     pub fn fullscreen_allowed(&self) -> bool {
         self.fullscreen_allowed.get()
+    }
+    /// Whether the document's permissions policy allows `media-playback-while-not-visible`.
+    pub fn media_while_hidden_allowed(&self) -> bool {
+        self.media_while_hidden_allowed.get()
+    }
+    /// Sets that policy bit: the browser computes a child frame's from its container's `allow`
+    /// and its parent document's when the document is made.
+    pub fn set_media_while_hidden_allowed(&self, allowed: bool) {
+        self.media_while_hidden_allowed.set(allowed);
     }
     pub fn context_services(&self) -> Rc<crate::navigator_extras::ContextServices> {
         self.context_services.borrow().clone()

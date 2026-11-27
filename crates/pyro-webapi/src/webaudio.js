@@ -12,7 +12,7 @@
 // it only runs its clock and ends its sources on time.
 (natives => {
   'use strict';
-  const { decode, activated, timer, clearTimer: clearClock, audioWorklet: makeAudioWorklet, secureContext } = natives;
+  const { decode, activated, timer, clearTimer: clearClock, audioWorklet: makeAudioWorklet, secureContext, mediaBlocked } = natives;
   const apply = Reflect.apply;
   const ET = EventTarget;
   const dispatch = ET.prototype.dispatchEvent;
@@ -2274,8 +2274,11 @@
           c.timer = timer(max(0, delay) + 1, () => { c.timer = undefined; c.scheduleEnds(); });
         }
       };
-      // Chrome's autoplay policy: a context made after a user gesture runs.
-      if (activated()) setTimer(() => c.run(), 0);
+      realtime.add(new WeakRefC(c));
+      // Chrome's autoplay policy: a context made after a user gesture runs; one whose frame is
+      // not rendered under a `media-playback-while-not-visible` policy that disables it is
+      // interrupted instead (and runs when the frame is rendered, `frameRendered`).
+      if (activated()) setTimer(() => { if (mediaBlocked()) c.halt('interrupted'); else c.run(); }, 0);
     }
     get baseLatency() {
       const c = ctxOf(this);
@@ -2294,6 +2297,14 @@
     resume() {
       const c = ctxOf(this);
       if (c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'resume' on 'AudioContext': Cannot resume a context that has been closed.", 'InvalidStateError'));
+      // iframe-media-pausing: not rendered under a policy that disables it, the context is
+      // interrupted and the promise rejects.
+      if (mediaBlocked()) {
+        return new PromiseC((resolve, reject) => setTimer(() => {
+          if (c.state !== 'closed') c.halt('interrupted');
+          reject(new DE("Failed to execute 'resume' on 'AudioContext': Cannot resume a context whose frame is not visible.", 'InvalidStateError'));
+        }, 0));
+      }
       return new PromiseC((resolve) => {
         // Without a user gesture the promise waits for one (Chrome).
         if (!activated()) { c.pendingResumes.push(resolve); return; }
@@ -2318,6 +2329,19 @@
     }
   }
   webidl(AudioContext, 'AudioContext');
+  // The real-time contexts of this realm (weakly), for `frameRendered`.
+  const realtime = new Set();
+  // The frame became not rendered (false) or rendered (true) while the document's policy
+  // disables `media-playback-while-not-visible` (webaudio.rs `frame_rendered_changed`): running
+  // contexts are interrupted, interrupted ones run again. A suspended context is left alone.
+  function frameRendered(rendered) {
+    for (const ref of realtime) {
+      const c = ref.deref();
+      if (c === undefined || c.state === 'closed') { realtime.delete(ref); continue; }
+      if (!rendered) { if (c.state === 'running') c.halt('interrupted'); }
+      else if (c.state === 'interrupted') c.run();
+    }
+  }
   // When a source of a running real-time context stops (context time).
   function sourceEnd(n, rate) {
     if (n.ended || n.start < 0) return Infinity;
@@ -2518,7 +2542,7 @@
   webidl(OfflineAudioCompletionEvent, 'OfflineAudioCompletionEvent');
 
   return {
-    localImpulseInfo, BaseAudioContext, AudioContext, AudioPlaybackStats, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
+    localImpulseInfo, frameRendered, BaseAudioContext, AudioContext, AudioPlaybackStats, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode, PeriodicWave,
     ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, DynamicsCompressorNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };

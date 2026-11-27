@@ -732,6 +732,7 @@ impl Browser {
         host.connect_rendered_objects(|parent| self.apply_same_document_url(parent));
         self.fetch_rendered_objects(&host);
         self.resume_lazy_frames(&host);
+        host.refresh_media_visibility();
         self.fetch_rendered_images(page);
         // Runs at every checkpoint: leave early when nothing is queued.
         let (iframe_events, resource_events) = {
@@ -1275,6 +1276,29 @@ fn fullscreen_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &s
     )
 }
 
+/// Whether a child frame's new document at `url` may play media while its frame is not rendered:
+/// its parent document may, and its container's `allow` does not disable
+/// `media-playback-while-not-visible` for the document's origin (no declaration: allowed).
+fn media_while_hidden_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &str, opaque: bool) -> bool {
+    let parent = host.parent_key(key);
+    let Some(frame) = host.frame(key) else { return true };
+    let Some(pd) = host.frame(parent).and_then(|f| f.page_dom.clone()) else { return true };
+    if !pd.media_while_hidden_allowed() {
+        return false;
+    }
+    let container = frame.fullscreen_container.clone();
+    let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
+    let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
+    let child_origin = frame_origin(host, key, url, opaque);
+    pyro_webapi::fullscreen::container_allows(
+        "media-playback-while-not-visible",
+        container.allow.as_deref(),
+        parent_origin.as_deref(),
+        container.declared_origin.as_deref(),
+        child_origin.as_deref(),
+    ) != Some(false)
+}
+
 /// Whether a child frame's container lets its document fire `unload` (Chrome: only when the
 /// container's `allow` declares `unload` for the frame's origin; no declaration, no `unload`).
 fn unload_allowed(host: &crate::frames::FrameHost, key: FrameKey) -> bool {
@@ -1412,6 +1436,15 @@ pub(crate) fn create(
     // Permissions Policy for `fullscreen`, inherited through the container when the document is made.
     if page.child.is_some() {
         bindings.set_fullscreen_allowed(fullscreen_allowed_in(host, page, url, frame.sandbox.opaque));
+    }
+    // Permissions Policy for `media-playback-while-not-visible` (iframe media pausing): disabled by
+    // the container's `allow` for this origin, or by the parent document's own policy.
+    if page.child.is_some() {
+        let allowed = media_while_hidden_allowed_in(host, page, url, frame.sandbox.opaque);
+        bindings.set_media_while_hidden_allowed(allowed);
+        if !allowed {
+            host.media_policy_frames.set(true);
+        }
     }
     bindings.set_max_touch_points(settings.max_touch_points);
     bindings

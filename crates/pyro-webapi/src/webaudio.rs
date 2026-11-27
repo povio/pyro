@@ -130,6 +130,17 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.boolean(crate::media::autoplay_allowed(&page)))
     })?;
     natives.set_atom("activated", activated.value())?;
+    // `media-playback-while-not-visible`: the document's policy disables it and its frame is not
+    // rendered now (a context does not run, `resume()` rejects).
+    let blocked = s.function("mediaBlocked", |s, _this, _a| {
+        let page = crate::target::page_of(s)?;
+        let blocked = crate::media::frame_hidden_by_policy(&page);
+        if blocked {
+            page.media_audio_blocked.set(true);
+        }
+        Ok(s.boolean(blocked))
+    })?;
+    natives.set_atom("mediaBlocked", blocked.value())?;
     let can_update_stats = s.function("canUpdatePlaybackStats", |s, _, _| {
         let page = crate::target::page_of(s)?;
         Ok(s.boolean((page.is_fully_active() && !page.is_hidden()) || matches!(
@@ -308,6 +319,20 @@ fn float32_array<'s>(s: &Scope<'s>, samples: &[f32]) -> JsResult<Value<'s>> {
             }
         }
         Ok(Value::from_raw(ctx, obj as sys::JSValueRef))
+    }
+}
+
+/// The document's frame became rendered or not rendered while its permissions policy disables
+/// `media-playback-while-not-visible` (`crate::media::refresh_frame_rendered`): running
+/// real-time contexts of the main-world realm are interrupted, interrupted ones run again.
+/// Nothing happens in a realm that never made the module (no contexts).
+pub(crate) fn frame_rendered_changed(page: &Rc<PageDom>, rendered: bool) {
+    let Some(realm) = page.main_world_realm() else { return };
+    let Ok(s) = realm.scope() else { return };
+    let Ok(Some(module)) = MODULE.existing(&s, page) else { return };
+    let Some(notify) = module.get_atom("frameRendered").ok().and_then(|v| v.as_object()) else { return };
+    if let Err(e) = notify.call(None, &[s.boolean(rendered)]) {
+        s.report_exception(&e);
     }
 }
 
