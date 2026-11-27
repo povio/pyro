@@ -902,6 +902,7 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
             if !is_active || !matches!(version.state.get(), State::Activating | State::Activated) {
                 return reply_error("InvalidStateError", "Only the active worker can claim clients.");
             }
+            let mut losers: Vec<Rc<Registration>> = Vec::new();
             for client in registry.live_clients() {
                 if !registration.shares_storage(&client) {
                     continue;
@@ -912,12 +913,24 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
                 if client.controller.borrow().as_ref().is_some_and(|c| Rc::ptr_eq(c, version)) {
                     continue;
                 }
+                // The registration that controlled it until now (Clients.claim step 3.2.3).
+                if let Some(old) = client.controller.borrow().as_ref().and_then(|v| v.registration.upgrade()) {
+                    if !losers.iter().any(|r| Rc::ptr_eq(r, &old)) {
+                        losers.push(old);
+                    }
+                }
                 set_controller(&client, Some(version.clone()));
                 if let Some(page) = client.page.upgrade() {
                     let json = version.json();
                     post_to_module(&page, false, move |s, glue| {
                         call(s, glue, "controller", &[s.string(&json), s.boolean(true)]);
                     });
+                }
+            }
+            // A registration that lost a controllee may have a waiting worker that was waiting for it.
+            for old in losers {
+                if old.waiting.borrow().is_some() {
+                    try_activate(&old);
                 }
             }
             Ok(String::new())
