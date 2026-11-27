@@ -310,6 +310,11 @@ pub struct Resource {
     /// 2 `isolate-and-credentialless`. Two same-origin documents of different policies are in different
     /// agent clusters: each sees the other as cross-origin (`frames::isolation_of`).
     pub isolation_policy: u8,
+    /// The navigation that fetched this really carried the ephemeral cookie jar of a credentialless
+    /// frame tree (its request's `RequestDefaults::ephemeral_cookies` was set), as opposed to a frame
+    /// whose container was marked `credentialless` only after the request went out. Only then does
+    /// `embedder_policy_blocks` skip the embedder-policy check.
+    pub ephemeral_jar: bool,
     /// A document's `Cross-Origin-Embedder-Policy` (HTML § 7.1.4 "obtain an embedder policy"):
     /// `unsafe-none` for other kinds and for a local-scheme document, which inherits its creator's
     /// ([`pyro_webapi::csp::InheritedCsp::embedder_policy`]).
@@ -665,6 +670,7 @@ impl ResourceLoader for NetLoader {
         // without `allow-downloads` that turns out to be a download (`Content-Disposition:
         // attachment`) is dropped at its response head, the transfer cancelled: the server never
         // sees the body through (WPT the-iframe-element/iframe_sandbox_*_download_block_downloads).
+        let ephemeral_jar = req.defaults.ephemeral_cookies.is_some();
         let downloads_blocked = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe)
             && request
                 .frame_id
@@ -795,7 +801,7 @@ impl ResourceLoader for NetLoader {
                 speculation_rules: Vec::new(),
                 no_vary_search: None,
                 referrer_policy: None,
-                origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
+                origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
                 embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                 embedder_reporting: Default::default(),
                 coop: Vec::new(),
@@ -866,7 +872,7 @@ impl ResourceLoader for NetLoader {
                     cut = true;
                     let resource = Resource {
                         embedder_reporting: Default::default(),
-                        isolation_policy: 0,
+                        isolation_policy: 0, ephemeral_jar: false,
                         url: h.url.to_string(),
                         status: h.status.as_u16(),
                         mime: h.mime,
@@ -936,7 +942,7 @@ impl ResourceLoader for NetLoader {
                     speculation_rules: Vec::new(),
                     no_vary_search: None,
                     referrer_policy: None,
-                    origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
+                    origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
                     embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                     embedder_reporting: Default::default(),
                     coop: Vec::new(),
@@ -1078,6 +1084,7 @@ impl ResourceLoader for NetLoader {
                         origin_agent_cluster: document && origin_agent_cluster_requested(&h.headers),
                         force_load_at_top: document && force_load_at_top_policy(&h.headers),
                         isolation_policy: if document { pyro_webapi::coep_report::obtain_isolation_policy(&h.headers, &h.url) } else { 0 },
+                        ephemeral_jar,
                         embedder_policy: if document { obtain_embedder(&h.headers, &h.url).0 } else { pyro_net::EmbedderPolicy::UnsafeNone },
                         embedder_reporting: if document { obtain_embedder(&h.headers, &h.url).1 } else { Default::default() },
                         coop: if document {
@@ -2009,7 +2016,7 @@ impl ResourceLoader for StaticLoader {
                         speculation_rules: Vec::new(),
                         no_vary_search: None,
                         referrer_policy,
-                        origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
+                        origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
                         embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                         embedder_reporting: Default::default(),
                         coop: Vec::new(),
@@ -3045,8 +3052,9 @@ impl Browser {
         let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return false };
         // A credentialless frame (its container's attribute, or an ancestor's) may embed a document
         // without a COEP under a `require-corp` or `credentialless` parent: its storage and
-        // credentials are ephemeral already.
-        if self.doc(page).is_some_and(|doc| doc.main_frame.fullscreen_container.credentialless) {
+        // credentials are ephemeral already. That holds only when this navigation really went out with
+        // the ephemeral jar, not when the container's attribute changed since the request was made.
+        if resource.ephemeral_jar {
             return false;
         }
         let parent = host.parent_key(page);
@@ -3195,7 +3203,7 @@ impl Browser {
             speculation_rules: Vec::new(),
             no_vary_search: None,
             referrer_policy: None,
-            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
+            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             embedder_reporting: Default::default(),
             coop: Vec::new(),
@@ -6052,7 +6060,7 @@ mod disposition_tests {
             speculation_rules: Vec::new(),
             no_vary_search: None,
             referrer_policy: None,
-            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
+            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, ephemeral_jar: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             embedder_reporting: Default::default(),
             coop: Vec::new(),
