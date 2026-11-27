@@ -916,6 +916,12 @@ pub trait GeometrySource {
     fn stale(&self) -> bool {
         false
     }
+    /// pyro: whether a geometry query must sync although the document did not change: `stale`, or
+    /// state that only a full sync (layout) settles, which a style-only sync leaves (told scroll
+    /// offsets a layout has not seen).
+    fn layout_stale(&self) -> bool {
+        self.stale()
+    }
     /// pyro: whether a web font the engine asked its network for has not arrived yet
     /// (`document.fonts`: `status`, `ready`).
     fn fonts_pending(&self) -> bool {

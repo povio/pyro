@@ -746,14 +746,14 @@ impl Layout {
             let ((v1, g1, f1, h1), vp1) = key;
             if v0 != v1
                 && (g0, f0, h0, vp0) == (g1, f1, h1, vp1)
-                && !source.stale()
+                && !source.layout_stale()
                 && !self.style.animations_changed_for_layout()
                 && dom.only_detached_changes_since(v0)
             {
                 self.external_synced.set(Some(key));
             }
         }
-        if self.external_synced.get() != Some(key) || source.stale() || self.style.animations_changed_for_layout() {
+        if self.external_synced.get() != Some(key) || source.layout_stale() || self.style.animations_changed_for_layout() {
             self.style.before_recalc(dom);
             source.sync(dom, self);
             self.external_synced.set(Some(key));
@@ -3357,7 +3357,7 @@ impl Layout {
         }
         // (As `synced_geometry_source` decides it would sync.)
         let synced = self.external_synced.get() == Some(self.sync_key(dom))
-            && !source.stale()
+            && !source.layout_stale()
             && !self.style.animations_changed_for_layout();
         source.record_remembered_sizes(synced);
     }

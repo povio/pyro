@@ -157,6 +157,7 @@ pub fn install_with(fetchers: FetcherFactory) {
             sheets: Default::default(),
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
             scroll_stale: Default::default(),
+            scroll_layout_stale: Default::default(),
             base_url: RefCell::new(BaseUrl::new(BLANK)),
             snapshot_base: RefCell::new(Default::default()),
             snapshot_quirks: Default::default(),
@@ -257,6 +258,11 @@ pub struct BlitzGeometry {
     /// pyro: scroll offsets were told ([`GeometrySource::set_scroll`]) to a document that uses
     /// scroll markers, which follow them: it syncs again (`stale`).
     scroll_stale: std::cell::Cell<bool>,
+    /// pyro: told scroll offsets that no layout has seen yet. A style-only sync (a computed-style
+    /// read) clears `scroll_stale` but resolves no layout, so the damage the offsets made (a
+    /// `position-try` fallback that follows a scroller) waits for the next geometry read, which
+    /// must still sync ([`GeometrySource::layout_stale`]); a full sync clears it.
+    scroll_layout_stale: std::cell::Cell<bool>,
     /// Each style sheet's owner, whether it is a `<style>`, and its text's
     /// revision (`StyleEngine::sheet_revision`), as last synced (see
     /// [`BlitzGeometry::changed_style_sheets`]).
@@ -757,7 +763,14 @@ impl BlitzGeometry {
     }
 
     fn sync_inner(&self, dom: &Dom, style: &StyleEngine, style_only: bool) {
-        self.scroll_stale.set(false);
+        let told_scroll = self.scroll_stale.replace(false);
+        if style_only {
+            if told_scroll {
+                self.scroll_layout_stale.set(true);
+            }
+        } else {
+            self.scroll_layout_stale.set(false);
+        }
         let resources = self.arrivals();
         let rebuild = self.resources.replace(resources) != resources;
         if rebuild {
@@ -891,6 +904,10 @@ impl GeometrySource for BlitzGeometry {
 
     fn stale(&self) -> bool {
         self.resources.get() != self.arrivals() || self.scroll_stale.get()
+    }
+
+    fn layout_stale(&self) -> bool {
+        self.stale() || self.scroll_layout_stale.get()
     }
 
     fn fonts_pending(&self) -> bool {
@@ -1562,6 +1579,7 @@ mod tests {
             sheets: Default::default(),
             resources: Default::default(),
             scroll_stale: Default::default(),
+            scroll_layout_stale: Default::default(),
             base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
             snapshot_base: RefCell::new(Default::default()),
             snapshot_quirks: Default::default(),
