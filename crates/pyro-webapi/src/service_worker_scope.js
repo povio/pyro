@@ -5,7 +5,9 @@
 //     ('skipWaiting', 'claim', 'matchAll' (includeUncontrolled, type), 'get'
 //     (clientId), 'unregister', 'update'), answered by reply(id, ok, json).
 //   postToClient(clientId, message, options) structured-serializes now.
-//   respond(fetchId, status, statusText, headers, body, url, type)
+//   respondHead(fetchId, status, statusText, headers, url, type), respondChunk(fetchId, bytes),
+//   respondEnd(fetchId): the response to an intercepted request, event by event
+//   (a worker that goes away between head and end truncates the body)
 //   passthrough(fetchId), failFetch(fetchId, reason)
 //   done(kind, ok): the install or activate event's lifetime promises settled.
 // `info`: {scope, scriptURL, registrationId, versionId, updateViaCache}.
@@ -286,32 +288,77 @@
     settled(d).then(() => native.done(kind, true), () => native.done(kind, kind === 'activate'));
   }
 
-  function dispatchFetch(id, request, clientId, resultingClientId) {
+  // -- The fetch pipeline ----------------------------------------------------------
+  // `dispatchFetch(job)` is called by Rust (`service_worker_scope::fetch`) for each
+  // request a controlled client (or a navigation) sends through this worker:
+  //   job = {id, request, clientId, resultingClientId, isNavigation, preload}
+  // `request` is a `Request`; `id` is the key of the native `FetchJob` (answered by
+  // `native.respondHead/respondChunk/respondEnd`, `passthrough` or `failFetch`).
+  // Three stages, each a hook for the lanes that build on this:
+  //   route(job)       -> a source: 'network' | 'cache' | 'fetch-event' | 'race'
+  //                       (sw-1: the static router's rules; sw-3 decides here whether the
+  //                       navigation preload starts: it needs `job.preload`, `native.fetchRoute(id)`
+  //                       is the hook for natives it adds)
+  //   fire(job)        -> builds the FetchEvent, dispatches it, returns its fetchData record
+  //                       (sw-2: FetchEvent semantics: handled, preloadResponse from job.preload,
+  //                       event init, waitUntil lifetime of the event past the response)
+  //   settle(job, d)   -> turns d.response into native calls (sw-2: stream the body with
+  //                       respondChunk as the Response's reader yields instead of `arrayBuffer`,
+  //                       and failFetch after the head means a truncated body: Rust's Drop of the job)
+  // The browser-side half is `LoadRoute::dispatch` (service_worker.rs), which builds the
+  // native `FetchJob`; sw-3 adds `preload` to `LoadRoute`/`FetchJob` there.
+  const respondWhole = (id, response, body) => {
+    const headers = [];
+    for (const pair of headersEntries.call(responseHeaders.call(response))) headers.push(pair[0], pair[1]);
+    native.respondHead(id, response.status, response.statusText, headers, response.url, response.type);
+    native.respondChunk(id, body);
+    native.respondEnd(id);
+  };
+
+  // Which source answers `job`. Behaviour of a worker without routes: its fetch handlers.
+  function route(job) {
+    return 'fetch-event';
+  }
+
+  // The `fetch` event for `job`, dispatched; null when it cannot be made (the request
+  // then goes to the network).
+  function fire(job) {
     let event;
     try {
-      event = new FetchEvent('fetch', { request, clientId, resultingClientId, cancelable: true });
+      event = new FetchEvent('fetch', { request: job.request, clientId: job.clientId, resultingClientId: job.resultingClientId, cancelable: true });
     } catch (e) {
-      native.passthrough(id);
-      return;
+      return null;
     }
     dispatch(event);
-    const d = fetchData.get(event);
-    if (!d.responded) {
-      native.passthrough(id);
-      return;
-    }
+    return fetchData.get(event);
+  }
+
+  // The `respondWith` promise's response, handed to the native side.
+  function settle(job, d) {
+    const id = job.id;
     native.observeFetch(id);
     d.response.then(
       (response) => {
         if (!isResponse(response)) throw new TypeErrorC('respondWith() was given a value that is not a Response');
         if (response.type === 'error') throw new TypeErrorC('respondWith() was given a network error');
         if (response.bodyUsed) throw new TypeErrorC('respondWith() was given a Response whose body was used');
-        const headers = [];
-        for (const pair of headersEntries.call(responseHeaders.call(response))) headers.push(pair[0], pair[1]);
-        return arrayBuffer.call(response).then((body) =>
-          native.respond(id, response.status, response.statusText, headers, body, response.url, response.type));
+        return arrayBuffer.call(response).then((body) => respondWhole(id, response, body));
       },
     ).then(undefined, (error) => native.failFetch(id, String(error && error.message || error)));
+  }
+
+  function dispatchFetch(job) {
+    const source = route(job);
+    if (source === 'network') {
+      native.passthrough(job.id);
+      return;
+    }
+    const d = fire(job);
+    if (d === null || !d.responded) {
+      native.passthrough(job.id);
+      return;
+    }
+    settle(job, d);
   }
 
   function dispatchMessage(data, ports, source, origin, originKey) {

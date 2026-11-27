@@ -56,10 +56,21 @@ pub(crate) struct FetchJob {
     /// A `fetch` event has it: dropping it unanswered is a network error.
     pub dispatched: bool,
     pub observed: bool,
+    /// `respondHead` sent the response head: the rest is chunks and the end,
+    /// and a worker that goes away now truncates the body.
+    pub head_sent: bool,
+    /// Body bytes `respondChunk` sent so far.
+    pub sent: u64,
 }
 
 impl Drop for FetchJob {
     fn drop(&mut self) {
+        if self.head_sent {
+            if let Some(mut sink) = self.sink.take() {
+                sink(ResponseEvent::Failed(NetError::Other("The service worker stopped before it finished its response".into())));
+            }
+            return;
+        }
         let (Some(request), Some(mut sink)) = (self.request.take(), self.sink.take()) else { return };
         if self.dispatched {
             sink(ResponseEvent::Failed(NetError::Other("The service worker stopped before it responded".into())));
@@ -247,13 +258,45 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         Ok(s.undefined())
     })?;
     native.set_atom("observeFetch", observe.value())?;
-    let respond = s.function("respond", |s, _, a| {
+    let head_fn = s.function("respondHead", |s, _, a| {
         let key = a.get(0).to_number()? as u64;
-        let Some(job) = PENDING.with(|p| p.borrow_mut().remove(&key)) else { return Ok(s.undefined()) };
-        respond(s, job, &a)?;
+        let Some(mut job) = PENDING.with(|p| p.borrow_mut().remove(&key)) else { return Ok(s.undefined()) };
+        // Kept for the chunks and the end when the head went out; a refused head dropped the job.
+        if respond_head(s, &mut job, &a)? {
+            PENDING.with(|p| p.borrow_mut().insert(key, job));
+        }
         Ok(s.undefined())
     })?;
-    native.set_atom("respond", respond.value())?;
+    native.set_atom("respondHead", head_fn.value())?;
+    let chunk_fn = s.function("respondChunk", |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        let bytes = crate::encoding::buffer_source_bytes(s, a.get(1))?.map(Bytes::from).unwrap_or_default();
+        // Out of the map while the sink runs, as in `respondHead`.
+        let job = PENDING.with(|p| p.borrow_mut().remove(&key));
+        if let Some(mut job) = job {
+            if job.head_sent && !bytes.is_empty() {
+                job.sent += bytes.len() as u64;
+                if let Some(sink) = job.sink.as_mut() {
+                    sink(ResponseEvent::Data(bytes));
+                }
+            }
+            PENDING.with(|p| p.borrow_mut().insert(key, job));
+        }
+        Ok(s.undefined())
+    })?;
+    native.set_atom("respondChunk", chunk_fn.value())?;
+    let end_fn = s.function("respondEnd", |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        let job = PENDING.with(|p| p.borrow_mut().remove(&key)).filter(|job| job.head_sent);
+        if let Some(mut job) = job {
+            let len = job.sent;
+            if let Some(mut sink) = job.sink.take() {
+                sink(ResponseEvent::Finished { encoded_len: len, decoded_len: len });
+            }
+        }
+        Ok(s.undefined())
+    })?;
+    native.set_atom("respondEnd", end_fn.value())?;
     let passthrough = s.function("passthrough", |s, _, a| {
         let key = a.get(0).to_number()? as u64;
         if let Some(mut job) = PENDING.with(|p| p.borrow_mut().remove(&key)) {
@@ -290,13 +333,16 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
     Ok(())
 }
 
-/// The `respondWith` response, as the network would have given it.
-fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<()> {
-    let (Some(request), Some(mut sink)) = (job.request.take(), job.sink.take()) else { return Ok(()) };
+/// The head of the `respondWith` response, as the network would have given it
+/// (arguments: key, status, statusText, header list, url, type). `Ok(true)`: it
+/// went to the sink and the job awaits `respondChunk`/`respondEnd`; `Ok(false)`:
+/// refused (the request failed) or no longer there.
+fn respond_head(s: &Scope<'_>, job: &mut FetchJob, a: &pyro_js::Args<'_>) -> JsResult<bool> {
+    let (Some(request), Some(mut sink)) = (job.request.take(), job.sink.take()) else { return Ok(false) };
     let fail = |mut sink: ResponseSink, reason: &str| {
         sink(ResponseEvent::Failed(NetError::Other(format!("The service worker's response failed: {reason}"))));
     };
-    let kind = match a.get(6).to_string()?.as_str() {
+    let kind = match a.get(5).to_string()?.as_str() {
         "opaque" => ResponseKind::Opaque,
         "opaqueredirect" => ResponseKind::OpaqueRedirect,
         "cors" => ResponseKind::Cors,
@@ -313,7 +359,7 @@ fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<
     };
     if unsuitable {
         fail(sink, "its type does not suit the request's mode");
-        return Ok(());
+        return Ok(false);
     }
     let status = a.get(1).to_number()? as u16;
     let status = match (StatusCode::from_u16(status), kind) {
@@ -321,7 +367,7 @@ fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<
         (Ok(status), _) => status,
         (Err(_), _) => {
             fail(sink, "invalid status");
-            return Ok(());
+            return Ok(false);
         }
     };
     let mut headers = HeaderMap::new();
@@ -336,8 +382,7 @@ fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<
             i += 2;
         }
     }
-    let body = crate::encoding::buffer_source_bytes(s, a.get(4))?.map(Bytes::from).unwrap_or_default();
-    let url = a.get(5).to_string().ok().filter(|u| !u.is_empty()).and_then(|u| pyro_net::Url::parse(&u).ok());
+    let url = a.get(4).to_string().ok().filter(|u| !u.is_empty()).and_then(|u| pyro_net::Url::parse(&u).ok());
     let (mime, charset) = headers
         .get(pyro_net::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -358,13 +403,10 @@ fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<
         // Made by the worker, not the network: no connection phases.
         timing: Default::default(),
     };
-    let len = body.len() as u64;
     sink(ResponseEvent::Response(head));
-    if !body.is_empty() {
-        sink(ResponseEvent::Data(body));
-    }
-    sink(ResponseEvent::Finished { encoded_len: len, decoded_len: len });
-    Ok(())
+    job.sink = Some(sink);
+    job.head_sent = true;
+    Ok(true)
 }
 
 /// Moves this worker's own `state` (the browser thread's lifecycle step).
@@ -503,11 +545,32 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
         // The job drops undispatched: the request goes to the network.
         Err(_) => return,
     };
+    let is_navigation = request.mode == pyro_net::RequestMode::Navigate;
     let key = next_key();
     let (client, resulting) = (job.client_id.clone(), job.resulting_client_id.clone());
     job.dispatched = true;
     PENDING.with(|p| p.borrow_mut().insert(key, job));
-    call(s, "dispatchFetch", &[s.number(key as f64), value, s.string(&client), s.string(&resulting)]);
+    // The glue's `dispatchFetch(job)`; `preload` is for navigation preload (sw-3).
+    let described = (|| {
+        let job = s.object();
+        job.set_atom("id", s.number(key as f64))?;
+        job.set_atom("request", value)?;
+        job.set_atom("clientId", s.string(&client))?;
+        job.set_atom("resultingClientId", s.string(&resulting))?;
+        job.set_atom("isNavigation", s.boolean(is_navigation))?;
+        job.set_atom("preload", s.null())?;
+        Ok::<_, JsError>(job)
+    })();
+    match described {
+        Ok(job) => call(s, "dispatchFetch", &[job.value()]),
+        // As an undispatched job: dropped, the request goes to the network.
+        Err(_) => {
+            let removed = PENDING.with(|p| p.borrow_mut().remove(&key));
+            if let Some(mut job) = removed {
+                job.dispatched = false;
+            }
+        }
+    }
 }
 
 /// This module's part of [`crate::thread_state::reset_thread`]: what of its
