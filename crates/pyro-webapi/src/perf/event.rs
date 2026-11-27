@@ -374,8 +374,16 @@ fn record(page: &PageDom, raw: Raw<'_>) {
             first_input_eligible: true,
         });
     }
-    // The entry's duration ends at the next presentation: ask for one.
-    timeline::request_rendering(page);
+    // The entry's duration ends at the next presentation. Ask for one only when somebody can see the
+    // entry (an observer, or the first-input entry that is always buffered); otherwise the next
+    // frame the page renders anyway closes it, and an idle page is not made to render per input.
+    let wanted = {
+        let timeline = page.timeline();
+        timeline.is_observed("event") || timeline.is_observed("first-input") || !timeline.event.inner.borrow().first_input_done
+    };
+    if wanted {
+        timeline::request_rendering(page);
+    }
 }
 
 /// What an exposed entry shares between its observers' wrappers.

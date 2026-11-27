@@ -259,6 +259,7 @@ impl Browser {
             state: State::Pending { waiter: None, cancel: None },
         });
         let request = FetchRequest {
+            accept_signature: None,
             csp: None,
             required_csp: None,
             purpose: Some(Purpose::Prefetch { cross_site }),

@@ -44,7 +44,9 @@ use super::{FrameInfo, LONG_TASK_MS};
 /// Entry types this module makes real.
 pub const ENTRY_TYPES: &[&str] = &["long-animation-frame"];
 /// Entries come from the task hook, the frame hook and the engine's script entries.
-pub const ENABLED: bool = true;
+// Off until `Browser::task_finished` can skip tasks that entered no realm without walking every
+// document (review finding: the per-task bookkeeping ran for every task of every page).
+pub const ENABLED: bool = false;
 
 /// A first task this long (ms) before the update began started a frame that ended without one.
 const GAP_MS: f64 = 10.0;

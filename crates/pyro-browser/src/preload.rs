@@ -656,6 +656,7 @@ impl Browser {
         let Some(resource_loader) = self.loader_for(page) else { return };
         for link in links.into_iter().take(MAX_PRELOADS) {
             let request = FetchRequest {
+                purpose: None,
                 csp: None,
                 required_csp: None,
                 parser_priority: false,
