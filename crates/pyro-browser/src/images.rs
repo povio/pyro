@@ -164,7 +164,10 @@ impl Images {
     fn offer(&mut self, shape: Shape, node: NodeId, resource: &Resource, bindings: &pyro_webapi::PageDom) {
         self.offers.retain(|(old, owner, ..)| old != &shape && *owner != node);
         const BUDGET: usize = 16 * 1024 * 1024;
-        if !resource.immutable_local || resource.body.capacity() > BUDGET { return; }
+        // A local resource never changes; one a service worker controls is not asked for twice either: the
+        // layout engine's later request for the same image would be a second `fetch` event of the worker
+        // (Chrome has one request, the element's).
+        if !(resource.immutable_local || bindings.is_service_worker_controlled()) || resource.body.capacity() > BUDGET { return; }
         let mut bytes = resource.body.capacity() + self.offers.iter().map(|(_, _, entry, _)| entry.body.capacity()).sum::<usize>();
         while bytes > BUDGET || self.offers.len() >= 64 {
             bytes -= self.offers.pop_front().unwrap().2.body.capacity();

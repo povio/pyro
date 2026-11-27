@@ -959,6 +959,13 @@ fn is_embedded_content(request: &Request) -> bool {
     matches!(request.destination, Destination::Embed | Destination::Object)
 }
 
+impl PageDom {
+    /// A service worker controls this document (its requests go through the worker's `fetch` event).
+    pub fn is_service_worker_controlled(&self) -> bool {
+        self.sw_controlled.get()
+    }
+}
+
 /// A request `document` makes (its `fetch()`, XHR, scripts, stylesheets,
 /// images, ...): its controller's route, if any. One flag test for a
 /// document that no worker controls.
