@@ -252,6 +252,14 @@ fn call(s: &Scope<'_>, name: &str, args: &[Value<'_>]) {
     }
 }
 
+/// [`call`] of a function that dispatches events. The call's return ran the microtask checkpoint,
+/// the end of the events' dispatch: their dispatch flags clear then (`closeDispatch`), which is
+/// when a `fetch` event's outcome is decided.
+fn call_event(s: &Scope<'_>, name: &str, args: &[Value<'_>]) {
+    call(s, name, args);
+    call(s, "closeDispatch", &[]);
+}
+
 /// Makes the glue in a new service worker realm, before its script runs.
 pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster, shared: Arc<Shared>) -> JsResult<()> {
     let version = start.version;
@@ -545,7 +553,7 @@ pub(crate) fn extendable_event<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
 /// and lifetime-promise machinery as its install/activate events.
 pub(crate) fn cookie_change(s: &Scope<'_>, page: &Rc<PageDom>, changes: &[pyro_net::cookies::CookieChange]) {
     match crate::cookie_store::events::cookie_event(s, page, true, changes) {
-        Ok(event) => call(s, "dispatchCookieChange", &[event]),
+        Ok(event) => call_event(s, "dispatchCookieChange", &[event]),
         Err(err) => s.report_exception(&err),
     }
 }
@@ -555,7 +563,7 @@ pub(crate) fn set_state(s: &Scope<'_>, state: &str) {
 }
 
 pub(crate) fn lifecycle(s: &Scope<'_>, kind: Lifecycle) {
-    call(s, if kind == Lifecycle::Install { "install" } else { "activate" }, &[]);
+    call_event(s, if kind == Lifecycle::Install { "install" } else { "activate" }, &[]);
 }
 
 pub(crate) fn reply(s: &Scope<'_>, id: u64, result: Result<String, (String, String)>) {
@@ -582,13 +590,13 @@ pub(crate) fn message(
     let origin = s.string(crate::event::serialize_message_origin(origin_key));
     let key = s.string(origin_key);
     match crate::structured_clone::decode_with_ports(s, message) {
-        Ok((data, ports)) => call(
+        Ok((data, ports)) => call_event(
             s,
             "dispatchMessage",
             &[data, ports.map_or_else(|| s.undefined(), |p| p.value()), source, origin, key],
         ),
         Err(JsError::Terminated) => {}
-        Err(_) => call(s, "dispatchMessageError", &[source, origin, key]),
+        Err(_) => call_event(s, "dispatchMessageError", &[source, origin, key]),
     }
 }
 
@@ -641,11 +649,16 @@ fn destination_name(destination: pyro_net::Destination) -> &'static str {
 /// Fires a `fetch` event for `job`.
 pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
     let Some(request) = job.request.as_ref() else { return };
-    let headers = request
+    let mut headers: Vec<(String, String)> = request
         .headers
         .iter()
         .map(|(n, v)| (n.as_str().to_owned(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
         .collect();
+    // Fetch's "http-network-or-cache fetch" adds `Accept` before the network sees the request; the
+    // worker's `Request` has the headers the page's request carries on its way, it included.
+    if !request.headers.contains_key(pyro_net::http::header::ACCEPT) {
+        headers.push(("accept".to_owned(), pyro_net::client::default_accept(request.destination).to_owned()));
+    }
     let intercepted = crate::request::Intercepted {
         method: request.method.as_str().to_owned(),
         url: request.url.to_string(),
@@ -689,7 +702,7 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
         Ok::<_, JsError>(job)
     })();
     match described {
-        Ok(job) => call(s, "dispatchFetch", &[job.value()]),
+        Ok(job) => call_event(s, "dispatchFetch", &[job.value()]),
         // As an undispatched job: dropped, the request goes to the network.
         Err(_) => {
             let removed = PENDING.with(|p| p.borrow_mut().remove(&key));

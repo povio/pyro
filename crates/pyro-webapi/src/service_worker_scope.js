@@ -23,6 +23,7 @@
   const PromiseC = Promise;
   const all = PromiseC.all.bind(PromiseC);
   const resolved = (v) => PromiseC.resolve(v);
+  const queueMicrotaskC = typeof queueMicrotask === 'function' ? queueMicrotask : (f) => { PromiseC.resolve().then(f); };
   const EventC = Event;
   const EventTargetC = EventTarget;
   const DOMExceptionC = DOMException;
@@ -72,7 +73,10 @@
       }
       d.pendingCount++;
       const p = resolved(promise);
-      p.then(() => { d.pendingCount--; }, () => { d.pendingCount--; });
+      // "Upon fulfillment or rejection of promise, queue a microtask to decrement the pending
+      // promises count": a waitUntil() made by a handler of the same settlement still sees it.
+      const done = () => { queueMicrotaskC(() => { d.pendingCount--; }); };
+      p.then(done, done);
       d.promises.push(p);
     }
   }
@@ -86,14 +90,25 @@
         throw new TypeErrorC("Failed to construct 'FetchEvent': Failed to read the 'request' property from 'FetchEventInit': Required member is undefined.");
       }
       super(type, init);
+      // `handled` is the page's promise when the init gives one; this scope's events own theirs
+      // and settle it when the response is known (see `settleFetch`).
+      let handled = init.handled;
+      let handledSettlers = null;
+      if (!(handled instanceof PromiseC)) {
+        handled = new PromiseC((resolve, reject) => { handledSettlers = { resolve, reject }; });
+        // Rejected for a network error, never an unhandled rejection of the worker.
+        handled.then(undefined, () => {});
+      }
       fetchData.set(this, {
         request: init.request,
         clientId: init.clientId === undefined ? '' : String(init.clientId),
         resultingClientId: init.resultingClientId === undefined ? '' : String(init.resultingClientId),
-        handled: init.handled instanceof PromiseC ? init.handled : resolved(undefined),
+        handled,
+        handledSettlers,
         preloadResponse: resolved(undefined),
         response: null,
         responded: false,
+        event: this,
       });
     }
     get request() { return fetchData.get(this).request; }
@@ -423,18 +438,31 @@
   }
 
   // -- Dispatch -------------------------------------------------------------------
+  // An event's dispatch flag stays set until the microtask checkpoint after its listeners ran
+  // (respondWith() and waitUntil() are allowed from a microtask of the handler); Rust calls
+  // `closeDispatch` once the call that dispatched returned, which drained the microtasks.
+  let open = [];
   const dispatch = (event, trusted = false, originKey = undefined) => {
     const d = extendData.get(event);
     d.internal = true;
     d.dispatching = true;
-    try {
-      if (trusted) native.dispatchTrustedEvent(event, originKey);
-      else self.dispatchEvent(event);
-    } finally {
-      d.dispatching = false;
-    }
+    open.push(d);
+    if (trusted) native.dispatchTrustedEvent(event, originKey);
+    else self.dispatchEvent(event);
     return d;
   };
+  function closeDispatch() {
+    const list = open;
+    open = [];
+    for (const d of list) {
+      d.dispatching = false;
+      if (d.after !== undefined) {
+        const after = d.after;
+        d.after = undefined;
+        after();
+      }
+    }
+  }
   // Lifetime promises, including ones added while they settle.
   const settled = (d) => {
     const count = d.promises.length;
@@ -495,7 +523,7 @@
   }
 
   // The `fetch` event for `job`, dispatched; null when it cannot be made (the request
-  // then goes to the network).
+  // then goes to the network). The record returned is the event's `fetchData`.
   function fire(job) {
     let event;
     try {
@@ -507,6 +535,16 @@
     return fetchData.get(event);
   }
 
+  // `FetchEvent.handled`: resolved when the event's outcome is known and good, rejected for a
+  // network error (a canceled event nobody answered, an invalid or rejected `respondWith` value).
+  function handledSettled(d, error) {
+    const settlers = d.handledSettlers;
+    if (!settlers) return;
+    d.handledSettlers = null;
+    if (error === undefined) settlers.resolve(undefined);
+    else settlers.reject(error);
+  }
+
   // The `respondWith` promise's response, handed to the native side.
   function settle(job, d) {
     const id = job.id;
@@ -516,9 +554,28 @@
         if (!isResponse(response)) throw new TypeErrorC('respondWith() was given a value that is not a Response');
         if (response.type === 'error') throw new TypeErrorC('respondWith() was given a network error');
         if (response.bodyUsed) throw new TypeErrorC('respondWith() was given a Response whose body was used');
+        handledSettled(d);
         return arrayBuffer.call(response).then((body) => respondWhole(id, response, body));
       },
-    ).then(undefined, (error) => native.failFetch(id, String(error && error.message || error)));
+    ).then(undefined, (error) => {
+      handledSettled(d, error);
+      native.failFetch(id, String(error && error.message || error));
+    });
+  }
+
+  // What the handlers' outcome means once the microtask checkpoint after them is over (a
+  // `respondWith()` call may come from a microtask): the response, a network error when the event
+  // was canceled and nobody answered, otherwise the network's answer.
+  function decide(job, d) {
+    if (d.responded) {
+      settle(job, d);
+    } else if (d.event.defaultPrevented) {
+      handledSettled(d, new TypeErrorC('The fetch event was canceled without a response'));
+      native.failFetch(job.id, 'The fetch event was canceled without a response');
+    } else {
+      handledSettled(d);
+      native.passthrough(job.id);
+    }
   }
 
   function dispatchFetch(job) {
@@ -535,11 +592,11 @@
     // side answers with the first good response, and `passthrough` below means "the network's".
     if (source.type === 'race') native.startRace(job.id);
     const d = fire(job);
-    if (d === null || !d.responded) {
+    if (d === null) {
       native.passthrough(job.id);
       return;
     }
-    settle(job, d);
+    extendData.get(d.event).after = () => decide(job, d);
   }
 
   function dispatchMessage(data, ports, source, origin, originKey) {
@@ -579,6 +636,7 @@
     install: () => lifecycle('install'),
     activate: () => lifecycle('activate'),
     dispatchFetch,
+    closeDispatch,
     dispatchMessage,
     dispatchMessageError,
     reply,

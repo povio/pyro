@@ -1723,7 +1723,9 @@ fn wall_time() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-fn default_accept(d: Destination) -> &'static str {
+/// The `Accept` value Fetch gives a request of destination `d` that sets none (a service
+/// worker's `FetchEvent.request` has it, as the network sees it).
+pub fn default_accept(d: Destination) -> &'static str {
     match d {
         Destination::Document | Destination::Iframe => {
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
