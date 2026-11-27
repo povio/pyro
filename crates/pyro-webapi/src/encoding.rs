@@ -153,8 +153,8 @@ pub fn uint8_array<'s>(s: &Scope<'s>, bytes: &[u8]) -> JsResult<Value<'s>> {
             &mut exc,
         );
         if obj.is_null() || !exc.is_null() {
-            // JSC did not take the memory over (it calls the deallocator itself only when it did).
-            drop(Box::from_raw(raw));
+            // JSC wrapped the memory in its ArrayBuffer before making the view, so the buffer's release
+            // has run (or will run) `free_owned_bytes`: freeing here as well would be a double free.
             check_exc(s, exc)?;
             return Err(JsError::Type("Failed to allocate a Uint8Array".into()));
         }
