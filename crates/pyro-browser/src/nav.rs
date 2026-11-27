@@ -916,6 +916,16 @@ impl PageNav {
     /// The frame is about to leave its document for another one: a script
     /// navigation is queued (its fetch, once started, is the frame's
     /// pending loader). Not for the frame's initial about:blank document.
+    /// A link, form or `window.open` navigation of this frame to another document is queued
+    /// ([`PageNav::leaving_document`]); `leaving_navigation_ran` when its task starts.
+    pub(crate) fn queue_leaving_navigation(&self) {
+        self.queued_navigations.set(self.queued_navigations.get().saturating_add(1));
+    }
+
+    pub(crate) fn leaving_navigation_ran(&self) {
+        self.queued_navigations.set(self.queued_navigations.get().saturating_sub(1));
+    }
+
     pub(crate) fn leaving_document(&self) -> bool {
         self.queued_navigations.get() > 0 && !self.is_first_blank()
     }

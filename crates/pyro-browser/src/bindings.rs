@@ -945,19 +945,43 @@ impl Hooks {
             .flatten()
             .map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom));
         let frames = self.frames.clone();
+        // HTML "navigate" aborts the document the frame leaves: while this navigation's task is
+        // queued the frame's document does not fire `load` (a link's `click()` or a form's
+        // `submit()` during parsing: the container's `load` fires once, for the new document).
+        // `PageNav::leaving_document` counts it, as it does for `location` navigations. Only a
+        // navigation of the document's own frame to another document leaves it.
+        let leaves = request.target.as_deref().is_none_or(|t| t.is_empty() || t.eq_ignore_ascii_case("_self"))
+            && !request.url.get(..11).is_some_and(|scheme| scheme.eq_ignore_ascii_case("javascript:"));
+        let own_nav = if leaves { frames.upgrade().and_then(|host| host.nav(page)) } else { None };
         let task = NavigationTask { page, loader: loader.clone(), started, user_gesture, initiator };
         match proceed {
             None => {
                 let Some(stops) = before_navigation(&frames, page, &loader, user_gesture, &mut request) else { return };
-                self.sched.post(TaskSource::Navigation, move |b| run_navigation(b, task, stops, request, false));
-            }
-            Some(proceed) => self.sched.post(TaskSource::Navigation, move |b| {
-                if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) || !proceed() {
-                    return;
+                if let Some(nav) = &own_nav {
+                    nav.queue_leaving_navigation();
                 }
-                let Some(stops) = before_navigation(&frames, page, &loader, user_gesture, &mut request) else { return };
-                run_navigation(b, task, stops, request, true);
-            }),
+                self.sched.post(TaskSource::Navigation, move |b| {
+                    if let Some(nav) = &own_nav {
+                        nav.leaving_navigation_ran();
+                    }
+                    run_navigation(b, task, stops, request, false)
+                });
+            }
+            Some(proceed) => {
+                if let Some(nav) = &own_nav {
+                    nav.queue_leaving_navigation();
+                }
+                self.sched.post(TaskSource::Navigation, move |b| {
+                    if let Some(nav) = &own_nav {
+                        nav.leaving_navigation_ran();
+                    }
+                    if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) || !proceed() {
+                        return;
+                    }
+                    let Some(stops) = before_navigation(&frames, page, &loader, user_gesture, &mut request) else { return };
+                    run_navigation(b, task, stops, request, true);
+                })
+            }
         }
     }
 }

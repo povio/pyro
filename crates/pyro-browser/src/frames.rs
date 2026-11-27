@@ -1140,13 +1140,17 @@ impl FrameHost {
         // A `document.open()` on the frame's document from now on stops the navigation the
         // attributes start (a javascript: src).
         let stops = nav.stop_count();
+        // HTML "process the iframe attributes" navigates with history handling "replace" when
+        // the content document is not completely loaded when the attribute changes (a `src` set
+        // from its `load` or `pageshow` handler), not when the queued task runs.
+        let completely_loaded = self.frame(key).is_some_and(|f| f.loaded && f.page_dom.as_ref().is_none_or(|dom| dom.is_completely_loaded()));
         nav.attributes_queued.set(nav.attributes_queued.get() + 1);
         self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
             if let Some(mut doc) = b.doc_mut(key) {
                 doc.pending_frame_attributes -= 1;
                 doc.nav.attributes_run.set(doc.nav.attributes_run.get() + 1);
             }
-            b.process_iframe_attributes(key, &loader, stops);
+            b.process_iframe_attributes(key, &loader, stops, completely_loaded);
             b.maybe_fire_load(parent);
         });
     }
@@ -2294,7 +2298,7 @@ impl Browser {
         );
         self.maybe_fire_load(key);
     }
-    pub(crate) fn process_iframe_attributes(&mut self, key: FrameKey, loader: &LoaderId, stops: u64) {
+    pub(crate) fn process_iframe_attributes(&mut self, key: FrameKey, loader: &LoaderId, stops: u64, queued_completely_loaded: bool) {
         let Some(host) = self.page(key.page).map(|p| p.frames.clone()) else { return };
         // The cancel marker belongs to this queued processing: taken before any early return, so
         // a stale one cannot swallow a later lazy navigation of the frame.
@@ -2460,8 +2464,9 @@ impl Browser {
                 // the frame counts as loaded), else "auto", a push (which leaving the initial
                 // about:blank document still makes a replace). An `<object>` or `<embed>`
                 // always replaces.
-                let completely_loaded =
-                    frame.loaded && frame.page_dom.as_ref().is_none_or(|dom| dom.is_completely_loaded());
+                let completely_loaded = queued_completely_loaded
+                    && frame.loaded
+                    && frame.page_dom.as_ref().is_none_or(|dom| dom.is_completely_loaded());
                 let handling = if completely_loaded && !host.dom.borrow().is_document_object(owner) {
                     HistoryHandling::Push
                 } else {
