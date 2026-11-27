@@ -2717,7 +2717,10 @@ impl Io {
                             headers: resp_headers,
                         },
                     );
-                    if (status == StatusCode::SEE_OTHER && req.method != Method::HEAD)
+                    // Fetch "HTTP-redirect fetch" step 12: 303 for a method other than GET or HEAD (a GET stays as
+                    // it is, with all its headers), or 301/302 for POST, becomes GET without a body, and the
+                    // request-body-header names are dropped (Content-Encoding, -Language, -Location, -Type).
+                    if (status == StatusCode::SEE_OTHER && req.method != Method::HEAD && req.method != Method::GET)
                         || (matches!(status.as_u16(), 301 | 302) && req.method == Method::POST)
                     {
                         req.method = Method::GET;
@@ -2727,6 +2730,7 @@ impl Io {
                             header::CONTENT_LENGTH,
                             header::CONTENT_ENCODING,
                             header::CONTENT_LANGUAGE,
+                            header::CONTENT_LOCATION,
                         ] {
                             req.headers.remove(h);
                         }
