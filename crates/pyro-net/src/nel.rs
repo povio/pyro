@@ -75,6 +75,15 @@ pub(crate) enum Outcome {
     Failure { phase: &'static str, kind: &'static str },
 }
 
+/// Stored policies at most: a server (or many) cannot grow the list without bound; the oldest goes first.
+const MAX_POLICIES: usize = 1024;
+
+/// Whether two URLs have the same (tuple) origin, compared in place: `Url::origin` builds a serialized host for
+/// each call, which this does for every response. Only http(s) URLs have one a policy can name.
+fn same_origin(a: &Url, b: &Url) -> bool {
+    matches!(a.scheme(), "http" | "https") && a.scheme() == b.scheme() && a.host_str() == b.host_str() && a.port_or_known_default() == b.port_or_known_default()
+}
+
 struct Policy {
     /// The URL of the response that set it.
     base: Url,
@@ -193,9 +202,8 @@ impl Nel {
         if !max_age.is_finite() || *max_age < 0.0 {
             return;
         }
-        let origin = url.origin();
         let mut policies = self.policies.lock().unwrap_or_else(|e| e.into_inner());
-        policies.retain(|p| p.base.origin() != origin);
+        policies.retain(|p| !same_origin(&p.base, url));
         if *max_age == 0.0 {
             return;
         }
@@ -204,6 +212,11 @@ impl Nel {
             Some(Json::Num(n)) if (0.0..=1.0).contains(n) => *n,
             _ => default,
         };
+        let now = Instant::now();
+        policies.retain(|p| p.expires > now);
+        if policies.len() >= MAX_POLICIES {
+            policies.remove(0);
+        }
         policies.push(Policy {
             base: url.clone(),
             report_to: report_to.clone(),
@@ -222,8 +235,7 @@ impl Nel {
         let now = Instant::now();
         let mut policies = self.policies.lock().unwrap_or_else(|e| e.into_inner());
         policies.retain(|p| p.expires > now);
-        let origin = url.origin();
-        if let Some(p) = policies.iter().find(|p| p.base.origin() == origin) {
+        if let Some(p) = policies.iter().find(|p| same_origin(&p.base, url)) {
             return Some((PolicyView::from(p), true));
         }
         let host = match url.host() {
