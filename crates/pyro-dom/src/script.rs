@@ -477,6 +477,22 @@ impl Dom {
         if matches!(local, "src" | "srcset" | "sizes" | "width" | "crossorigin" | "referrerpolicy") {
             self.note_current_src_update(idx);
         }
+        // HTML "relevant mutations": a `<source>` that is a previous sibling of an `<img>` in a
+        // `<picture>` had its `srcset`, `sizes`, `media` or `type` set, changed or removed.
+        if matches!(local, "srcset" | "sizes" | "media" | "type") && self.resources.enabled {
+            let parent = self.n(idx).parent;
+            let is_source = self.n(idx).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("source"));
+            let in_picture = parent != NIL
+                && self.n(parent).element().is_some_and(|e| e.is_html() && e.name.local == local_name!("picture"));
+            if is_source && in_picture {
+                let later: Vec<u32> = self.child_idx_iter(parent).skip_while(|&c| c != idx).skip(1).filter(|&c| self.is_html_img(c)).collect();
+                for img in later {
+                    self.note_current_src_update(img);
+                    let id = self.id_of(img);
+                    self.queue_image_update(id);
+                }
+            }
+        }
         self.iframes_after_attr(idx, local);
         self.media_after_attr(idx, local);
         // HTML: a connected script is prepared when it gets a `src` it did
