@@ -428,6 +428,11 @@ impl Dom {
         !self.reactions.queued.is_empty()
     }
 
+    /// The documents that have queued custom element reactions.
+    pub fn custom_reaction_documents(&self) -> Vec<NodeId> {
+        self.reactions.queued.keys().copied().collect()
+    }
+
     /// Whether `document` has queued custom element reactions.
     pub fn has_custom_reactions_for(&self, document: NodeId) -> bool {
         self.reactions.queued.contains_key(&document)

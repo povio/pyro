@@ -451,6 +451,36 @@ pub(crate) fn run_reactions(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
+    run_document_reactions(page);
+    // Reactions are queued per creation document, and a call on another window's document (an
+    // element of this window inserted into an iframe's document) runs here: the other documents
+    // of the shared DOM run theirs through their own windows, in this same point.
+    for _ in 0..16 {
+        let others: Vec<NodeId> = match page.dom.try_borrow() {
+            Ok(dom) if dom.has_custom_reactions() => dom.custom_reaction_documents(),
+            _ => return,
+        };
+        let mut ran = false;
+        for doc in others {
+            if doc == page.document() {
+                continue;
+            }
+            if let Some(owner) = document_page(page, doc) {
+                ran = true;
+                run_document_reactions(&owner);
+            }
+        }
+        if !ran && !page.dom.try_borrow().is_ok_and(|dom| dom.has_custom_reactions_for(page.document())) {
+            return;
+        }
+        run_document_reactions(page);
+    }
+}
+
+fn run_document_reactions(page: &Rc<PageDom>) {
+    if page.is_disposed() {
+        return;
+    }
     let pending = page.dom.try_borrow().is_ok_and(|dom| dom.has_custom_reactions_for(page.document()));
     if !pending || RUNNING.with(|r| r.borrow().contains(&page.id())) {
         return;
