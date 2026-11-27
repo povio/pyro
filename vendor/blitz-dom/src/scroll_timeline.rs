@@ -421,7 +421,10 @@ fn nearest_scroll_container(doc: &BaseDocument, node: &Node) -> Option<NodeId> {
     // 1: `scroll(nearest)` is the nearest scroll container ancestor of the box's containing block
     // chain; WPT scroll-timeline-nearest-with-absolute-positioned-element). Out-of-flow boxes
     // know their containing block from layout (`Node::containing_block`).
-    let out_of_flow = node.primary_styles().is_some_and(|s| s.is_absolutely_positioned());
+    let out_of_flow = node.primary_styles().is_some_and(|s| {
+        use style::computed_values::position::T as Position;
+        matches!(s.slow_clone_position(), Position::Absolute | Position::Fixed)
+    });
     let mut current = if out_of_flow { node.containing_block() } else { node.parent };
     while let Some(id) = current {
         let n = doc.get_node(id)?;
