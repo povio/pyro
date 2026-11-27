@@ -324,6 +324,10 @@ pub struct Layout {
     /// pyro: with the anchor selected in it and the suppression-trigger values of the anchor and
     /// its ancestors then (`anchor_fingerprint`).
     scroll_anchors: FxHashMap<Option<NodeId>, (Rc<LayoutResult>, Option<(NodeId, String)>)>,
+    /// pyro: the part of an anchoring adjustment each scroller (`None`: the viewport) has not
+    /// applied yet, as scroll offsets are whole CSS px here (Chromium keeps them fractional: WPT
+    /// `device-pixel-adjustment` adds 0.5px twice and reads 1px more). Dropped by a script's write.
+    scroll_anchor_carry: FxHashMap<Option<NodeId>, f64>,
     /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
     /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
     snapped: FxHashMap<Option<NodeId>, [Option<SnapBox>; 2]>,
@@ -637,6 +641,7 @@ impl Layout {
             element_scroll: FxHashMap::default(),
             scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
+            scroll_anchor_carry: FxHashMap::default(),
             snapped: FxHashMap::default(),
             smooth_targets: Default::default(),
             reported_snaps: FxHashMap::default(),
@@ -3178,6 +3183,7 @@ impl Layout {
             return false;
         }
         self.window_scroll = (new_x, new_y);
+        self.scroll_anchor_carry.remove(&None);
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
         self.capture_scroll_anchor(dom, None);
         true
@@ -3352,6 +3358,7 @@ impl Layout {
             }
             None => self.window_scroll = pos,
         }
+        self.scroll_anchor_carry.remove(&target);
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
         self.capture_scroll_anchor(dom, target);
         true
@@ -3399,6 +3406,7 @@ impl Layout {
             return false;
         }
         self.element_scroll.insert(el, (x, y));
+        self.scroll_anchor_carry.remove(&Some(el));
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
         self.capture_scroll_anchor(dom, Some(el));
         true
@@ -4180,7 +4188,14 @@ impl Layout {
                 // The viewport has no box: document coordinates.
                 None => ab.rect.y - oab.rect.y,
             };
-            let ny = (y as f64 + delta).round().clamp(0.0, i32::MAX as f64) as i32;
+            let total = y as f64 + self.scroll_anchor_carry.get(&el).copied().unwrap_or(0.0) + delta;
+            let ny = total.round().clamp(0.0, i32::MAX as f64) as i32;
+            let rest = if delta != 0.0 { (total - ny as f64).clamp(-0.5, 0.5) } else { 0.0 };
+            if rest != 0.0 {
+                self.scroll_anchor_carry.insert(el, rest);
+            } else {
+                self.scroll_anchor_carry.remove(&el);
+            }
             if ny != y {
                 match el {
                     Some(el) => {
@@ -4449,6 +4464,7 @@ impl Layout {
             anchored.push(None);
         }
         self.scroll_anchors.retain(|k, _| anchored.contains(k));
+        self.scroll_anchor_carry.retain(|k, _| anchored.contains(k));
         for el in anchored.iter().copied().filter(Option::is_some) {
             self.capture_scroll_anchor(dom, el);
         }
