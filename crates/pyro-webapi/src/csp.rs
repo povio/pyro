@@ -335,12 +335,15 @@ pub struct NavigationInitiator {
     /// Where the script that navigated was when it did ([`NavigationInitiator::at`]); `None`
     /// without one: a blocked URL's violation is then unlocated.
     pub location: Option<SourceLocation>,
+    /// The element a violation is reported at (an `<iframe>` navigating to its own `src`:
+    /// Chrome fires `securitypolicyviolation` at the container); `None`: the document.
+    pub target: Option<NodeId>,
 }
 
 impl NavigationInitiator {
     /// `page`'s policies, now.
     pub fn of(page: &Rc<PageDom>) -> NavigationInitiator {
-        NavigationInitiator { page: page.clone(), list: policy_list(page), location: None }
+        NavigationInitiator { page: page.clone(), list: policy_list(page), location: None, target: None }
     }
 
     /// This initiator, its violations located at the page script running in `s` now (read only
@@ -352,12 +355,18 @@ impl NavigationInitiator {
         self
     }
 
+    /// This initiator, its violations reported at the element `target`.
+    pub fn on(mut self, target: NodeId) -> NavigationInitiator {
+        self.target = Some(target);
+        self
+    }
+
     /// CSP3 for a `javascript:` navigation (`url`, the whole URL, is what a hash-source with
     /// 'unsafe-hashes' matches): `script-src-elem` of the initiator's policies. Whether its
     /// script may run.
     pub fn allows_javascript_url(&self, url: &str) -> bool {
         let (list, location) = (self.list.as_deref(), self.location.as_ref());
-        inline_allowed_in_at(&self.page, list, InlineKind::Navigation, "", url, None, location)
+        inline_allowed_in_at(&self.page, list, InlineKind::Navigation, "", url, self.target, location)
     }
 }
 

@@ -834,6 +834,11 @@ impl PageNav {
             if !initiator.allows_javascript_url(&url) {
                 return;
             }
+            // The script then runs in the target document: its own policies apply too, after the
+            // initiator's (Chrome checks the parent's first; its violation fires in the target).
+            if !Rc::ptr_eq(&initiator.page, &page_dom) && !pyro_webapi::csp::NavigationInitiator::of(&page_dom).allows_javascript_url(&url) {
+                return;
+            }
             let Ok(scope) = realm.scope() else { return };
             let Some(source) = pyro_webapi::trusted_types::javascript_url_script(&scope, &page_dom, &source) else { return };
             // HTML "evaluate a javascript: URL": a string result replaces the document
@@ -1854,9 +1859,10 @@ fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsRe
         return Ok(());
     }
     if target.scheme() == "javascript" {
-        // Located at the calling script, for a blocked URL's violation.
-        let initiator =
-            pyro_webapi::target::page_of(s).ok().map(|page| pyro_webapi::csp::NavigationInitiator::of(&page).at(s));
+        // Located at the calling script, for a blocked URL's violation. The initiator is the
+        // incumbent document (a parent assigning its child's `location.href` is checked against
+        // the parent's policies, not the child's), as for the referrer below.
+        let initiator = incumbent_page(s).map(|page| pyro_webapi::csp::NavigationInitiator::of(&page).at(s));
         nav.run_javascript_url(target.as_str(), initiator);
         return Ok(());
     }

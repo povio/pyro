@@ -2392,7 +2392,7 @@ impl Browser {
                 // CSP: the URL is checked against the inserting document's policies (the
                 // navigation's initiator), snapshotted now.
                 let initiator =
-                    parent_key.and_then(|k| host.page_dom(k)).map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom));
+                    parent_key.and_then(|k| host.page_dom(k)).map(|dom| pyro_webapi::csp::NavigationInitiator::of(&dom).on(owner));
                 let js_url = url.clone();
                 // The frame holds its parent's `load` until the script has run and its string
                 // result (a new document) has begun: the parent's `load` sees that document.
