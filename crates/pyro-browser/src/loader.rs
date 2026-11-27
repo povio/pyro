@@ -3557,6 +3557,10 @@ impl Browser {
             (None, Some(prior)) => prior,
             (None, None) => (resource.embedder_policy, resource.embedder_reporting.clone()),
         };
+        // HTML "obtain an embedder policy": a document that is not a secure context (an HTTPS frame below an
+        // HTTP page, a document of an insecure origin) has the default policy whatever its response says.
+        let secure = self.page(page.page).map(|p| p.frames.clone()).is_none_or(|host| crate::window::frame_chain_secure(&host, page, &resource.url));
+        let (embedder_policy, embedder_reporting) = if secure { (embedder_policy, embedder_reporting) } else { Default::default() };
         page_dom.set_embedder_policy(embedder_policy);
         page_dom.set_embedder_reporting(embedder_reporting);
         // Its Document-Isolation-Policy likewise (`isolation`, decided before the commit): the response's, or
