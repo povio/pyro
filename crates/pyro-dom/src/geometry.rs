@@ -762,6 +762,9 @@ pub trait GeometrySource {
     /// The elements that are a scroll container's snap target now, by key, with the axes (x, y)
     /// they are snapped on, which `scroll-state(snapped)` follows.
     fn set_snapped(&self, _snapped: Vec<(u64, (bool, bool))>) {}
+    /// The scroll targets now (CSS Overflow 5 § 2.1: the element each scroll container was last
+    /// scrolled to, the viewport's under `u64::MAX`), by key, which scroll marker selection follows.
+    fn set_scroll_targets(&self, _targets: Vec<(u64, u64)>) {}
     /// The sticky boxes held at an edge by their insets now, by key, with the edges (bit 0 top, 1
     /// right, 2 bottom, 3 left), which `scroll-state(stuck)` follows.
     fn set_stuck(&self, _stuck: Vec<(u64, u8)>) {}

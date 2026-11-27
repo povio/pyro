@@ -1596,13 +1596,13 @@ impl BaseDocument {
 
     /// pyro: whether the document has scroll pseudo-elements (markers, groups, buttons).
     pub fn uses_scroll_markers(&self) -> bool {
-        !self.scroll_pseudo_owners.is_empty()
+        !self.scroll_pseudo_owners.is_empty() || !self.scroll_target_groups.is_empty()
     }
 
     pub fn update_scroll_marker_states(&mut self) {
-        // pyro: and `scroll-state(scrollable)` queries (`resolve::refresh_scroll_state_queries`).
-        let scroll_state_queries = !self.nodes.scroll_state_queries.lock().unwrap().is_empty();
-        if !self.scroll_pseudo_owners.is_empty() || scroll_state_queries {
+        // pyro: and `scroll-state(scrollable)` queries (`resolve::refresh_scroll_state_queries`), and
+        // the links of scroll target groups (`scroll-target-group: auto`), which have no box of their own.
+        if self.tracks_scroll_states() {
             if let Some(root) = self.try_root_element().map(|root| root.id) {
                 self.nodes[root].mark_damaged();
             }
@@ -1842,11 +1842,15 @@ impl BaseDocument {
     /// pyro: the current scroll target of each scroll container (CSS Overflow 5 § 2.1: the
     /// element a scroll into view last revealed in it, until it scrolls otherwise; the viewport's
     /// under the root element), which the embedder tracks. Scroll marker selection starts from it.
-    pub fn set_scroll_targets(&mut self, targets: Vec<(NodeId, NodeId)>) {
+    pub fn set_scroll_targets(&mut self, targets: Vec<(NodeId, NodeId)>) -> bool {
         let targets: std::collections::HashMap<NodeId, NodeId> = targets.into_iter().collect();
-        if targets != self.scroll_targets {
-            self.scroll_targets = targets;
+        if targets == self.scroll_targets {
+            return false;
         }
+        self.scroll_targets = targets;
+        // (The active markers are picked again at the next resolve.)
+        self.update_scroll_marker_states();
+        true
     }
 
     /// Of `candidates` (in `scroller`, in tree order), the one a reverse tree-order walk from

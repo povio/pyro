@@ -330,6 +330,11 @@ pub struct Layout {
     /// Snapping is held off for scroll writes ([`Self::set_snap_suspended`]): a scrollbar drag.
     snap_suspended: bool,
     snapped_pushed_at: std::cell::Cell<Option<u64>>,
+    /// The scroll targets last told to the geometry source ([`Self::scroll_target_keys`]), and the
+    /// count of changes to `scroll_targets` they were built at (`scroll_targets_generation`).
+    targets_pushed: std::cell::RefCell<Vec<(u64, u64)>>,
+    targets_pushed_at: std::cell::Cell<Option<u64>>,
+    scroll_targets_generation: u64,
     /// The stuck sticky boxes last told to the geometry source ([`Self::stuck_keys`]), and the
     /// observation stamp they were looked for at ([`Self::push_stuck`]).
     stuck_pushed: std::cell::RefCell<Vec<(u64, u8)>>,
@@ -677,6 +682,9 @@ impl Layout {
             snapped_generation: 0,
             snap_suspended: false,
             snapped_pushed_at: std::cell::Cell::new(None),
+            targets_pushed: Default::default(),
+            targets_pushed_at: std::cell::Cell::new(None),
+            scroll_targets_generation: 0,
             stuck_pushed: Default::default(),
             stuck_pushed_at: std::cell::Cell::new(None),
             smooth_targets: Default::default(),
@@ -3423,7 +3431,7 @@ impl Layout {
     /// per-axis delta, makes the snap directional ([`Self::snap_positions`]).
     fn window_scroll_write(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>, dir: Option<[i64; 2]>) -> bool {
         // A scroll without a target (CSS Overflow 5 § 2.1).
-        self.scroll_targets.remove(&None);
+        self.clear_scroll_target(None);
         // pyro: a write past the origin lays out first, which adjusts for what changed since the
         // anchor was selected (the offset it then replaces is the adjusted one) and selects the
         // anchor again below, whether or not the offset moves (WPT `position-change-heuristic`
@@ -3487,12 +3495,22 @@ impl Layout {
     pub fn push_scroll(&self) -> bool {
         // (A snap target changes without a scroll when layout does: `scroll-state(snapped)`.)
         // (Nothing changed since the last push: the keys are not even built.)
-        if self.scroll_pushed.get() == Some(self.scroll_generation as u64) && self.snapped_pushed_at.get() == Some(self.snapped_generation) {
+        if self.scroll_pushed.get() == Some(self.scroll_generation as u64)
+            && self.snapped_pushed_at.get() == Some(self.snapped_generation)
+            && self.targets_pushed_at.get() == Some(self.scroll_targets_generation)
+        {
             return false;
         }
         let snapped = self.snapped_keys();
         self.snapped_pushed_at.set(Some(self.snapped_generation));
-        if self.scroll_pushed.get() == Some(self.scroll_generation as u64) && *self.snapped_pushed.borrow() == snapped {
+        // (The scroll targets, which scroll marker selection follows: a scrolled-into-view element's
+        // marker is the active one though the scroll position says another.)
+        let targets = self.scroll_target_keys();
+        self.targets_pushed_at.set(Some(self.scroll_targets_generation));
+        if self.scroll_pushed.get() == Some(self.scroll_generation as u64)
+            && *self.snapped_pushed.borrow() == snapped
+            && *self.targets_pushed.borrow() == targets
+        {
             return false;
         }
         self.scroll_pushed.set(Some(self.scroll_generation as u64));
@@ -3503,8 +3521,12 @@ impl Layout {
             if *self.snapped_pushed.borrow() != snapped {
                 source.set_snapped(snapped.clone());
             }
+            if *self.targets_pushed.borrow() != targets {
+                source.set_scroll_targets(targets.clone());
+            }
         }
         *self.snapped_pushed.borrow_mut() = snapped;
+        *self.targets_pushed.borrow_mut() = targets;
         true
     }
 
@@ -3775,7 +3797,7 @@ impl Layout {
             return false;
         }
         // A scroll without a target (CSS Overflow 5 § 2.1).
-        self.scroll_targets.remove(&Some(el));
+        self.clear_scroll_target(Some(el));
         // (As `window_scroll_write`: what changed since the anchor was selected is adjusted for
         // before the offset is compared and the anchor selected again.)
         if !matches!(write, ScrollWrite::To { left: None | Some(0), top: None | Some(0) }) {
@@ -4401,6 +4423,7 @@ impl Layout {
                     }
                 } else if let Some(target) = target {
                     self.scroll_targets.insert(None, target);
+                    self.scroll_targets_generation += 1;
                 }
             }
         }
@@ -5634,6 +5657,28 @@ impl Layout {
             cur = dom.parent_element(node).ok().flatten();
         }
         self.scroll_targets.insert(None, el);
+        self.scroll_targets_generation += 1;
+    }
+
+    /// [`Self::scroll_targets`] without the check that the nodes are alive (the engine drops a key
+    /// it has no node for).
+    fn scroll_target_keys(&self) -> Vec<(u64, u64)> {
+        let mut out: Vec<(u64, u64)> = self
+            .scroll_targets
+            .iter()
+            .map(|(scroller, &target)| {
+                (scroller.map_or(u64::MAX, crate::snapshot::render_key), crate::snapshot::render_key(target))
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Forgets the scroll target of `scroller` (`None`: the viewport): a scroll without one.
+    fn clear_scroll_target(&mut self, scroller: Option<NodeId>) {
+        if self.scroll_targets.remove(&scroller).is_some() {
+            self.scroll_targets_generation += 1;
+        }
     }
 
     /// The current scroll targets (CSS Overflow 5 § 2.1) by render key: each scroll container's

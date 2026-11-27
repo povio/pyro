@@ -648,6 +648,13 @@ fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &
                 dom.is_connected(el).unwrap_or(false) && dom.node_document(el).ok() == Some(doc)
             };
             if connected {
+                // (The scroll targets and offsets are the engine's before the handlers read the
+                // active scroll marker.)
+                if kind == "scrollend" {
+                    if let Ok(layout) = p.layout.try_borrow() {
+                        layout.push_scroll();
+                    }
+                }
                 crate::input::fire_simple(p, el, kind, false, false);
                 // (A scroll can move the active scroll marker: the layout engine follows it.)
                 if kind == "scrollend" {
@@ -660,6 +667,11 @@ fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &
             }
         }
         None => {
+            if kind == "scrollend" {
+                if let Ok(layout) = p.layout.try_borrow() {
+                    layout.push_scroll();
+                }
+            }
             crate::input::fire_simple(p, doc, kind, true, false);
         }
     }

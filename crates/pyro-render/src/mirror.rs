@@ -338,7 +338,7 @@ impl Mirror {
         self.doc.set_stuck(stuck)
     }
 
-    pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) {
+    pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) -> bool {
         let root = self.doc.try_root_element().map(|root| root.id);
         let targets: Vec<(NodeId, NodeId)> = targets
             .iter()
@@ -347,7 +347,7 @@ impl Mirror {
                 Some((scroller, self.node(target)?))
             })
             .collect();
-        self.doc.set_scroll_targets(targets);
+        self.doc.set_scroll_targets(targets)
     }
 
     /// Gives the `position: sticky` elements in `offsets` (by key) their

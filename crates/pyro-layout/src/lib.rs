@@ -1007,6 +1007,17 @@ impl GeometrySource for BlitzGeometry {
         });
     }
 
+    fn set_scroll_targets(&self, targets: Vec<(u64, u64)>) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                let r = r.get_or_insert_with(Renderer::new);
+                if r.set_scroll_targets(self.page, targets) {
+                    self.scroll_stale.set(true);
+                }
+            }
+        });
+    }
+
     fn set_stuck(&self, stuck: Vec<(u64, u8)>) {
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {

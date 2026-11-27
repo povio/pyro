@@ -884,6 +884,8 @@ pub struct Renderer {
     scroll_directions: HashMap<u64, Vec<(u64, (i8, i8))>>,
     /// pyro: each page's snap targets as last told ([`Renderer::set_snapped`]), likewise.
     snapped: HashMap<u64, Vec<(u64, (bool, bool))>>,
+    /// pyro: each page's scroll targets as last told ([`Renderer::set_scroll_targets`]), likewise.
+    scroll_targets: HashMap<u64, Vec<(u64, u64)>>,
     /// pyro: each page's stuck sticky boxes as last told ([`Renderer::set_stuck`]), likewise.
     stuck: HashMap<u64, Vec<(u64, u8)>>,
     pdf_cache: pdf::PdfCache,
@@ -1060,6 +1062,7 @@ impl Renderer {
             focused_scroll_group: HashMap::new(),
             scroll_directions: HashMap::new(),
             snapped: HashMap::new(),
+            scroll_targets: HashMap::new(),
             stuck: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
@@ -1087,6 +1090,7 @@ impl Renderer {
         self.focused_scroll_group.remove(&page);
         self.scroll_directions.remove(&page);
         self.snapped.remove(&page);
+        self.scroll_targets.remove(&page);
         self.stuck.remove(&page);
     }
 
@@ -1309,6 +1313,15 @@ impl Renderer {
         changed
     }
 
+    /// pyro: the scroll targets of the page now (by key: each scroll container's, the viewport's
+    /// under `u64::MAX`, and its target's), which scroll marker selection follows. Whether the
+    /// document's styles are stale now.
+    pub fn set_scroll_targets(&mut self, page: u64, targets: Vec<(u64, u64)>) -> bool {
+        let changed = self.mirrors.get_mut(&page).is_some_and(|m| m.set_scroll_targets(&targets));
+        self.scroll_targets.insert(page, targets);
+        changed
+    }
+
     /// pyro: the sticky boxes of the page held at an edge by their insets now (by key, with the
     /// edges: bit 0 top, 1 right, 2 bottom, 3 left), which `scroll-state(stuck)` follows. Whether
     /// the document's styles are stale now.
@@ -1333,6 +1346,9 @@ impl Renderer {
             }
             if let Some(stuck) = self.stuck.get(&page) {
                 m.set_stuck(stuck);
+            }
+            if let Some(targets) = self.scroll_targets.get(&page) {
+                m.set_scroll_targets(targets);
             }
         }
         if let (Some(m), Some(scroll)) = (self.mirrors.get_mut(&page), self.timeline_scroll.get_mut(&page)) {

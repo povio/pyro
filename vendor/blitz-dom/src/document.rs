@@ -2710,7 +2710,7 @@ impl BaseDocument {
         }
         // pyro: `scroll-state()` containers read the offsets (`refresh_scroll_state_queries`).
         // (And the active scroll marker follows the scroll position: `update_target_current`.)
-        let scroll_state_changed = (!self.nodes.scroll_state_queries.lock().unwrap().is_empty() || !self.scroll_pseudo_owners.is_empty())
+        let scroll_state_changed = self.tracks_scroll_states()
             && self.timeline_scroll.as_ref().is_none_or(|(old, old_viewport)| *old != elements || *old_viewport != viewport);
         self.timeline_scroll = Some((elements, viewport));
         if scroll_state_changed {
