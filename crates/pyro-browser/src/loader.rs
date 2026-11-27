@@ -2620,6 +2620,21 @@ impl Browser {
         p.popup_sandbox.is_some() || csp_sandbox
     }
 
+    /// HTML "check if COOP values require a browsing context group switch": the top-level page
+    /// `left` moved to a new browsing context group, so a popup it had opened is no longer related
+    /// to it: the popup's `opener` is null and `left` sees a closed window for it.
+    fn sever_openees(&self, left: &Rc<crate::frames::FrameHost>) {
+        for page in &self.pages {
+            let opened_by_left =
+                page.frames.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade).is_some_and(|opener| Rc::ptr_eq(&opener, left));
+            if opened_by_left {
+                if let Some(ticket) = page.frames.popup.borrow().clone() {
+                    ticket.sever();
+                }
+            }
+        }
+    }
+
     /// HTML "check a navigation response's adherence to its embedder policy": whether `resource`, the
     /// response of child frame `page`'s navigation, is refused because the embedding document's
     /// cross-origin embedder policy is `require-corp` or `credentialless` and the response's is
@@ -3036,6 +3051,9 @@ impl Browser {
                     Some(last) => {
                         let switched = host.coop_requires_switch(&resource.coop);
                         let left = host.coop_committed(last.enforced.value, last.origin.clone(), switched);
+                        if switched {
+                            self.sever_openees(&host);
+                        }
                         let virtual_switch = switched || coop_reports.as_ref().is_some_and(|r| r.virtual_switch);
                         host.coop_note_commit(&last, &page_dom, virtual_switch);
                         left
