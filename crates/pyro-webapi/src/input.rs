@@ -1908,7 +1908,15 @@ fn control_key_action(page: &Rc<PageDom>, el: NodeId, key: &str) -> bool {
                 "ArrowDown" => false,
                 _ => return false,
             };
-            mutable && step_by_key(page, el, |dom| dom.step_value(el, 1.0, up))
+            // Canceled (or the document went away in the listener): nothing steps, no `input`/`change`.
+            if !mutable {
+                false
+            } else {
+                match number_step(page, el, up) {
+                    Some(changed) => changed,
+                    None => return true,
+                }
+            }
         }
         ("input", Some(InputType::Range)) => {
             if !matches!(
@@ -2161,6 +2169,43 @@ fn fire_control_change(page: &Rc<PageDom>, el: NodeId) {
     fire_user_change(page, el);
     if page.focus_values.borrow().contains_key(&el) {
         page.remember_focus_value(el);
+    }
+}
+
+/// A user step of a number input (arrow key, spin button): Chromium fires a cancelable
+/// `beforeinput` (empty `inputType`) before it changes the value. `None` when a listener canceled
+/// it or removed the document or element; else whether the value changed.
+fn number_step(page: &Rc<PageDom>, el: NodeId, up: bool) -> Option<bool> {
+    let doc = page.document();
+    if !fire_input_event(page, el, "beforeinput", "", None, true) || page.document() != doc || !live_element(page, doc, el) {
+        return None;
+    }
+    Some(step_by_key(page, el, |dom| dom.step_value(el, 1.0, up)))
+}
+
+/// The width of a number input's spin button, from its right edge.
+const SPIN_BUTTON_WIDTH: f64 = 15.0;
+
+/// A left press (mousedown not canceled) on the spin button of an enabled, writable
+/// `<input type=number>`: the upper half steps up, the lower half down, as the arrow keys do
+/// (`beforeinput`, then `input` and `change`).
+fn number_spin_press(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
+    let rect = {
+        let dom = page.dom.borrow();
+        let is_number = local(&dom, target).as_deref() == Some("input")
+            && dom.input_type(target).ok() == Some(InputType::Number)
+            && !dom.is_disabled(target).unwrap_or(true)
+            && !dom.has_attribute(target, "readonly").unwrap_or(false);
+        if !is_number {
+            return;
+        }
+        page.layout().bounding_client_rect(&dom, target)
+    };
+    if m.x < rect.x + rect.width - SPIN_BUTTON_WIDTH || m.x >= rect.x + rect.width || m.y < rect.y || m.y >= rect.y + rect.height {
+        return;
+    }
+    if number_step(page, target, m.y < rect.y + rect.height / 2.0) == Some(true) {
+        fire_control_change(page, target);
     }
 }
 
@@ -3333,6 +3378,7 @@ fn dispatch_mouse_inner(
             if place_caret {
                 crate::editing::caret_on_press(page, target);
                 range_press(page, target, m);
+                number_spin_press(page, target, m);
             }
             page.text_drag.set(None);
             if place_caret && source.is_none() {
