@@ -12,7 +12,7 @@ use crate::logical_geometry::{LogicalSize, PhysicalSide, WritingMode};
 use crate::parser::ParserContext;
 use crate::properties::ComputedValues;
 use crate::queries::feature::{AllowsRanges, Evaluator, FeatureFlags, QueryFeatureDescription};
-use crate::queries::values::{Orientation, Scrollable};
+use crate::queries::values::{Orientation, Scrollable, Snapped, Stuck};
 use crate::queries::{FeatureType, QueryCondition};
 use crate::selector_map::{PrecomputedHashMap, PrecomputedHashSet};
 use crate::shared_lock::{
@@ -320,6 +320,9 @@ impl ContainerCondition {
                 fallback: if anchored { potential_container.query_anchored_fallback() } else { None },
                 anchored_cb_wm,
                 scrollable: if scroll_state { potential_container.query_scrollable_edges() } else { ScrollableEdges::empty() },
+                scrolled: if scroll_state { potential_container.query_scrolled_edges() } else { ScrollableEdges::empty() },
+                snapped: if scroll_state { potential_container.query_snapped_axes() } else { SnappedAxes::empty() },
+                stuck: if scroll_state { potential_container.query_stuck_edges() } else { ScrollableEdges::empty() },
                 size,
                 wm,
                 inherited_style,
@@ -477,6 +480,12 @@ pub struct ContainerInfo {
     pub(crate) anchored_cb_wm: WritingMode,
     /// pyro: the edges a scroll-state container can be scrolled towards (`scrollable`).
     pub(crate) scrollable: ScrollableEdges,
+    /// pyro: the edges the container was last scrolled towards (`scrolled`).
+    pub(crate) scrolled: ScrollableEdges,
+    /// pyro: the axes the container is snapped on (`snapped`).
+    pub(crate) snapped: SnappedAxes,
+    /// pyro: the edges a sticky container is stuck to (`stuck`).
+    pub(crate) stuck: ScrollableEdges,
     size: Size2D<Option<Au>>,
     pub(crate) wm: WritingMode,
     inherited_style: Option<Arc<ComputedValues>>,
@@ -561,13 +570,23 @@ impl ScrollableEdges {
     }
 }
 
-/// pyro: `scroll-state(scrollable[: <value>])`, against the container's writing mode for the
-/// logical values. In a boolean context, any edge.
-fn eval_scrollable(context: &Context, value: Option<Scrollable>) -> KleeneValue {
-    let Some(info) = context.container_info.as_ref() else {
-        return KleeneValue::Unknown;
-    };
-    let (edges, wm) = (info.scrollable, info.wm);
+/// pyro: the physical axes a scroll-state container is a snap target on, which the `snapped`
+/// feature queries (CSS Conditional 5 § 7.3.3).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SnappedAxes(u8);
+bitflags! {
+    impl SnappedAxes: u8 {
+        /// Snapped on the horizontal axis.
+        const X = 1 << 0;
+        /// Snapped on the vertical axis.
+        const Y = 1 << 1;
+    }
+}
+
+/// pyro: the physical edge set `edges` against a `<scroll-state>` direction keyword, with the
+/// logical values resolved by the container's writing mode. In a boolean context (`None`), any
+/// edge; `none` matches an empty set.
+fn eval_edges(edges: ScrollableEdges, wm: WritingMode, value: Option<Scrollable>) -> KleeneValue {
     let block = ScrollableEdges::side(wm.block_start_physical_side())
         | ScrollableEdges::side(wm.block_end_physical_side());
     let inline = ScrollableEdges::side(wm.inline_start_physical_side())
@@ -591,16 +610,95 @@ fn eval_scrollable(context: &Context, value: Option<Scrollable>) -> KleeneValue 
     KleeneValue::from(edges.intersects(wanted))
 }
 
+/// pyro: `scroll-state(scrollable[: <value>])`.
+fn eval_scrollable(context: &Context, value: Option<Scrollable>) -> KleeneValue {
+    let Some(info) = context.container_info.as_ref() else {
+        return KleeneValue::Unknown;
+    };
+    eval_edges(info.scrollable, info.wm, value)
+}
+
+/// pyro: `scroll-state(scrolled[: <value>])`, the directions of the container's last scroll
+/// (same value set as `scrollable`).
+fn eval_scrolled(context: &Context, value: Option<Scrollable>) -> KleeneValue {
+    let Some(info) = context.container_info.as_ref() else {
+        return KleeneValue::Unknown;
+    };
+    eval_edges(info.scrolled, info.wm, value)
+}
+
+/// pyro: `scroll-state(stuck[: <value>])`, the edges a sticky container is stuck to.
+fn eval_stuck(context: &Context, value: Option<Stuck>) -> KleeneValue {
+    let Some(info) = context.container_info.as_ref() else {
+        return KleeneValue::Unknown;
+    };
+    let value = value.map(|value| match value {
+        Stuck::None => Scrollable::None,
+        Stuck::Top => Scrollable::Top,
+        Stuck::Right => Scrollable::Right,
+        Stuck::Bottom => Scrollable::Bottom,
+        Stuck::Left => Scrollable::Left,
+        Stuck::BlockStart => Scrollable::BlockStart,
+        Stuck::InlineStart => Scrollable::InlineStart,
+        Stuck::BlockEnd => Scrollable::BlockEnd,
+        Stuck::InlineEnd => Scrollable::InlineEnd,
+    });
+    eval_edges(info.stuck, info.wm, value)
+}
+
+/// pyro: `scroll-state(snapped[: <value>])`; `block` and `inline` name physical axes through the
+/// container's writing mode, `both` needs both axes, a bare `snapped` any.
+fn eval_snapped(context: &Context, value: Option<Snapped>) -> KleeneValue {
+    let Some(info) = context.container_info.as_ref() else {
+        return KleeneValue::Unknown;
+    };
+    let axes = info.snapped;
+    let (block, inline) = if info.wm.is_horizontal() {
+        (SnappedAxes::Y, SnappedAxes::X)
+    } else {
+        (SnappedAxes::X, SnappedAxes::Y)
+    };
+    KleeneValue::from(match value {
+        None => !axes.is_empty(),
+        Some(Snapped::None) => axes.is_empty(),
+        Some(Snapped::X) => axes.contains(SnappedAxes::X),
+        Some(Snapped::Y) => axes.contains(SnappedAxes::Y),
+        Some(Snapped::Block) => axes.contains(block),
+        Some(Snapped::Inline) => axes.contains(inline),
+        Some(Snapped::Both) => axes.contains(SnappedAxes::X | SnappedAxes::Y),
+    })
+}
+
 /// pyro: the features of a container query's `scroll-state()` function.
 /// https://drafts.csswg.org/css-conditional-5/#scroll-state-container
-pub static SCROLL_STATE_FEATURES: std::sync::LazyLock<[QueryFeatureDescription; 1]> =
+pub static SCROLL_STATE_FEATURES: std::sync::LazyLock<[QueryFeatureDescription; 4]> =
     std::sync::LazyLock::new(|| {
-        [feature!(
-            crate::Atom::from("scrollable"),
-            AllowsRanges::No,
-            keyword_evaluator!(eval_scrollable, Scrollable),
-            FeatureFlags::SCROLL_STATE,
-        )]
+        [
+            feature!(
+                crate::Atom::from("scrollable"),
+                AllowsRanges::No,
+                keyword_evaluator!(eval_scrollable, Scrollable),
+                FeatureFlags::SCROLL_STATE,
+            ),
+            feature!(
+                crate::Atom::from("scrolled"),
+                AllowsRanges::No,
+                keyword_evaluator!(eval_scrolled, Scrollable),
+                FeatureFlags::SCROLL_STATE,
+            ),
+            feature!(
+                crate::Atom::from("snapped"),
+                AllowsRanges::No,
+                keyword_evaluator!(eval_snapped, Snapped),
+                FeatureFlags::SCROLL_STATE,
+            ),
+            feature!(
+                crate::Atom::from("stuck"),
+                AllowsRanges::No,
+                keyword_evaluator!(eval_stuck, Stuck),
+                FeatureFlags::SCROLL_STATE,
+            ),
+        ]
     });
 
 /// https://drafts.csswg.org/css-contain-3/#container-features

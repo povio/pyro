@@ -970,6 +970,21 @@ pub trait TElement:
         Default::default()
     }
 
+    /// pyro: the edges this scroll-state container was last scrolled towards (`scrolled`).
+    fn query_scrolled_edges(&self) -> crate::stylesheets::container_rule::ScrollableEdges {
+        Default::default()
+    }
+
+    /// pyro: the axes this scroll-state container is currently a snap target on (`snapped`).
+    fn query_snapped_axes(&self) -> crate::stylesheets::container_rule::SnappedAxes {
+        Default::default()
+    }
+
+    /// pyro: the edges this scroll-state container, a sticky box, is stuck to (`stuck`).
+    fn query_stuck_edges(&self) -> crate::stylesheets::container_rule::ScrollableEdges {
+        Default::default()
+    }
+
     /// Returns true if the element has all of specified selector flags.
     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool;
 

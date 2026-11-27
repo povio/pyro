@@ -518,8 +518,13 @@ without a style context (custom properties left as they are): pyro serializes a 
   (`container_rule.rs` `SCROLL_STATE_FEATURES`: `scrollable`, keyword `queries/values.rs` `Scrollable`). It
   needs a `scroll-state` container (`FeatureFlags::SCROLL_STATE`) and evaluates against the edges
   `TElement::query_scrollable_edges` gives (`ScrollableEdges`), logical values by the container's writing mode;
-  blitz-dom records them per container after layout. `scrolled`, `snapped` and `stuck` stay
-  `<general-enclosed>`. `queries/feature_expression.rs` `to_css_unparenthesized`. WPT css-conditional
+  blitz-dom records them per container after layout. `queries/feature_expression.rs` `to_css_unparenthesized`.
+- Round 8 (scroll-state `scrolled`, `snapped`, `stuck`): `SCROLL_STATE_FEATURES` grows to four keyword features
+  (`scrolled` shares `Scrollable`'s value set, `snapped` is `Snapped`, `stuck` is `Stuck` in `queries/values.rs`; a bare
+  feature means not `none`). `ContainerInfo` carries `scrolled` / `stuck` (`ScrollableEdges`) and `snapped`
+  (`SnappedAxes`), read through `TElement::query_scrolled_edges` / `query_snapped_axes` / `query_stuck_edges`, whose
+  defaults are empty (so `none` matches until the embedder feeds them). WPT css-conditional
+  `container-queries/scroll-state/at-container-{scrolled,snapped,stuck}-{parsing,serialization}`. WPT css-conditional
   `container-queries/scroll-state/*scrollable*`, `container-type-scroll-state-*`.
 - Round 7 (R-HTML-16r): `queries/feature_expression.rs` `QueryExpressionValue::parse`: a length media feature takes a
   math function that resolves to the number 0 (`calc(0)`) as a zero length, as Blink does. WPT html
