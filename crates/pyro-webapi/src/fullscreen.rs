@@ -14,7 +14,7 @@ use pyro_dom::NodeId;
 use pyro_js::{Deferred, JsError, JsResult, Scope, Value, WeakRealm};
 
 use crate::event::{EventCore, EventInterface};
-use crate::page::PageDom;
+use crate::page::{FrameContainer, PageDom, PageHooks};
 
 /// Whether the document may use fullscreen ("fullscreen enabled": its permissions policy
 /// allows `fullscreen`), as the browser decided when it made the document
@@ -160,7 +160,14 @@ pub(crate) fn removed(page: &Rc<PageDom>, gone: Vec<NodeId>) {
                 let _ = dom.set_fullscreen(el, false);
             }
         }
-        fire(&page, page.document(), "fullscreenchange");
+        // A frame whose document left fullscreen entirely takes its container with it.
+        let mut events: Vec<(Rc<PageDom>, NodeId)> = leave_containers(&page);
+        events.reverse();
+        let document = page.document();
+        events.push((page, document));
+        for (page, node) in events {
+            fire(&page, node, "fullscreenchange");
+        }
     }));
 }
 
@@ -181,7 +188,11 @@ pub(crate) fn element_for<'s>(s: &Scope<'s>, page: &Rc<PageDom>, root: NodeId) -
 /// Fires a trusted `fullscreenchange` or `fullscreenerror` (bubbles, composed) at `node`, or
 /// at the document when `node` is no longer connected.
 fn fire(page: &Rc<PageDom>, node: NodeId, ty: &str) {
-    let target = if page.dom.borrow().is_in_active_document(node) { node } else { page.document() };
+    // An element that moved to another document (or left this one) is no longer a target here.
+    let target = {
+        let dom = page.dom.borrow();
+        if dom.is_in_active_document(node) && dom.node_document(node).ok() == Some(page.document()) { node } else { page.document() }
+    };
     let Some(key) = crate::input::key_of(page, target) else { return };
     if crate::target::unheard(page, ty) {
         return;
@@ -191,19 +202,59 @@ fn fire(page: &Rc<PageDom>, node: NodeId, ty: &str) {
     crate::target::fire(page, key, &ev);
 }
 
-/// Fires `ty` at `node` in a task of its own, after the one that changed the state and settled the
+/// Fires `ty` in a task of its own, after the one that changed the state and settled the
 /// promise: the spec appends the event to the document's pending events, which the next rendering
 /// update fires, so the promise's continuations run first and can listen for it
 /// (`await el.requestFullscreen(); await fullScreenChange()`, WPT fullscreen/rendering/fullscreen-pseudo-class).
-fn fire_later(page: &Rc<PageDom>, node: NodeId, ty: &'static str) {
-    let weak = Rc::downgrade(page);
-    page.post_task(Box::new(move || {
-        let Some(page) = weak.upgrade() else { return };
-        if page.is_disposed() {
-            return;
+/// `events` are (document, target) pairs in the frame tree's order, the outermost document first.
+fn fire_later(events: Vec<(Rc<PageDom>, NodeId)>, ty: &'static str) {
+    let Some((first, _)) = events.first() else { return };
+    let first = first.clone();
+    first.post_task(Box::new(move || {
+        for (page, node) in events {
+            if !page.is_disposed() {
+                fire(&page, node, ty);
+            }
         }
-        fire(&page, node, ty);
     }));
+}
+
+/// The documents above `page`, innermost first, each with the owner element in it of the frame
+/// that shows the one below (the "container" chain Fullscreen walks).
+fn ancestors(page: &Rc<PageDom>) -> Vec<(Rc<PageDom>, NodeId)> {
+    let mut out = Vec::new();
+    let mut cur = page.clone();
+    // (Bounded: a frame tree is never this deep.)
+    for _ in 0..64 {
+        match cur.container() {
+            FrameContainer::Frame(parent, owner) => {
+                out.push((parent.clone(), owner));
+                cur = parent;
+            }
+            _ => break,
+        }
+    }
+    out
+}
+
+/// Fullscreen "exit fullscreen" for the documents a document leaving fullscreen drags along: when
+/// `page`'s stack just became empty and its frame's owner is the only fullscreen element of the
+/// parent document (a "simple fullscreen document"), the owner leaves fullscreen there too, and so
+/// on up. Returns the (document, element) pairs that left, innermost first.
+fn leave_containers(page: &Rc<PageDom>) -> Vec<(Rc<PageDom>, NodeId)> {
+    let mut left = Vec::new();
+    let mut cur = page.clone();
+    while element(&cur).is_none() {
+        let FrameContainer::Frame(parent, owner) = cur.container() else { break };
+        if element(&parent) != Some(owner) || parent.fullscreen_stack.borrow().len() != 1 {
+            break;
+        }
+        parent.fullscreen_stack.borrow_mut().pop();
+        let _ = parent.dom.borrow_mut().set_fullscreen(owner, false);
+        left.push((parent.clone(), owner));
+        cur = parent;
+    }
+    left
 }
 
 fn settle(realm: WeakRealm, deferred: Deferred, error: Option<&'static str>) {
@@ -262,10 +313,12 @@ pub(crate) fn request<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsRe
     // The rest runs "in parallel" and then in a task, as the spec has it (after a resize
     // pyro does not do): the state changes, the promise settles, the event fires.
     page.post_task(Box::new(move || {
-        let Some(page) = weak.upgrade() else { return };
-        if page.is_disposed() {
+        // A document that is gone (its frame was removed or navigated) is not fully active: the
+        // request is refused with no event, there being no document to fire it at.
+        let Some(page) = weak.upgrade().filter(|p| !p.is_disposed() && !p.is_detached()) else {
+            settle(realm, d, Some("Document not active"));
             return;
-        }
+        };
         // The element may have been removed (or the document deactivated) in between.
         if granted && ready(&page, el) {
             // "If element is doc's fullscreen element, terminate these subsubsteps": already
@@ -282,12 +335,30 @@ pub(crate) fn request<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsRe
                 stack.push(el);
             }
             let _ = page.dom.borrow_mut().set_fullscreen(el, true);
-            // The promise resolves before the event is dispatched (Chrome).
+            // Each ancestor document goes fullscreen with its frame: the container is pushed on
+            // its document's stack, unless it is already that document's fullscreen element. The
+            // events fire outermost document first (animation frame tasks run in frame tree order).
+            let mut events: Vec<(Rc<PageDom>, NodeId)> = Vec::new();
+            for (parent, owner) in ancestors(&page) {
+                if element(&parent) == Some(owner) {
+                    continue;
+                }
+                {
+                    let mut stack = parent.fullscreen_stack.borrow_mut();
+                    stack.retain(|&e| e != owner);
+                    stack.push(owner);
+                }
+                let _ = parent.dom.borrow_mut().set_fullscreen(owner, true);
+                events.push((parent, owner));
+            }
+            events.reverse();
+            events.push((page.clone(), el));
+            // The promise resolves before the events are dispatched (Chrome).
             settle(realm, d, None);
-            fire_later(&page, el, "fullscreenchange");
+            fire_later(events, "fullscreenchange");
         } else {
             settle(realm, d, Some("Permissions check failed"));
-            fire_later(&page, el, "fullscreenerror");
+            fire_later(vec![(page, el)], "fullscreenerror");
         }
     }));
     Ok(promise)
@@ -319,11 +390,13 @@ pub(crate) fn check_options(options: Value<'_>) -> JsResult<()> {
 /// topmost fullscreen element leaves fullscreen ("exit fullscreen" with nested fullscreen
 /// elements pops one level), `fullscreenchange` fires at it and the promise resolves. The state
 /// still holds when the call returns. A call made while another exit is pending joins it: it
-/// resolves after it, with no second change.
+/// resolves after it, with no second change. A document left with no fullscreen element whose
+/// frame is the only fullscreen element of its parent takes the frame out of fullscreen too (and
+/// so on up); the documents of frames below it leave fullscreen entirely.
 pub(crate) fn exit<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
     let d = s.deferred()?;
     let promise = d.promise.get(s);
-    if element(page).is_none() {
+    if element(page).is_none() || page.is_detached() {
         d.reject(s, JsError::Type("Document not active or no fullscreen element".into()).to_value(s))?;
         return Ok(promise);
     }
@@ -331,22 +404,45 @@ pub(crate) fn exit<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>>
     let joined = page.fullscreen_exit_pending.replace(true);
     let weak = Rc::downgrade(page);
     page.post_task(Box::new(move || {
-        let Some(page) = weak.upgrade() else { return };
-        if page.is_disposed() {
+        let Some(page) = weak.upgrade().filter(|p| !p.is_disposed()) else {
+            settle(realm, d, Some("Document not active"));
             return;
-        }
+        };
+        let mut events: Vec<(Rc<PageDom>, NodeId)> = Vec::new();
         if !joined {
             page.fullscreen_exit_pending.set(false);
             // The element may have left (a removal) before the task ran: then there is nothing to pop.
             if let Some(top) = element(&page) {
                 page.fullscreen_stack.borrow_mut().pop();
                 let _ = page.dom.borrow_mut().set_fullscreen(top, false);
-                settle(realm, d, None);
-                fire_later(&page, top, "fullscreenchange");
-                return;
+                // The frame tree below leaves fullscreen entirely, with the one event per document.
+                if let Some(hooks) = page.hooks() {
+                    for below in hooks.frame_tree() {
+                        if Rc::ptr_eq(&below, &page) || !ancestors(&below).iter().any(|(p, _)| Rc::ptr_eq(p, &page)) {
+                            continue;
+                        }
+                        let Some(top) = element(&below) else { continue };
+                        let all: Vec<NodeId> = std::mem::take(&mut *below.fullscreen_stack.borrow_mut());
+                        {
+                            let mut dom = below.dom.borrow_mut();
+                            for el in all {
+                                let _ = dom.set_fullscreen(el, false);
+                            }
+                        }
+                        events.push((below, top));
+                    }
+                }
+                // Then the ancestors that only were fullscreen for this document's sake.
+                let mut up = leave_containers(&page);
+                up.reverse();
+                events.extend(up);
+                events.push((page, top));
+                // Outermost document first: the frame tree's order.
+                events.sort_by_key(|(p, _)| ancestors(p).len());
             }
         }
         settle(realm, d, None);
+        fire_later(events, "fullscreenchange");
     }));
     Ok(promise)
 }
