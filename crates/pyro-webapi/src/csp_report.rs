@@ -300,8 +300,8 @@ pub(crate) struct ReportState {
     flush_queued: bool,
     /// `<img>` URLs whose request the element's own CSP check blocked and reported, which the
     /// layout engine's later fetch of the same image must not report again
-    /// ([`PageDom::note_blocked_image`]).
-    blocked_images: Vec<String>,
+    /// ([`PageDom::note_blocked_image`]), with the `<img>` the note belongs to.
+    blocked_images: Vec<(NodeId, String)>,
 }
 
 /// The most blocked-image URLs remembered per document.
@@ -377,20 +377,25 @@ impl PageDom {
     /// element's own check. The layout engine fetches the same image again when it draws the
     /// element ([`PageDom::take_blocked_image`]); that second request is the same one, not a
     /// second violation (Chrome reports an image once).
-    pub fn note_blocked_image(&self, url: &str) {
+    pub fn note_blocked_image(&self, node: NodeId, url: &str) {
         let mut state = self.csp_reports.borrow_mut();
         let state = state.for_doc(self.document());
+        // An element has one current request: its earlier note is superseded.
+        state.blocked_images.retain(|(n, _)| *n != node);
         if state.blocked_images.len() < MAX_BLOCKED_IMAGES {
-            state.blocked_images.push(url.to_owned());
+            state.blocked_images.push((node, url.to_owned()));
         }
     }
 
-    /// Whether `url` was noted by [`PageDom::note_blocked_image`] and not yet taken; taking
-    /// forgets one note, so a later request for the same URL is reported again.
-    pub fn take_blocked_image(&self, url: &str) -> bool {
+    /// Whether `url` was noted by [`PageDom::note_blocked_image`] for an element that is still
+    /// `live(node, url)` (still has that request) and not yet taken; taking forgets one note, so
+    /// a later request for the same URL is reported again. Notes of elements that are no longer
+    /// live are dropped here, so a stale one never stands in for a later request.
+    pub fn take_blocked_image(&self, url: &str, live: &dyn Fn(NodeId, &str) -> bool) -> bool {
         let mut state = self.csp_reports.borrow_mut();
         let state = state.for_doc(self.document());
-        match state.blocked_images.iter().position(|u| u == url) {
+        state.blocked_images.retain(|(node, noted)| live(*node, noted));
+        match state.blocked_images.iter().position(|(_, u)| u == url) {
             Some(i) => {
                 state.blocked_images.remove(i);
                 true
@@ -873,10 +878,15 @@ mod tests {
     #[test]
     fn blocked_image_notes_are_taken_once() {
         let (page, _dom) = page("https://a.test/doc");
-        assert!(!page.take_blocked_image("https://a.test/i.png"));
-        page.note_blocked_image("https://a.test/i.png");
-        assert!(page.take_blocked_image("https://a.test/i.png"));
-        assert!(!page.take_blocked_image("https://a.test/i.png"));
+        let node = page.document();
+        let (live, gone) = (|_: NodeId, _: &str| true, |_: NodeId, _: &str| false);
+        assert!(!page.take_blocked_image("https://a.test/i.png", &live));
+        page.note_blocked_image(node, "https://a.test/i.png");
+        assert!(page.take_blocked_image("https://a.test/i.png", &live));
+        assert!(!page.take_blocked_image("https://a.test/i.png", &live));
+        page.note_blocked_image(node, "https://a.test/i.png");
+        assert!(!page.take_blocked_image("https://a.test/i.png", &gone), "a note of an element that moved on is dropped");
+        assert!(!page.take_blocked_image("https://a.test/i.png", &live));
     }
 
     #[test]

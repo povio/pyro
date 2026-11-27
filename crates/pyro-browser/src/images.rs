@@ -172,8 +172,15 @@ impl Browser {
     pub(crate) fn dispatch_image(&mut self, frame: FrameKey, loader: &Rc<dyn ResourceLoader>, request: FetchRequest, done: FetchDone, layout: bool) -> Option<ResourceCancellation> {
         // An `<img>` whose request CSP blocked and reported (`PageDom::note_blocked_image`) is
         // asked for again by layout: the same blocked request, a network error without a second
-        // violation report.
-        if layout && self.doc(frame).and_then(|state| state.main_frame.page_dom.clone()).is_some_and(|page| page.take_blocked_image(&request.url)) {
+        // violation report. Only while that element is still connected and still has this
+        // request; a note of a removed or retargeted `<img>` never covers another request.
+        let noted = layout && self.doc(frame).is_some_and(|state| {
+            let Some(page) = state.main_frame.page_dom.clone() else { return false };
+            let dom = page.dom.borrow();
+            let taken = page.take_blocked_image(&request.url, &|node, url| dom.is_alive(node) && dom.is_connected(node) == Ok(true) && state.images.entries.get(&node).is_some_and(|i| i.url == url));
+            taken
+        });
+        if noted {
             let error = format!("{} {}", pyro_webapi::csp::BLOCKED_BY_CSP, request.url);
             self.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
             return None;
@@ -665,7 +672,7 @@ impl Browser {
                     Err(_) => {
                         // Reported once: the layout engine asks for this image again when it
                         // draws the element (`dispatch_image`), which must not report again.
-                        bindings.note_blocked_image(&url);
+                        bindings.note_blocked_image(node, &url);
                         let error = format!("{} {url}", pyro_webapi::csp::BLOCKED_BY_CSP);
                         self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err(error), None));
                         return;
