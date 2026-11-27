@@ -233,6 +233,15 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     let out = s.object();
     out.set_atom("captureValid", capture.value())?;
     out.set_atom("sizeChanged", resized.value())?;
+    // A document-scoped transition suppresses its document's rendering from the old state's capture
+    // until its update callback is done (frame callbacks and CSS animations wait, input targets the root).
+    let suppress = s.function("suppressRendering", |s, _, args| {
+        if let Some(root) = s.unwrap::<crate::node::Node>(args.get(0)) {
+            root.page().set_view_transition_suppressed(args.get(1).to_bool());
+        }
+        Ok(s.undefined())
+    })?;
+    out.set_atom("suppressRendering", suppress.value())?;
     out.set_atom("transitionAnimations", animations.value())?;
     let sample = s.function("sample",|s,_,args| {
         let Some(root) = s.unwrap::<crate::node::Node>(args.get(0)) else { return Ok(s.boolean(false)); };

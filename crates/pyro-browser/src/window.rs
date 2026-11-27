@@ -931,34 +931,40 @@ pub(crate) fn navigation_activation(scope: &Scope<'_>, ty: &str, url: &str) -> O
     }
 }
 
+/// The frame runs as soon as rendering is no longer blocked (a render-blocking element, or a view
+/// transition's rendering suppression): its timers are dropped, the callbacks stay queued.
+fn defer_frame_until_unblocked(scope: &Scope<'_>, w: &WindowData) {
+    clear_frame_timers(w);
+    let realm_weak = scope.realm().downgrade();
+    w.target.page.when_render_unblocked(Box::new(move || {
+        let Some(realm) = realm_weak.upgrade() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        let Some(w) = scope.global_data::<Window>() else { return };
+        let mut frame = w.animation.borrow_mut();
+        // (A smooth scroll that was running when rendering blocked needs a frame too, though
+        // no callback asks for one: it would stall otherwise.)
+        if frame.timer.is_none()
+            && (!(frame.callbacks.is_empty() && frame.native_callbacks.is_empty())
+                || pyro_webapi::smooth_scroll::running(&w.target.page)
+                || w.target.page.timeline().wants_rendering())
+        {
+            let realm_weak = realm.downgrade();
+            frame.timer = Some(w.sched.set_timer(Duration::ZERO, false, true, move |_browser: &mut Browser| {
+                let Some(realm) = realm_weak.upgrade() else { return };
+                let Ok(scope) = realm.scope() else { return };
+                run_animation_frame(&scope);
+            }));
+        }
+    }));
+}
+
 fn run_animation_frame(scope: &Scope<'_>) {
     let Some(w) = scope.global_data::<Window>() else { return };
     // A render-blocked document (a pending render-blocking stylesheet or
     // script, an unresolved `<link rel=expect>`) has no rendering
     // opportunity: the frame runs as soon as rendering is unblocked.
     if w.target.page.render_blocked() {
-        clear_frame_timers(w);
-        let realm_weak = scope.realm().downgrade();
-        w.target.page.when_render_unblocked(Box::new(move || {
-            let Some(realm) = realm_weak.upgrade() else { return };
-            let Ok(scope) = realm.scope() else { return };
-            let Some(w) = scope.global_data::<Window>() else { return };
-            let mut frame = w.animation.borrow_mut();
-            // (A smooth scroll that was running when rendering blocked needs a frame too, though
-            // no callback asks for one: it would stall otherwise.)
-            if frame.timer.is_none()
-                && (!(frame.callbacks.is_empty() && frame.native_callbacks.is_empty())
-                    || pyro_webapi::smooth_scroll::running(&w.target.page)
-                    || w.target.page.timeline().wants_rendering())
-            {
-                let realm_weak = realm.downgrade();
-                frame.timer = Some(w.sched.set_timer(Duration::ZERO, false, true, move |_browser: &mut Browser| {
-                    let Some(realm) = realm_weak.upgrade() else { return };
-                    let Ok(scope) = realm.scope() else { return };
-                    run_animation_frame(&scope);
-                }));
-            }
-        }));
+        defer_frame_until_unblocked(scope, w);
         return;
     }
     // The rendering update starts here (long animation frames' `renderStart`).
@@ -994,7 +1000,15 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // HTML video frame callbacks run before the animation frame callbacks.
     pyro_webapi::media::run_video_frame_callbacks(&w.target.page, now_ms);
     let now = scope.number(now_ms);
+    let mut suppressed = false;
     for handle in handles {
+        // A callback that began a view transition's rendering suppression (the update callback runs
+        // after its old state was captured, at the start of this frame's callbacks): the callbacks
+        // after it stay queued for the first frame after the suppression.
+        if w.target.page.view_transition_suppressed() {
+            suppressed = true;
+            break;
+        }
         // A callback may cancel a later one of the same frame.
         let cb = {
             let mut frame = w.animation.borrow_mut();
@@ -1011,6 +1025,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
     w.animation.borrow_mut().running = None;
     for ready in native {
         ready.set(true);
+    }
+    if suppressed {
+        defer_frame_until_unblocked(scope, w);
     }
     // Style and layout of the frame start after its callbacks (long animation frames'
     // `styleAndLayoutStart`).
