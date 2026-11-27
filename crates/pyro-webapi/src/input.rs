@@ -2818,7 +2818,27 @@ pub struct MouseInput {
     /// `movementX/Y` of a `pointermove`/`mousemove`: the move since the previous mouse input of
     /// the document. Set by the dispatcher, not by callers.
     pub movement: (f64, f64),
+    /// A pen drives the pointer (`Input.dispatchMouseEvent` with `pointerType: "pen"`): its
+    /// events are `pointerType` "pen" with its own `pointerId`. `None`: the mouse.
+    pub pen: Option<PenState>,
 }
+
+/// A pen's state at one `Input.dispatchMouseEvent`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PenState {
+    /// Degrees, -90 to 90.
+    pub tilt_x: f64,
+    pub tilt_y: f64,
+    /// Degrees clockwise, 0 to 359.
+    pub twist: f64,
+    /// Normalized pressure while a button is down, 0 to 1.
+    pub pressure: f64,
+    /// -1 to 1.
+    pub tangential_pressure: f64,
+}
+
+/// The `pointerId` of the pen (the mouse is 1; touches count up from 2).
+pub const PEN_POINTER_ID: i32 = 2;
 
 pub(crate) fn mouse_event(
     page: &Rc<PageDom>,
@@ -2863,6 +2883,17 @@ pub(crate) fn mouse_event(
             f.width = 1.0;
             f.height = 1.0;
             f.pressure = if m.buttons != 0 { 0.5 } else { 0.0 };
+            if let Some(pen) = m.pen {
+                f.pointer_id = PEN_POINTER_ID;
+                f.pointer_type = "pen".into();
+                f.pressure = if m.buttons != 0 { pen.pressure } else { 0.0 };
+                f.tangential_pressure = pen.tangential_pressure;
+                f.tilt_x = pen.tilt_x;
+                f.tilt_y = pen.tilt_y;
+                f.twist = pen.twist;
+                let (altitude, azimuth) = crate::event::tilt_to_spherical(pen.tilt_x, pen.tilt_y);
+                (f.altitude_angle, f.azimuth_angle) = (Some(altitude), azimuth);
+            }
         }
         if iface == EventInterface::WheelEvent {
             f.delta_x = m.delta_x;
@@ -3385,6 +3416,15 @@ fn dispatch_mouse_inner(
 ) -> Result<Option<DragData>, String> {
     // Empty viewport space targets the root element, as Chromium hit-tests it.
     let hit = pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?;
+    // The pointer id `setPointerCapture` accepts for this mouse-like pointer: the mouse's or the pen's.
+    if touch.is_none() {
+        let id = if m.pen.is_some() { PEN_POINTER_ID } else { 1 };
+        let mut c = page.mouse_capture.get();
+        if c.pointer_id != id {
+            c.pointer_id = id;
+            page.mouse_capture.set(c);
+        }
+    }
     // Mouse pointer events (and their compatibility mouse events) go to the
     // capture target while there is one.
     let captured = match (touch, kind) {

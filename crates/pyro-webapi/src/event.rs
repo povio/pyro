@@ -820,7 +820,7 @@ fn spherical_to_tilt(altitude: f64, azimuth: f64) -> (f64, f64) {
 }
 
 /// Tilt (degrees) to (altitudeAngle, azimuthAngle) in radians.
-fn tilt_to_spherical(tilt_x: f64, tilt_y: f64) -> (f64, f64) {
+pub(crate) fn tilt_to_spherical(tilt_x: f64, tilt_y: f64) -> (f64, f64) {
     use std::f64::consts::{FRAC_PI_2, PI};
     let (x, y) = (tilt_x.to_radians(), tilt_y.to_radians());
     let flat = tilt_x.abs() == 90.0 || tilt_y.abs() == 90.0;

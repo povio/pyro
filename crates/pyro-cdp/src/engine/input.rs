@@ -277,16 +277,43 @@ impl EngineHost {
                     return Err(CdpError::invalid_params("Invalid mouse coordinates or button mask"));
                 }
                 let pressure = if p.buttons == 0 { 0.0 } else { 0.5 };
-                if p.pointer_type.as_deref().is_some_and(|v| v != "mouse")
-                    || p.force.is_some_and(|v| v != pressure)
-                    || p.tangential_pressure != 0.0
-                    || p.tilt_x != 0
-                    || p.tilt_y != 0
-                    || p.twist != 0
-                    || p.timestamp.is_some()
-                {
-                    return Err(CdpError::unsupported("Input pen, custom pressure or timestamp"));
+                if p.timestamp.is_some() {
+                    return Err(CdpError::unsupported("Input timestamp"));
                 }
+                // A pen carries its pressure, tilt and twist (ranges as Chrome checks them);
+                // the mouse has none of them.
+                let pen = match p.pointer_type.as_deref() {
+                    None | Some("mouse") => {
+                        if p.force.is_some_and(|v| v != pressure)
+                            || p.tangential_pressure != 0.0
+                            || p.tilt_x != 0
+                            || p.tilt_y != 0
+                            || p.twist != 0
+                        {
+                            return Err(CdpError::unsupported("Input custom pressure, tilt or twist for a mouse"));
+                        }
+                        None
+                    }
+                    Some("pen") => {
+                        let force = p.force.unwrap_or(0.5);
+                        if !(0.0..=1.0).contains(&force)
+                            || !(-1.0..=1.0).contains(&p.tangential_pressure)
+                            || !(-90..=90).contains(&p.tilt_x)
+                            || !(-90..=90).contains(&p.tilt_y)
+                            || p.twist > 359
+                        {
+                            return Err(CdpError::invalid_params("Invalid pen pressure, tilt or twist"));
+                        }
+                        Some(input::PenState {
+                            tilt_x: p.tilt_x as f64,
+                            tilt_y: p.tilt_y as f64,
+                            twist: p.twist as f64,
+                            pressure: force,
+                            tangential_pressure: p.tangential_pressure,
+                        })
+                    }
+                    Some(_) => return Err(CdpError::invalid_params("Invalid pointer type")),
+                };
                 // A point over an iframe goes to its document, in its own
                 // viewport coordinates (recursively); only the innermost
                 // document receives the mouse events.
@@ -300,6 +327,7 @@ impl EngineHost {
                     modifiers: modifiers(p.modifiers)?,
                     delta_x: p.delta_x,
                     delta_y: p.delta_y,
+                    pen,
                     ..MouseInput::default()
                 };
                 let intercept = self.pages.get(&cmd.page).is_some_and(|state| state.intercept_drags);

@@ -1400,7 +1400,9 @@ fn input_validation_rejects_before_delivering_events() {
     for params in [
         json!({"type":"mousePressed","x":0,"y":0,"button":"invalid"}),
         json!({"type":"mousePressed","x":0,"y":0,"buttons":32}),
-        json!({"type":"mousePressed","x":0,"y":0,"pointerType":"pen"}),
+        json!({"type":"mousePressed","x":0,"y":0,"pointerType":"pen","tiltX":91}),
+        json!({"type":"mousePressed","x":0,"y":0,"pointerType":"pen","force":1.5}),
+        json!({"type":"mousePressed","x":0,"y":0,"pointerType":"touch"}),
         json!({"type":"mousePressed","x":0,"y":0,"force":0.8}),
     ] {
         assert!(h.page("Input.dispatchMouseEvent", params).get("error").is_some());

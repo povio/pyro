@@ -26,9 +26,20 @@ pub struct MouseCapture {
     pub(crate) pending: Option<NodeId>,
     pub(crate) current: Option<NodeId>,
     pub(crate) buttons_down: bool,
+    /// The `pointerId` of the mouse-like pointer driving the page (the mouse's, or a pen's); 0
+    /// until the first mouse input.
+    pub(crate) pointer_id: i32,
 }
 
 const MOUSE_POINTER_ID: i32 = 1;
+
+/// The `pointerId` of the mouse-like pointer (mouse or pen) of `page`.
+fn mouse_pointer_id(page: &PageDom) -> i32 {
+    match page.mouse_capture.get().pointer_id {
+        0 => MOUSE_POINTER_ID,
+        id => id,
+    }
+}
 
 /// The pending and the current pointer capture target of a touch pointer.
 #[derive(Copy, Clone, Debug, Default)]
@@ -178,21 +189,22 @@ fn pointer_id_arg(a: &Args<'_>, method: &str) -> JsResult<i32> {
 pub(crate) fn set_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let id = pointer_id_arg(&a, "Element.setPointerCapture")?;
     let page = n.page();
+    let mouse = mouse_pointer_id(page);
     // (An id that is no active pointer: the mouse, or a touch that is down.)
-    if id != MOUSE_POINTER_ID && touch_capture(page, id).is_none() {
+    if id != mouse && touch_capture(page, id).is_none() {
         return Err(JsError::dom("NotFoundError", "No active pointer with the given id is found."));
     }
     if !page.dom.borrow().is_connected(n.id).unwrap_or(false) {
         return Err(JsError::dom("InvalidStateError", "The element is not connected."));
     }
-    if id != MOUSE_POINTER_ID {
+    if id != mouse {
         if let Some(c) = touch_capture(page, id).filter(|_| capture_connected(page, n.id)) {
             set_touch_capture(page, id, TouchCapture { pending: Some(n.id), ..c });
         }
         return Ok(s.undefined());
     }
     let c = page.mouse_capture.get();
-    if id == MOUSE_POINTER_ID && c.buttons_down && capture_connected(page, n.id) {
+    if id == mouse && c.buttons_down && capture_connected(page, n.id) {
         page.mouse_capture.set(MouseCapture { pending: Some(n.id), ..c });
     }
     Ok(s.undefined())
@@ -201,17 +213,18 @@ pub(crate) fn set_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
 pub(crate) fn release_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let id = pointer_id_arg(&a, "Element.releasePointerCapture")?;
     let page = n.page();
-    if id != MOUSE_POINTER_ID && touch_capture(page, id).is_none() {
+    let mouse = mouse_pointer_id(page);
+    if id != mouse && touch_capture(page, id).is_none() {
         return Err(JsError::dom("NotFoundError", "No active pointer with the given id is found."));
     }
-    if id != MOUSE_POINTER_ID {
+    if id != mouse {
         if let Some(c) = touch_capture(page, id).filter(|c| c.pending == Some(n.id)) {
             set_touch_capture(page, id, TouchCapture { pending: None, ..c });
         }
         return Ok(s.undefined());
     }
     let c = page.mouse_capture.get();
-    if id == MOUSE_POINTER_ID && c.pending == Some(n.id) {
+    if id == mouse && c.pending == Some(n.id) {
         page.mouse_capture.set(MouseCapture { pending: None, ..c });
     }
     Ok(s.undefined())
@@ -221,7 +234,7 @@ pub(crate) fn has_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
     a.require(1, "Element.hasPointerCapture")?;
     let id = crate::util::to_i32(a.get(0))?;
     let page = n.page();
-    let has = if id == MOUSE_POINTER_ID {
+    let has = if id == mouse_pointer_id(page) {
         page.mouse_capture.get().pending == Some(n.id)
     } else {
         touch_capture(page, id).is_some_and(|c| c.pending == Some(n.id))
