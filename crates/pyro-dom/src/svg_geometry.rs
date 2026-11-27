@@ -143,13 +143,35 @@ fn attr(dom: &Dom, el: NodeId, name: &str) -> Option<f64> {
     v.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
+/// A length attribute with CSS units (`vh`, `vw`, `em`, `rem`, `in`, ...): the plain number or
+/// `px` fast path first, then `resolve_len` against the element's font sizes and the viewport.
+/// Percentages (relative to the SVG viewport) are not resolved here.
+fn len_attr(dom: &Dom, style: &StyleEngine, el: NodeId, name: &str) -> Option<f64> {
+    if let Some(n) = attr(dom, el, name) {
+        return Some(n);
+    }
+    let value = dom.get_attribute(el, name).ok().flatten()?;
+    let root = dom.node_document(el).ok().and_then(|doc| dom.document_element(doc).ok().flatten());
+    let cx = crate::computed::LengthContext {
+        viewport_width: f64::from(style.viewport().width),
+        viewport_height: f64::from(style.viewport().height),
+        ..crate::computed::LengthContext::fonts(style.computed_font_size(dom, Some(el)), style.computed_font_size(dom, root))
+    };
+    let (px, pct) = crate::computed::resolve_len(value, &cx)?;
+    (pct == 0.0 && px.is_finite()).then_some(px)
+}
+
+fn num_len(dom: &Dom, style: &StyleEngine, el: NodeId, name: &str) -> f64 {
+    len_attr(dom, style, el, name).unwrap_or(0.0)
+}
+
 fn num(dom: &Dom, el: NodeId, name: &str) -> f64 {
     attr(dom, el, name).unwrap_or(0.0)
 }
 
 /// [`num`] under the SMIL animations of `animated`.
-fn num_animated(dom: &Dom, animated: &dyn Animated, el: NodeId, name: &str) -> f64 {
-    animated.number(el, name).unwrap_or_else(|| num(dom, el, name))
+fn num_animated(dom: &Dom, style: &StyleEngine, animated: &dyn Animated, el: NodeId, name: &str) -> f64 {
+    animated.number(el, name).unwrap_or_else(|| num_len(dom, style, el, name))
 }
 
 fn local_name(dom: &Dom, el: NodeId) -> Option<String> {
@@ -163,31 +185,31 @@ fn bounds(dom: &Dom, style: &StyleEngine, animated: &dyn Animated, el: NodeId, d
     }
     match local_name(dom, el)?.as_str() {
         "rect" | "image" | "foreignObject" | "use" => {
-            let (w, h) = (num_animated(dom, animated, el, "width"), num_animated(dom, animated, el, "height"));
+            let (w, h) = (num_animated(dom, style, animated, el, "width"), num_animated(dom, style, animated, el, "height"));
             if w < 0.0 || h < 0.0 {
                 return None;
             }
-            let (x, y) = (num_animated(dom, animated, el, "x"), num_animated(dom, animated, el, "y"));
+            let (x, y) = (num_animated(dom, style, animated, el, "x"), num_animated(dom, style, animated, el, "y"));
             let mut b = Bounds::point(x, y);
             b.add(x + w, y + h);
             Some(b)
         }
         "circle" => {
-            let (cx, cy, r) = (num_animated(dom, animated, el, "cx"), num_animated(dom, animated, el, "cy"), num_animated(dom, animated, el, "r"));
+            let (cx, cy, r) = (num_animated(dom, style, animated, el, "cx"), num_animated(dom, style, animated, el, "cy"), num_animated(dom, style, animated, el, "r"));
             let mut b = Bounds::point(cx - r, cy - r);
             b.add(cx + r, cy + r);
             Some(b)
         }
         "ellipse" => {
-            let (cx, cy) = (num_animated(dom, animated, el, "cx"), num_animated(dom, animated, el, "cy"));
-            let (rx, ry) = (num_animated(dom, animated, el, "rx"), num_animated(dom, animated, el, "ry"));
+            let (cx, cy) = (num_animated(dom, style, animated, el, "cx"), num_animated(dom, style, animated, el, "cy"));
+            let (rx, ry) = (num_animated(dom, style, animated, el, "rx"), num_animated(dom, style, animated, el, "ry"));
             let mut b = Bounds::point(cx - rx, cy - ry);
             b.add(cx + rx, cy + ry);
             Some(b)
         }
         "line" => {
-            let mut b = Bounds::point(num_animated(dom, animated, el, "x1"), num_animated(dom, animated, el, "y1"));
-            b.add(num_animated(dom, animated, el, "x2"), num_animated(dom, animated, el, "y2"));
+            let mut b = Bounds::point(num_animated(dom, style, animated, el, "x1"), num_animated(dom, style, animated, el, "y1"));
+            b.add(num_animated(dom, style, animated, el, "x2"), num_animated(dom, style, animated, el, "y2"));
             Some(b)
         }
         "polyline" | "polygon" => {
@@ -227,7 +249,7 @@ fn text_bounds(dom: &Dom, style: &StyleEngine, el: NodeId) -> Option<Bounds> {
         style.stylo_style(dom, el).map_or(400, |s| (s.get_font().font_weight.value() as f64).clamp(1.0, 1000.0) as u16);
     let width = crate::text_metrics::text_width(&text, size, weight);
     let (ascent, descent) = crate::text_metrics::vertical_metrics(size);
-    let (x, y) = (num(dom, el, "x"), num(dom, el, "y"));
+    let (x, y) = (num_len(dom, style, el, "x"), num_len(dom, style, el, "y"));
     let x = match style.used_value(dom, el, "text-anchor").as_deref().map(str::trim) {
         Some("middle") => x - width / 2.0,
         Some("end") => x - width,
