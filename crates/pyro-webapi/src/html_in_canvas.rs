@@ -136,6 +136,21 @@ impl State {
     }
 }
 
+/// Whether the journal's touches are only insertions that were removed again before the frame: each
+/// such element left two `Children` touches (its insertion and its removal) and one `Inserted` for a
+/// node that is no longer connected, and nothing else was touched. The rendering is as it was.
+fn cancelled_insertions(dom: &Dom, list: &[(NodeId, Touch)]) -> bool {
+    let (mut children, mut gone) = (0usize, 0usize);
+    for (node, touch) in list {
+        match touch {
+            Touch::Children => children += 1,
+            Touch::Inserted if !dom.is_connected(*node).unwrap_or(false) => gone += 1,
+            _ => return false,
+        }
+    }
+    gone > 0 && children == 2 * gone
+}
+
 /// `canvas.requestPaint()`: the canvas owes a `paint` event in the next
 /// frame, which is requested.
 pub(crate) fn request_paint(page: &Rc<PageDom>, canvas: NodeId) {
@@ -157,6 +172,10 @@ pub fn run_paint_step(page: &Rc<PageDom>) {
     if !page.dom.borrow().drawable_canvas_seen() {
         return;
     }
+    // HTML "update the rendering": the ResizeObserver step comes before the `paint` events
+    // (WPT html-in-canvas `onpaint-fires-post-resize-observer`). (An IntersectionObserver's
+    // observations are made at a task's end here, and delivered from a task of their own.)
+    crate::resize_observer::rendering_step(page);
     let events = {
         let layout = page.layout();
         let dom = page.dom.borrow();
@@ -183,6 +202,27 @@ pub fn run_paint_step(page: &Rc<PageDom>) {
         };
         let first = state.seen.is_none();
         state.seen = Some(version);
+        // Changes inside the document of a frame (an `<iframe>` in a canvas's subtree) are no node of
+        // the canvas's subtree: the frame element stands for them.
+        let mut in_frames: Vec<NodeId> = Vec::new();
+        if let Some(list) = touched.as_ref().filter(|list| !list.is_empty() && !state.canvases.is_empty()) {
+            for canvas in state.canvases.clone() {
+                let frames: Vec<NodeId> = dom
+                    .descendants(canvas)
+                    .into_iter()
+                    .flatten()
+                    .filter(|&n| dom.element(n).is_ok_and(|e| e.is_html() && &*e.name.local == "iframe"))
+                    .collect();
+                for iframe in frames {
+                    let Some(frame_doc) = page.frame_document(iframe) else { continue };
+                    if list.iter().any(|(node, _)| dom.owner_document(*node).ok().flatten() == Some(frame_doc)) {
+                        in_frames.push(iframe);
+                    }
+                }
+            }
+        }
+        // An insertion undone within the frame (an element added and removed again) changed nothing.
+        let touched = touched.map(|list| if cancelled_insertions(&dom, &list) { Vec::new() } else { list });
         match touched {
             None => {
                 // First look, or the journal no longer covers the last one:
@@ -215,6 +255,30 @@ pub fn run_paint_step(page: &Rc<PageDom>) {
         // Forget canvases that left the document or stopped being drawable
         // (one reconnected later counts as new).
         state.canvases.retain(|&c| dom.is_connected(c).unwrap_or(false) && is_drawable_canvas(&dom, c));
+        for iframe in in_frames {
+            state.attribute(&dom, &rendered, iframe, false);
+        }
+        // A running CSS animation or transition repaints its element each frame, with no write to
+        // the DOM for the journal to show (a paused or finished one does not).
+        if !state.canvases.is_empty() {
+            let moving: Vec<NodeId> = page
+                .animation_events
+                .try_timelines()
+                .map(|(animations, transitions)| {
+                    animations
+                        .iter()
+                        .chain(transitions.iter())
+                        .filter(|t| t.is_live() && !t.has_ended() && !t.is_paused())
+                        .map(|t| t.el())
+                        .collect()
+                })
+                .unwrap_or_default();
+            for el in moving {
+                if dom.is_connected(el).unwrap_or(false) {
+                    state.attribute(&dom, &rendered, el, false);
+                }
+            }
+        }
         let known = state.canvases.clone();
         state.ready.retain(|c| known.contains(c));
         let mut events: Vec<(NodeId, Vec<NodeId>)> = std::mem::take(&mut state.pending)

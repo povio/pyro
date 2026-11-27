@@ -433,6 +433,20 @@ pub(crate) fn request_update(page: &PageDom) {
     after_task(page);
 }
 
+/// pyro: the ResizeObserver step of a rendering update that goes on to HTML-in-Canvas `paint` events
+/// (HTML "update the rendering": the observers' gather and broadcast come before them): what changed
+/// since the last gather is gathered now, without the pacing a task checkpoint keeps, and delivered
+/// at once (the callbacks run before the caller's next step) instead of from a task of its own.
+pub(crate) fn rendering_step(page: &Rc<PageDom>) {
+    if page.is_disposed() || !page.resizes.has_observers() {
+        return;
+    }
+    request_update(page);
+    if page.resizes.queued.get() {
+        notify(page);
+    }
+}
+
 /// Checkpoint from `PageDom::after_task`.
 pub(crate) fn after_task(page: &PageDom) {
     if page.is_disposed() {
