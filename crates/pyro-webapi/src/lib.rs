@@ -121,6 +121,7 @@ pub mod perf;
 pub mod performance;
 pub mod server_timing;
 mod pointer_capture;
+mod scrollbar_drag;
 mod popover;
 mod popup;
 mod port_link;

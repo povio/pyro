@@ -97,6 +97,9 @@ use crate::style::{CheckVisibilityOptions, ComputedStyle, Display, Position, Scr
 use crate::viewport_meta::{MetaViewport, MobileMetrics, MobileViewport};
 use style::values::specified::box_::PositionProperty;
 
+mod scrollbar;
+pub use scrollbar::{ScrollbarHit, ScrollbarPart};
+
 /// A DOMRect's values.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Rect {
@@ -324,6 +327,8 @@ pub struct Layout {
     snapped_pushed: std::cell::RefCell<Vec<(u64, (bool, bool))>>,
     /// Counts the changes of `snapped`; `snapped_pushed_at` is the count `snapped_pushed` was built at.
     snapped_generation: u64,
+    /// Snapping is held off for scroll writes ([`Self::set_snap_suspended`]): a scrollbar drag.
+    snap_suspended: bool,
     snapped_pushed_at: std::cell::Cell<Option<u64>>,
     /// The stuck sticky boxes last told to the geometry source ([`Self::stuck_keys`]), and the
     /// observation stamp they were looked for at ([`Self::push_stuck`]).
@@ -670,6 +675,7 @@ impl Layout {
             scroll_anchor_carry: FxHashMap::default(),
             snapped: FxHashMap::default(),
             snapped_generation: 0,
+            snap_suspended: false,
             snapped_pushed_at: std::cell::Cell::new(None),
             stuck_pushed: Default::default(),
             stuck_pushed_at: std::cell::Cell::new(None),
@@ -3790,6 +3796,9 @@ impl Layout {
         ty: Option<i64>,
         dir: Option<[i64; 2]>,
     ) -> (Option<i64>, Option<i64>) {
+        if self.snap_suspended {
+            return (tx, ty);
+        }
         let (x, y, mut chosen) = self.snap_positions(dom, scroller, current, tx, ty, None, dir);
         if let Some(d) = dir {
             let prior = self.snapped.get(&scroller).copied().unwrap_or([None, None]);

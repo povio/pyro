@@ -412,6 +412,8 @@ pub struct PageDom {
     pub(crate) hover_trail: RefCell<crate::input::HoverTrail>,
     press_target: Cell<Option<NodeId>>,
     pub(crate) pressed_pseudo: Cell<Option<pyro_dom::geometry::GeneratedHit>>,
+    /// The scrollbar thumb drag in progress ([`crate::scrollbar_drag`]).
+    pub(crate) scrollbar_drag: Cell<Option<crate::scrollbar_drag::Drag>>,
     /// The `pointerdown` of the press in progress was canceled: its
     /// compatibility mouse events (moves while down, `mouseup`) are not
     /// sent, as in Chromium; a canceled `pointerup` suppresses nothing.
@@ -1273,6 +1275,7 @@ impl PageDom {
             hover_trail: RefCell::new(Default::default()),
             press_target: Cell::new(None),
             pressed_pseudo: Cell::new(None),
+            scrollbar_drag: Cell::new(None),
             compat_mouse_suppressed: Cell::new(false),
             drag_candidate: Cell::new(None),
             text_drag: Cell::new(None),

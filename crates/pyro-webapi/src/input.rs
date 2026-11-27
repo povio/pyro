@@ -3813,6 +3813,9 @@ fn dispatch_mouse_inner(
         _ => None,
     };
     let target = captured.unwrap_or(hit);
+    // pyro: a press on a classic scrollbar part, and the moves and release of the thumb drag it
+    // starts, scroll (`scrollbar_drag.rs`); the press takes no focus, selection or click.
+    let on_scrollbar = touch.is_none() && crate::scrollbar_drag::input(page, kind, m, target);
     // pyro: and, for a left release, the `::scroll-button()` of the target under the pointer (from
     // the same synced geometry: the click's default action needs no other).
     let release = matches!(kind, MouseKind::Released) && m.button == MouseButton::Left && touch.is_none();
@@ -3949,6 +3952,10 @@ fn dispatch_mouse_inner(
                         fire(page, k, &ev);
                     }
                 }
+                return Ok(None);
+            }
+            if on_scrollbar {
+                note_buttons(page, m);
                 return Ok(None);
             }
             page.set_press_target(Some(target));
