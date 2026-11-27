@@ -2782,6 +2782,18 @@ pub enum MouseButton {
 }
 
 impl MouseButton {
+    /// The `MouseEvent.buttons` bit of this button.
+    fn mask(self) -> u16 {
+        match self {
+            MouseButton::None => 0,
+            MouseButton::Left => 1,
+            MouseButton::Right => 2,
+            MouseButton::Middle => 4,
+            MouseButton::Back => 8,
+            MouseButton::Forward => 16,
+        }
+    }
+
     fn dom_button(self) -> i16 {
         match self {
             MouseButton::Left | MouseButton::None => 0,
@@ -2871,6 +2883,30 @@ fn fire_mouse(
     let ev = mouse_event(page, iface, ty, m, cancelable);
     ev.fields.borrow_mut().pseudo_hit = hit.map(|hit| (target, hit));
     fire(page, target, &ev)
+}
+
+/// The trusted `pointermove` of a mouse. `button` is `None` for a plain move (`button` -1) and
+/// the changed button for a chorded press or release (Pointer Events: another button going down
+/// or up while one stays down is a `pointermove` carrying that button, not a down or up).
+fn fire_pointer_move(
+    page: &Rc<PageDom>,
+    target: TargetKey,
+    m: &MouseInput,
+    button: Option<i16>,
+    hit: Option<pyro_dom::geometry::GeneratedHit>,
+) {
+    if crate::target::unheard(page, "pointermove") {
+        return;
+    }
+    let ev = mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true);
+    {
+        let mut f = ev.fields.borrow_mut();
+        if let Some(b) = button {
+            f.button = b;
+        }
+        f.pseudo_hit = hit.map(|hit| (target, hit));
+    }
+    fire(page, target, &ev);
 }
 
 /// Whether `node` is a disabled form control or inside one (a button, input, select or
@@ -3275,7 +3311,7 @@ fn dispatch_mouse_inner(
     match kind {
         MouseKind::Moved => {
             if touch.is_none() {
-                fire_mouse(page, tkey, EventInterface::PointerEvent, "pointermove", m, true, pseudo);
+                fire_pointer_move(page, tkey, m, None, pseudo);
             }
             if !(page.compat_mouse_suppressed.get() && m.buttons != 0) {
                 fire_mouse(page, tkey, EventInterface::MouseEvent, "mousemove", m, true, pseudo);
@@ -3294,7 +3330,11 @@ fn dispatch_mouse_inner(
             if m.button != MouseButton::Right {
                 crate::popover::light_dismiss(page, target, m.x, m.y, true);
             }
-            if touch.is_none() {
+            // Another button pressed while one is already down (a chord) is a `pointermove`
+            // carrying that button, not a `pointerdown`; the compatibility `mousedown` still fires
+            // (Pointer Events "chorded button interactions").
+            let chorded = touch.is_none() && m.buttons & !m.button.mask() != 0;
+            if touch.is_none() && !chorded {
                 let mut c = page.mouse_capture.get();
                 c.buttons_down = true;
                 page.mouse_capture.set(c);
@@ -3302,11 +3342,32 @@ fn dispatch_mouse_inner(
             // Any button's press activates `:active`, as in Chrome (WPT css/selectors
             // `active-observable`: right and middle presses too).
             set_active(page, page.document(), Some(target));
-            let pd = touch.is_some() || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true, pseudo);
+            let pd = if chorded {
+                fire_pointer_move(page, tkey, m, Some(m.button.dom_button()), pseudo);
+                // A pointermove cannot suppress the compatibility mouse events; a canceled
+                // pointerdown of the first button keeps suppressing them for the whole chord.
+                !page.compat_mouse_suppressed.get()
+            } else {
+                touch.is_some() || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true, pseudo)
+            };
             let md = !pd
                 || in_disabled_control(page, target)
                 || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true, pseudo);
-            page.compat_mouse_suppressed.set(!pd);
+            if !chorded {
+                page.compat_mouse_suppressed.set(!pd);
+            }
+            if chorded {
+                // The first button's press stays the one a click is measured from.
+                note_buttons(page, m);
+                if m.button == MouseButton::Right && !page.is_disposed() {
+                    if let Some(k) = key_of(page, target) {
+                        let ev = mouse_event(page, EventInterface::PointerEvent, "contextmenu", m, true);
+                        ev.state.borrow_mut().composed = true;
+                        fire(page, k, &ev);
+                    }
+                }
+                return Ok(None);
+            }
             page.set_press_target(Some(target));
             remember_press(page, target);
             page.pressed_pseudo.set(pseudo);
@@ -3399,8 +3460,16 @@ fn dispatch_mouse_inner(
             }
             page.drag_candidate.set(None);
             page.text_drag.set(None);
-            set_active(page, page.document(), None);
-            if touch.is_none() {
+            // A release while another button stays down is a `pointermove` carrying the released
+            // button: no `pointerup`, the pointer capture stays, and the click goes with the last
+            // release.
+            let chorded = touch.is_none() && m.buttons != 0;
+            if !chorded {
+                set_active(page, page.document(), None);
+            }
+            if chorded {
+                fire_pointer_move(page, tkey, m, Some(m.button.dom_button()), pseudo);
+            } else if touch.is_none() {
                 fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerup", m, true, pseudo);
                 // Implicit release right after pointerup: lostpointercapture
                 // before the compatibility mouseup and the click.
@@ -3416,15 +3485,16 @@ fn dispatch_mouse_inner(
             // Only a canceled pointerdown holds back the mouseup (an app's
             // pointerup handler that calls preventDefault does not).
             // (No mouseup, no mouseup default handling: nor a pick.)
-            let mouseup_ok = !page.compat_mouse_suppressed.replace(false)
+            let suppressed = if chorded { page.compat_mouse_suppressed.get() } else { page.compat_mouse_suppressed.replace(false) };
+            let mouseup_ok = !suppressed
                 && (in_disabled_control(page, target)
                     || fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo));
             // A release on an option of a customizable select's open picker picks it.
             if mouseup_ok && m.button == MouseButton::Left && !page.is_disposed() {
                 select_picker_option_release(page, target);
             }
-            let pressed = page.take_press_target();
-            let pressed_pseudo = page.pressed_pseudo.take();
+            let pressed = if chorded { None } else { page.take_press_target() };
+            let pressed_pseudo = if chorded { None } else { page.pressed_pseudo.take() };
             // click targets the common ancestor of press and release targets;
             // under capture, the capture target (as in Chrome).
             let click_target = match pressed {
