@@ -4086,18 +4086,7 @@ impl Browser {
     fn add_import_map(&mut self, page: FrameKey, info: &pyro_dom::script::ScriptInfo, base: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
-        // Spec: an external import map is an error event; there is no fetch.
-        if info.src.is_some() {
-            scope.console_warn("External import maps are not supported: <script type=\"importmap\"> ignored its src.");
-            return;
-        }
-        match scope.add_import_map(&info.inline_text, base) {
-            Ok(warnings) => warnings.iter().for_each(|w| scope.console_warn(&format!("Import map: {w}"))),
-            Err(JsError::Unsupported(what)) => {
-                scope.console_warn(&format!("Ignored <script type=\"importmap\">: {what}"))
-            }
-            Err(e) => scope.report_exception(&e),
-        }
+        register_import_map(&scope, info, base);
     }
 
     /// Runs a script the network parser reached with the parser lent to the
@@ -4619,6 +4608,21 @@ fn graph_loaded(
     });
 }
 
+/// Registers the import map of the script `info` in `scope`'s realm (HTML "register an import
+/// map"); its problems go to the console or `error` reporting.
+fn register_import_map(scope: &pyro_js::Scope<'_>, info: &pyro_dom::script::ScriptInfo, base: &str) {
+    // Spec: an external import map is an error event; there is no fetch.
+    if info.src.is_some() {
+        scope.console_warn("External import maps are not supported: <script type=\"importmap\"> ignored its src.");
+        return;
+    }
+    match scope.add_import_map(&info.inline_text, base) {
+        Ok(warnings) => warnings.iter().for_each(|w| scope.console_warn(&format!("Import map: {w}"))),
+        Err(JsError::Unsupported(what)) => scope.console_warn(&format!("Ignored <script type=\"importmap\">: {what}")),
+        Err(e) => scope.report_exception(&e),
+    }
+}
+
 /// "Prepare the script element" for a script the parser did not insert
 /// (`PageHooks::script_connected`, a post-connection step), before the DOM
 /// call that connected it (or gave it its text or `src`) returns: an inline
@@ -4677,6 +4681,25 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
     let (text, line) = {
         let Ok(mut dom) = bindings.dom.try_borrow_mut() else { return };
         let _ = dom.mark_script_started(node);
+        // An inline import map is registered as the script is prepared, before the inserting call
+        // returns (HTML "prepare the script element": "register an import map"): an `import()`
+        // right after the insertion already sees it. Its CSP inline check is the other scripts'.
+        if info.src.is_none() && info.kind == ScriptKind::ImportMap {
+            let base = dom
+                .node_document(node)
+                .ok()
+                .and_then(|doc| dom.document_base_url(doc).ok().map(str::to_owned))
+                .unwrap_or_else(|| frame.base_url.clone());
+            drop(dom);
+            let nonce = pyro_webapi::csp::element_nonce(&bindings, node);
+            if !pyro_webapi::csp::inserted_script_allowed(&bindings, &nonce, &info.inline_text, node) {
+                return;
+            }
+            if let Ok(scope) = realm.scope() {
+                register_import_map(&scope, &info, &base);
+            }
+            return;
+        }
         if info.src.is_some() || info.kind != ScriptKind::Classic || info.nomodule {
             let document = bindings.document();
             let _ = dom.stash_prepared_script(node, info, document);
