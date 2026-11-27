@@ -497,6 +497,9 @@ struct Frame {
 
 thread_local! {
     static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
+    /// The address of a local of the outermost running reaction loop ([`run_reactions`] at depth 0):
+    /// how much native stack the nested ones have used is measured from it.
+    static REACTION_STACK_BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn run_document_reactions(page: &Rc<PageDom>) {
@@ -534,7 +537,14 @@ fn run_document_reactions(page: &Rc<PageDom>) {
             return;
         }
         let below = FRAMES.with(|f| f.borrow().len());
-        let overflow = below >= MAX_REACTION_NESTING;
+        let marker = 0u8;
+        let here = std::ptr::addr_of!(marker) as usize;
+        if below == 0 {
+            REACTION_STACK_BASE.with(|b| b.set(here));
+        }
+        // Each level is a native recursion (the callback, the DOM call it makes, this loop):
+        // past the depth cap, or the stack those levels took, the next callback throws.
+        let overflow = below >= MAX_REACTION_NESTING || REACTION_STACK_BASE.with(|b| b.get().abs_diff(here)) > MAX_REACTION_STACK_BYTES;
         FRAMES.with(|f| f.borrow_mut().push(Frame { page: page.clone(), items: batch.into() }));
         struct Pop(usize);
         impl Drop for Pop {
@@ -598,7 +608,18 @@ fn reaction_has_callback(page: &Rc<PageDom>, el: NodeId, reaction: &CustomReacti
 
 /// How deep reactions nest (see [`run_reactions`]) before a callback throws
 /// a `RangeError` instead of running, as on a browser's stack overflow.
-const MAX_REACTION_NESTING: usize = 256;
+///
+/// Each level is native frames too (JavaScriptCore's call, the binding, the DOM mutation, the
+/// reaction loop: a few KB in a release build, several times that in a debug one), and the smallest
+/// stack a page's thread can have is a 2 MB spawned one (the browser, render and worker threads
+/// have 8 MB; the test harness's are 2 MB): 64 levels is a fraction of it at those frame sizes,
+/// and [`MAX_REACTION_STACK_BYTES`] ends the nesting by the stack it actually took, whatever the
+/// frames cost, before it could reach the end of that stack.
+const MAX_REACTION_NESTING: usize = 64;
+
+/// The native stack the nested reaction loops may take, measured from the outermost one (what
+/// is below it on the stack is JavaScriptCore's own guard's concern), under half of the smallest stack.
+const MAX_REACTION_STACK_BYTES: usize = 768 * 1024;
 
 /// Calls the callback of one reaction on `el`. A move without
 /// `connectedMoveCallback` calls `disconnectedCallback` and then
