@@ -2953,6 +2953,8 @@ impl Dom {
         if !self.live_iterators.is_empty() {
             self.iterators_before_remove(node);
         }
+        // The moved subtree stays observed through its old ancestors until the observers are notified.
+        self.add_transient_observers(old_parent, node);
         self.unlink(node);
         self.bump_tree();
         self.note(Change::Removed(old_parent, node, old_next));
@@ -4379,17 +4381,8 @@ impl Dom {
             NodeKind::Attr(_) => self.set_attr_node_value(id, value),
             k if k.char_data().is_some() => self.replace_data(id, 0, u32::MAX, value),
             _ => {
-                // Its one text child holds this text already: nothing to
-                // do, as in Chrome (no records, the child stays; the spec's
-                // "replace all" would swap it for an equal one).
-                let first = self.n(i).first_child;
-                if !value.is_empty()
-                    && first != NIL
-                    && self.n(first).next == NIL
-                    && matches!(&self.n(first).kind, NodeKind::Text(s) if s == value)
-                {
-                    return Ok(());
-                }
+                // "String replace all": an element whose one text child holds this text already gets a
+                // new text node and the records for it, as in Chrome.
                 let t = if value.is_empty() {
                     None
                 } else {

@@ -66,6 +66,8 @@ struct Registration {
 #[derive(Default)]
 struct Observer {
     alive: bool,
+    /// Creation order (ids are reused): "notify mutation observers" runs the callbacks in it.
+    seq: u64,
     records: Vec<MutationRecord>,
     /// Nodes holding (non-transient or transient) registrations for us.
     nodes: Vec<u32>,
@@ -76,6 +78,8 @@ pub(crate) struct MutationState {
     regs: FxHashMap<u32, Vec<Registration>>,
     observers: Vec<Observer>,
     free: Vec<u32>,
+    /// The creation sequence number of the last observer.
+    last_seq: u64,
     /// Observers with pending records awaiting the notify microtask.
     pending: Vec<u32>,
     /// Count of queued-record references per node index.
@@ -114,7 +118,8 @@ impl MutationState {
 impl Dom {
     pub fn create_observer(&mut self) -> ObserverId {
         let m = &mut self.mutation;
-        let o = Observer { alive: true, ..Default::default() };
+        m.last_seq += 1;
+        let o = Observer { alive: true, seq: m.last_seq, ..Default::default() };
         let id = match m.free.pop() {
             Some(i) => {
                 m.observers[i as usize] = o;
@@ -172,9 +177,29 @@ impl Dom {
             // whose source is this node.
             existing.opts = opts;
             let observer = obs.0;
-            for list in m.regs.values_mut() {
-                list.retain(|r| !(r.observer == observer && r.transient_source == t));
+            // The transient registrations whose source is this node, and those made from them
+            // (a node removed from a removed subtree): all stop observing.
+            let mut sources = vec![t];
+            let mut i = 0;
+            while i < sources.len() {
+                let source = sources[i];
+                i += 1;
+                let holders: Vec<u32> = m
+                    .regs
+                    .iter()
+                    .filter(|(_, list)| list.iter().any(|r| r.observer == observer && r.transient_source == source))
+                    .map(|(&node, _)| node)
+                    .collect();
+                for node in holders {
+                    if let Some(list) = m.regs.get_mut(&node) {
+                        list.retain(|r| !(r.observer == observer && r.transient_source == source));
+                    }
+                    if !sources.contains(&node) {
+                        sources.push(node);
+                    }
+                }
             }
+            m.regs.retain(|_, list| !list.is_empty());
         } else {
             regs.push(Registration { observer: obs.0, opts, transient_source: NIL });
             o.nodes.push(t);
@@ -230,7 +255,12 @@ impl Dom {
     /// the notify microtask, then for each observer: `clear_transient`,
     /// `take_records`, and invoke the callback if non-empty.
     pub fn take_pending_observers(&mut self) -> Vec<ObserverId> {
-        std::mem::take(&mut self.mutation.pending).into_iter().map(ObserverId).collect()
+        // "Notify mutation observers": the observers are notified in the order they were created,
+        // not the order in which they got their first record.
+        let mut pending = std::mem::take(&mut self.mutation.pending);
+        let observers = &self.mutation.observers;
+        pending.sort_by_key(|&id| observers.get(id as usize).map_or(u64::MAX, |o| o.seq));
+        pending.into_iter().map(ObserverId).collect()
     }
     /// Snapshot only newly queued observer ids for binding lifetime roots.
     pub fn pending_observers_from(&self, start: usize) -> Vec<ObserverId> {
@@ -309,6 +339,11 @@ impl Dom {
                 if !o.nodes.contains(&node) {
                     o.nodes.push(node);
                 }
+            }
+            // "Remove": the mutation observer microtask is queued, so that the notify step
+            // drops this observer's transient registrations even if no record is queued.
+            if !m.pending.contains(&r.observer) {
+                m.pending.push(r.observer);
             }
         }
         m.regs.entry(node).or_default().extend(add);
