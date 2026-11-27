@@ -256,8 +256,10 @@ fn view_ranges(doc: &BaseDocument, subject: NodeId, resolved: &Resolved, scroll:
         }
         None => 0.0,
     };
-    let start = subject_start - port_start;
-    let end = start + subject_size;
+    let (start, end) = (subject_start - port_start, subject_start - port_start + subject_size);
+    // pyro: from a scroll origin at the right edge the subject's edges count from there.
+    let from_right = !resolved.vertical && origin_at_right(doc, resolved.source.and_then(|id| doc.get_node(id)));
+    let (start, end) = if from_right { (scroll.port - end, scroll.port - start) } else { (start, end) };
     let (inset_start, inset_end) = match &resolved.inset {
         Some(inset) => {
             // An `auto` inset is the scroll container's `scroll-padding` on that side: the snapport
@@ -277,7 +279,7 @@ fn view_ranges(doc: &BaseDocument, subject: NodeId, resolved: &Resolved, scroll:
     // pyro: a sticky subject (or one in a sticky box) moves while it is stuck: its start edge is
     // `start + shift(scroll offset)`, and each range edge is where that moving edge meets the
     // port's (Scroll-driven Animations 1 § "view progress timeline", Chrome's sticky ranges).
-    if let Some(sticky) = sticky_travel(doc, subject, resolved, port, port_start) {
+    if let Some(sticky) = sticky_travel(doc, subject, resolved, port, port_start).filter(|_| !from_right) {
         let edges = (
             sticky.first(start, port - inset_end),
             sticky.first(start, port - inset_end - subject_size),
@@ -588,6 +590,17 @@ fn declared(doc: &BaseDocument, el: &Node, name: &str) -> Option<Option<Resolved
     None
 }
 
+/// Whether the horizontal scroll origin of `scroller` (`None`: the viewport) is its right edge:
+/// `direction: rtl` in horizontal writing, `vertical-rl` blocks.
+fn origin_at_right(doc: &BaseDocument, scroller: Option<&Node>) -> bool {
+    match scroller {
+        Some(n) if doc.try_root_element().is_none_or(|root| root.id != n.id) => {
+            n.primary_styles().is_some_and(|s| crate::resolve::scrolls_leftward(s.writing_mode))
+        }
+        _ => doc.viewport_scrolls_leftward(),
+    }
+}
+
 /// Whether the axis is vertical for `node`'s writing mode.
 fn vertical(node: &Node, axis: ScrollAxis) -> bool {
     let horizontal_writing = node.primary_styles().is_none_or(|s| s.writing_mode.is_horizontal());
@@ -664,7 +677,9 @@ fn scroll_of(doc: &BaseDocument, source: Option<NodeId>, vertical: bool) -> Opti
                 Some((elements, _)) => elements.get(&id).copied().unwrap_or((0.0, 0.0)),
                 None => own,
             };
-            let offset = if vertical { page.1 } else { page.0 };
+            // pyro: a horizontal origin at the right edge (`direction: rtl`, `vertical-rl`) scrolls to
+            // negative offsets: progress counts from that origin (as the viewport's, below).
+            let offset = if vertical { page.1 } else if origin_at_right(doc, Some(n)) { -page.0 } else { page.0 };
             let (client, size) = if vertical {
                 (n.client_height() as f64, n.scroll_height() as f64)
             } else {
