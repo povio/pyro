@@ -358,7 +358,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     }
     fn append_based_on_parent_node(&self, element: &u32, prev_element: &u32, child: NodeOrText<u32>) {
         // A replaced element has no parent: the place it stands for is its position.
-        let has_parent = self.dom.with(|d| d.n(*element).parent != NIL) || self.forwarded(*element).is_some();
+        let has_parent = self.dom.with(|d| d.n(*element).parent != NIL) || (self.filter.is_some() && self.forwarded(*element).is_some());
         if has_parent {
             self.append_before_sibling(element, child);
         } else {
