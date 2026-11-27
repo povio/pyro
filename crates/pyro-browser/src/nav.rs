@@ -432,6 +432,16 @@ impl PageNav {
         self.state.borrow().url.clone()
     }
 
+    /// The step of the page's first (top-level) frame's entry that covers `current`: its last
+    /// entry at or before it. `current` when that frame has none, or is this one.
+    fn covering_step(&self, current: u64) -> u64 {
+        let members = self.joint.members.borrow();
+        let top = members.first().and_then(std::rc::Weak::upgrade);
+        let Some(top) = top.filter(|top| !std::ptr::eq(Rc::as_ptr(top), self)) else { return current };
+        let step = top.state.try_borrow().ok().and_then(|st| st.entries.iter().rev().find(|e| e.step <= current).map(|e| e.step));
+        step.unwrap_or(current)
+    }
+
     /// `history.length`: the steps of the page's joint session history.
     pub fn history_length(&self) -> usize {
         let members = self.joint.members();
@@ -619,7 +629,14 @@ impl PageNav {
             Some(current) if replaces => current.key,
             _ => st.next_entry_id(),
         };
-        let current_step = st.entries.get(st.index).map_or(self.joint.current.get(), |e| e.step);
+        let current_step = match st.entries.get(st.index) {
+            Some(e) => e.step,
+            // A frame's first (initial about:blank) entry joins the step of the page's top-level
+            // document that covers the current step, not a step a removed frame pushed (the
+            // current step stays at it, and a frame inserted since would otherwise add a step
+            // to `history.length`).
+            None => self.covering_step(self.joint.current.get()),
+        };
         let mut entry = Entry {
             url: entry_url.to_string(),
             state: None,
