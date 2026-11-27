@@ -280,6 +280,7 @@ where
     crate::canvas::define_globals(def);
     crate::media::define_globals(def);
     crate::media_source::define_globals(def);
+    crate::eme::define_globals(def);
     crate::webaudio::define_globals(def);
     crate::webnn::define_globals(def);
     def.getter("screen", |s, w| {
@@ -619,6 +620,7 @@ impl JsClass for Navigator {
             def.method(name, 2, protocol_handler);
         }
         def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
+        def.method("requestMediaKeySystemAccess", 2, |s, p, a| crate::eme::request_access(s, p, a.len(), a.get(0), a.get(1)));
     }
 }
 

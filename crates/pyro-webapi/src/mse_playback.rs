@@ -44,6 +44,23 @@ pub(super) struct Presentation {
     frame: Option<Frame>,
     audio: Option<(f64, pyro_media::audio::Decoded)>,
     decoder: Option<(usize, Rc<pyro_media::mse::Track>, pyro_media::audio::packet::PacketDecoder)>,
+    /// EME: the keys of the element's `MediaKeys`, which its Common Encryption samples decrypt with.
+    keys: Option<crate::eme::SharedKeys>,
+}
+
+/// The access unit of `sample` as the decoder takes it: a protected sample decrypted with the key of its
+/// key ID (`pyro_media::cenc`); `None` while that key is missing, or for ciphertext that does not parse.
+fn clear_data(sample: &pyro_media::mse::Sample, keys: Option<&crate::eme::SharedKeys>) -> Option<Bytes> {
+    let Some(enc) = sample.enc.as_deref().filter(|enc| !enc.is_clear()) else { return Some(sample.data.clone()) };
+    let key = keys?.borrow().key(&enc.kid)?;
+    pyro_media::cenc::decrypt(enc, &crate::eme::Aes::new(&key), &sample.data).map(Bytes::from)
+}
+
+/// Whether `sample` is protected and its key is not known: EME "waiting for key".
+fn lacks_key(sample: &pyro_media::mse::Sample, keys: Option<&crate::eme::SharedKeys>) -> bool {
+    sample.enc.as_deref().filter(|enc| !enc.is_clear()).is_some_and(|enc| {
+        !keys.is_some_and(|keys| keys.borrow().key(&enc.kid).is_some())
+    })
 }
 
 fn index_at(track: &TrackBuffer, t: f64) -> Option<usize> {
@@ -57,6 +74,31 @@ fn index_at(track: &TrackBuffer, t: f64) -> Option<usize> {
 }
 
 impl Presentation {
+    pub(super) fn set_keys(&mut self, keys: Option<crate::eme::SharedKeys>) {
+        self.keys = keys;
+        // What was decoded with the previous keys is stale.
+        self.frame = None;
+        self.audio = None;
+        self.decoder = None;
+    }
+
+    /// The protected sample presented at `t`, in either track, has no key: playback cannot proceed.
+    pub(super) fn key_missing(&self, t: f64) -> bool {
+        let tracks = self.video_buffer.iter().chain(self.audio_buffer.iter());
+        tracks.into_iter().any(|buffer| {
+            buffer.borrow().track_buffers().iter().any(|track| {
+                let samples = track.samples();
+                // Within the start fudge of the first buffered range the position precedes its first sample.
+                let at = index_at(track, t).or_else(|| {
+                    (0..samples.len())
+                        .filter(|&i| samples[i].sample.pts > t && samples[i].sample.pts - t < 1.0)
+                        .min_by(|&a, &b| samples[a].sample.pts.total_cmp(&samples[b].sample.pts))
+                });
+                at.is_some_and(|i| lacks_key(&samples[i].sample, self.keys.as_ref()))
+            })
+        })
+    }
+
     /// The configuration of the selected track at this presentation time. While
     /// waiting in a gap, retain the dimensions of the preceding coded picture.
     pub(super) fn dimensions(&self, time: f64) -> (u32, u32) {
@@ -94,7 +136,8 @@ impl Presentation {
                 for (j, s) in
                     samples.iter().enumerate().skip(start).take_while(|(_, s)| Rc::ptr_eq(&s.config, &target.config))
                 {
-                    decoded = decoder.decode(&s.sample.data, j as u64).ok()?.into_iter().find(|f| f.tag == i as u64);
+                    let data = clear_data(&s.sample, self.keys.as_ref())?;
+                    decoded = decoder.decode(&data, j as u64).ok()?.into_iter().find(|f| f.tag == i as u64);
                     if decoded.is_some() {
                         break;
                     }
@@ -138,7 +181,8 @@ impl Presentation {
                     if !Rc::ptr_eq(&s.config, c) {
                         continue;
                     }
-                    if let Ok(Some(p)) = decoder.decode((s.sample.pts * 1e6).round() as i64, s.sample.data.clone()) {
+                    let Some(data) = clear_data(&s.sample, self.keys.as_ref()) else { continue };
+                    if let Ok(Some(p)) = decoder.decode((s.sample.pts * 1e6).round() as i64, data) {
                         if let PacketAudio::Planar(pcm) = p.audio {
                             self.audio = Some((s.sample.pts, pcm));
                         }
@@ -160,6 +204,8 @@ pub(super) struct Attachment {
     pub(super) seekable: Vec<(f64, f64)>,
     pub(super) ended: bool,
     loaded_data: bool,
+    /// EME: `waitingforkey` was fired for the stall that is still going on.
+    waiting_key: bool,
 }
 
 impl Attachment {
@@ -172,6 +218,10 @@ impl Attachment {
             position
         };
         self.presentation.frame(position)
+    }
+
+    pub(super) fn reset_waiting_key(&mut self) {
+        self.waiting_key = false;
     }
 
     pub(super) fn detach(self) {
@@ -213,6 +263,7 @@ pub(super) fn attach(page: &Rc<PageDom>, node: NodeId, gen: u32, url: &str) -> O
             let ended = a.get(5).to_bool();
             let object = source.wrapper.get(s).as_object().ok_or(JsError::ContextDestroyed)?;
             let buffers = crate::media_source::presentation(s, object)?;
+            let encrypted = crate::media_source::take_encrypted(s, object)?;
             // The controller admits one video and one audio track across its
             // SourceBuffers. A multiplexed buffer can supply both.
             let video_buffer =
@@ -227,11 +278,12 @@ pub(super) fn attach(page: &Rc<PageDom>, node: NodeId, gen: u32, url: &str) -> O
             let mut source_failed = false;
             with(&p, node, |st| {
                 st.fold(t);
+                let keys = st.keys.clone();
                 let m = st.mse.as_mut().unwrap();
                 m.buffered = buffered;
                 m.seekable = seekable;
                 m.ended = ended;
-                m.presentation = Presentation { video_buffer, audio_buffer, ..Default::default() };
+                m.presentation = Presentation { video_buffer, audio_buffer, keys, ..Default::default() };
                 if duration != st.duration && !(duration.is_nan() && st.duration.is_nan()) {
                     st.duration = duration;
                     events.push("durationchange");
@@ -259,6 +311,10 @@ pub(super) fn attach(page: &Rc<PageDom>, node: NodeId, gen: u32, url: &str) -> O
                     events.push("error");
                 }
             });
+            // EME "initialization data encountered" (init segments carrying protection information).
+            for (init_data_type, init_data) in encrypted {
+                queue(&p, node, gen, move |p| crate::eme::fire_encrypted(p, node, init_data_type, &init_data));
+            }
             let initialized = events.contains(&"loadedmetadata");
             let truncated = events.contains(&"durationchange")
                 && peek(&p, node, |st| st.ready >= HAVE_METADATA && duration.is_finite() && st.position > duration);
@@ -292,6 +348,7 @@ pub(super) fn attach(page: &Rc<PageDom>, node: NodeId, gen: u32, url: &str) -> O
                 seekable: vec![],
                 ended: false,
                 loaded_data: false,
+                waiting_key: false,
             });
             st.network = NETWORK_LOADING;
         });
@@ -309,6 +366,7 @@ pub(super) fn attach(page: &Rc<PageDom>, node: NodeId, gen: u32, url: &str) -> O
 pub(super) fn refresh(p: &Rc<PageDom>, node: NodeId) {
     let t = now(p);
     let mut size_change = None;
+    let mut waiting_key = false;
     let Some((gen, old, ready, first, playing)) = with(p, node, |st| {
         let position = st.position_at(t);
         let m = st.mse.as_mut()?;
@@ -329,6 +387,12 @@ pub(super) fn refresh(p: &Rc<PageDom>, node: NodeId) {
         let first_start = m.buffered.first().map(|r| r.0);
         let covered = m.buffered.iter().any(|&(a, b)| a <= position && (position < b || m.ended && b == st.duration && position == b))
             || first_start.is_some_and(|a| position <= a && a < START_FUDGE && m.buffered[0].1 > a);
+        // EME: data is there but its key is not (a protected sample at the position): the element
+        // stays at HAVE_METADATA and fires `waitingforkey` until a session provides the key.
+        let blocked = covered && m.presentation.key_missing(position);
+        waiting_key = blocked && !m.waiting_key;
+        m.waiting_key = blocked;
+        let covered = covered && !blocked;
         let ready = if covered {
             if m.ended {
                 HAVE_ENOUGH_DATA
@@ -348,6 +412,9 @@ pub(super) fn refresh(p: &Rc<PageDom>, node: NodeId) {
     }) else {
         return;
     };
+    if waiting_key {
+        queue_event(p, node, gen, "waitingforkey");
+    }
     if let Some((width, height)) = size_change {
         let size = (width > 0 && height > 0).then_some((f64::from(width), f64::from(height)));
         p.dom.borrow_mut().set_natural_size(node, size);

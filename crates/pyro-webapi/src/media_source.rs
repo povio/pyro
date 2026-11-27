@@ -58,6 +58,19 @@ pub(crate) fn presentation(s: &Scope<'_>, source: Object<'_>) -> JsResult<Buffer
     Ok(buffers)
 }
 
+/// The protection initialization data (`encrypted` events) of init segments appended to this source's
+/// buffers since the last call: `(initDataType, initData)`.
+pub(crate) fn take_encrypted(s: &Scope<'_>, source: Object<'_>) -> JsResult<Vec<(&'static str, Vec<u8>)>> {
+    let buffers = presentation(s, source)?;
+    let mut found = Vec::new();
+    for buffer in buffers {
+        for e in buffer.borrow_mut().take_encrypted() {
+            found.push((e.init_data_type, e.init_data));
+        }
+    }
+    Ok(found)
+}
+
 fn source_object<'s>(s: &Scope<'s>, d: &MediaSourceData) -> JsResult<Object<'s>> {
     crate::target::target_object(s, &d.target.page, d.target.key)?.ok_or(JsError::ContextDestroyed)
 }

@@ -173,6 +173,8 @@ struct MediaState {
     /// HTML "blocked on its media element's pending text tracks": the load
     /// of this generation stopped at HAVE_CURRENT_DATA until they settle.
     blocked_on_tracks: Option<u32>,
+    /// EME: the `MediaKeys` set on this element (`setMediaKeys`), whose sessions' keys decrypt its samples.
+    keys: Option<crate::eme::SharedKeys>,
 }
 
 /// A `<video>`'s resource, kept to decode frames from: the bytes until the
@@ -240,6 +242,7 @@ impl Default for MediaState {
             presented: None,
             presented_frames: 0,
             blocked_on_tracks: None,
+            keys: None,
         }
     }
 }
@@ -1557,6 +1560,38 @@ fn internal_pause(page: &Rc<PageDom>, node: NodeId) {
     }
 }
 
+/// EME `setMediaKeys` (after eme.js checked the argument): the element decrypts with `keys` from now on and
+/// attempts to resume playback it was blocked on.
+pub(crate) fn set_media_keys(page: &Rc<PageDom>, node: NodeId, keys: Option<crate::eme::SharedKeys>) {
+    let has_mse = with(page, node, |st| {
+        st.keys = keys;
+        let keys = st.keys.clone();
+        if let Some(m) = st.mse.as_mut() {
+            m.presentation.set_keys(keys);
+            m.reset_waiting_key();
+        }
+        st.mse.is_some()
+    });
+    if has_mse {
+        mse_playback::refresh(page, node);
+    }
+}
+
+/// A session of `store` learned or lost keys: elements blocked on a missing key attempt to resume.
+pub(crate) fn keys_changed(page: &Rc<PageDom>, store: &crate::eme::SharedKeys) {
+    let nodes: Vec<NodeId> = page
+        .media
+        .elements
+        .borrow()
+        .iter()
+        .filter(|(_, st)| st.mse.is_some() && st.keys.as_ref().is_some_and(|k| Rc::ptr_eq(k, store)))
+        .map(|(node, _)| *node)
+        .collect();
+    for node in nodes {
+        mse_playback::refresh(page, node);
+    }
+}
+
 fn finite(v: Value<'_>, what: &str) -> JsResult<f64> {
     let n = v.to_number()?;
     if !n.is_finite() {
@@ -2010,6 +2045,21 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
     def.method("captureStream", 0, |s, n, _a| {
         let wrapper = node_value(s, n.page(), Some(n.id))?;
         crate::media_stream::stream_helper(s, n.page(), "captureElement", &[wrapper])
+    });
+    def.accessor(
+        "onencrypted",
+        |s, n| crate::target::event_handler(s, &n.target, "encrypted"),
+        |s, n, v| crate::target::set_event_handler(s, &n.target, "encrypted", v),
+    );
+    def.accessor(
+        "onwaitingforkey",
+        |s, n| crate::target::event_handler(s, &n.target, "waitingforkey"),
+        |s, n, v| crate::target::set_event_handler(s, &n.target, "waitingforkey", v),
+    );
+    def.getter("mediaKeys", |s, n| crate::eme::media_keys(s, n.page(), n.id));
+    def.method("setMediaKeys", 1, |s, n, a| {
+        let page = page_rc(n);
+        crate::eme::set_media_keys(s, &page, n.id, a.get(0), a.len())
     });
     def.method("load", 0, |s, n, _a| {
         let page = page_rc(n);

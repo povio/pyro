@@ -72,6 +72,7 @@ mod media_devices;
 mod media_stream;
 mod media_session;
 mod media_capabilities;
+mod eme;
 pub mod pressure;
 mod credentials;
 pub mod credentialless;
