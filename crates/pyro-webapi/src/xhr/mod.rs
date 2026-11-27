@@ -390,7 +390,11 @@ fn define_members<C: JsClass<Data = XhrData, Parent = EventTarget>>(def: &mut Cl
     });
     def.method("getAllResponseHeaders", 0, |s, d, _| {
         let mut out = String::new();
-        for (name, value) in d.state.headers() {
+        // The spec sorts by the byte order of the lowercased name; Chrome (and xhr/getallresponseheaders.htm,
+        // "__custom" after "foo-test") orders by the uppercased one, which puts '_' after the letters.
+        let mut headers = d.state.headers();
+        headers.sort_by_key(|(name, _)| name.to_ascii_uppercase());
+        for (name, value) in headers {
             out.push_str(&name);
             out.push_str(": ");
             out.push_str(&value);

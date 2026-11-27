@@ -281,7 +281,9 @@ export function startProxy() {
       return;
     }
     // After the head went out the response cannot be ended cleanly while the upstream may still be piped into it.
-    up.on('error', () => { if (res.headersSent) res.destroy(); else { res.writeHead(502); res.end(); } });
+    // An upstream response Node's strict parser refuses (a NUL or another control character in a header value: HPE_*)
+    // is the browser's network error too (fetch/api/basic/header-value-null-byte, which a 502 answer would resolve).
+    up.on('error', (e) => { if (res.headersSent || String(e && e.code).startsWith('HPE_')) res.destroy(); else { res.writeHead(502); res.end(); } });
     // A response that ended (the upstream failed, the browser left) while the upstream still sends: without a
     // listener the "write after end" is an uncaught exception.
     res.on('error', () => up.destroy());
