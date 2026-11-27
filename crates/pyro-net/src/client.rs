@@ -862,6 +862,18 @@ impl NetClient {
     pub fn prefetch_cache_cleared_since(&self, origin: &str, since: Instant) -> bool {
         self.inner.shared.prefetch_clears.lock().unwrap().iter().any(|(o, at)| o == origin && *at >= since)
     }
+    /// Whether the jar holds a cookie that a navigation to `url` could send, whatever its
+    /// `SameSite` (an inclusive check: Chrome refuses a cross-site speculation-rules prefetch of a
+    /// URL the user has any cookie for, as its credential-less response would stand in for the
+    /// logged-in page).
+    pub fn has_cookies_for(&self, url: &Url) -> bool {
+        let mut jar = self.inner.cookies.lock().unwrap();
+        if jar.is_empty() {
+            return false;
+        }
+        let partition = crate::cookies::partition_key(url);
+        jar.header_for_context(url, SiteContext::SameSite, crate::cookies::now_secs(), partition.as_deref(), false).is_some()
+    }
     pub fn config(&self) -> &NetConfig {
         &self.inner.shared.config
     }

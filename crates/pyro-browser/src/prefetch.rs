@@ -44,8 +44,10 @@
 //! prefetch` (on every redirect hop), `Sec-Fetch-Dest: document`, `Sec-Fetch-Mode: navigate`, no
 //! `Sec-Fetch-User`, the navigation `Accept`, the initiator document's URL as referrer under the
 //! rule's `referrer_policy` (else the document's), cookies and client hints as a navigation of
-//! the same site has them. A CROSS-SITE prefetch sends no cookies and no non-default client hints
-//! (the cookies its response sets are stored, as they take effect when the navigation uses it).
+//! the same site has them. A CROSS-SITE prefetch sends no cookies and no non-default client hints,
+//! and is not made at all when the jar holds a cookie a navigation to the URL would send (Chrome:
+//! its credential-less response must not stand in for a logged-in page); a claim checks again, as
+//! cookies may have appeared since, and drops the entry.
 //! It goes through the context's HTTP cache like any navigation (a fresh cached response answers
 //! it, and its response is stored) but its result is kept in this cache, not in the HTTP cache's
 //! hands: a response that is not 2xx is dropped, never served.
@@ -108,6 +110,9 @@ struct Entry {
     page: PageId,
     initiator_loader: String,
     initiator: Url,
+    /// The URL is of another site than the initiator: the request carried no cookies, so the
+    /// response may only stand in for a navigation of a user who has none for it.
+    cross_site: bool,
     set: RuleSetId,
     /// The requested URL without fragment: the only one a navigation matches, up to `nvs`.
     url: Url,
@@ -300,6 +305,11 @@ impl Browser {
         if cross_site && self.navigation_service_worker_controls(page.page, &url) {
             return;
         }
+        // Chrome refuses a cross-site prefetch of a URL the user has cookies for: its response,
+        // made without them, would be served to a navigation that sends them.
+        if cross_site && self.prefetch_has_cookies(context, &[&url]) {
+            return;
+        }
         self.sweep_prefetches();
         if !self.prefetches.attempted.insert((page.page, frame.loader_id.0.clone(), url.to_string())) {
             return;
@@ -314,6 +324,7 @@ impl Browser {
             page: page.page,
             initiator_loader: frame.loader_id.0.clone(),
             initiator,
+            cross_site,
             set: candidate.set,
             url: url.clone(),
             nvs,
@@ -395,6 +406,13 @@ impl Browser {
         urls.iter().any(|u| net.prefetch_cache_cleared_since(&u.origin().ascii_serialization(), since))
     }
 
+    /// Whether the cookie jar of `context` holds a cookie a navigation to any of `urls` would
+    /// send (see `NetClient::has_cookies_for`).
+    fn prefetch_has_cookies(&self, context: ContextId, urls: &[&Url]) -> bool {
+        let Some(net) = self.context_net(context) else { return false };
+        urls.iter().any(|u| net.has_cookies_for(u))
+    }
+
     /// The prefetch `id` got its result.
     fn prefetch_finished(&mut self, id: u64, result: Result<Resource, String>) {
         let Some(at) = self.prefetches.find(id) else { return };
@@ -411,7 +429,8 @@ impl Browser {
             let final_url = Url::parse(&r.url).ok();
             let mut urls = vec![&entry.url];
             urls.extend(final_url.as_ref());
-            !self.prefetch_cleared(entry.context, entry.started, &urls)
+            // A cross-site response was made without cookies: not for a user who has some now.
+            !self.prefetch_cleared(entry.context, entry.started, &urls) && !(entry.cross_site && self.prefetch_has_cookies(entry.context, &urls))
         });
         match (waiter, resource) {
             (Some((target, waiter)), resource) => {
@@ -470,6 +489,20 @@ impl Browser {
             self.prefetches.entries.remove(at);
             return None;
         }
+        // Cookies may have appeared since the prefetch was made without them (cross-site): the
+        // entry is dropped and the navigation goes to the network.
+        if entry.cross_site {
+            let mut urls = vec![&entry.url];
+            let final_url = match &entry.state {
+                State::Ready(resource) => Url::parse(&resource.url).ok(),
+                State::Pending { .. } => None,
+            };
+            urls.extend(final_url.as_ref());
+            if self.prefetch_has_cookies(entry.context, &urls) {
+                self.prefetches.entries.remove(at);
+                return None;
+            }
+        }
         if let State::Pending { .. } = entry.state {
             return Some(Claim::Pending(entry.id, started));
         }
@@ -524,6 +557,7 @@ mod tests {
                 page: PageId(1),
                 initiator_loader: String::new(),
                 initiator: Url::parse("https://a.test/").unwrap(),
+                cross_site: false,
                 set: RuleSetId(0),
                 url: Url::parse("https://a.test/x").unwrap(),
                 nvs: NoVarySearch::default(),
