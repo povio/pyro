@@ -1734,32 +1734,7 @@ impl JsClass for HtmlElement {
         reflect_str!(def, "accessKey", "accesskey");
         reflect_enum!(def, "inputMode", "inputmode", INPUT_MODE);
         reflect_enum!(def, "enterKeyHint", "enterkeyhint", ENTER_KEY_HINT);
-        // The nonce IDL attribute reads the [[CryptographicNonce]] slot; setting
-        // it never touches the content attribute.
-        def.accessor(
-            "nonce",
-            |s, n| {
-                let dom = n.page().dom.borrow();
-                let attr = dom.get_attribute(n.id, "nonce").js()?;
-                if let Some(nonce) = n.page().nonce(n.id, attr) {
-                    return Ok(s.string(&nonce));
-                }
-                // Connecting to a document with a header-delivered CSP emptied
-                // the attribute: the slot still holds the nonce it had.
-                if attr == Some("") {
-                    if let Some(hidden) = dom.hidden_nonce(n.id) {
-                        return Ok(s.string(&n.page().nonce(n.id, Some(hidden)).unwrap_or_else(|| hidden.to_owned())));
-                    }
-                }
-                Ok(s.string(attr.unwrap_or("")))
-            },
-            |_s, n, v| {
-                let value = dom_string(v)?;
-                let dom = n.page().dom.borrow();
-                n.page().set_nonce(n.id, dom.get_attribute(n.id, "nonce").js()?, value);
-                Ok(())
-            },
-        );
+        define_nonce(def);
         // `hidden` is (boolean or unrestricted double or DOMString)?: the
         // "until-found" state reads back as that string.
         def.accessor(
@@ -4226,6 +4201,37 @@ simple_class!(HtmlMicrophoneElement, "HTMLMicrophoneElement", HtmlElement, |def|
     own_handlers!(def, ["track", "error", "cancel"]);
 });
 
+/// The `nonce` IDL attribute of the HTMLOrSVGElement mixin (HTMLElement, SVGElement and
+/// MathMLElement).
+fn define_nonce<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    // The nonce IDL attribute reads the [[CryptographicNonce]] slot; setting
+    // it never touches the content attribute.
+    def.accessor(
+        "nonce",
+        |s, n| {
+            let dom = n.page().dom.borrow();
+            let attr = dom.get_attribute(n.id, "nonce").js()?;
+            if let Some(nonce) = n.page().nonce(n.id, attr) {
+                return Ok(s.string(&nonce));
+            }
+            // Connecting to a document with a header-delivered CSP emptied
+            // the attribute: the slot still holds the nonce it had.
+            if attr == Some("") {
+                if let Some(hidden) = dom.hidden_nonce(n.id) {
+                    return Ok(s.string(&n.page().nonce(n.id, Some(hidden)).unwrap_or_else(|| hidden.to_owned())));
+                }
+            }
+            Ok(s.string(attr.unwrap_or("")))
+        },
+        |_s, n, v| {
+            let value = dom_string(v)?;
+            let dom = n.page().dom.borrow();
+            n.page().set_nonce(n.id, dom.get_attribute(n.id, "nonce").js()?, value);
+            Ok(())
+        },
+    );
+}
+
 /// HTMLOrSVGOrMathMLElement reflects both focus attributes in no namespace,
 /// and the scoped focusgroup ones: `[SameObject, PutForwards=value]
 /// readonly attribute DOMTokenList focusGroup` (`focusgroup`) and the
@@ -4277,6 +4283,7 @@ impl JsClass for SvgElement {
             Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &SVG_CLASS)?.value())
         });
         crate::handlers::define_global(def);
+        define_nonce(def);
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]
         def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");
@@ -4327,6 +4334,7 @@ impl JsClass for MathMlElement {
     type Parent = Element;
     fn define(def: &mut ClassDef<Self>) {
         crate::handlers::define_global(def);
+        define_nonce(def);
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         // [PutForwards=cssText]
         def.put_forwards("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()), "cssText");

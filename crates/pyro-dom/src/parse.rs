@@ -259,6 +259,11 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             if dom.n(n).element().is_some_and(|e| e.shadow_root != NIL) && dom.is_connected_idx(parent) {
                 dom.upgrades_after_insert(n);
             }
+            // Nonce hiding applies to what the parser inserts as to what a script does (after
+            // the connected reaction: a custom element's `attributeChangedCallback` for the
+            // emptied attribute follows its `connectedCallback`). Returns at once without a
+            // header-delivered policy.
+            dom.hide_nonces(n);
         }
     }
 }
@@ -499,6 +504,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         self.dom.with(|d| {
             let mut style_added = false;
             let element_name = self.filter.as_ref().and_then(|_| d.n(*target).element().map(|e| e.name.clone()));
+            let mut nonce_added = false;
             for a in attrs {
                 if let (Some(filter), Some(name)) = (&self.filter, &element_name) {
                     if !filter.allows_attribute(name, &a.name, &a.value) {
@@ -508,6 +514,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 let Some(el) = d.n_mut(*target).element_mut() else { return };
                 if !el.attrs.iter().any(|x| x.name == a.name) {
                     style_added |= a.name.ns == ns!() && a.name.local == local_name!("style");
+                    nonce_added |= a.name.ns == ns!() && a.name.local == local_name!("nonce");
                     d.note_style_attr(*target, &a.name, None);
                     let change = crate::dom::Change::attr(*target, &a.name);
                     let name = a.name.clone();
@@ -520,6 +527,11 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             d.note_inline_handlers(*target);
             if style_added {
                 d.note_inline_style(*target);
+            }
+            // A dangling `<body nonce=...` or `<html nonce=...` merges its attributes into the
+            // existing element: its nonce is hidden as any other (a CSS selector must not see it).
+            if nonce_added {
+                d.hide_nonces(*target);
             }
         });
     }

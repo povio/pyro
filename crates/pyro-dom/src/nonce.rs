@@ -341,6 +341,18 @@ impl Dom {
         self.nonces.hidden.get(&el).map(|v| &**v)
     }
 
+    /// A clone `to` of `from` keeps the nonce `from` had hidden (cloning steps copy the
+    /// [[CryptographicNonce]] slot, and the clone's attribute is the emptied one).
+    pub(crate) fn copy_hidden_nonce(&mut self, from: u32, to: NodeId) {
+        if self.nonces.hidden.is_empty() {
+            return;
+        }
+        let from = self.id_of(from);
+        if let Some(nonce) = self.nonces.hidden.get(&from).cloned() {
+            self.nonces.hidden.insert(to, nonce);
+        }
+    }
+
     /// After `root` was inserted: empties the non-empty `nonce` attributes of
     /// its subtree when it is now connected to a document with a
     /// header-delivered policy.

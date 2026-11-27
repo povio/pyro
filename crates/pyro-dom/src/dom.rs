@@ -3558,6 +3558,9 @@ impl Dom {
                 // pyro: a copy of a `style` attribute CSP blocked declares nothing either (Chrome
                 // copies the element's empty inline style); a clone is not checked again.
                 self.copy_style_attribute_block(n, id);
+                // A copy of an element whose nonce was hidden keeps that nonce in its slot (its
+                // attribute is the emptied one the clone copied).
+                self.copy_hidden_nonce(n, id);
                 id.idx
             }
             NodeKind::Text(s) => {
