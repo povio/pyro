@@ -430,6 +430,8 @@ struct Shared {
     /// built once (a request without overrides sends them as they are).
     default_user_agent: Option<HeaderValue>,
     default_accept_language: Option<HeaderValue>,
+    /// Network Error Logging policies and where `Report-To` headers and reports go (`crate::nel`).
+    nel: crate::nel::Nel,
 }
 
 impl Shared {
@@ -846,6 +848,7 @@ impl NetClient {
             epoch: Instant::now(),
             ignore_certificate_errors: std::sync::atomic::AtomicBool::new(false),
             proxy,
+            nel: Default::default(),
         });
         let cookies = Arc::new(Mutex::new(CookieJar::new()));
         let (s2, c2) = (shared.clone(), cookies.clone());
@@ -945,6 +948,11 @@ impl NetClient {
     }
     pub fn set_interceptor(&self, i: Option<Arc<dyn Interceptor>>) {
         *self.inner.shared.interceptor.lock().unwrap() = i;
+    }
+    /// Where `Report-To` headers and Network Error Logging reports of this client go
+    /// ([`crate::nel::ReportingSink`]); `None`: neither is looked at.
+    pub fn set_reporting_sink(&self, sink: Option<Arc<dyn crate::nel::ReportingSink>>) {
+        self.inner.shared.nel.set_sink(sink);
     }
     /// Network.clearBrowserCache: drops every HTTP cache entry of this context.
     pub fn clear_http_cache(&self) {
@@ -2102,6 +2110,17 @@ impl From<SendError> for NetError {
 
 const TUNNEL_FAILED: &str = "net::ERR_TUNNEL_CONNECTION_FAILED";
 
+/// NEL's phase and type for a failure to get a response (`None`: not a failure it names).
+fn nel_failure(e: &SendError) -> Option<(&'static str, &'static str)> {
+    match e {
+        SendError::Net(NetError::NameNotResolved) => Some(("dns", "dns.name_not_resolved")),
+        SendError::Net(NetError::ConnectionRefused) => Some(("connection", "tcp.refused")),
+        SendError::Net(NetError::Timeout) => Some(("connection", "tcp.timed_out")),
+        SendError::Net(NetError::Certificate(_)) => Some(("connection", "tls.cert.invalid")),
+        _ => None,
+    }
+}
+
 fn classify(e: &hyper_util::client::legacy::Error) -> SendError {
     let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(e);
     let mut text = e.to_string();
@@ -2694,7 +2713,20 @@ impl Io {
                     Err(SendError::ProxyChallenge { scheme, realm }) if auth_interceptor.is_some() => {
                         (None, true, scheme, realm)
                     }
-                    Err(e) => return Err(e.into()),
+                    Err(e) => {
+                        // Network Error Logging: a failure to get a response (a report upload has no policy).
+                        if let (Some((phase, kind)), true) = (nel_failure(&e), req.destination != Destination::Report) {
+                            self.shared.nel.record(
+                                &url,
+                                &method,
+                                referrer.referrer.as_ref(),
+                                &HeaderMap::new(),
+                                request_start,
+                                crate::nel::Outcome::Failure { phase, kind },
+                            );
+                        }
+                        return Err(e.into());
+                    }
                 };
                 let Some(interceptor) = auth_interceptor else { unreachable!("no challenge without an interceptor") };
                 if auth_attempts >= self.shared.config.max_auth_retries {
@@ -2808,6 +2840,19 @@ impl Io {
             // pyro: the same decision as the cookies sent (`includes_credentials`): a tainted hop
             // (a no-cors chain that went through another origin) neither sends nor stores.
             self.store_cookies(&req, &url, &resp_headers, includes_credentials(req.hop_credentials(basic_tainting), basic_tainting));
+            // Network Error Logging: this exchange (each redirect hop and each revalidation is one) is reported
+            // when a policy of the origin asks for it; its `Report-To` and `NEL` headers count first. A response
+            // the HTTP cache serves never gets here.
+            if req.destination != Destination::Report {
+                self.shared.nel.record(
+                    &url,
+                    &method,
+                    referrer.referrer.as_ref(),
+                    &resp_headers,
+                    request_start,
+                    crate::nel::Outcome::Response { status: status.as_u16(), protocol },
+                );
+            }
             // Client Hints: a top-level document's `Accept-CH` (a redirect's too) replaces the origin's
             // set; `Clear-Site-Data` clears it from a navigation or a same-origin fetch, not a subframe's.
             self.shared.client_hints.lock().unwrap().response(

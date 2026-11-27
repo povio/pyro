@@ -984,6 +984,34 @@ impl LoopState for Browser {
     }
 }
 
+/// The Reporting side of a browser context's network client: the `Report-To` groups responses carry and the
+/// Network Error Logging reports of its requests (`pyro_net::ReportingSink`, called on the network thread)
+/// are applied and sent on the browser's thread, in the order they arrived.
+struct ContextReporting {
+    handle: pyro_runtime::LoopHandle<Browser>,
+    context: ContextId,
+}
+
+impl pyro_net::ReportingSink for ContextReporting {
+    fn report_to(&self, url: &pyro_net::Url, value: &str) {
+        let (url, value, context) = (url.clone(), value.to_owned(), self.context);
+        let _ = self.handle.post(move |browser: &mut Browser| {
+            if let Some(services) = browser.context_services(context) {
+                pyro_webapi::reporting_store::apply_report_to(&services, &url, &value);
+            }
+        });
+    }
+
+    fn network_error(&self, report: pyro_net::NelReport) {
+        let context = self.context;
+        let _ = self.handle.post(move |browser: &mut Browser| {
+            if let (Some(services), Some(net)) = (browser.context_services(context), browser.context_net(context)) {
+                pyro_webapi::reporting_store::send_network_error(&services, net, &report);
+            }
+        });
+    }
+}
+
 impl Browser {
     /// A loaded single-frame page with nothing queued: every step of the
     /// checkpoint below would be a no-op. Checked first because the
@@ -1448,6 +1476,7 @@ impl Browser {
         let layout_bodies = self.layout_bodies_for(own_identity, &config);
         let client = pyro_net::NetClient::new(config)?;
         client.set_ignore_certificate_errors(self.ignore_certificate_errors);
+        client.set_reporting_sink(Some(std::sync::Arc::new(ContextReporting { handle: self.handle(), context: id })));
         if let Some(c) = self.contexts.iter_mut().find(|c| c.id == id) {
             c.loader = Some(Rc::new(NetLoader::new(client.clone())));
             c.net = Some(client);

@@ -336,6 +336,58 @@ impl PageDom {
     }
 }
 
+/// A response of `url` (any hop of any request of the context, a subresource's included) carried the
+/// `Report-To` header `value`: its groups replace the origin's, as for a document's response
+/// (`PageDom::set_report_to`). The network layer reports it (`pyro_net::ReportingSink`) from its
+/// thread; the embedder calls this on the main thread, in the order the responses arrived.
+pub fn apply_report_to(services: &crate::ContextServices, url: &Url, value: &str) {
+    if !pyro_net::is_potentially_trustworthy_url(url) {
+        return;
+    }
+    let Some(groups) = parse_report_to(value, url, Instant::now()) else { return };
+    services.report_to.borrow_mut().set(url, groups);
+}
+
+/// A Network Error Logging report (`pyro_net::NelReport`): sent to the endpoint of the policy's
+/// `report_to` group, which the `Report-To` groups of the policy's origin name, as a one-report
+/// `application/reports+json` list with the browser's `User-Agent`, from the policy's origin (a
+/// cross-origin endpoint answers a CORS preflight first; one that refuses it gets no report).
+/// Nothing observes it: a NEL report has no document, so no `ReportingObserver` hears it. Dropped
+/// when the group is unknown or expired.
+pub fn send_network_error(services: &crate::ContextServices, net: &pyro_net::NetClient, report: &pyro_net::NelReport) {
+    let Some(endpoint) = services.report_to.borrow().lookup(&report.policy_url, &report.group, Instant::now()) else { return };
+    let b = &report.body;
+    let mut body = Map::new();
+    body.insert("sampling_fraction".to_owned(), b.sampling_fraction.into());
+    body.insert("referrer".to_owned(), b.referrer.clone().into());
+    body.insert("server_ip".to_owned(), b.server_ip.clone().into());
+    body.insert("protocol".to_owned(), b.protocol.clone().into());
+    body.insert("method".to_owned(), b.method.clone().into());
+    body.insert("request_headers".to_owned(), Json::Object(Map::new()));
+    body.insert("response_headers".to_owned(), Json::Object(Map::new()));
+    body.insert("status_code".to_owned(), b.status_code.into());
+    body.insert("elapsed_time".to_owned(), b.elapsed_time.into());
+    body.insert("phase".to_owned(), b.phase.into());
+    body.insert("type".to_owned(), b.kind.clone().into());
+    let mut entry = Map::new();
+    entry.insert("age".to_owned(), 0.into());
+    entry.insert("type".to_owned(), "network-error".into());
+    entry.insert("url".to_owned(), report.url.clone().into());
+    entry.insert("user_agent".to_owned(), net.user_agent().into());
+    entry.insert("body".to_owned(), Json::Object(body));
+    let mut request = pyro_net::Request::get(endpoint, pyro_net::Destination::Report);
+    request.method = pyro_net::http::Method::POST;
+    request.headers.insert(
+        pyro_net::http::header::CONTENT_TYPE,
+        pyro_net::http::HeaderValue::from_static("application/reports+json"),
+    );
+    request.body = Some(Json::Array(vec![Json::Object(entry)]).to_string().into());
+    request.mode = pyro_net::RequestMode::Cors;
+    request.credentials = pyro_net::Credentials::SameOrigin;
+    request.origin = Some(report.policy_url.origin().ascii_serialization());
+    net.fetch(request, Box::new(|_| {}));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
