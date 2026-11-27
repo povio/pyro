@@ -743,6 +743,11 @@
       if (v.unit === 'number' && v.value === 0) return [1, 0];
     }
     if (typeof CSSKeywordValue === 'function' && v instanceof CSSKeywordValue && v.value === 'auto') return [0, 0];
+    // A math value of one unit type (`new CSSMathNegate(CSS.px(144))`): its px or percent sum.
+    if (typeof CSSNumericValue === 'function' && v instanceof CSSNumericValue) {
+      try { return [1, v.to('px').value]; } catch { /* not a length */ }
+      try { return [2, v.to('percent').value / 100]; } catch { /* not a percentage */ }
+    }
     throw new TypeError('Invalid inset');
   }
   function insetOf(options) {
