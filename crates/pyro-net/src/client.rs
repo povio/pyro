@@ -2544,7 +2544,9 @@ impl Io {
                             if preemptive.is_some() && headers.get(header::AUTHORIZATION) == preemptive.as_ref() {
                                 // The session's credentials were refused: they are gone.
                                 self.shared.basic_auth.lock().unwrap().evict(&url, preemptive.as_ref().unwrap());
-                            } else if let Some((scheme, realm)) = challenge.filter(|_| auth_attempts == 0) {
+                            }
+                            // Chrome then answers the challenge with what is stored for its realm.
+                            if let Some((scheme, realm)) = challenge.filter(|_| auth_attempts == 0) {
                                 let value = match &url_credentials {
                                     Some((user, password)) if scheme == "basic" => basic_authorization(user, password).ok(),
                                     None if scheme == "basic" => self.shared.basic_auth.lock().unwrap().for_realm(&url, &realm),
