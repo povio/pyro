@@ -701,10 +701,13 @@ impl JsClass for Range {
         });
         def.method("extractContents", 0, |s, r, _a| {
             let frag = extract(r, &mut r.page.dom.borrow_mut())?;
+            crate::custom::upgrade_clone(s, &r.page, frag);
             Ok(wrap_node(s, &r.page, frag)?.value())
         });
         def.method("cloneContents", 0, |s, r, _a| {
             let frag = contents(&mut r.page.dom.borrow_mut(), r.live.start(), r.live.end(), false)?;
+            // The cloned custom elements are created and upgraded (DOM "clone a node": create an element).
+            crate::custom::upgrade_clone(s, &r.page, frag);
             Ok(wrap_node(s, &r.page, frag)?.value())
         });
         def.method("insertNode", 1, |s, r, a| {
