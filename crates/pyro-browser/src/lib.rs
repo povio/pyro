@@ -893,12 +893,14 @@ impl LoopState for Browser {
         let depth = pyro_runtime::task_depth();
         let duration = end.saturating_duration_since(start).as_secs_f64() * 1000.0;
         let nested_ms = pyro_webapi::perf::task_accounted(depth, duration);
-        // Nothing to report for a short task unless a module keeps books on every task (no
-        // allocation, no clock conversion, no walk of the pages before this return).
-        if duration < pyro_webapi::perf::LONG_TASK_MS && !pyro_webapi::perf::TASK_BOOKKEEPING {
-            // The documents whose script ran are forgotten at the end of each outermost task
-            // (`pyro_webapi::perf::longtask::ran_script` reads them); a nested task's belong to
-            // the task it ran in.
+        // No document's script ran (no realm entered since the outermost task began): neither hook
+        // attributes such a task (`longtask::on_task` and `loaf::on_task` both start with
+        // `ran_script`, and a Long Animation Frame is made of script tasks), so no page is visited
+        // and nothing is allocated. Nor is a short task, unless a module keeps books on every task.
+        // The documents whose script ran are forgotten at the end of each outermost task
+        // (`pyro_webapi::perf::longtask::ran_script` reads them); a nested task's belong to the
+        // task it ran in.
+        if (duration < pyro_webapi::perf::LONG_TASK_MS && !pyro_webapi::perf::TASK_BOOKKEEPING) || !pyro_js::entered_any() {
             if depth <= 1 {
                 pyro_js::reset_entered();
             }
@@ -909,6 +911,10 @@ impl LoopState for Browser {
             let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };
             for key in host.keys() {
                 let Some(dom) = host.page_dom(key) else { continue };
+                // State only for the documents that ran script in this task.
+                if !pyro_webapi::perf::ran_script(&dom) {
+                    continue;
+                }
                 let Some(nav) = self.doc(key).map(|state| state.nav.clone()) else { continue };
                 let task = pyro_webapi::perf::TaskInfo { start: nav.time_at(start), end: nav.time_at(end), depth, nested_ms };
                 pyro_webapi::perf::task_finished(&dom, &task);

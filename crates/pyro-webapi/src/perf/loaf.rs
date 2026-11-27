@@ -26,9 +26,11 @@
 //! too. Frames of invisible documents are not told apart (the engine has no visibility notion
 //! here), and an event loop spun by a nested task counts as a part of its outer task.
 //!
-//! Cost with the module enabled and no observer: per task, per document, one clock-free check of
-//! whether the document's realms were entered (a thread-local list lookup); a task that ran script
-//! then updates five numbers; nothing allocates until a frame is long.
+//! Cost with the module enabled and no observer: a task that ran no script costs one thread-local
+//! length read (`pyro_js::entered_any`) in `Browser::task_finished`, no document is visited and
+//! nothing allocates; a task that ran script costs one check per document (`ran_script`, a thread-local
+//! list lookup) and, for each document that ran script, five numbers updated; nothing else
+//! allocates until a frame is long.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -44,9 +46,11 @@ use super::{FrameInfo, LONG_TASK_MS};
 /// Entry types this module makes real.
 pub const ENTRY_TYPES: &[&str] = &["long-animation-frame"];
 /// Entries come from the task hook, the frame hook and the engine's script entries.
-// Off until `Browser::task_finished` can skip tasks that entered no realm without walking every
-// document (review finding: the per-task bookkeeping ran for every task of every page).
-pub const ENABLED: bool = false;
+///
+/// On: `Browser::task_finished` returns before any allocation or document visit for a task in which
+/// no realm was entered (`pyro_js::entered_any`), and otherwise only hands the task to the documents
+/// that ran script in it. `perf::FRAME_STAGE_TIMES`, `TASK_HOOKS` and `TASK_BOOKKEEPING` follow it.
+pub const ENABLED: bool = true;
 
 /// A first task this long (ms) before the update began started a frame that ended without one.
 const GAP_MS: f64 = 10.0;

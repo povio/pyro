@@ -786,6 +786,12 @@ pub fn reset_entered() {
     let _ = ENTERED.try_with(|list| list.borrow_mut().clear());
 }
 
+/// Whether native code entered any context since [`reset_entered`]: one thread-local length read, no
+/// allocation. False means no document's script ran (the embedder's per-task bookkeeping can stop there).
+pub fn entered_any() -> bool {
+    ENTERED.try_with(|list| !list.borrow().is_empty()).unwrap_or(false)
+}
+
 /// Whether native code entered the context `ctx` since [`reset_entered`].
 pub(crate) fn entered_since_reset(ctx: sys::JSContextRef) -> bool {
     let ctx = ctx as usize;
