@@ -155,7 +155,11 @@ impl WorkerStart {
         let net = page.net.borrow().clone()?;
         let poster = page.remote_poster()?;
         let script = (url.scheme() == "blob").then(|| page.blob_url(url.as_str()).map(|(bytes, _)| bytes)).flatten();
-        let owner_embedder = {
+        // (A Document-Isolation-Policy's workers inherit it: nothing to check.)
+        let owner_reporting = page.embedder_reporting();
+        let owner_embedder = if owner_reporting.dip || owner_reporting.report_only_dip {
+            None
+        } else {
             let mut owner = pyro_net::RequestDefaults::default();
             page.apply_embedder_defaults(&mut owner);
             owner.corp_report.map(|report| OwnerEmbedder { policy: owner.embedder_policy, report_only: report.report_only, report: Some(report) })
@@ -876,11 +880,18 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
 struct MainRequest {
     referrer: Option<(pyro_net::Url, pyro_net::ReferrerPolicy)>,
     response_url: RefCell<Option<pyro_net::Url>>,
+    /// The worker keeps its owner's embedder policy whatever its script's response says (a worker of
+    /// a document with a Document-Isolation-Policy shares the document's isolation).
+    inherit_embedder: bool,
 }
 
 /// The script and, when it was fetched, its response's URL.
 fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> (Option<String>, Option<pyro_net::Url>) {
-    let main = MainRequest { referrer: start.referrer.clone(), response_url: RefCell::new(None) };
+    let main = MainRequest {
+        referrer: start.referrer.clone(),
+        response_url: RefCell::new(None),
+        inherit_embedder: start.embedder_reporting.dip || start.embedder_reporting.report_only_dip,
+    };
     let script = load_main_bytes(page, start, &main).map(|bytes| script_text(&bytes));
     (script, main.response_url.take())
 }
@@ -1291,7 +1302,7 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                             };
                                             let import = referrer_url
                                                 .clone()
-                                                .map(|url| MainRequest { referrer: Some((url, policy)), response_url: RefCell::new(None) });
+                                                .map(|url| MainRequest { referrer: Some((url, policy)), response_url: RefCell::new(None), inherit_embedder: false });
                                             fetch_script(
                                                 &page,
                                                 &net,
@@ -1436,9 +1447,10 @@ fn fetch_script(
                 if main {
                     // The worker global's embedder policy is its script response's (HTML "run a
                     // worker"); a `data:` script's stays its owner's.
-                    if matches!(head.url.scheme(), "http" | "https") {
-                        page.set_embedder_policy(crate::coep_report::obtain_embedder_policy(&head.headers, &head.url));
-                        page.set_embedder_reporting(crate::coep_report::obtain_embedder_reporting(&head.headers, &head.url));
+                    if matches!(head.url.scheme(), "http" | "https") && !main_request.is_some_and(|m| m.inherit_embedder) {
+                        let (policy, reporting) = crate::coep_report::obtain_embedder(&head.headers, &head.url);
+                        page.set_embedder_policy(policy);
+                        page.set_embedder_reporting(reporting);
                     }
                     page.set_referrer_policy_header(pyro_net::ReferrerPolicy::from_header(
                         head.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),

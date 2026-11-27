@@ -156,10 +156,15 @@ pub enum EmbedderPolicy {
 pub struct EmbedderReporting {
     /// The enforced policy's `report-to` endpoint name (only when that parameter is a string).
     pub report_to: Option<String>,
+    /// The enforced policy is a `Document-Isolation-Policy`'s (no COEP of its own): its reports have
+    /// the type `dip`, and it constrains subresources, not nested navigations.
+    pub dip: bool,
     /// The report-only policy's value.
     pub report_only: EmbedderPolicy,
     /// The report-only policy's `report-to` endpoint name.
     pub report_only_report_to: Option<String>,
+    /// The report-only policy is a `Document-Isolation-Policy-Report-Only`'s.
+    pub report_only_dip: bool,
 }
 
 /// What a context's Cross-Origin Resource Policy check reports (HTML § 7.1.4 "queue a cross-origin

@@ -77,7 +77,11 @@ impl PageDom {
 /// realm's when the caller runs inside one of its natives (see [`queue_report`]).
 pub fn queue_violation(page: &Rc<PageDom>, scope: Option<&pyro_js::Scope<'_>>, kind: &str, blocked_url: &str, destination: Option<&str>, report_only: bool) {
     let reporting = page.embedder_reporting();
-    let endpoint = if report_only { reporting.report_only_report_to } else { reporting.report_to };
+    let (dip, endpoint) = if report_only {
+        (reporting.report_only_dip, reporting.report_only_report_to)
+    } else {
+        (reporting.dip, reporting.report_to)
+    };
     let mut body = Map::new();
     body.insert("type".into(), kind.into());
     body.insert("blockedURL".into(), strip_url_for_report(blocked_url).into());
@@ -90,7 +94,7 @@ pub fn queue_violation(page: &Rc<PageDom>, scope: Option<&pyro_js::Scope<'_>>, k
         page,
         scope,
         ReportInput {
-            report_type: "coep",
+            report_type: if dip { "dip" } else { "coep" },
             url: report_url(page),
             body,
             destination: endpoint,
@@ -120,6 +124,23 @@ pub fn obtain_embedder_policy(headers: &pyro_net::http::HeaderMap, url: &pyro_ne
 /// The embedder policy header `name` (the enforced one or its `-report-only` twin) as
 /// [`obtain_embedder_policy`] reads it, and its `report-to` parameter when that is a string.
 fn embedder_policy_field(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Url, name: &str) -> (pyro_net::EmbedderPolicy, Option<String>) {
+    policy_field(headers, url, name, "require-corp", "credentialless")
+}
+
+/// The same for a `Document-Isolation-Policy` header, whose values `isolate-and-require-corp` and
+/// `isolate-and-credentialless` are the embedder policies `require-corp` and `credentialless` (with
+/// the isolation of the agent cluster, which is not this module's).
+fn dip_field(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Url, name: &str) -> (pyro_net::EmbedderPolicy, Option<String>) {
+    policy_field(headers, url, name, "isolate-and-require-corp", "isolate-and-credentialless")
+}
+
+fn policy_field(
+    headers: &pyro_net::http::HeaderMap,
+    url: &pyro_net::Url,
+    name: &str,
+    require_corp: &str,
+    credentialless: &str,
+) -> (pyro_net::EmbedderPolicy, Option<String>) {
     let none = (pyro_net::EmbedderPolicy::UnsafeNone, None);
     let trustworthy = url.scheme() == "https"
         || url.host_str().is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h.ends_with(".localhost"));
@@ -135,20 +156,32 @@ fn embedder_policy_field(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Ur
     }
     let joined = values.join(", ");
     let value = match structured_item_token(&joined) {
-        Some("require-corp") => pyro_net::EmbedderPolicy::RequireCorp,
-        Some("credentialless") => pyro_net::EmbedderPolicy::Credentialless,
+        Some(token) if token == require_corp => pyro_net::EmbedderPolicy::RequireCorp,
+        Some(token) if token == credentialless => pyro_net::EmbedderPolicy::Credentialless,
         _ => return none,
     };
     (value, report_to_param(&joined))
 }
 
-/// The reporting parts of a response's embedder policies: HTML "obtain an embedder policy" of
-/// `Cross-Origin-Embedder-Policy` for its `report-to`, and of `Cross-Origin-Embedder-Policy-Report-Only`
-/// for the report-only value and its own `report-to`.
-pub fn obtain_embedder_reporting(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Url) -> pyro_net::EmbedderReporting {
-    let (_, report_to) = embedder_policy_field(headers, url, "cross-origin-embedder-policy");
-    let (report_only, report_only_report_to) = embedder_policy_field(headers, url, "cross-origin-embedder-policy-report-only");
-    pyro_net::EmbedderReporting { report_to, report_only, report_only_report_to }
+/// The embedder policy a response gives its document or worker, and what it reports with: its
+/// `Cross-Origin-Embedder-Policy` and `-Report-Only` headers, each (when it has no value) taken from
+/// the `Document-Isolation-Policy` header that is its twin, whose reports are of type `dip`.
+pub fn obtain_embedder(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Url) -> (pyro_net::EmbedderPolicy, pyro_net::EmbedderReporting) {
+    use pyro_net::EmbedderPolicy::UnsafeNone;
+    let (coep, coep_to) = embedder_policy_field(headers, url, "cross-origin-embedder-policy");
+    let (dip, dip_to) = dip_field(headers, url, "document-isolation-policy");
+    let (coep_ro, coep_ro_to) = embedder_policy_field(headers, url, "cross-origin-embedder-policy-report-only");
+    let (dip_ro, dip_ro_to) = dip_field(headers, url, "document-isolation-policy-report-only");
+    let (enforced_dip, report_only_dip) = (coep == UnsafeNone && dip != UnsafeNone, coep_ro == UnsafeNone && dip_ro != UnsafeNone);
+    let policy = if enforced_dip { dip } else { coep };
+    let reporting = pyro_net::EmbedderReporting {
+        report_to: if enforced_dip { dip_to } else { coep_to },
+        dip: enforced_dip,
+        report_only: if report_only_dip { dip_ro } else { coep_ro },
+        report_only_report_to: if report_only_dip { dip_ro_to } else { coep_ro_to },
+        report_only_dip,
+    };
+    (policy, reporting)
 }
 
 /// The first item of a structured field value that is a bare item (RFC 8941 `sf-item`), when it is

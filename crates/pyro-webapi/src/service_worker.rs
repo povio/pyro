@@ -1482,10 +1482,7 @@ fn fetched_script(
     };
     // The worker's own embedder policy is its script response's (HTML "run a worker"): its fetches
     // and the `Cache` it reads are subject to it.
-    let embedder = (
-        crate::coep_report::obtain_embedder_policy(&head.headers, &head.url),
-        crate::coep_report::obtain_embedder_reporting(&head.headers, &head.url),
-    );
+    let embedder = crate::coep_report::obtain_embedder(&head.headers, &head.url);
     start_version(page, registration, script_url, body, allowlist, embedder, settle);
 }
 

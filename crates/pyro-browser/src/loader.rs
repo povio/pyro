@@ -35,7 +35,7 @@
 
 use crate::frames::FrameKey;
 use crate::{Browser, HistoryHandling, LoaderId, NavigateOpts, PageEvent, PageId};
-use pyro_webapi::coep_report::{obtain_embedder_policy, obtain_embedder_reporting};
+use pyro_webapi::coep_report::{obtain_embedder, obtain_embedder_policy};
 use pyro_dom::parse::{DocumentParser, DomRef, ParseStep};
 use pyro_dom::script::ScriptKind;
 use pyro_dom::NodeId;
@@ -988,8 +988,8 @@ impl ResourceLoader for NetLoader {
                         ),
                         origin_agent_cluster: document && origin_agent_cluster_requested(&h.headers),
                         force_load_at_top: document && force_load_at_top_policy(&h.headers),
-                        embedder_policy: if document { obtain_embedder_policy(&h.headers, &h.url) } else { pyro_net::EmbedderPolicy::UnsafeNone },
-                        embedder_reporting: if document { obtain_embedder_reporting(&h.headers, &h.url) } else { Default::default() },
+                        embedder_policy: if document { obtain_embedder(&h.headers, &h.url).0 } else { pyro_net::EmbedderPolicy::UnsafeNone },
+                        embedder_reporting: if document { obtain_embedder(&h.headers, &h.url).1 } else { Default::default() },
                         coop: if document {
                             let mut responses = std::mem::take(&mut coop_responses);
                             responses.push(coop_response(&h.headers, &h.url, false));
@@ -2634,10 +2634,12 @@ impl Browser {
         // The embedding document reports the mismatch: what its report-only policy would refuse
         // (`reporting`) and, when its enforced policy refuses it, that too (`enforce`).
         use pyro_webapi::coep_report::queue_violation;
-        if dom.embedder_reporting().report_only != pyro_net::EmbedderPolicy::UnsafeNone {
+        // (A Document-Isolation-Policy constrains subresources, not the frames it embeds.)
+        let reporting = dom.embedder_reporting();
+        if reporting.report_only != pyro_net::EmbedderPolicy::UnsafeNone && !reporting.report_only_dip {
             queue_violation(&dom, None, "navigation", &resource.url, None, true);
         }
-        let blocks = dom.embedder_policy() != pyro_net::EmbedderPolicy::UnsafeNone;
+        let blocks = dom.embedder_policy() != pyro_net::EmbedderPolicy::UnsafeNone && !reporting.dip;
         if blocks {
             queue_violation(&dom, None, "navigation", &resource.url, None, false);
         }
