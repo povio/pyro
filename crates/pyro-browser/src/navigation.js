@@ -464,9 +464,9 @@
         throw invalidState("Failed to execute 'redirect' on 'NavigationPrecommitController': A reload or a traversal cannot be redirected.");
       }
       const target = native.resolve(String(url));
-      const to = new URLC(target);
-      const here = new URLC(location.href);
-      if (to.origin !== here.origin || to.protocol !== here.protocol) {
+      // HTML: the URL must "can have its URL rewritten" (same components, and the path for a
+      // non-http(s) scheme), not merely share an origin (opaque origins differ).
+      if (!native.canRewrite(target)) {
         throw new DOMExceptionC("Failed to execute 'redirect' on 'NavigationPrecommitController': Cannot redirect to '" + target + "' from a document with origin '" + location.origin + "'.", 'SecurityError');
       }
       // HTML serializes the state only for a navigation that has an API method tracker.

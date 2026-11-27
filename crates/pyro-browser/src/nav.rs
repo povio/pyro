@@ -2723,6 +2723,12 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
     }
     // resolve(url) -> the absolute URL, or SyntaxError.
     native!("resolve", |s, nav, a| Ok(s.string(parse_str(&nav, &a.get(0).to_string()?)?.as_str())));
+    // canRewrite(url) -> HTML's "can have its URL rewritten" for the document's URL and `url`
+    // (an absolute URL): what `redirect()` may target.
+    native!("canRewrite", |s, nav, a| {
+        let target = parse_str(&nav, &a.get(0).to_string()?)?;
+        Ok(s.boolean(Url::parse(&nav.url()).is_ok_and(|current| can_rewrite_url(&current, &target))))
+    });
     // navigate(url, replace, stateJSON?) -> whether it stayed in the
     // document. Its `navigate` event was fired by the caller.
     native!("navigate", |s, nav, a| {
