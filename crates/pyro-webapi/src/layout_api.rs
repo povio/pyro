@@ -342,10 +342,12 @@ pub(crate) fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend
                 pending.iter().position(|(_, _, entry)| Rc::ptr_eq(entry, &token)).map(|i| pending.remove(i).1)
             };
             let Some(end) = pending else { return };
-            if scroll_back_where_reported(&p, doc, target) {
-                return;
+            // (A scroller back where its last `scroll` left it fires none, but a scroll that ended
+            // there still ends: a smooth scroll interrupted and sent back to where it started
+            // reports its last step at the same offset, then its `scrollend`.)
+            if !scroll_back_where_reported(&p, doc, target) {
+                dispatch_scroll(&p, doc, target, "scroll");
             }
-            dispatch_scroll(&p, doc, target, "scroll");
             if end {
                 fire_snap_events(&p);
                 dispatch_scroll(&p, doc, target, "scrollend");
@@ -560,10 +562,9 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
 pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     let pending = std::mem::take(&mut *page.pending_scrolls.borrow_mut());
     for ((doc, target), end, _) in pending {
-        if scroll_back_where_reported(page, doc, target) {
-            continue;
+        if !scroll_back_where_reported(page, doc, target) {
+            dispatch_scroll(page, doc, target, "scroll");
         }
-        dispatch_scroll(page, doc, target, "scroll");
         if end {
             fire_snap_events(page);
             dispatch_scroll(page, doc, target, "scrollend");
