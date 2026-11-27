@@ -173,6 +173,10 @@ fn deliver(page_id: u64, realm_id: RealmId, inbox: &Inbox, change: CookieChange)
     if !page.dom.borrow().has_listener_for(key, "change") {
         return;
     }
+    // The document lost (or never had) its unpartitioned cookies: no change of them is its to see.
+    if super::environment(&s, &page).is_ok_and(|url| super::blocked(&page, &url)) {
+        return;
+    }
     let result = cookie_event(&s, &page, false, std::slice::from_ref(&change))
         .and_then(|event| dispatch_at(&s, &page, key, event));
     if let Err(error) = result {
