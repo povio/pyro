@@ -870,8 +870,8 @@ pub(crate) fn fetch(s: &Scope<'_>, mut job: FetchJob) {
             .and_then(|r| pyro_net::referrer::referrer_for(r, &request.url, request.referrer_policy))
             .unwrap_or_else(|| "no-referrer".to_owned()),
         referrer_policy: request.referrer_policy.as_str().to_owned(),
-        integrity: String::new(),
-        keepalive: false,
+        integrity: request.integrity.clone(),
+        keepalive: request.keepalive,
         destination: destination_name(request.destination),
         headers,
         body: request.body.clone(),

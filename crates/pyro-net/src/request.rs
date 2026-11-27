@@ -306,6 +306,12 @@ pub struct Request {
     /// prefetch fails (as a network error) at a redirect to such a URL, as a service worker
     /// cannot see the hops of a prefetch (Chrome fails these prefetches too).
     pub prefetch_redirect_stop: Option<std::sync::Arc<PrefetchRedirectStop>>,
+    /// The request's integrity metadata (`Request.integrity`), as the page gave it: the network
+    /// layer does not check it (the page's fetch holds the response until it has), a service worker's
+    /// `FetchEvent.request` shows it.
+    pub integrity: String,
+    /// The request's keepalive flag (`Request.keepalive`), for a service worker's `FetchEvent.request`.
+    pub keepalive: bool,
 }
 
 /// One `Set-Cookie` header a cross-site prefetch's response carried, with what storing it needs.
@@ -440,6 +446,8 @@ impl Request {
             cross_site_prefetch: false,
             deferred_cookies: None,
             prefetch_redirect_stop: None,
+            integrity: String::new(),
+            keepalive: false,
         }
     }
 }

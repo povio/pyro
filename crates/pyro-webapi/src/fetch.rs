@@ -746,6 +746,8 @@ pub(crate) fn parse_request<'s>(
     } else {
         None
     };
+    request.keepalive = keepalive.is_some();
+    request.integrity.clone_from(&integrity);
     let extras = FetchExtras { integrity: crate::integrity::Integrity::parse(&integrity), signature_keys, keepalive };
     request.cache = match string_option(s, init, "cache", &default_string("cache", "default"))?.as_str() {
         "default" => pyro_net::CacheMode::Default,
