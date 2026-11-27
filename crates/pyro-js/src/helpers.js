@@ -208,6 +208,10 @@
       return apply(wmGet, quotaLimits, [this])[1];
     }
   }
+  // WebIDL attributes are enumerable accessors.
+  for (const member of ['requested', 'quota']) {
+    defineProperty(QuotaExceededError.prototype, member, { enumerable: true });
+  }
   defineProperty(QuotaExceededError.prototype, toStringTag, { value: 'QuotaExceededError', configurable: true });
   defineProperty(globalThis, 'QuotaExceededError', { value: QuotaExceededError, writable: true, configurable: true });
 
