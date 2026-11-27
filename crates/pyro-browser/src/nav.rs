@@ -2557,10 +2557,14 @@ fn timeline_entries<'s>(
         }
     }
     p.user.collect(s, name, entry_type, &mut entries);
-    // Event Timing: the document's one `first-input` entry is on its timeline (the other types
-    // of `perf/` are for observers only).
+    // Event Timing's `first-input` entry and the long animation frames are on the timeline (the
+    // other types of `perf/` are for observers only).
     if pyro_webapi::perf::event::ENABLED && entry_type.is_none_or(|t| t == "first-input") {
         entries.extend(pyro_webapi::perf::event::first_input_entries(s, &p.target.page, name)?);
+    }
+    // Long Animation Frames: the frames are on the timeline too.
+    if pyro_webapi::perf::loaf::ENABLED && entry_type.is_none_or(|t| t == "long-animation-frame") {
+        entries.extend(pyro_webapi::perf::loaf::timeline_entries(s, &p.target.page, name)?);
     }
     if entry_type.is_none_or(|t| t == "resource") {
         perf::collect_resources(s, &p.target.page, name, &mut entries)?;

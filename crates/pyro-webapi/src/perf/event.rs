@@ -347,6 +347,9 @@ struct Raw<'a> {
 }
 
 fn record(page: &PageDom, raw: Raw<'_>) {
+    if super::loaf::ENABLED {
+        super::loaf::note_ui_event(page, raw.start);
+    }
     {
         let mut guard = page.timeline().event.inner.borrow_mut();
         let inner = &mut *guard;
@@ -483,7 +486,7 @@ impl JsClass for EventCounts {
 
     fn define(def: &mut ClassDef<Self>) {
         def.getter("size", |s, _d| Ok(s.number(N as f64)));
-        def.pure_method("get", 1, |s, d, a| {
+        def.method("get", 1, |s, d, a| {
             a.require(1, "EventCounts.get")?;
             let key = a.get(0).to_string()?;
             Ok(match type_index(&key) {
@@ -491,7 +494,7 @@ impl JsClass for EventCounts {
                 None => s.undefined(),
             })
         });
-        def.pure_method("has", 1, |s, _d, a| {
+        def.method("has", 1, |s, _d, a| {
             a.require(1, "EventCounts.has")?;
             let key = a.get(0).to_string()?;
             Ok(s.boolean(type_index(&key).is_some()))
@@ -640,7 +643,16 @@ pub struct DispatchToken {
 pub fn dispatch_begin(page: &PageDom, event: &EventData) -> Option<DispatchToken> {
     let (ty, start) = {
         let state = event.state.borrow();
-        (type_index(&state.ty)?, state.time_stamp)
+        match type_index(&state.ty) {
+            Some(ty) => (ty, state.time_stamp),
+            None => {
+                // Not timed, but a UI event a long animation frame notes (`firstUIEventTimestamp`).
+                if super::loaf::ENABLED && super::loaf::is_untimed_ui_event(&state.ty) {
+                    super::loaf::note_ui_event(page, state.time_stamp);
+                }
+                return None;
+            }
+        }
     };
     Some(DispatchToken { ty, start, processing_start: crate::event::page_now_ms(page) })
 }
@@ -667,7 +679,12 @@ pub fn dispatch_end(page: &PageDom, event: &EventData, token: DispatchToken) {
 /// A trusted input event nobody listens for was not made (`perf::note_unheard`); called when
 /// ENABLED. It counts like a dispatched one (`eventCounts`, entries, `interactionId`).
 pub fn note_unheard(page: &PageDom, event: &super::UnheardEvent<'_>) {
-    let Some(ty) = type_index(event.ty) else { return };
+    let Some(ty) = type_index(event.ty) else {
+        if super::loaf::ENABLED && super::loaf::is_untimed_ui_event(event.ty) {
+            super::loaf::note_ui_event(page, event.time_stamp);
+        }
+        return;
+    };
     let now = crate::event::page_now_ms(page);
     // Nobody listens, so the event never leaves a shadow tree: report the host.
     let target = {
@@ -733,19 +750,30 @@ pub fn interaction_count(page: &PageDom) -> u32 {
     page.timeline().event.inner.borrow().interactions
 }
 
-/// The document's `first-input` entry as `getEntries*()` lists it (Event Timing: the one entry
-/// of that type is on the performance timeline), as `(startTime, entry)` pairs; `name` filters.
-pub fn first_input_entries<'s>(s: &Scope<'s>, page: &PageDom, name: Option<&str>) -> JsResult<Vec<(f64, Value<'s>)>> {
-    let list = page.timeline().buffered(s, "first-input", false)?;
+/// The entries of `entry_type` buffered in the document's timeline, as `(startTime, entry)` pairs:
+/// what `getEntries*()` lists of the types that are on the performance timeline besides User
+/// Timing, Resource Timing and Paint Timing (`first-input`, `long-animation-frame`).
+pub(super) fn buffered_entries<'s>(s: &Scope<'s>, page: &PageDom, entry_type: &str) -> JsResult<Vec<(f64, Value<'s>)>> {
+    let list = page.timeline().buffered(s, entry_type, false)?;
     let mut out = Vec::new();
     let Some(list) = list.as_object() else { return Ok(out) };
     let len = list.get("length")?.to_number()? as u32;
     for i in 0..len {
         let entry = list.get_index(i)?;
         let Some(object) = entry.as_object() else { continue };
-        if name.is_none_or(|n| object.get("name").and_then(|v| v.to_string()).is_ok_and(|v| v == n)) {
-            out.push((object.get("startTime")?.to_number()?, entry));
-        }
+        out.push((object.get("startTime")?.to_number()?, entry));
     }
     Ok(out)
+}
+
+/// The document's `first-input` entry as `getEntries*()` lists it (Event Timing: the one entry
+/// of that type is on the performance timeline); `name` filters.
+pub fn first_input_entries<'s>(s: &Scope<'s>, page: &PageDom, name: Option<&str>) -> JsResult<Vec<(f64, Value<'s>)>> {
+    let mut entries = buffered_entries(s, page, "first-input")?;
+    if let Some(name) = name {
+        entries.retain(|(_, entry)| {
+            entry.as_object().is_some_and(|o| o.get("name").and_then(|v| v.to_string()).is_ok_and(|n| n == name))
+        });
+    }
+    Ok(entries)
 }

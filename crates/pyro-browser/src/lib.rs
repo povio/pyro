@@ -892,6 +892,12 @@ impl LoopState for Browser {
         // Nothing to report for a short task unless a module keeps books on every task (no
         // allocation, no clock conversion, no walk of the pages before this return).
         if duration < pyro_webapi::perf::LONG_TASK_MS && !pyro_webapi::perf::TASK_BOOKKEEPING {
+            // The documents whose script ran are forgotten at the end of each outermost task
+            // (`pyro_webapi::perf::longtask::ran_script` reads them); a nested task's belong to
+            // the task it ran in.
+            if depth <= 1 {
+                pyro_js::reset_entered();
+            }
             return;
         }
         let pages: Vec<_> = self.pages.iter().map(|p| p.id).collect();
@@ -903,6 +909,9 @@ impl LoopState for Browser {
                 let task = pyro_webapi::perf::TaskInfo { start: nav.time_at(start), end: nav.time_at(end), depth, nested_ms };
                 pyro_webapi::perf::task_finished(&dom, &task);
             }
+        }
+        if depth <= 1 {
+            pyro_js::reset_entered();
         }
     }
 }
@@ -995,6 +1004,13 @@ impl Browser {
         }
         // Document rules of speculation rules follow the links the tasks above changed.
         self.document_rules_after_task();
+        // The script the checkpoint ran (observer callbacks, `load` events) or a host command
+        // ran before it belongs to no task body: it is not attributed to the next task
+        // (`pyro_webapi::perf::longtask::ran_script`). The checkpoint of a nested task leaves
+        // it to the outer task.
+        if pyro_webapi::perf::TASK_HOOKS && pyro_runtime::task_depth() <= 1 {
+            pyro_js::reset_entered();
+        }
     }
 }
 

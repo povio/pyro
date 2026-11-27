@@ -747,8 +747,49 @@ pub(crate) struct EntryGuard(sys::JSContextRef);
 impl EntryGuard {
     #[inline]
     pub(crate) fn enter(ctx: sys::JSContextRef) -> Self {
+        note_entered(ctx);
         Self(callback_tls().entry.replace(ctx))
     }
+}
+
+thread_local! {
+    /// The contexts native code entered (a Rust-to-JavaScript call) since [`reset_entered`], by
+    /// address: which documents' script ran in a task (long task and long animation frame
+    /// attribution). Bounded; `ENTERED_LAST` skips the list for repeated entries of one context.
+    static ENTERED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    static ENTERED_LAST: Cell<usize> = const { Cell::new(0) };
+}
+
+/// The most contexts remembered between two [`reset_entered`] calls (more than a page set has).
+const ENTERED_MAX: usize = 64;
+
+#[inline]
+fn note_entered(ctx: sys::JSContextRef) {
+    let ctx = ctx as usize;
+    let _ = ENTERED_LAST.try_with(|last| {
+        if last.get() != ctx {
+            last.set(ctx);
+            let _ = ENTERED.try_with(|list| {
+                let mut list = list.borrow_mut();
+                if list.len() < ENTERED_MAX && !list.contains(&ctx) {
+                    list.push(ctx);
+                }
+            });
+        }
+    });
+}
+
+/// Forgets which contexts were entered ([`Realm::entered_since_reset`]): the embedder calls it
+/// at the boundaries of the units of work it attributes script to (event-loop tasks).
+pub fn reset_entered() {
+    let _ = ENTERED_LAST.try_with(|last| last.set(0));
+    let _ = ENTERED.try_with(|list| list.borrow_mut().clear());
+}
+
+/// Whether native code entered the context `ctx` since [`reset_entered`].
+pub(crate) fn entered_since_reset(ctx: sys::JSContextRef) -> bool {
+    let ctx = ctx as usize;
+    ENTERED.try_with(|list| list.borrow().contains(&ctx)).unwrap_or(false)
 }
 
 impl Drop for EntryGuard {

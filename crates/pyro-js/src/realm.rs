@@ -871,6 +871,14 @@ impl Realm {
         self.inner.id
     }
 
+    /// Whether native code entered this realm (called into its script: a timer, an event
+    /// listener, a script, a promise reaction ...) since the embedder last called
+    /// [`crate::reset_entered`]: which documents ran script in an event-loop task.
+    pub fn entered_since_reset(&self) -> bool {
+        let ctx = self.inner.ctx.get();
+        !ctx.is_null() && crate::engine::entered_since_reset(ctx as sys::JSContextRef)
+    }
+
     pub fn name(&self) -> &str {
         &self.inner.name
     }

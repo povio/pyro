@@ -119,6 +119,8 @@ pub struct TimelineBuffers {
     pub(super) scan: RefCell<super::scan::ScanState>,
     /// Event Timing's counters, pending entries and interaction state (`perf/event.rs`).
     pub(super) event: super::event::EventTimingState,
+    /// Long Animation Frames' open frame (`perf/loaf.rs`).
+    pub(super) loaf: super::loaf::LoafState,
 }
 
 impl TimelineBuffers {
