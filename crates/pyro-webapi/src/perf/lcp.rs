@@ -104,7 +104,7 @@ pub fn wants_frame(page: &Rc<PageDom>) -> bool {
 }
 
 /// A text colour that paints nothing by itself (`transparent`, alpha 0).
-fn transparent(value: &str) -> bool {
+pub(super) fn transparent(value: &str) -> bool {
     let v = value.trim().to_ascii_lowercase();
     if v.is_empty() || v == "transparent" {
         return true;
