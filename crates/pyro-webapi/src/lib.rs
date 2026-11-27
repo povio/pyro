@@ -122,6 +122,7 @@ mod service_worker;
 mod show_picker;
 mod service_worker_scope;
 mod smil;
+mod svg_animation_element;
 pub mod smooth_scroll;
 pub mod sri;
 pub mod storage;
@@ -197,6 +198,7 @@ pub fn register(engine: &pyro_js::Engine) {
     popup::register(engine);
     node::register(engine);
     html::register(engine);
+    svg_animation_element::register(engine);
     collections::register(engine);
     css::register(engine);
     layout_api::register(engine);

@@ -349,6 +349,9 @@ pub(crate) fn handler_attribute_changed(s: &Scope<'_>, n: &NodeData, name: &str,
             // onvisibilitychange) are none.
             Ok(e) if !(crate::handlers::GLOBAL.contains(&ty)
                 || crate::handlers::FULLSCREEN.contains(&ty)
+                || (e.namespace() == &markup5ever::ns!(svg)
+                    && matches!(&*e.name.local, "animate" | "set" | "animateMotion" | "animateTransform")
+                    && crate::handlers::SVG_ANIMATION_ATTRIBUTES.iter().any(|(_, event)| *event == ty))
                 || (e.is_html() && crate::handlers::element_handler(&e.name.local, ty))
                 || (e.is_html() && matches!(&*e.name.local, "body" | "frameset") && crate::handlers::WINDOW.contains(&ty))) =>
             {

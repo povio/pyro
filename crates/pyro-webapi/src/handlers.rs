@@ -128,6 +128,10 @@ pub(crate) fn element_handler(local: &str, ty: &str) -> bool {
     }
 }
 
+/// The timing event handlers of `SVGAnimationElement`: the attribute's name after `on` and the event type.
+pub(crate) const SVG_ANIMATION_ATTRIBUTES: &[(&str, &str)] =
+    &[("begin", "beginEvent"), ("end", "endEvent"), ("repeat", "repeatEvent")];
+
 /// The event type of an event handler content attribute named `local`
 /// (`onclick`), compared ASCII case-insensitively.
 pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
@@ -136,6 +140,11 @@ pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
     }
     // The first two bytes are ASCII: a char boundary follows them.
     let ty = &local[2..];
+    // SVG animation elements' `onbegin`, `onend` and `onrepeat` listen for `beginEvent`, `endEvent`
+    // and `repeatEvent` (SVG Animations); `onendEvent` is no handler.
+    if let Some(event) = SVG_ANIMATION_ATTRIBUTES.iter().find(|(name, _)| name.eq_ignore_ascii_case(ty)).map(|(_, event)| *event) {
+        return Some(event);
+    }
     GLOBAL
         .iter()
         .chain(WINDOW)

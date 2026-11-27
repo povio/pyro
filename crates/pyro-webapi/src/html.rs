@@ -815,6 +815,10 @@ pub enum ElClass {
     SvgFeSpecularLighting,
     SvgFeTile,
     SvgFeTurbulence,
+    SvgAnimate,
+    SvgSet,
+    SvgAnimateMotion,
+    SvgAnimateTransform,
     MathMl,
     Other,
 }
@@ -879,6 +883,10 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             "feSpecularLighting" => ElClass::SvgFeSpecularLighting,
             "feTile" => ElClass::SvgFeTile,
             "feTurbulence" => ElClass::SvgFeTurbulence,
+            "animate" => ElClass::SvgAnimate,
+            "set" => ElClass::SvgSet,
+            "animateMotion" => ElClass::SvgAnimateMotion,
+            "animateTransform" => ElClass::SvgAnimateTransform,
             _ => ElClass::Svg,
         };
     }
@@ -1121,6 +1129,10 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgFeSpecularLighting => s.wrap::<SvgFeSpecularLightingElement>(d, k),
         SvgFeTile => s.wrap::<SvgFeTileElement>(d, k),
         SvgFeTurbulence => s.wrap::<SvgFeTurbulenceElement>(d, k),
+        SvgAnimate => s.wrap::<crate::svg_animation_element::SvgAnimateElement>(d, k),
+        SvgSet => s.wrap::<crate::svg_animation_element::SvgSetElement>(d, k),
+        SvgAnimateMotion => s.wrap::<crate::svg_animation_element::SvgAnimateMotionElement>(d, k),
+        SvgAnimateTransform => s.wrap::<crate::svg_animation_element::SvgAnimateTransformElement>(d, k),
         MathMl => s.wrap::<MathMlElement>(d, k),
         Other => s.wrap::<Element>(d, k),
     }
@@ -1262,6 +1274,10 @@ pub fn interface_name(class: ElClass) -> &'static str {
         SvgFeSpecularLighting => SvgFeSpecularLightingElement::NAME,
         SvgFeTile => SvgFeTileElement::NAME,
         SvgFeTurbulence => SvgFeTurbulenceElement::NAME,
+        SvgAnimate => crate::svg_animation_element::SvgAnimateElement::NAME,
+        SvgSet => crate::svg_animation_element::SvgSetElement::NAME,
+        SvgAnimateMotion => crate::svg_animation_element::SvgAnimateMotionElement::NAME,
+        SvgAnimateTransform => crate::svg_animation_element::SvgAnimateTransformElement::NAME,
         MathMl => MathMlElement::NAME,
         Other => Element::NAME,
     }
@@ -1420,6 +1436,10 @@ pub(crate) fn wrap_new_html_element<'s>(
         SvgFeSpecularLighting => crate::node::wrap_new_node::<SvgFeSpecularLightingElement>(s, page, el, new_target),
         SvgFeTile => crate::node::wrap_new_node::<SvgFeTileElement>(s, page, el, new_target),
         SvgFeTurbulence => crate::node::wrap_new_node::<SvgFeTurbulenceElement>(s, page, el, new_target),
+        SvgAnimate => crate::node::wrap_new_node::<crate::svg_animation_element::SvgAnimateElement>(s, page, el, new_target),
+        SvgSet => crate::node::wrap_new_node::<crate::svg_animation_element::SvgSetElement>(s, page, el, new_target),
+        SvgAnimateMotion => crate::node::wrap_new_node::<crate::svg_animation_element::SvgAnimateMotionElement>(s, page, el, new_target),
+        SvgAnimateTransform => crate::node::wrap_new_node::<crate::svg_animation_element::SvgAnimateTransformElement>(s, page, el, new_target),
         MathMl => crate::node::wrap_new_node::<MathMlElement>(s, page, el, new_target),
         Other => crate::node::wrap_new_node::<Element>(s, page, el, new_target),
     }
