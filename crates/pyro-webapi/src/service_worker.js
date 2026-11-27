@@ -2,7 +2,7 @@
 // one realm, made on its first use of one of them (service_worker.rs). The
 // browser thread owns the registrations; this realm keeps one object per
 // registration and per worker version, so identity holds across calls.
-//   native.register(id, scriptURL, scope, type, updateViaCache)
+//   native.register(id, scriptURL, scope, type, updateViaCache), trustedScriptURL(value)
 //   native.blocked(): the context blocks registration (serviceWorkers: 'block')
 //   native.getRegistration(id, clientURL), getRegistrations(id)
 //   native.unregister(id, registrationId), update(id, registrationId)
@@ -293,7 +293,7 @@
         if (!['imports', 'all', 'none'].includes(updateViaCache)) {
           throw new TypeErrorC(`Failed to execute 'register' on 'ServiceWorkerContainer': The provided value '${updateViaCache}' is not a valid enum value of type ServiceWorkerUpdateViaCache.`);
         }
-        return request('register', String(scriptURL), scope, type, updateViaCache);
+        return request('register', native.trustedScriptURL(scriptURL), scope, type, updateViaCache);
       } catch (e) {
         return PromiseC.reject(e);
       }

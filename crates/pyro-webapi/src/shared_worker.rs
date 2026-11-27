@@ -251,7 +251,8 @@ impl JsClass for SharedWorker {
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);
             }
-            let input = dom_string(a.get(0))?;
+            // Trusted Types: the script URL is a TrustedScriptURL sink ("SharedWorker constructor").
+            let input = crate::trusted_types::compliant_string(s, &page, crate::trusted_types::Kind::ScriptUrl, a.get(0), "SharedWorker constructor", false)?;
             let mut name = String::new();
             let mut module = false;
             let mut credentials = Credentials::SameOrigin;

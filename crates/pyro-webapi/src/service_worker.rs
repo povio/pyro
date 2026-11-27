@@ -1566,6 +1566,14 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     native.set_atom("register", f.value())?;
+    // Trusted Types: `register(scriptURL)` takes a TrustedScriptURL ("ServiceWorkerContainer register"); the JS wrapper
+    // calls this inside its try block so a violation rejects the promise with the TypeError.
+    let f = s.function("trustedScriptURL", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let url = crate::trusted_types::compliant_string(s, &page, crate::trusted_types::Kind::ScriptUrl, a.get(0), "ServiceWorkerContainer register", false)?;
+        Ok(s.string(&url))
+    })?;
+    native.set_atom("trustedScriptURL", f.value())?;
     let f = s.function("blocked", |s, _, _| {
         let page = crate::target::page_of(s)?;
         Ok(s.boolean(page.context_services().service_workers.blocked.get()))

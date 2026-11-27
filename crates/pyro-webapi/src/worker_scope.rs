@@ -1543,7 +1543,9 @@ impl JsClass for WorkerGlobalScope {
             }
             let mut urls = Vec::with_capacity(a.len());
             for value in a.iter() {
-                let input = value.to_string()?;
+                // Trusted Types (importScripts step 1): every argument is made a compliant TrustedScriptURL
+                // string under the worker's own policies before anything is fetched.
+                let input = crate::trusted_types::compliant_string(s, &g.target.page, crate::trusted_types::Kind::ScriptUrl, value, "WorkerGlobalScope importScripts", false)?;
                 let url = g.url.join(&input).map_err(|_| {
                     JsError::dom(
                         "SyntaxError",
