@@ -3,6 +3,7 @@
 
 mod auth;
 mod cache;
+mod client_hints;
 mod dictionary;
 pub mod client;
 pub mod cookies;

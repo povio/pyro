@@ -408,6 +408,8 @@ struct Shared {
     cache: Mutex<crate::cache::HttpCache>,
     /// Compression dictionaries (RFC 9842) responses registered.
     dictionaries: Mutex<crate::dictionary::Dictionaries>,
+    /// `Accept-CH`: the client hints each origin asked for, for the session.
+    client_hints: Mutex<crate::client_hints::Store>,
     epoch: Instant,
     /// `Security.setIgnoreCertificateErrors`: HTTPS requests skip certificate
     /// verification (handshake signatures are still checked).
@@ -517,6 +519,20 @@ impl Shared {
                 for (name, value) in hints.iter() {
                     h.entry(name.clone()).or_insert_with(|| value.clone());
                 }
+            }
+        }
+        // UA Client Hints: the low-entropy ones go to every potentially trustworthy request of an agent
+        // that is not overridden (an override without metadata sends none, as Chrome); `Accept-CH`
+        // adds what the origin asked for to its own requests (a navigation's, or a same-origin context's).
+        if crate::cookies::is_trustworthy(&req.url) {
+            let default_agent = req.defaults.user_agent.is_none() && settings.user_agent.is_none() && req.defaults.client_hints.is_none();
+            if default_agent {
+                for (name, value) in crate::client_hints::low_entropy() {
+                    h.entry(name).or_insert(value);
+                }
+            }
+            if same_origin || req.destination == Destination::Document {
+                self.client_hints.lock().unwrap().add_to(&req.url, default_agent, &mut h);
             }
         }
         // Fetch: a ranged request asks for the bytes as stored.
@@ -790,6 +806,7 @@ impl NetClient {
             interceptor: Mutex::new(None),
             cache: Mutex::new(cache),
             dictionaries: Mutex::default(),
+            client_hints: Mutex::default(),
             epoch: Instant::now(),
             ignore_certificate_errors: std::sync::atomic::AtomicBool::new(false),
             proxy,
@@ -2593,6 +2610,14 @@ impl Io {
             // pyro: the same decision as the cookies sent (`includes_credentials`): a tainted hop
             // (a no-cors chain that went through another origin) neither sends nor stores.
             self.store_cookies(&req, &url, &resp_headers, includes_credentials(req.credentials, basic_tainting));
+            // Client Hints: a top-level document's `Accept-CH` (a redirect's too) replaces the origin's
+            // set; `Clear-Site-Data` clears it from a navigation or a same-origin fetch, not a subframe's.
+            self.shared.client_hints.lock().unwrap().response(
+                &url,
+                &resp_headers,
+                req.destination == Destination::Document,
+                basic_tainting && req.destination != Destination::Iframe,
+            );
             let response_time = wall_time();
             if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE)
                 && (status.is_success() || status.is_redirection())
