@@ -4326,8 +4326,8 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     // of shapes, paths, text and containers (pyro_dom::svg_geometry).
     def.method("getBBox", 0, |s, n, _a| {
         let page = n.page();
-        // (What SMIL animation changes, read before the DOM and the layout are borrowed.)
-        let animated = crate::smil::geometry(page);
+        // (What SMIL animation changes, sampled before the layout is borrowed.)
+        let animated = collections::SmilGeometry::new(page);
         let dom = page.dom.borrow();
         let layout = page.layout();
         crate::canvas::svg_rect_value(s, page, pyro_dom::svg_geometry::bbox_animated(&dom, layout.style(), n.id, &animated))
@@ -4336,7 +4336,7 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     def.method("getCTM", 0, |s, n, _a| {
         let matrix = {
             let page = n.page();
-            let animated = crate::smil::geometry(page);
+            let animated = collections::SmilGeometry::new(page);
             let dom = page.dom.borrow();
             let layout = page.layout();
             pyro_dom::svg_geometry::ctm_animated(&dom, &layout, n.id, &animated)
@@ -4346,7 +4346,7 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     def.method("getScreenCTM", 0, |s, n, _a| {
         let matrix = {
             let page = n.page();
-            let animated = crate::smil::geometry(page);
+            let animated = collections::SmilGeometry::new(page);
             let dom = page.dom.borrow();
             let layout = page.layout();
             pyro_dom::svg_geometry::screen_ctm_animated(&dom, &layout, n.id, &animated)

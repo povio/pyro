@@ -742,7 +742,8 @@ fn parse_number_list(list: &str) -> Option<Vec<f64>> {
     parts.into_iter().map(|p| p.parse::<f64>().ok().filter(|v| v.is_finite())).collect()
 }
 
-/// `keySplines`: each a cubic Bezier `x1 y1 x2 y2` with both x in 0..1 (y may leave it, as in Chrome).
+/// `keySplines`: each a cubic Bezier `x1 y1 x2 y2`, all in 0..1 (one outside makes the list invalid, and with
+/// `calcMode="spline"` the animation has no effect: WPT `keysplines-x-limits` and `keysplines-y-limits`).
 fn parse_key_splines(list: &str) -> Option<Vec<[f64; 4]>> {
     let mut parts: Vec<&str> = list.split(';').map(str::trim).collect();
     if parts.last().is_some_and(|p| p.is_empty()) {
@@ -756,7 +757,7 @@ fn parse_key_splines(list: &str) -> Option<Vec<[f64; 4]>> {
                 .filter(|t| !t.is_empty())
                 .map(|t| t.parse::<f64>().ok().filter(|v| v.is_finite()))
                 .collect::<Option<_>>()?;
-            (p.len() == 4 && (0.0..=1.0).contains(&p[0]) && (0.0..=1.0).contains(&p[2])).then(|| [p[0], p[1], p[2], p[3]])
+            (p.len() == 4 && p.iter().all(|v| (0.0..=1.0).contains(v))).then(|| [p[0], p[1], p[2], p[3]])
         })
         .collect()
 }
@@ -2110,8 +2111,10 @@ mod tests {
         assert_eq!(parse_number_list("0;;1"), None);
         assert_eq!(number_unit("10px"), Some((10.0, "px")));
         assert_eq!(number_unit("red"), None);
-        // x of a control point stays in 0..1, y may leave it.
-        assert_eq!(parse_key_splines("0.5 -1 0.5 2;"), Some(vec![[0.5, -1.0, 0.5, 2.0]]));
+        // Every control point coordinate stays in 0..1.
+        assert_eq!(parse_key_splines("0.5 0 0.5 1;"), Some(vec![[0.5, 0.0, 0.5, 1.0]]));
+        assert_eq!(parse_key_splines("0.5 -1 0.5 2;"), None);
+        assert_eq!(parse_key_splines("0 0 1 -1"), None);
         assert_eq!(parse_key_splines("1.5 0 0.5 1"), None);
     }
 

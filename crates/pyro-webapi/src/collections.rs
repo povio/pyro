@@ -3027,6 +3027,56 @@ fn attribute_contributions(page: &PageDom, id: NodeId, names: &[&str]) -> Vec<cr
     names.iter().flat_map(|name| crate::smil::animated(page, id, name)).collect()
 }
 
+/// The animated value, in user units, of the geometry length attribute `name` of `id` (what its `animVal`
+/// has: `x`, `width`, `cx`, `r`, ...) for `getBBox()`; `None` when no animation changes it, or the value
+/// is in a unit that needs the layout (`%`, `em`: the attribute's own reading stays).
+pub(crate) fn animated_geometry_number(page: &PageDom, id: NodeId, name: &str) -> Option<f64> {
+    let contributions = attribute_contributions(page, id, &[name]);
+    if contributions.is_empty() {
+        return None;
+    }
+    let base = page.dom.borrow().get_attribute(id, name).ok().flatten().and_then(parse_svg_length).unwrap_or((0.0, 1));
+    // (Absolute units only: this runs under the layout's borrow, which `unit_factor` takes again.)
+    let factor = |kind: u16| match kind {
+        1 | 5 => 1.0,
+        6 => 96.0 / 2.54,
+        7 => 96.0 / 25.4,
+        8 => 96.0,
+        9 => 4.0 / 3.0,
+        10 => 16.0,
+        _ => 0.0,
+    };
+    let space = LengthSpace { factor: &factor };
+    let (value, kind) = crate::smil::fold(&space, &contributions, vec![base]).first().copied().unwrap_or(base);
+    let scale = factor(kind);
+    (scale != 0.0).then(|| value * scale)
+}
+
+/// What SMIL animation changes in the geometry of `page`'s elements at its current time, for
+/// `getBBox()`, `getCTM()` and `getScreenCTM()` (`pyro_dom::svg_geometry::Animated`).
+pub(crate) struct SmilGeometry<'a> {
+    page: &'a PageDom,
+    /// The `<animateMotion>`s' transforms, sampled once.
+    motion: crate::smil::Geometry,
+}
+
+impl<'a> SmilGeometry<'a> {
+    /// Call it before borrowing the layout.
+    pub(crate) fn new(page: &'a PageDom) -> SmilGeometry<'a> {
+        SmilGeometry { page, motion: crate::smil::geometry(page) }
+    }
+}
+
+impl pyro_dom::svg_geometry::Animated for SmilGeometry<'_> {
+    fn motion(&self, el: NodeId) -> Option<[f64; 6]> {
+        pyro_dom::svg_geometry::Animated::motion(&self.motion, el)
+    }
+
+    fn number(&self, el: NodeId, name: &str) -> Option<f64> {
+        animated_geometry_number(self.page, el, name)
+    }
+}
+
 /// The numbers of a list separated by whitespace and/or commas.
 fn split_values(text: &str) -> Vec<&str> {
     text.split(|c: char| c == ',' || c.is_ascii_whitespace()).filter(|t| !t.is_empty()).collect()

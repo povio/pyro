@@ -53,6 +53,12 @@ impl Bounds {
 /// knows no animations: the webapi layer implements this over its SMIL sampler and passes it to
 /// [`bbox_animated`] and [`ctm_animated`]. A `None` is the value the attributes give.
 pub trait Animated {
+    /// The animated value, in user units, of the geometry attribute `name` (`x`, `width`, `cx`, `r`,
+    /// ...) of `el`: what `animVal` has, when an animation of that attribute is in effect.
+    fn number(&self, _el: NodeId, _name: &str) -> Option<f64> {
+        None
+    }
+
     /// The supplemental transform of the `<animateMotion>`s in effect on `el` (SVG 2, "animateMotion"):
     /// applied after the element's `transform`, in the element's own user space.
     fn motion(&self, _el: NodeId) -> Option<[f64; 6]> {
@@ -135,6 +141,11 @@ fn num(dom: &Dom, el: NodeId, name: &str) -> f64 {
     attr(dom, el, name).unwrap_or(0.0)
 }
 
+/// [`num`] under the SMIL animations of `animated`.
+fn num_animated(dom: &Dom, animated: &dyn Animated, el: NodeId, name: &str) -> f64 {
+    animated.number(el, name).unwrap_or_else(|| num(dom, el, name))
+}
+
 fn local_name(dom: &Dom, el: NodeId) -> Option<String> {
     let e = dom.element(el).ok()?;
     (e.name.ns == markup5ever::ns!(svg)).then(|| e.name.local.to_string())
@@ -146,31 +157,31 @@ fn bounds(dom: &Dom, style: &StyleEngine, animated: &dyn Animated, el: NodeId, d
     }
     match local_name(dom, el)?.as_str() {
         "rect" | "image" | "foreignObject" | "use" => {
-            let (w, h) = (num(dom, el, "width"), num(dom, el, "height"));
+            let (w, h) = (num_animated(dom, animated, el, "width"), num_animated(dom, animated, el, "height"));
             if w < 0.0 || h < 0.0 {
                 return None;
             }
-            let (x, y) = (num(dom, el, "x"), num(dom, el, "y"));
+            let (x, y) = (num_animated(dom, animated, el, "x"), num_animated(dom, animated, el, "y"));
             let mut b = Bounds::point(x, y);
             b.add(x + w, y + h);
             Some(b)
         }
         "circle" => {
-            let (cx, cy, r) = (num(dom, el, "cx"), num(dom, el, "cy"), num(dom, el, "r"));
+            let (cx, cy, r) = (num_animated(dom, animated, el, "cx"), num_animated(dom, animated, el, "cy"), num_animated(dom, animated, el, "r"));
             let mut b = Bounds::point(cx - r, cy - r);
             b.add(cx + r, cy + r);
             Some(b)
         }
         "ellipse" => {
-            let (cx, cy) = (num(dom, el, "cx"), num(dom, el, "cy"));
-            let (rx, ry) = (num(dom, el, "rx"), num(dom, el, "ry"));
+            let (cx, cy) = (num_animated(dom, animated, el, "cx"), num_animated(dom, animated, el, "cy"));
+            let (rx, ry) = (num_animated(dom, animated, el, "rx"), num_animated(dom, animated, el, "ry"));
             let mut b = Bounds::point(cx - rx, cy - ry);
             b.add(cx + rx, cy + ry);
             Some(b)
         }
         "line" => {
-            let mut b = Bounds::point(num(dom, el, "x1"), num(dom, el, "y1"));
-            b.add(num(dom, el, "x2"), num(dom, el, "y2"));
+            let mut b = Bounds::point(num_animated(dom, animated, el, "x1"), num_animated(dom, animated, el, "y1"));
+            b.add(num_animated(dom, animated, el, "x2"), num_animated(dom, animated, el, "y2"));
             Some(b)
         }
         "polyline" | "polygon" => {
