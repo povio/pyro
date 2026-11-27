@@ -21,6 +21,7 @@
   const getOwnPropertyNames = Object.getOwnPropertyNames;
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const parseColor = natives.parseColor;
+  const parseStopColor = natives.parseStopColor;
   const apply = Reflect.apply;
 
   function illegal() { return new TypeErrorC('Illegal constructor'); }
@@ -761,7 +762,7 @@
   class CanvasGradient {
     constructor(token, kind, args) {
       if (token !== secret) throw illegal();
-      gradients.set(this, { kind, args, stops: [], version: 0 });
+      gradients.set(this, { kind, args, stops: [], nonLegacy: false, version: 0 });
     }
     addColorStop(offset, color) {
       const g = gradients.get(this);
@@ -769,9 +770,11 @@
       if (arguments.length < 2) throw new TypeErrorC(`Failed to execute 'addColorStop' on 'CanvasGradient': 2 arguments required, but only ${arguments.length} present.`);
       const o = finite(offset, "The provided double value");
       if (o < 0 || o > 1) throw domError('IndexSizeError', `The provided value (${o}) is outside the range (0.0, 1.0).`);
-      const parsed = parseColor(String(color));
+      const parsed = parseStopColor(String(color));
       if (parsed === null) throw domError('SyntaxError', `The value provided ('${color}') could not be parsed as a color.`);
-      g.stops.push(o, parsed);
+      // A stop in a non-legacy color syntax makes the gradient interpolate in Oklab.
+      if (!parsed[1]) g.nonLegacy = true;
+      g.stops.push(o, parsed[0]);
       g.version++;
     }
   }

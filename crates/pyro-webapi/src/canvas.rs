@@ -184,6 +184,15 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })
     })?;
     natives.set_atom("parseColor", parse.value())?;
+    // `addColorStop`'s color: `[serialization, legacy]` (whether it was written in a legacy color
+    // syntax, from the parser), or null.
+    let parse_stop = s.function("parseStopColor", |s, _this, a| {
+        Ok(match parsed_color(&dom_string(a.get(0))?) {
+            Some(c) => s.array(&[s.string(&c.css), s.boolean(c.legacy)])?.value(),
+            None => s.null(),
+        })
+    })?;
+    natives.set_atom("parseStopColor", parse_stop.value())?;
     let is_blob =
         s.function("isBlob", |s, _this, a| Ok(s.boolean(s.unwrap::<crate::file::Blob>(a.get(0)).is_some())))?;
     natives.set_atom("isBlob", is_blob.value())?;
@@ -1423,15 +1432,14 @@ fn gradient_paint(record: Object<'_>, space: Space) -> JsResult<Option<pyro_canv
     let Some(stops) = record.get_atom("stops")?.as_object() else { return Ok(None) };
     let len = stops.get_atom("length")?.to_number()? as u32;
     let mut list = Vec::with_capacity(len as usize / 2);
-    let mut oklab = false;
+    // A stop written in a non-legacy color syntax (`color()`, `lab()`, `color-mix()`, `rgb(from ...)`)
+    // makes the gradient interpolate in Oklab, as Chrome does; the parser said so when it was added.
+    let oklab = record.get_atom("nonLegacy")?.to_bool();
     for i in (0..len).step_by(2) {
         let offset = stops.get_index(i)?.to_number()? as f32;
         // Stops keep their serialization (currentcolor is black); painted
         // in the context's color space.
         let stop = stops.get_index(i + 1)?.to_string()?;
-        // Legacy sRGB syntaxes serialize as `#rrggbb` / `rgba(...)`; any other color makes the
-        // gradient interpolate in Oklab, as Chrome does (`color-mix()`, `rgb(from ...)`).
-        oklab |= !(stop.starts_with('#') || stop.starts_with("rgba("));
         let color = match space {
             Space::Srgb => color_of(&stop),
             _ => pyro_dom::canvas_color::parse_in(&stop, [0.0, 0.0, 0.0, 1.0], space)
