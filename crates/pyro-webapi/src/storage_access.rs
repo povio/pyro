@@ -22,9 +22,10 @@
 //!
 //! The `StorageAccessTypes` form grants cookie access only: Pyro's Web Storage, IndexedDB, Cache Storage,
 //! Web Locks and the like are not partitioned by top-level site for a third party, so there is no
-//! partitioned/unpartitioned pair to hand a handle for. `{cookies: true}` and `{all: true}` resolve with a
-//! `StorageAccessHandle` that has no storage members; asking for one of the storage members by name
-//! rejects with `NotSupportedError`. `requestStorageAccessFor()` (Related Website Sets) is not provided.
+//! partitioned/unpartitioned pair to hand a handle for. `{cookies: true}` alone resolves with a
+//! `StorageAccessHandle` (a cookies-only request legitimately yields a handle without storage members: the
+//! handle carries only what was requested besides cookies); `{all: true}` and asking for one of the storage
+//! members by name reject with `NotSupportedError`, since the handle could not carry them. `requestStorageAccessFor()` (Related Website Sets) is not provided.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -36,7 +37,7 @@ use pyro_net::cookies::{partition_key, CookieBlocking, SiteContext};
 use crate::navigator_extras::PermissionSetting;
 use crate::page::PageDom;
 
-/// The `StorageAccessHandle` a typed request resolves with.
+/// The `StorageAccessHandle` a cookies-only typed request resolves with (no storage members were requested).
 pub(crate) struct StorageAccessHandle;
 impl JsClass for StorageAccessHandle {
     const NAME: &'static str = "StorageAccessHandle";
@@ -184,11 +185,12 @@ pub(crate) fn request<'s>(s: &Scope<'s>, page: &Rc<PageDom>, document: NodeId, t
         if !all && !cookies && named.is_empty() {
             return not_allowed("requestStorageAccess() needs at least one storage type to be requested.");
         }
-        if !all && !named.is_empty() {
-            return Err(JsError::dom(
-                "NotSupportedError",
-                format!("Storage access handles for {} are not supported: that storage is not partitioned.", named.join(", ")),
-            ));
+        // A handle carries the storage members that were requested (`all` is every one of them). Pyro's storage
+        // is not partitioned for a third party, so there is nothing to put in such a handle: reject rather than
+        // resolve with a handle whose members are missing.
+        if all || !named.is_empty() {
+            let what = if all { "all storage".to_string() } else { named.join(", ") };
+            return Err(JsError::dom("NotSupportedError", format!("Storage access handles for {what} are not supported: that storage is not partitioned.")));
         }
     }
     grant(s, page)?;
