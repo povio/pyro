@@ -203,11 +203,20 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         {
             let mut commits = page.canvas_commits.borrow_mut();
             commits.retain(|c| c.surface.strong_count() > 0);
+            c.placeholder_canvas.set(canvas_of_placeholder(&page, &placeholder));
             commits.push(FrameCommit { surface: Rc::downgrade(&c.surface), clean: c.clean.clone(), placeholder, committed: Cell::new(None) });
         }
         Ok(context.value())
     })?;
     natives.set_atom("offscreenContext", offscreen.value())?;
+    // offscreenElementImageSize(placeholder or null, elementImage or element): HTML-in-Canvas
+    // `OffscreenCanvas.getElementImageDefaultSize`.
+    let element_size = s.function("offscreenElementImageSize", |s, _this, a| {
+        let page = crate::target::page_of(s)?;
+        let canvas = placeholder_of(a.get(0))?.and_then(|placeholder| canvas_of_placeholder(&page, &placeholder));
+        crate::html_in_canvas::offscreen_default_size(s, &page, canvas, a.get(1))
+    })?;
+    natives.set_atom("offscreenElementImageSize", element_size.value())?;
     let resize = s.function("resizeContext", |s, _this, a| {
         if let Some(c) = s.unwrap::<OffscreenCanvasRenderingContext2D>(a.get(0)) {
             let (w, h) = (size_u32(a.get(1).to_number()?), size_u32(a.get(2).to_number()?));
@@ -505,6 +514,9 @@ enum Target {
 pub struct ContextData {
     page: Rc<PageDom>,
     target: Target,
+    /// An OffscreenCanvas of `transferControlToOffscreen`: the placeholder `<canvas>` it draws
+    /// for, the canvas whose ElementImages (and only those) it may draw.
+    placeholder_canvas: Cell<Option<NodeId>>,
     state: RefCell<State>,
     stack: RefCell<Vec<State>>,
     path: RefCell<Path>,
@@ -659,6 +671,7 @@ fn new_context<'s>(
     let data = ContextData {
         page: page.clone(),
         target,
+        placeholder_canvas: Cell::new(None),
         state: RefCell::new(State::new()),
         stack: RefCell::new(Vec::new()),
         path: RefCell::new(Path::default()),
@@ -1826,9 +1839,23 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
                 .ok_or_else(|| JsError::Type("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': parameter 1 is not of type '(Element or ElementImage)'.".into()))?,
         ),
     };
-    let Target::Element(canvas) = c.target else {
+    // The canvas an ElementImage must come from: this context's `<canvas>`, or the placeholder
+    // of an OffscreenCanvas that took its control. A standalone OffscreenCanvas has none.
+    let owner = match c.target {
+        Target::Element(canvas) => Some(canvas),
+        Target::Offscreen => c.placeholder_canvas.get(),
+    };
+    let Some(canvas) = owner else {
         return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The canvas has no drawable content."));
     };
+    if element.is_some() && !matches!(c.target, Target::Element(_)) {
+        return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': An Element can only be drawn by the 2D context of its <canvas>."));
+    }
+    if let Some(from) = s.unwrap::<crate::html_in_canvas::ElementImageClass>(a.get(0)).map(|image| image.owner) {
+        if from != crate::html_in_canvas::owner_key(&c.page, canvas) {
+            return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The ElementImage was captured from a different canvas."));
+        }
+    }
     if closed {
         return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The ElementImage is closed."));
     }
@@ -2960,6 +2987,11 @@ pub(crate) fn ensure_not_placeholder(page: &PageDom, canvas: NodeId, attribute: 
         ));
     }
     Ok(())
+}
+
+/// The `<canvas>` whose control was transferred to the OffscreenCanvas `placeholder` belongs to.
+fn canvas_of_placeholder(page: &PageDom, placeholder: &Arc<Placeholder>) -> Option<NodeId> {
+    page.canvas_placeholders.borrow().iter().find(|(_, p)| Arc::ptr_eq(p, placeholder)).map(|(canvas, _)| *canvas)
 }
 
 /// The frame shown on `canvas` if its control was transferred.

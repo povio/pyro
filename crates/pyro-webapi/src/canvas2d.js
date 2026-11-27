@@ -983,6 +983,13 @@
       }
       return o.context;
     }
+    // HTML-in-Canvas: the size of an ElementImage of the canvas this OffscreenCanvas took the control of.
+    getElementImageDefaultSize(image) {
+      const o = oc(this);
+      if (arguments.length < 1) throw new TypeErrorC(`Failed to execute 'getElementImageDefaultSize' on 'OffscreenCanvas': 1 argument required, but only 0 present.`);
+      if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
+      return natives.offscreenElementImageSize(o.placeholder, image);
+    }
     transferToImageBitmap() {
       const o = oc(this);
       if (o.detached) throw domError('InvalidStateError', 'Cannot transfer an ImageBitmap from a detached OffscreenCanvas');

@@ -386,6 +386,14 @@ pub struct ElementSnapshot {
     pub taints: bool,
     /// `close()` was called.
     pub closed: Cell<bool>,
+    /// The canvas it was captured from ([`owner_key`]): only that canvas, or an OffscreenCanvas
+    /// holding its control, may draw or measure it.
+    pub owner: (usize, NodeId),
+}
+
+/// `canvas` of `page` as an [`ElementSnapshot`] records its owner.
+pub(crate) fn owner_key(page: &PageDom, canvas: NodeId) -> (usize, NodeId) {
+    (Rc::as_ptr(&page.dom) as *const () as usize, canvas)
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
@@ -435,6 +443,7 @@ pub(crate) fn capture<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId, ele
         pixels: image.pixels.map(|(w, h, data)| (w, h, Rc::new(data))),
         taints: image.taints,
         closed: Cell::new(false),
+        owner: owner_key(page, canvas),
     };
     Ok(s.wrap::<ElementImageClass>(snapshot, None)?.value())
 }
@@ -452,6 +461,9 @@ pub(crate) fn default_size<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId
             if image.closed.get() {
                 return Err(invalid_state("The ElementImage is closed."));
             }
+            if image.owner != owner_key(page, canvas) {
+                return Err(invalid_state("The ElementImage was captured from a different canvas."));
+            }
             (image.width, image.height)
         }
         None => {
@@ -464,6 +476,35 @@ pub(crate) fn default_size<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: NodeId
     let out = s.object();
     out.set_atom("width", s.number(width * sx))?;
     out.set_atom("height", s.number(height * sy))?;
+    Ok(out.value())
+}
+
+/// `OffscreenCanvas.getElementImageDefaultSize(elementImage)`: an ElementImage of the canvas whose
+/// control this OffscreenCanvas took (`canvas`), in that canvas grid's units. An Element is the
+/// canvas element's to measure, and a standalone OffscreenCanvas has no canvas: InvalidStateError.
+pub(crate) fn offscreen_default_size<'s>(s: &Scope<'s>, page: &Rc<PageDom>, canvas: Option<NodeId>, target: Value<'s>) -> pyro_js::JsResult<Value<'s>> {
+    let Some(image) = s.unwrap::<ElementImageClass>(target) else {
+        return Err(match element_of(s, page, target) {
+            Ok(_) => invalid_state("An Element can only be measured by its <canvas>."),
+            Err(error) => error,
+        });
+    };
+    let Some(canvas) = canvas else { return Err(invalid_state("The OffscreenCanvas has no canvas to take the ElementImage from.")) };
+    let layout = page.layout();
+    let dom = page.dom.borrow();
+    if !is_drawable_canvas(&dom, canvas) {
+        return Err(invalid_state("The canvas's content is not drawable."));
+    }
+    if image.closed.get() {
+        return Err(invalid_state("The ElementImage is closed."));
+    }
+    if image.owner != owner_key(page, canvas) {
+        return Err(invalid_state("The ElementImage was captured from a different canvas."));
+    }
+    let (sx, sy) = grid_scale(&layout, &dom, canvas);
+    let out = s.object();
+    out.set_atom("width", s.number(image.width * sx))?;
+    out.set_atom("height", s.number(image.height * sy))?;
     Ok(out.value())
 }
 
