@@ -2611,6 +2611,17 @@ impl Browser {
         // The document's Reporting API endpoints (CSP `report-to`); a document without the header
         // has none, and the previous document's report state goes.
         page_dom.set_reporting_endpoints(resource.reporting_endpoints.as_deref());
+        // `bindings::create` parses every `about:blank` document from the blank markup (html,
+        // head, body). A document made from a body at that URL (a `javascript:` URL's string
+        // result replacing an about:blank document keeps its URL) must start empty: the parser
+        // cannot add its html element to a document that has one, and the string's markup is lost.
+        if resource.url == "about:blank" {
+            let mut dom = dom.borrow_mut();
+            let children: Vec<NodeId> = dom.children(doc).map(|c| c.collect()).unwrap_or_default();
+            for child in children {
+                let _ = dom.remove_child(doc, child);
+            }
+        }
         let json_document = pyro_net::is_json_mime(&resource.mime);
         let mut parser = if json_document {
             DocumentParser::new_json(dom.clone(), doc, &resource.mime)
