@@ -97,6 +97,20 @@ macro_rules! handler_accessors {
     };
 }
 
+/// The same accessors for a [Global] interface: WebIDL puts a global's attributes on the global
+/// object itself, not on the interface prototype (`Window.prototype` has no `onclick`).
+macro_rules! global_handler_accessors {
+    ($def:expr, $get:expr, [$($ty:literal),* $(,)?]) => {
+        $(
+            $def.global_accessor(
+                concat!("on", $ty),
+                |s, d| event_handler(s, $get(d), $ty),
+                |s, d, v| set_event_handler(s, $get(d), $ty, v),
+            );
+        )*
+    };
+}
+
 /// Fullscreen API handlers, on Document and Element.
 macro_rules! fullscreen_events {
     ($callback:ident!($($args:tt)*)) => {
@@ -193,8 +207,8 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    global_events!(handler_accessors!(def, window_target::<W::Data>,));
-    window_events!(handler_accessors!(def, window_target::<W::Data>,));
+    global_events!(global_handler_accessors!(def, window_target::<W::Data>,));
+    window_events!(global_handler_accessors!(def, window_target::<W::Data>,));
 }
 
 /// The Window's handlers for a `<body>`/`<frameset>` of the page's document;
