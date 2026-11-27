@@ -161,6 +161,17 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
             Some(resolved_alignment(shorthand.name(), out))
         }
         Err(declaration) => {
+            // The computed `d` has absolute commands (SVG 2 "The d property": relative ones are
+            // converted, `H`, `V`, `S`, `T`, `A` and `Z` stay what they are), as Chrome serializes it.
+            if name.eq_ignore_ascii_case("d") {
+                use style::values::specified::svg::DProperty;
+                if let DProperty::Path(path) = &style.get_svg().d {
+                    let absolute = DProperty::Path(path.normalize(false));
+                    let mut out = String::new();
+                    style_traits::ToCss::to_css(&absolute, &mut style_traits::CssWriter::new(&mut out)).ok()?;
+                    return Some(out);
+                }
+            }
             // Serialize resolved line-height in CSS pixels at the element's effective zoom.
             if name.eq_ignore_ascii_case("line-height") {
                 use style::values::generics::font::GenericLineHeight;
