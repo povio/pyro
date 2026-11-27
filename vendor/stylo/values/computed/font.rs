@@ -454,7 +454,7 @@ impl FontFamily {
         generic_font_family!(MONOSPACE, Monospace);
         generic_font_family!(CURSIVE, Cursive);
         generic_font_family!(FANTASY, Fantasy);
-        #[cfg(feature = "gecko")]
+        // pyro: also for servo (MathML Core's `font-family: math`).
         generic_font_family!(MATH, Math);
         #[cfg(feature = "gecko")]
         generic_font_family!(MOZ_EMOJI, MozEmoji);
@@ -470,7 +470,6 @@ impl FontFamily {
             GenericFontFamily::Monospace => &*MONOSPACE,
             GenericFontFamily::Cursive => &*CURSIVE,
             GenericFontFamily::Fantasy => &*FANTASY,
-            #[cfg(feature = "gecko")]
             GenericFontFamily::Math => &*MATH,
             #[cfg(feature = "gecko")]
             GenericFontFamily::MozEmoji => &*MOZ_EMOJI,
@@ -681,7 +680,7 @@ pub enum GenericFontFamily {
     Monospace,
     Cursive,
     Fantasy,
-    #[cfg(feature = "gecko")]
+    // pyro: also for servo (MathML Core's `font-family: math`).
     Math,
     #[parse(condition = "system_ui_enabled")]
     SystemUi,
@@ -697,9 +696,9 @@ impl GenericFontFamily {
     /// the user. See bug 789788 and bug 1730098.
     pub(crate) fn valid_for_user_font_prioritization(self) -> bool {
         match self {
-            Self::None | Self::Cursive | Self::Fantasy | Self::SystemUi => false,
+            Self::None | Self::Cursive | Self::Fantasy | Self::SystemUi | Self::Math => false,
             #[cfg(feature = "gecko")]
-            Self::Math | Self::MozEmoji => false,
+            Self::MozEmoji => false,
             Self::Serif | Self::SansSerif | Self::Monospace => true,
         }
     }

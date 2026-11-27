@@ -2088,6 +2088,12 @@ impl Node {
             push_style(declaration);
         }
 
+        // pyro: MathML Core § 3.1's `mathcolor`, `mathbackground`, `mathsize` and `scriptlevel`
+        // (`mathml_attrs`).
+        for declaration in crate::mathml_attrs::hints(elem) {
+            push_style(declaration);
+        }
+
         // pyro: MathML Core § 2.1.3: `displaystyle="true"` or `"false"` (ASCII case-insensitive)
         // on any MathML element sets its `math-style` to `normal` or `compact`, a presentational
         // hint as in Chromium (over every UA rule, `math[display=block]` and `mfrac > *`

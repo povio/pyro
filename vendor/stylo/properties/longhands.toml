@@ -4169,7 +4169,7 @@ initial = "computed::MathStyle::Normal"
 
 [math-shift]
 struct = "font"
-engine = "gecko"
+servo_pref = "layout.css.math-properties.enabled"
 spec = "https://w3c.github.io/mathml-core/#the-math-shift"
 animation_type = "discrete"
 affects = "layout"

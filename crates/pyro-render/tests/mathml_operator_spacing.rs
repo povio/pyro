@@ -18,7 +18,7 @@ impl Fetcher for NoFetch {
     }
 }
 
-const STYLE: &str = "<!doctype html><style>body{margin:0;background:white;font:36px serif} math{font-size:36px}</style>";
+const STYLE: &str = "<!doctype html><style>body{margin:0;background:white;font:36px serif} math{font-size:36px;font-family:inherit}</style>";
 
 /// Each element's border box: `[x, y, width, height]`.
 fn rects(body: &str, ids: &[&str]) -> Vec<[f64; 4]> {

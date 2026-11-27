@@ -1657,3 +1657,50 @@ m|math { math-style: compact; }
 m|math[display="block" i] { math-style: normal; display: block; }
 m|mfrac { padding-inline: 1px; }
 m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }
+
+/* pyro: MathML attribute-independent UA rules (MathML Core Appendix A, user agent stylesheet; Chromium's
+ * mathml.css). The `m|math` and `m|mfrac` rules above belong to the layout; the attribute mappings
+ * (`mathcolor`, `mathbackground`, `mathsize`, `scriptlevel`, `displaystyle`) are presentational hints
+ * (`mathml_attrs`, `build_presentational_hints`). */
+/* MathML Core level 1 has no vertical or mixed writing modes: a MathML element is always horizontal,
+ * whatever the author or `dir` say (WPT mathml/relations/css-styling/writing-mode). */
+m|* { writing-mode: horizontal-tb !important; }
+/* The root resets what its HTML ancestors would otherwise inherit into the formula. */
+m|math {
+    direction: ltr;
+    text-indent: 0;
+    letter-spacing: normal;
+    word-spacing: normal;
+    line-height: normal;
+    font-family: math;
+    font-style: normal;
+    font-weight: normal;
+    math-shift: normal;
+}
+/* `dir` (only `ltr` and `rtl`, ASCII case-insensitively; `auto` and other values leave `direction` as inherited). */
+m|*[dir="ltr" i] { direction: ltr; }
+m|*[dir="rtl" i] { direction: rtl; }
+/* Identifiers: a single character is italicised, unless `mathvariant="normal"` (Core 3.2.2). */
+m|mi { text-transform: math-auto; }
+m|mi[mathvariant="normal" i] { text-transform: none; }
+m|merror { border: 1px solid red; background-color: lightyellow; }
+m|mphantom { visibility: hidden; }
+/* Only the first child of a `semantics` or `maction` is rendered; annotations never are. */
+m|semantics > m|*:not(:first-child),
+m|maction > m|*:not(:first-child),
+m|annotation,
+m|annotation-xml { display: none; }
+/* `math-shift` (cramped style): the radicand and index of a radical, a fraction's denominator, the
+ * subscripts of scripts (the non-first children of `msub`, the second of `msubsup`, the even ones of
+ * `mmultiscripts` before its `mprescripts` and the odd ones after it) and the base of an accented
+ * `mover`/`munderover`. The inherited value carries it to all descendants. */
+m|msqrt > m|*,
+m|mroot > m|*,
+m|mfrac > m|*:nth-child(2),
+m|msub > m|*:not(:first-child),
+m|msubsup > m|*:nth-child(2),
+m|mmultiscripts > m|*:nth-child(2n),
+m|mmultiscripts > m|mprescripts ~ m|*:nth-child(2n+1),
+m|mover[accent="true" i] > m|*:first-child,
+m|munderover[accent="true" i] > m|*:first-child { math-shift: compact; }
+m|mmultiscripts > m|mprescripts ~ m|*:nth-child(2n) { math-shift: normal; }

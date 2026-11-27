@@ -56,6 +56,7 @@ pub(crate) fn generic_font_family(input: stylo::GenericFontFamily) -> parley::Ge
         stylo::GenericFontFamily::Monospace => parley::GenericFamily::Monospace,
         stylo::GenericFontFamily::Cursive => parley::GenericFamily::Cursive,
         stylo::GenericFontFamily::Fantasy => parley::GenericFamily::Fantasy,
+        stylo::GenericFontFamily::Math => parley::GenericFamily::Math,
         stylo::GenericFontFamily::SystemUi => parley::GenericFamily::SystemUi,
     }
 }
@@ -64,13 +65,14 @@ pub(crate) fn generic_font_family(input: stylo::GenericFontFamily) -> parley::Ge
 /// families is available, browsers use their default font rather than the
 /// system fallback for the script (CSS 2.1 § 15.5, step 4). Blitz's default font
 /// is the initial value, `serif`. A list that names a generic family always
-/// finds a font, so it needs none.
+/// finds a font, so it needs none. pyro: except `math` (MathML's default family), which no
+/// installed font may serve.
 pub(crate) fn fallback_font_family(
     families: &stylo::FontFamilyList,
 ) -> Option<parley::GenericFamily> {
-    let names_generic = families
-        .iter()
-        .any(|family| matches!(family, stylo::SingleFontFamily::Generic(_)));
+    let names_generic = families.iter().any(|family| {
+        matches!(family, stylo::SingleFontFamily::Generic(generic) if *generic != stylo::GenericFontFamily::Math)
+    });
     (!names_generic).then_some(parley::GenericFamily::Serif)
 }
 
