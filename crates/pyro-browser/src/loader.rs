@@ -3133,6 +3133,11 @@ impl Browser {
         let http = resource.url.starts_with("http://") || resource.url.starts_with("https://");
         // Chrome runs its encoding detector on an unlabelled http(s) document unless a same-origin parent supplies one.
         parser.set_detect_charset(http && inherited.is_none());
+        let tld = url::Url::parse(&resource.url).ok().and_then(|u| match u.host() {
+            Some(url::Host::Domain(d)) => d.trim_end_matches('.').rsplit('.').next().map(str::to_owned),
+            _ => None,
+        });
+        parser.set_detect_tld(tld.as_deref());
         parser.set_fallback_charset(inherited.or(http.then_some("windows-1252")));
         // An image is shown in an image document (HTML § 7.6.6 "Page load processing model for
         // media"): Chromium's markup, the image at the top left in a frame, centred on a dark

@@ -980,6 +980,8 @@ pub struct DocumentParser {
     /// Run the compact encoding detector (chardetng, as Chrome/Firefox do) on an
     /// unlabelled document with non-ASCII bytes, ahead of `fallback_charset`.
     detect_charset: bool,
+    /// The document host's top-level domain (lower-case ASCII, as `guess` requires), a hint for the detector.
+    detect_tld: Option<Vec<u8>>,
     decoder: Option<encoding_rs::Decoder>,
     /// The first input chunk has been seen. Only one BOM is ever removed:
     /// by the decoder for bytes, or here once for input that came as text.
@@ -1376,6 +1378,7 @@ impl DocumentParser {
             transport_charset: None,
             fallback_charset: None,
             detect_charset: false,
+            detect_tld: None,
             decoder: None,
             bom_checked: false,
             decoded: String::new(),
@@ -1459,6 +1462,14 @@ impl DocumentParser {
         self.detect_charset = on;
     }
 
+    /// The host's top-level domain for the detector (Chrome/Firefox pass it): ignored unless
+    /// it is non-empty lower-case ASCII without periods.
+    pub fn set_detect_tld(&mut self, tld: Option<&str>) {
+        self.detect_tld = tld
+            .filter(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+            .map(|t| t.as_bytes().to_vec());
+    }
+
     /// Sets the Content-Type charset label for `feed_bytes`.
     pub fn set_transport_charset(&mut self, label: Option<&str>) {
         self.transport_charset = label.and_then(|l| encoding_rs::Encoding::for_label(l.as_bytes()));
@@ -1519,7 +1530,9 @@ impl DocumentParser {
                 }
                 let mut det = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Allow);
                 det.feed(&self.sniff, true);
-                Some(det.guess(None, chardetng::Utf8Detection::Allow))
+                // Chrome never detects UTF-8 for an http(s) document (encoding/sniffing.html,
+                // encoding-detection/utf-8.html): `Deny` yields the locale default, windows-1252.
+                Some(det.guess(self.detect_tld.as_deref(), chardetng::Utf8Detection::Deny))
             })
             .or(self.fallback_charset)
             .unwrap_or(encoding_rs::UTF_8);
