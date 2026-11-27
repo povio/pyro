@@ -86,7 +86,9 @@ impl Presentation {
     pub(super) fn key_missing(&self, t: f64) -> bool {
         let tracks = self.video_buffer.iter().chain(self.audio_buffer.iter());
         tracks.into_iter().any(|buffer| {
-            buffer.borrow().track_buffers().iter().any(|track| {
+            // Clear playback: a track whose configuration has no `protection` has no protected sample,
+            // so the position lookup below (a linear scan in a gap) is skipped.
+            buffer.borrow().track_buffers().iter().filter(|track| track.track().protection.is_some()).any(|track| {
                 let samples = track.samples();
                 // Within the start fudge of the first buffered range the position precedes its first sample.
                 let at = index_at(track, t).or_else(|| {
