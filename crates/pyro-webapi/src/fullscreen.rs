@@ -115,6 +115,27 @@ pub(crate) fn element(page: &PageDom) -> Option<NodeId> {
     top
 }
 
+/// Fullscreen "removing steps": `gone` left fullscreen because a removal (or a move into
+/// another document) took them out of this document. They leave the fullscreen stack at once
+/// (`fullscreenElement` reads null synchronously) and one `fullscreenchange` is queued at the
+/// document, as the element is no longer connected (Chrome fires once per removal; WPT
+/// fullscreen/model/remove-*, move-*).
+pub(crate) fn removed(page: &Rc<PageDom>, gone: Vec<NodeId>) {
+    if gone.is_empty() {
+        return;
+    }
+    // Drop the departed elements from the stack now (their flags are already clear).
+    let _ = element(page);
+    let weak = Rc::downgrade(page);
+    page.post_task(Box::new(move || {
+        let Some(page) = weak.upgrade() else { return };
+        if page.is_disposed() {
+            return;
+        }
+        fire(&page, page.document(), "fullscreenchange");
+    }));
+}
+
 /// `DocumentOrShadowRoot.fullscreenElement`: the fullscreen element retargeted against
 /// `root` (the document or a shadow root), or null when it is not in that tree.
 pub(crate) fn element_for<'s>(s: &Scope<'s>, page: &Rc<PageDom>, root: NodeId) -> JsResult<Value<'s>> {

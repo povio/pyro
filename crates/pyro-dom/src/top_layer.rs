@@ -56,6 +56,9 @@ pub(crate) struct TopLayer {
     modal: FxHashSet<NodeId>,
     /// Elements whose fullscreen flag is set (`:fullscreen`; the embedder keeps the stack).
     fullscreen: FxHashSet<NodeId>,
+    /// Fullscreen elements a removal took out of fullscreen (their document at that time, the
+    /// element), until the embedder queues the `fullscreenchange` the removing steps owe.
+    removed_fullscreen: Vec<(NodeId, NodeId)>,
     /// Popovers whose visibility state is "showing".
     popovers: FxHashSet<NodeId>,
     /// Showing elements whose popover attribute changed state during a DOM write.
@@ -314,6 +317,19 @@ impl Dom {
         }
     }
 
+    /// Whether a removal took an element out of fullscreen since the embedder last asked.
+    pub fn has_removed_fullscreen(&self) -> bool {
+        !self.top_layer.removed_fullscreen.is_empty()
+    }
+
+    /// The elements removals took out of fullscreen in `document`, for the embedder to queue
+    /// the Fullscreen removing steps' `fullscreenchange`; other documents' stay queued.
+    pub fn take_removed_fullscreen(&mut self, document: NodeId) -> Vec<NodeId> {
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.top_layer.removed_fullscreen).into_iter().partition(|&(d, _)| d == document);
+        self.top_layer.removed_fullscreen = rest;
+        mine.into_iter().map(|(_, el)| el).collect()
+    }
+
     pub fn has_changed_popovers(&self) -> bool {
         !self.top_layer.changed_popovers.is_empty()
     }
@@ -498,7 +514,14 @@ impl Dom {
             let id = self.id_of(i);
             // Fullscreen "removing steps": a removed element is no longer fullscreen (its
             // document's fullscreen stack drops it when next read).
-            if self.top_layer.fullscreen.remove(&id) {
+            if self.top_layer.fullscreen.contains(&id) {
+                // The document it was fullscreen in is read before the removal moves it on
+                // (adopting into another document removes it from this one first).
+                if let Ok(doc) = self.node_document(id) {
+                    self.top_layer.removed_fullscreen.push((doc, id));
+                    self.touch_hook();
+                }
+                self.top_layer.fullscreen.remove(&id);
                 self.bump();
             }
             // A removed select's picker closes.

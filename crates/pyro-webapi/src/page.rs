@@ -1812,6 +1812,13 @@ impl PageDom {
                 }
             }
         }
+        // Fullscreen removing steps: elements a removal took out of fullscreen.
+        if self.dom.try_borrow().is_ok_and(|dom| dom.has_removed_fullscreen()) {
+            if let Some(page) = self.this.upgrade() {
+                let removed = self.dom.borrow_mut().take_removed_fullscreen(self.document());
+                crate::fullscreen::removed(&page, removed);
+            }
+        }
         // `<details>` toggles pyro-dom queued: one empty check otherwise.
         if self.dom.try_borrow().is_ok_and(|d| d.has_details_toggles()) {
             if let Some(this) = self.this.upgrade() {
@@ -2764,6 +2771,7 @@ impl PageDom {
         }
         !dom.has_iframe_events()
             && !dom.has_changed_popovers()
+            && !dom.has_removed_fullscreen()
             && !dom.has_details_toggles()
             && !self.render_blocking_pending(&dom)
             && !dom.has_pending_mutations()
