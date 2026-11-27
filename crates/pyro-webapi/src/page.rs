@@ -2266,17 +2266,24 @@ impl PageDom {
     }
 
     /// pyro: the resize steps of a rendering update for the visual viewport: its `resize` when its
-    /// scrollbars changed ([`PageDom::note_visual_viewport`]). Nothing for a page that never
-    /// used `visualViewport`.
+    /// scrollbars changed ([`PageDom::note_visual_viewport`]). The gutters are noted even when no
+    /// `visualViewport` target exists yet.
     pub fn fire_visual_viewport_resize(self: &Rc<Self>) {
-        if self.is_disposed() || self.mobile.get() || self.viewport_targets(crate::window::ViewportTarget::VisualViewport).is_empty() {
+        if self.is_disposed() || self.mobile.get() {
+            return;
+        }
+        let targets = self.viewport_targets(crate::window::ViewportTarget::VisualViewport);
+        // The scrollbar gutters are tracked every frame, listener or not: a listener added later
+        // must not see the gutters laid out before it as a change (no spurious `resize`). Without
+        // a listener nothing forces a first layout for it.
+        if targets.is_empty() && !self.try_layout().is_some_and(|l| l.has_laid_out()) {
             return;
         }
         self.note_visual_viewport();
-        if !self.visual_resize_due.replace(false) {
+        if !self.visual_resize_due.replace(false) || targets.is_empty() {
             return;
         }
-        for target in self.viewport_targets(crate::window::ViewportTarget::VisualViewport) {
+        for target in targets {
             let event =
                 crate::event::EventCore::trusted(self, crate::event::EventInterface::Event, "resize", false, false);
             crate::target::fire(self, target, &event);
