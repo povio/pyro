@@ -18,7 +18,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -61,6 +61,99 @@ pub(crate) struct FetchJob {
     pub head_sent: bool,
     /// Body bytes `respondChunk` sent so far.
     pub sent: u64,
+    /// The static router's `race-network-and-fetch-handler` source: the network request runs
+    /// beside the fetch event and `sink` is the worker's side of the race.
+    pub race: Option<Arc<Race>>,
+}
+
+/// Which of the two answers of a race goes to the page.
+#[derive(Clone, Copy, PartialEq)]
+enum Side {
+    Network,
+    Worker,
+}
+
+struct RaceInner {
+    winner: Option<Side>,
+    sink: ResponseSink,
+    /// The network's events (a redirect, then a non-ok response or a failure) held until the
+    /// worker has decided: a non-ok network response only wins when the worker has nothing.
+    held: Vec<ResponseEvent>,
+}
+
+/// The network and the fetch handler both answer one request; whichever side answers first
+/// with something usable wins and the other side's events are dropped. A network response
+/// wins when it is ok (2xx); the worker wins with its first event (`respondWith`, or a
+/// failure of it); a worker that passes (no `respondWith`, or it went away) hands over to
+/// the network, held events included.
+pub(crate) struct Race {
+    inner: Mutex<RaceInner>,
+}
+
+impl Race {
+    fn new(sink: ResponseSink) -> Arc<Race> {
+        Arc::new(Race { inner: Mutex::new(RaceInner { winner: None, sink, held: Vec::new() }) })
+    }
+
+    /// The sink of the network request.
+    fn network_sink(self: &Arc<Self>) -> ResponseSink {
+        let race = self.clone();
+        Box::new(move |event| {
+            let mut guard = race.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let inner = &mut *guard;
+            match inner.winner {
+                Some(Side::Worker) => {}
+                Some(Side::Network) => (inner.sink)(event),
+                None => {
+                    if matches!(&event, ResponseEvent::Response(head) if head.status.is_success()) {
+                        inner.winner = Some(Side::Network);
+                        for held in std::mem::take(&mut inner.held) {
+                            (inner.sink)(held);
+                        }
+                        (inner.sink)(event);
+                    } else {
+                        inner.held.push(event);
+                    }
+                }
+            }
+        })
+    }
+
+    /// The sink the worker's response (`respondHead` ...) goes through.
+    fn worker_sink(self: &Arc<Self>) -> ResponseSink {
+        let race = self.clone();
+        Box::new(move |event| {
+            let mut guard = race.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let inner = &mut *guard;
+            if inner.winner.is_none() {
+                // A worker's failure before its response is no answer: the network's stands.
+                if matches!(event, ResponseEvent::Failed(_)) {
+                    inner.winner = Some(Side::Network);
+                    for held in std::mem::take(&mut inner.held) {
+                        (inner.sink)(held);
+                    }
+                    return;
+                }
+                inner.winner = Some(Side::Worker);
+                inner.held.clear();
+            }
+            if inner.winner == Some(Side::Worker) {
+                (inner.sink)(event);
+            }
+        })
+    }
+
+    /// The worker has no answer: the network's is the page's.
+    fn worker_passes(&self) {
+        let mut guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let inner = &mut *guard;
+        if inner.winner.is_none() {
+            inner.winner = Some(Side::Network);
+            for held in std::mem::take(&mut inner.held) {
+                (inner.sink)(held);
+            }
+        }
+    }
 }
 
 impl Drop for FetchJob {
@@ -69,6 +162,13 @@ impl Drop for FetchJob {
             if let Some(mut sink) = self.sink.take() {
                 sink(ResponseEvent::Failed(NetError::Other("The service worker stopped before it finished its response".into())));
             }
+            return;
+        }
+        if let Some(race) = self.race.take() {
+            // Unanswered: the network's answer is the page's.
+            self.request.take();
+            self.sink.take();
+            race.worker_passes();
             return;
         }
         let (Some(request), Some(mut sink)) = (self.request.take(), self.sink.take()) else { return };
@@ -247,7 +347,7 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         PENDING.with(|pending| {
             let mut pending = pending.borrow_mut();
             if let Some(job) = pending.get_mut(&key) {
-                if !job.observed {
+                if !job.observed && job.race.is_none() {
                     if let (Some(request), Some(sink)) = (job.request.as_ref(), job.sink.take()) {
                         job.sink = Some(job.net.observe_service_worker_response(job.id, request, sink));
                         job.observed = true;
@@ -297,10 +397,37 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         Ok(s.undefined())
     })?;
     native.set_atom("respondEnd", end_fn.value())?;
+    let race_fn = s.function("startRace", |s, _, a| {
+        let key = a.get(0).to_number()? as u64;
+        PENDING.with(|pending| {
+            let mut pending = pending.borrow_mut();
+            let Some(job) = pending.get_mut(&key).filter(|job| job.race.is_none()) else { return };
+            let Some(request) = job.request.clone() else { return };
+            let Some(sink) = job.sink.take() else { return };
+            let race = Race::new(sink);
+            job.net.fetch_with_id(job.id, request, race.network_sink());
+            job.sink = Some(race.worker_sink());
+            job.race = Some(race);
+        });
+        Ok(s.undefined())
+    })?;
+    native.set_atom("startRace", race_fn.value())?;
+    let has_fetch = s.function("hasFetchHandler", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        let has = page.window_target().is_some_and(|window| page.dom.try_borrow().is_ok_and(|dom| dom.has_listener_for(window, "fetch")));
+        Ok(s.boolean(has))
+    })?;
+    native.set_atom("hasFetchHandler", has_fetch.value())?;
     let passthrough = s.function("passthrough", |s, _, a| {
         let key = a.get(0).to_number()? as u64;
         if let Some(mut job) = PENDING.with(|p| p.borrow_mut().remove(&key)) {
-            // Dropped undispatched: the request goes to the network.
+            // Dropped undispatched: the request goes to the network. In a race the network
+            // request is already running: the worker only gives up its side.
+            if let Some(race) = job.race.take() {
+                job.request.take();
+                job.sink.take();
+                race.worker_passes();
+            }
             job.dispatched = false;
         }
         Ok(s.undefined())

@@ -8,7 +8,9 @@
 //   respondHead(fetchId, status, statusText, headers, url, type), respondChunk(fetchId, bytes),
 //   respondEnd(fetchId): the response to an intercepted request, event by event
 //   (a worker that goes away between head and end truncates the body)
-//   passthrough(fetchId), failFetch(fetchId, reason)
+//   passthrough(fetchId), failFetch(fetchId, reason), startRace(fetchId) (the static router's
+//   race source: the network request starts now, the first good response wins)
+//   hasFetchHandler(): whether the global has a `fetch` listener (addRoutes needs one for some sources)
 //   done(kind, ok): the install or activate event's lifetime promises settled.
 // `info`: {scope, scriptURL, registrationId, versionId, updateViaCache}.
 (function (native, info) {
@@ -27,6 +29,7 @@
   const TypeErrorC = TypeError;
   const ResponseC = Response;
   const RequestC = Request;
+  const URLPatternC = typeof URLPattern === 'function' ? URLPattern : undefined;
   const isResponse = (v) => v instanceof ResponseC;
   const arrayBuffer = ResponseC.prototype.arrayBuffer;
   const headersEntries = Headers.prototype.entries;
@@ -118,6 +121,145 @@
     }
   }
   tag(FetchEvent, 'FetchEvent');
+
+  // -- Static routing API (InstallEvent.addRoutes) ---------------------------------
+  // https://w3c.github.io/ServiceWorker/#dom-installevent-addroutes . The rules live in this
+  // worker's realm, so they belong to this version (a new version registers its own).
+  const ROUTER_MAX_DEPTH = 10;
+  const ROUTER_MAX_COUNT = 1024;
+  const ROUTER_MODES = ['navigate', 'same-origin', 'no-cors', 'cors'];
+  const ROUTER_DESTINATIONS = ['', 'audio', 'audioworklet', 'document', 'embed', 'font', 'frame', 'iframe', 'image', 'json', 'manifest', 'object', 'paintworklet', 'report', 'script', 'sharedworker', 'style', 'track', 'video', 'worker', 'xslt'];
+  const ROUTER_STATUSES = ['running', 'not-running'];
+  const ROUTER_METHODS = ['DELETE', 'GET', 'HEAD', 'OPTIONS', 'POST', 'PUT'];
+  const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+  const routerRules = [];
+  let routerCount = 0;
+
+  const routerEnum = (value, allowed, what) => {
+    const v = String(value);
+    if (!allowed.includes(v)) throw new TypeErrorC(`Failed to execute 'addRoutes' on 'InstallEvent': The provided value '${v}' is not a valid enum value of type ${what}.`);
+    return v;
+  };
+  const routerMethod = (value) => {
+    const v = String(value);
+    for (let i = 0; i < v.length; i++) {
+      if (v.charCodeAt(i) > 0xff) throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': The provided requestMethod is not a ByteString.");
+    }
+    if (!TOKEN.test(v)) throw new TypeErrorC('Failed to execute \'addRoutes\' on \'InstallEvent\': requestMethod is not a valid HTTP method token.');
+    const upper = v.toUpperCase();
+    if (upper === 'CONNECT' || upper === 'TRACE' || upper === 'TRACK') throw new TypeErrorC(`Failed to execute 'addRoutes' on 'InstallEvent': '${v}' is a forbidden method.`);
+    return ROUTER_METHODS.includes(upper) ? upper : v;
+  };
+  // A URLPattern a string or dictionary denotes is relative to the worker's script URL; one
+  // that is constructed already is used as it is.
+  const routerPattern = (value) => {
+    if (URLPatternC === undefined) throw new TypeErrorC('URLPattern is not supported');
+    if (value instanceof URLPatternC) return value;
+    if (value !== null && typeof value === 'object') {
+      const init = {};
+      for (const key of ['baseURL', 'hash', 'hostname', 'password', 'pathname', 'port', 'protocol', 'search', 'username']) {
+        if (value[key] !== undefined) init[key] = value[key];
+      }
+      if (init.baseURL === undefined) init.baseURL = info.scriptURL;
+      return new URLPatternC(init);
+    }
+    return new URLPatternC(String(value), info.scriptURL);
+  };
+
+  // A condition as a function of (request, runningStatus). `budget.left` counts the
+  // conditions the registry may still take.
+  function routerCondition(raw, depth, budget) {
+    if (raw === null || typeof raw !== 'object') throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': a condition must be a dictionary.");
+    if (depth > ROUTER_MAX_DEPTH) throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': the condition nests deeper than the limit.");
+    if (--budget.left < 0) throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': too many router conditions.");
+    const has = (key) => raw[key] !== undefined;
+    const tests = [];
+    const request = ['urlPattern', 'requestMethod', 'requestMode', 'requestDestination', 'runningStatus'].filter(has);
+    if (has('or') || has('not')) {
+      if (request.length > 0 || (has('or') && has('not'))) {
+        throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': 'or' and 'not' cannot be combined with other conditions.");
+      }
+      if (has('or')) {
+        if (raw.or === null || typeof raw.or[Symbol.iterator] !== 'function') throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': 'or' must be a sequence.");
+        const subs = Array.from(raw.or, (sub) => routerCondition(sub, depth + 1, budget));
+        return (r, status) => subs.some((sub) => sub(r, status));
+      }
+      const sub = routerCondition(raw.not, depth + 1, budget);
+      return (r, status) => !sub(r, status);
+    }
+    if (request.length === 0) throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': a condition must have at least one member.");
+    if (has('urlPattern')) {
+      const pattern = routerPattern(raw.urlPattern);
+      tests.push((r) => pattern.test(r.url));
+    }
+    if (has('requestMethod')) {
+      const method = routerMethod(raw.requestMethod);
+      tests.push((r) => r.method === method);
+    }
+    if (has('requestMode')) {
+      const mode = routerEnum(raw.requestMode, ROUTER_MODES, 'RequestMode');
+      tests.push((r) => r.mode === mode);
+    }
+    if (has('requestDestination')) {
+      const destination = routerEnum(raw.requestDestination, ROUTER_DESTINATIONS, 'RequestDestination');
+      tests.push((r) => r.destination === destination);
+    }
+    if (has('runningStatus')) {
+      const wanted = routerEnum(raw.runningStatus, ROUTER_STATUSES, 'RunningStatus');
+      tests.push((r, status) => status === wanted);
+    }
+    return (r, status) => tests.every((test) => test(r, status));
+  }
+
+  function routerSource(raw) {
+    if (raw === undefined) throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': a rule needs a source.");
+    if (raw !== null && typeof raw === 'object') {
+      return { type: 'cache', cacheName: raw.cacheName === undefined ? undefined : String(raw.cacheName) };
+    }
+    const v = String(raw);
+    switch (v) {
+      case 'network': return { type: 'network' };
+      case 'cache': return { type: 'cache', cacheName: undefined };
+      case 'fetch-event':
+      case 'race-network-and-fetch-handler':
+        // These need the worker's fetch handler.
+        if (!native.hasFetchHandler()) throw new TypeErrorC(`Failed to execute 'addRoutes' on 'InstallEvent': the '${v}' source needs a fetch event handler.`);
+        return { type: v === 'fetch-event' ? 'fetch-event' : 'race' };
+      default:
+        throw new TypeErrorC(`Failed to execute 'addRoutes' on 'InstallEvent': The provided value '${v}' is not a valid router source.`);
+    }
+  }
+
+  class InstallEvent extends ExtendableEvent {
+    addRoutes(rules) {
+      try {
+        if (!extendData.has(this) || !(this instanceof InstallEvent)) throw new TypeErrorC('Illegal invocation');
+        if (arguments.length === 0) throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': 1 argument required, but only 0 present.");
+        if (!extendData.get(this).internal || workerData.get(me).state !== 'installing') {
+          throw new DOMExceptionC("Failed to execute 'addRoutes' on 'InstallEvent': Router rules can only be added while the service worker is installing.", 'InvalidStateError');
+        }
+        let list;
+        if (rules !== null && typeof rules === 'object' && typeof rules[Symbol.iterator] === 'function') list = Array.from(rules);
+        else if (rules === undefined || rules === null || typeof rules === 'object') list = [rules === null ? undefined : rules];
+        else throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': The provided value is not a RouterRule or a sequence of them.");
+        const budget = { left: ROUTER_MAX_COUNT - routerCount };
+        const parsed = list.map((rule) => {
+          if (rule === undefined || rule === null || typeof rule !== 'object' || rule.condition === undefined) {
+            throw new TypeErrorC("Failed to execute 'addRoutes' on 'InstallEvent': a rule needs a condition and a source.");
+          }
+          const condition = routerCondition(rule.condition, 0, budget);
+          return { matches: condition, source: routerSource(rule.source) };
+        });
+        // All or none of the rules register.
+        for (const rule of parsed) routerRules.push(rule);
+        routerCount = ROUTER_MAX_COUNT - budget.left;
+        return resolved(undefined);
+      } catch (error) {
+        return PromiseC.reject(error);
+      }
+    }
+  }
+  tag(InstallEvent, 'InstallEvent');
 
   const messageData = new WeakMap();
   class ExtendableMessageEvent extends ExtendableEvent {
@@ -284,7 +426,7 @@
 
   function lifecycle(kind) {
     state(kind === 'install' ? 'installing' : 'activating');
-    const d = dispatch(new ExtendableEvent(kind));
+    const d = dispatch(kind === 'install' ? new InstallEvent(kind) : new ExtendableEvent(kind));
     settled(d).then(() => native.done(kind, true), () => native.done(kind, kind === 'activate'));
   }
 
@@ -315,9 +457,24 @@
     native.respondEnd(id);
   };
 
-  // Which source answers `job`. Behaviour of a worker without routes: its fetch handlers.
+  // Which source answers `job`: the first static router rule (addRoutes) its request matches, in
+  // registration order; without one, the fetch handlers. Always evaluated here, with or without a
+  // fetch handler. This worker is running, since it is evaluating.
   function route(job) {
-    return 'fetch-event';
+    for (const rule of routerRules) {
+      if (rule.matches(job.request, 'running')) return rule.source;
+    }
+    return { type: 'fetch-event' };
+  }
+
+  // The 'cache' source: a match in the (named) cache answers; no entry or a failing lookup is the
+  // network's, not the fetch handler's.
+  function fromCache(job, source) {
+    const options = source.cacheName === undefined ? {} : { cacheName: source.cacheName };
+    self.caches.match(job.request, options).then((response) => {
+      if (response === undefined) native.passthrough(job.id);
+      else settle(job, { response: resolved(response) });
+    }, () => native.passthrough(job.id));
   }
 
   // The `fetch` event for `job`, dispatched; null when it cannot be made (the request
@@ -349,10 +506,17 @@
 
   function dispatchFetch(job) {
     const source = route(job);
-    if (source === 'network') {
+    if (source.type === 'network') {
       native.passthrough(job.id);
       return;
     }
+    if (source.type === 'cache') {
+      fromCache(job, source);
+      return;
+    }
+    // 'race': the network request starts before the handler runs (it may run long); the native
+    // side answers with the first good response, and `passthrough` below means "the network's".
+    if (source.type === 'race') native.startRace(job.id);
     const d = fire(job);
     if (d === null || !d.responded) {
       native.passthrough(job.id);
@@ -377,7 +541,7 @@
   }
 
   for (const [name, C] of [
-    ['ExtendableEvent', ExtendableEvent], ['FetchEvent', FetchEvent],
+    ['ExtendableEvent', ExtendableEvent], ['InstallEvent', InstallEvent], ['FetchEvent', FetchEvent],
     ['ExtendableMessageEvent', ExtendableMessageEvent], ['Client', Client], ['WindowClient', WindowClient],
     ['Clients', Clients], ['ServiceWorker', ServiceWorker], ['ServiceWorkerRegistration', ServiceWorkerRegistration],
   ]) {
