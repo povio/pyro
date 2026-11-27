@@ -191,7 +191,8 @@
   }
   tag(Permissions, 'Permissions');
 
-  const itemData = new WeakMap();
+  // Same-origin realms share their ClipboardItems (a native slot, not a per-realm WeakMap).
+  const itemData = native.itemSlot;
   const itemError = (rest) => new TypeErrorC(`Failed to construct 'ClipboardItem': ${rest}`);
   class ClipboardItem {
     constructor(items) {
@@ -207,7 +208,12 @@
       return itemData.get(this).types;
     }
     getType(type) {
-      const entry = itemData.get(this).entries.find((e) => e[0] === String(type));
+      const data = itemData.get(this);
+      // An item read from the clipboard is stale once the clipboard changed, even for a type read before.
+      if (data.generation !== undefined && data.generation !== native.clipboardGeneration()) {
+        return rejected(new DOMExceptionC("Failed to execute 'getType' on 'ClipboardItem': The clipboard changed since this item was read.", 'InvalidStateError'));
+      }
+      const entry = data.entries.find((e) => e[0] === String(type));
       if (!entry) {
         return rejected(new DOMExceptionC("Failed to execute 'getType' on 'ClipboardItem': The type was not found", 'NotFoundError'));
       }
@@ -231,6 +237,12 @@
     for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
     return bytes;
   };
+  // PNG signature, then an IHDR chunk of 13 bytes.
+  const isPng = (buffer) => {
+    const b = new Uint8Array(buffer);
+    const magic = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52];
+    return b.length >= 33 && magic.every((v, i) => b[i] === v);
+  };
   const isText = (type) => type.startsWith('text/') || type === 'image/svg+xml';
   const denied = (method, what) => new DOMExceptionC(`Failed to execute '${method}' on 'Clipboard': ${what} permission denied.`, 'NotAllowedError');
   const store = (method, entries) => {
@@ -246,6 +258,7 @@
       ownTag(this, 'Clipboard');
     }
     readText() {
+      if (native.detached()) return resolved(undefined);
       const json = native.clipboardRead();
       if (json === null) return rejected(denied('readText', 'Read'));
       const entry = parse(json).find((e) => e[0] === 'text/plain');
@@ -256,16 +269,41 @@
         return rejected(new TypeErrorC("Failed to execute 'writeText' on 'Clipboard': 1 argument required, but only 0 present."));
       }
       text = String(text);
+      if (native.detached()) return resolved();
       return resolved().then(() => store('writeText', [['text/plain', text, false]]));
     }
-    read() {
+    read(options) {
+      // ClipboardUnsanitizedFormats: `unsanitized` is a sequence (null is not one); only text/html
+      // may be asked for unsanitized.
+      try {
+        if (options !== undefined && options !== null && typeof options !== 'object' && typeof options !== 'function') {
+          throw new TypeErrorC("Failed to execute 'read' on 'Clipboard': The provided value is not of type 'ClipboardUnsanitizedFormats'.");
+        }
+        const unsanitized = options == null ? undefined : options.unsanitized;
+        if (unsanitized !== undefined) {
+          if (unsanitized === null || typeof unsanitized[Symbol.iterator] !== 'function') {
+            throw new TypeErrorC("Failed to execute 'read' on 'Clipboard': The provided value cannot be converted to a sequence.");
+          }
+          for (const format of unsanitized) {
+            if (String(format) !== 'text/html') {
+              return rejected(new DOMExceptionC(`Failed to execute 'read' on 'Clipboard': Unsanitized ${String(format)} is not supported.`, 'NotAllowedError'));
+            }
+          }
+        }
+      } catch (e) {
+        return rejected(e);
+      }
+      if (native.detached()) return resolved(undefined);
       const json = native.clipboardRead();
       if (json === null) return rejected(denied('read', 'Read'));
       const items = {};
       for (const [type, data, binary] of parse(json)) {
         items[type] = new BlobC([binary ? stringToBytes(data) : data], { type });
       }
-      return resolved(O.keys(items).length ? [new ClipboardItem(items)] : []);
+      if (!O.keys(items).length) return resolved([]);
+      const item = new ClipboardItem(items);
+      itemData.get(item).generation = native.clipboardGeneration();
+      return resolved([item]);
     }
     write(items) {
       if (arguments.length === 0) {
@@ -278,6 +316,7 @@
       if (list.some((item) => !itemData.has(item))) {
         return rejected(new TypeErrorC("Failed to execute 'write' on 'Clipboard': Failed to convert value to 'ClipboardItem'."));
       }
+      if (native.detached()) return resolved();
       const pending = [];
       for (const item of list) {
         for (const type of item.types) {
@@ -286,7 +325,13 @@
           }
           pending.push(item.getType(type).then((blob) => (isText(type)
             ? blob.text().then((data) => [type, data, false])
-            : blob.arrayBuffer().then((buffer) => [type, bytesToString(buffer), true]))));
+            : blob.arrayBuffer().then((buffer) => {
+              // An image is decoded before it is stored: bytes that are not one are a DataError.
+              if (type === 'image/png' && !isPng(buffer)) {
+                throw new DOMExceptionC("Failed to execute 'write' on 'Clipboard': Failed to decode the image/png data.", 'DataError');
+              }
+              return [type, bytesToString(buffer), true];
+            }))));
         }
       }
       return PromiseC.all(pending).then((entries) => store('write', entries));

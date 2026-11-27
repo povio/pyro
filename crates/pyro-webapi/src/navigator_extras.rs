@@ -4,7 +4,7 @@
 //! nothing. Permissions and the clipboard belong to the browser context
 //! ([`ContextServices`], shared by its pages); client hints come from the
 //! page's user agent override.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt::Write as _;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
@@ -215,6 +215,8 @@ pub struct ContextServices {
     /// The context's Compute Pressure sources (`crate::pressure`).
     pressure: crate::pressure::PressureHub,
     clipboard: RefCell<Vec<ClipboardEntry>>,
+    /// Counts the clipboard's changes: a `ClipboardItem` read earlier is stale once it moved on.
+    clipboard_generation: Cell<u64>,
     /// Documents with PermissionStatus change listeners.
     watchers: RefCell<Vec<std::rc::Weak<PageDom>>>,
     /// `Emulation.setGeolocationOverride`. Outer `None`: no override.
@@ -358,6 +360,7 @@ impl ContextServices {
     /// Replaces the clipboard with text entries (copy, cut).
     pub(crate) fn write_clipboard_strings(&self, items: Vec<(String, String)>) {
         *self.clipboard.borrow_mut() = items.into_iter().map(|(ty, data)| (ty, data, false)).collect();
+        self.clipboard_generation.set(self.clipboard_generation.get() + 1);
     }
 }
 
@@ -448,10 +451,22 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
                 entry.get_index(2)?.to_bool(),
             ));
         }
-        *page.context_services().clipboard.borrow_mut() = entries;
+        let services = page.context_services();
+        *services.clipboard.borrow_mut() = entries;
+        services.clipboard_generation.set(services.clipboard_generation.get() + 1);
         Ok(s.undefined())
     })?;
     native.set_atom("clipboardWrite", write.value())?;
+    let generation = s.function("clipboardGeneration", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        Ok(s.number(page.context_services().clipboard_generation.get() as f64))
+    })?;
+    native.set_atom("clipboardGeneration", generation.value())?;
+    // Reading or writing the clipboard from a document that is no longer in a frame does nothing.
+    let detached = s.function("detached", |s, _, _| Ok(s.boolean(crate::target::page_of(s)?.is_detached())))?;
+    native.set_atom("detached", detached.value())?;
+    // ClipboardItems are shared by same-origin realms: an iframe's clipboard writes its parent's items.
+    native.set_atom("itemSlot", crate::streams::shared_slot(s, &crate::target::page_of(s)?, "ClipboardItem")?)?;
     let position = s.function("geolocationPosition", |s, _, _| {
         let page = crate::target::page_of(s)?;
         let services = page.context_services();

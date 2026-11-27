@@ -215,7 +215,8 @@ impl JsClass for DataTransfer {
                 .filter(|e| readable && matches!(e.kind, Kind::File { .. }))
                 .map(|e| format!("{},", e.id))
                 .collect();
-            if let (Some(list), Some(k)) = (s.get_hidden(this, FILES_LIST)?, s.get_hidden(this, FILES_KEY)?) {
+            let previous = s.get_hidden(this, FILES_LIST)?;
+            if let (Some(list), Some(k)) = (previous, s.get_hidden(this, FILES_KEY)?) {
                 if k.as_string().is_some_and(|k| k == key) {
                     return Ok(list);
                 }
@@ -224,6 +225,14 @@ impl JsClass for DataTransfer {
             for e in entries.iter().filter(|_| readable) {
                 if let Some(f) = d.store.file(s, e)? {
                     files.push(f.value())?;
+                }
+            }
+            // A reference the script kept follows the items ([SameObject]-like): the list it
+            // holds is updated in place rather than replaced.
+            if let Some(list) = previous {
+                if files.finish_into(s, list)? {
+                    s.set_hidden(this, FILES_KEY, s.string(&key))?;
+                    return Ok(list);
                 }
             }
             let list = files.finish(s)?;
