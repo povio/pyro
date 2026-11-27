@@ -30,6 +30,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use pyro_dom::dom::InvokerTarget;
 
+use crate::close_watcher::{CloseWatchers, Watcher};
 use crate::event::{EventCore, EventInterface};
 use crate::node::{node_value, NodeData};
 use crate::page::PageDom;
@@ -56,9 +57,10 @@ pub(crate) struct PopoverState {
     previously_focused: RefCell<FxHashMap<NodeId, NodeId>>,
     /// Popovers being shown or hidden ("popover showing or hiding").
     busy: RefCell<FxHashSet<NodeId>>,
-    /// The close watchers: dialogs opened with `show()`/`showModal()` and
-    /// showing auto/hint popovers, in the order they opened.
-    watchers: RefCell<Vec<NodeId>>,
+    /// The window's close watcher manager (`close_watcher.rs`): dialogs opened with
+    /// `show()`/`showModal()`, showing auto/hint popovers, open select pickers and
+    /// `CloseWatcher` objects, in groups.
+    pub(crate) watchers: CloseWatchers,
     /// HTML "popover pointerdown target" and the dialog one.
     pointerdown_popover: Cell<Option<NodeId>>,
     pointerdown_dialog: Cell<Option<NodeId>>,
@@ -466,7 +468,7 @@ pub(crate) fn hide_popovers_for_fullscreen(page: &Rc<PageDom>, el: NodeId) {
 }
 
 fn remove_watcher(page: &PageDom, el: NodeId) {
-    page.popover.watchers.borrow_mut().retain(|&w| w != el);
+    page.popover.watchers.remove(Watcher::Element(el));
 }
 
 struct Busy<'a>(&'a PageDom, NodeId, bool);
@@ -547,9 +549,7 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
     }
     if stack.is_some() {
         // Once: an open dialog that is also shown as a popover is one watcher entry.
-        let mut watchers = page.popover.watchers.borrow_mut();
-        watchers.retain(|&w| w != el);
-        watchers.push(el);
+        page.popover.watchers.establish(Watcher::Element(el));
     }
     // Popover focusing steps.
     if let Some(control) = autofocus_delegate(page, el) {
@@ -725,8 +725,7 @@ pub(crate) fn show_select_picker(page: &Rc<PageDom>, select: NodeId) {
     if page.dom.borrow_mut().set_select_picker_open(select, true).is_err() {
         return;
     }
-    page.popover.watchers.borrow_mut().retain(|&w| w != select);
-    page.popover.watchers.borrow_mut().push(select);
+    page.popover.watchers.establish(Watcher::Element(select));
     if let Some(prev) = previous {
         page.popover.previously_focused.borrow_mut().insert(select, prev);
     }
@@ -836,7 +835,7 @@ fn nearest_clicked_dialog(page: &PageDom, target: NodeId, x: f64, y: f64) -> Opt
 /// HTML "light dismiss open popovers" and "light dismiss open dialogs"
 /// for a trusted `pointerdown` (`down`) or `pointerup` at `target`.
 pub(crate) fn light_dismiss(page: &Rc<PageDom>, target: NodeId, x: f64, y: f64, down: bool) {
-    if page.popover.watchers.borrow().is_empty() {
+    if page.popover.watchers.elements().is_empty() {
         return;
     }
     forget_closed_watchers(page);
@@ -854,8 +853,8 @@ pub(crate) fn light_dismiss(page: &Rc<PageDom>, target: NodeId, x: f64, y: f64, 
     }
     let topmost = {
         let dom = page.dom.borrow();
-        let watchers = page.popover.watchers.borrow();
-        watchers.iter().rev().copied().find(|&w| is_html(&dom, w, "dialog") && is_open(&dom, w))
+        let elements = page.popover.watchers.elements();
+        elements.into_iter().rev().find(|&w| is_html(&dom, w, "dialog") && is_open(&dom, w))
     };
     let Some(topmost) = topmost.filter(|&d| closed_by(&page.dom.borrow(), d) == ClosedBy::Any) else {
         page.popover.pointerdown_dialog.set(None);
@@ -873,7 +872,7 @@ pub(crate) fn light_dismiss(page: &Rc<PageDom>, target: NodeId, x: f64, y: f64, 
 /// from its document, `open` removed).
 fn forget_closed_watchers(page: &PageDom) {
     let dom = page.dom.borrow();
-    page.popover.watchers.borrow_mut().retain(|&w| {
+    page.popover.watchers.retain_elements(|w| {
         dom.is_alive(w)
             && dom.is_connected(w).unwrap_or(false)
             && if is_html(&dom, w, "dialog") && !dom.is_popover_showing(w) {
@@ -884,33 +883,39 @@ fn forget_closed_watchers(page: &PageDom) {
     });
 }
 
-/// A close request (Escape): the newest close watcher that listens acts —
-/// an auto or hint popover hides, a dialog gets `cancel` and closes.
-/// Returns whether a watcher handled it.
+/// A close request (Escape): HTML "process close watchers" acts on the newest group of the
+/// window's close watcher manager, its watchers newest first. Returns whether a watcher handled it.
 pub(crate) fn close_request(page: &Rc<PageDom>) -> bool {
-    if page.popover.watchers.borrow().is_empty() {
+    if page.popover.watchers.is_empty() {
         return false;
     }
     forget_closed_watchers(page);
-    let candidate = {
-        let dom = page.dom.borrow();
-        let watchers = page.popover.watchers.borrow();
-        watchers.iter().rev().copied().find(|&w| {
-            dom.is_popover_showing(w) || dom.is_select_picker_open(w) || closed_by(&dom, w) != ClosedBy::None
-        })
-    };
-    let Some(w) = candidate else { return false };
+    crate::close_watcher::process(page)
+}
+
+/// Whether the element watcher `w` takes part in a close request: an auto or hint popover, a
+/// select picker, or a dialog whose `closedby` listens to close requests.
+pub(crate) fn listens_for_close_request(page: &PageDom, w: NodeId) -> bool {
+    let dom = page.dom.borrow();
+    dom.is_popover_showing(w) || dom.is_select_picker_open(w) || closed_by(&dom, w) != ClosedBy::None
+}
+
+/// HTML "request to close" for an element's close watcher: a popover or select picker closes, a
+/// dialog fires `cancel` (cancelable when `can_prevent`) and closes unless it was canceled.
+/// Returns false when it was canceled.
+pub(crate) fn request_close_element(page: &Rc<PageDom>, w: NodeId, can_prevent: bool) -> bool {
     if page.dom.borrow().is_select_picker_open(w) {
         hide_select_picker(page, w, true);
+        true
     } else if page.dom.borrow().is_popover_showing(w) {
         let _ = hide_popover(page, w, true, true, false, None);
         if page.dom.borrow().is_popover_showing(w) {
             remove_watcher(page, w);
         }
+        true
     } else {
-        request_close_dialog(page, w, None, None);
+        request_close_dialog_with(page, w, None, None, can_prevent)
     }
-    true
 }
 
 // ----- dialogs -----------------------------------------------------------------------
@@ -989,11 +994,7 @@ fn after_dialog_open(page: &Rc<PageDom>, dialog: NodeId, previous: Option<NodeId
     if let Some(prev) = previous {
         page.popover.previously_focused.borrow_mut().insert(dialog, prev);
     }
-    {
-        let mut watchers = page.popover.watchers.borrow_mut();
-        watchers.retain(|&w| w != dialog);
-        watchers.push(dialog);
-    }
+    page.popover.watchers.establish(Watcher::Element(dialog));
     dialog_focusing_steps(page, dialog);
 }
 
@@ -1136,29 +1137,42 @@ pub(crate) fn close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String
     crate::input::queue_simple(page, el, "close", false, false);
 }
 
-/// `dialog.requestClose(result)` and a close request: a cancelable
-/// `cancel`, then the dialog closes unless it was canceled.
+/// `dialog.requestClose(result)`: a cancelable `cancel`, then the dialog closes unless it was canceled.
 fn request_close_dialog(page: &Rc<PageDom>, el: NodeId, result: Option<String>, source: Option<NodeId>) {
+    request_close_dialog_with(page, el, result, source, true);
+}
+
+/// The dialog close watcher's request to close: `cancel` (cancelable when `cancelable`: a user's
+/// close request makes it so only with history-action activation), then the dialog closes unless it
+/// was canceled. Returns false when `cancel` was canceled.
+fn request_close_dialog_with(
+    page: &Rc<PageDom>,
+    el: NodeId,
+    result: Option<String>,
+    source: Option<NodeId>,
+    cancelable: bool,
+) -> bool {
     {
         let dom = page.dom.borrow();
         // Only a connected dialog of a fully active document has a close watcher.
         if !is_open(&dom, el) || !dom.is_connected(el).unwrap_or(false) || !in_active_document(page, &dom, el) {
-            return;
+            return true;
         }
     }
     // HTML close watcher "is running cancel action": a request made from the dialog's own
     // `cancel` listener neither fires another `cancel` nor closes it.
     let key = (page.id(), el);
     if CANCELING.with(|c| c.borrow().contains(&key)) {
-        return;
+        return true;
     }
     CANCELING.with(|c| c.borrow_mut().push(key));
-    let proceed = crate::input::fire_simple(page, el, "cancel", false, true);
+    let proceed = crate::input::fire_simple(page, el, "cancel", false, cancelable);
     CANCELING.with(|c| c.borrow_mut().retain(|k| *k != key));
     if !proceed {
-        return;
+        return false;
     }
     close_dialog(page, el, result, source);
+    true
 }
 
 thread_local! {

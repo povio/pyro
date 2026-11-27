@@ -26,6 +26,7 @@ mod opfs;
 pub mod canvas;
 mod canvas_path;
 mod clipboard;
+mod close_watcher;
 pub mod collections;
 mod compression;
 mod computed_properties;
@@ -206,6 +207,7 @@ pub fn register(engine: &pyro_js::Engine) {
     traversal::register(engine);
     range::register(engine);
     abort::register(engine);
+    close_watcher::register(engine);
     message_channel::register(engine);
     media_source::register(engine);
     worker::register(engine);

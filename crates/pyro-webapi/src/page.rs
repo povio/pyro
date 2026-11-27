@@ -1674,9 +1674,12 @@ impl PageDom {
         let now = Some(std::time::Instant::now());
         self.sticky_activation.set(true);
         self.input_activation.set(now);
+        // History-action activation of the close watcher manager (`close_watcher.rs`).
+        self.popover.watchers.activate();
         for peer in self.hooks().map(|h| h.activation_peers()).unwrap_or_default() {
             peer.sticky_activation.set(true);
             peer.input_activation.set(now);
+            peer.popover.watchers.activate();
         }
     }
     /// HTML "transient activation": trusted input within the last five seconds.
