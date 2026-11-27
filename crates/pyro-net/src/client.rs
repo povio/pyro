@@ -3548,7 +3548,7 @@ struct Hop {
 /// response the report-only policy would block is reported (`disposition: "reporting"`, before the
 /// enforced policy's report, as Chrome orders them) and let through; one the enforced policy
 /// blocks is reported and fails the request.
-fn corp_check(req: &Request, url: &Url, headers: &HeaderMap) -> Result<(), NetError> {
+pub fn corp_check(req: &Request, url: &Url, headers: &HeaderMap) -> Result<(), NetError> {
     let report = req.defaults.corp_report.as_ref();
     let violation = |report: &CorpReport, report_only| CorpViolation {
         kind: "corp",

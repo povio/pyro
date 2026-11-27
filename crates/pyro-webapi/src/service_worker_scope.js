@@ -527,7 +527,7 @@
   const sendHead = (id, response) => {
     const headers = [];
     for (const pair of headersEntries.call(responseHeaders.call(response))) headers.push(pair[0], pair[1]);
-    native.respondHead(id, response.status, response.statusText, headers, response.url, response.type);
+    native.respondHead(id, response.status, response.statusText, headers, response.url, response.type, native.responseCorp(response));
   };
 
   // Response bodies being streamed to the page, by fetch id: the page cancelling its side

@@ -366,12 +366,14 @@ fn query(a: &pyro_js::Args<'_>, at: usize) -> JsResult<Option<Query>> {
     }))
 }
 
-fn response<'s>(s: &Scope<'s>, stored: &Stored) -> JsResult<Value<'s>> {
+fn response<'s>(s: &Scope<'s>, request_url: &str, stored: &Stored) -> JsResult<Value<'s>> {
     crate::response::stored(
         s,
         stored.corp.as_deref(),
         &stored.kind,
-        &stored.url,
+        // An opaque response has no URL of its own to read; the request's is where it came from
+        // (what the embedder policy check compares), and `response.url` still reads empty.
+        if stored.kind == "opaque" { request_url } else { &stored.url },
         stored.status,
         stored.status_text.clone(),
         stored.headers.clone(),
@@ -510,7 +512,7 @@ fn storage_natives<'s>(s: &Scope<'s>, bucket: Option<(Namespace, String)>) -> Js
         let mut items = Vec::with_capacity(found.len());
         for (request_url, stored) in &found {
             embedder_policy_check(s, &page, request_url, stored)?;
-            items.push(response(s, stored)?);
+            items.push(response(s, request_url, stored)?);
         }
         Ok(s.array(&items)?.value())
     })?;

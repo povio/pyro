@@ -1480,7 +1480,13 @@ fn fetched_script(
             &head.url,
         )
     };
-    start_version(page, registration, script_url, body, allowlist, settle);
+    // The worker's own embedder policy is its script response's (HTML "run a worker"): its fetches
+    // and the `Cache` it reads are subject to it.
+    let embedder = (
+        crate::coep_report::obtain_embedder_policy(&head.headers, &head.url),
+        crate::coep_report::obtain_embedder_reporting(&head.headers, &head.url),
+    );
+    start_version(page, registration, script_url, body, allowlist, embedder, settle);
 }
 
 fn start_version(
@@ -1489,6 +1495,7 @@ fn start_version(
     script_url: pyro_net::Url,
     script: Bytes,
     allowlist: Option<Arc<pyro_net::connection_allowlist::ConnectionPolicy>>,
+    embedder: (pyro_net::EmbedderPolicy, pyro_net::EmbedderReporting),
     settle: Settle,
 ) {
     if VERSIONS.with(|v| v.borrow().len()) >= MAX_VERSIONS {
@@ -1524,6 +1531,7 @@ fn start_version(
         return;
     };
     start.csp.inherited_allowlist = allowlist;
+    (start.embedder_policy, start.embedder_reporting) = embedder;
     let version = Rc::new(Version {
         id,
         script_url: script_url.to_string(),

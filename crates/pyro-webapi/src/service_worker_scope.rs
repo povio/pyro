@@ -401,6 +401,17 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         Ok(s.undefined())
     })?;
     native.set_atom("respondHead", head_fn.value())?;
+    // responseCorp(response): [`Cross-Origin-Resource-Policy`, URL] a network response arrived with
+    // (an opaque one hides both from script), for the embedder policy check of the answer to the
+    // client; null for a response a script made.
+    let corp_fn = s.function("responseCorp", |s, _, a| match crate::response::network_source(a.get(0), s) {
+        Some((corp, url)) => {
+            let corp = corp.map_or_else(|| s.null(), |c| s.string(&c));
+            Ok(s.array(&[corp, s.string(&url)])?.value())
+        }
+        None => Ok(s.null()),
+    })?;
+    native.set_atom("responseCorp", corp_fn.value())?;
     let chunk_fn = s.function("respondChunk", |s, _, a| {
         let key = a.get(0).to_number()? as u64;
         let bytes = crate::encoding::buffer_source_bytes(s, a.get(1))?.map(Bytes::from).unwrap_or_default();
@@ -654,6 +665,27 @@ fn respond_head(s: &Scope<'_>, job: &mut FetchJob, a: &pyro_js::Args<'_>) -> JsR
         }
     }
     let url = a.get(4).to_string().ok().filter(|u| !u.is_empty()).and_then(|u| pyro_net::Url::parse(&u).ok());
+    // An opaque response hides its headers and URL from script; the ones it came with decide the
+    // check below. A response a script made (`null`) has neither and is the worker's own.
+    let source = a.get(6).as_object();
+    let mut checked = url.clone();
+    if let Some(source) = source.filter(|_| kind == ResponseKind::Opaque) {
+        let corp = source.get_index(0)?;
+        if !corp.is_nullish() {
+            if let Ok(value) = HeaderValue::from_str(&corp.to_string()?) {
+                headers.insert(HeaderName::from_static("cross-origin-resource-policy"), value);
+            }
+        }
+        checked = pyro_net::Url::parse(&source.get_index(1)?.to_string()?).ok();
+    }
+    // Fetch "main fetch": a no-cors request's response goes through the cross-origin resource policy
+    // check whatever made it, the worker's included.
+    if let Some(url) = &checked {
+        if let Err(error) = pyro_net::client::corp_check(&request, url, &headers) {
+            sink(ResponseEvent::Failed(error));
+            return Ok(false);
+        }
+    }
     let (mime, charset) = headers
         .get(pyro_net::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())

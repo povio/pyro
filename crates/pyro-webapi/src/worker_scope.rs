@@ -97,12 +97,12 @@ pub(crate) struct WorkerStart {
     /// The creator's cross-origin embedder policy (HTML § 7.1.4): a worker has its script response's, which an
     /// owner whose policy is not `unsafe-none` requires to be the same or stronger, and a `blob:` or
     /// `data:` worker inherits the owner's. The worker's requests are subject to it.
-    embedder_policy: pyro_net::EmbedderPolicy,
+    pub(crate) embedder_policy: pyro_net::EmbedderPolicy,
     /// The owner's policies when a dedicated worker's script must be compatible with them: none
     /// for a service worker, a shared worker, or an owner without a (report-only) policy.
     owner_embedder: Option<OwnerEmbedder>,
     /// The creator's reporting parts of it: a `blob:` or `data:` worker inherits them with the policy.
-    embedder_reporting: pyro_net::EmbedderReporting,
+    pub(crate) embedder_reporting: pyro_net::EmbedderReporting,
     cookie_partition_key: Option<String>,
     cookie_site_context: pyro_net::cookies::SiteContext,
     user_agent: Option<UserAgentOverride>,

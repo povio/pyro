@@ -546,6 +546,14 @@ pub(crate) fn corp_header(response: Value<'_>, s: &Scope<'_>) -> Option<String> 
     }
 }
 
+/// Where a response that came from the network really came from, and the
+/// `Cross-Origin-Resource-Policy` it carried (see [`corp_header`]): an opaque response hides both
+/// from script. `None` for a response a script made.
+pub(crate) fn network_source(response: Value<'_>, s: &Scope<'_>) -> Option<(Option<String>, String)> {
+    let data = s.unwrap::<Response>(response)?;
+    (data.origin == Origin::Network).then(|| (corp_header(response, s), data.head.url.to_string()))
+}
+
 pub(crate) fn filtered_headers(head: &ResponseHead, credentials: Credentials) -> HeadersData {
     let exposed = head
         .headers
