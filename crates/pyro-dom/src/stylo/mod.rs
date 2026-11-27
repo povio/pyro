@@ -448,6 +448,10 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         })();
         return pseudo.map(PseudoArg::Pseudo).unwrap_or(PseudoArg::Invalid);
     }
+    // `::picker(select)` (CSS Forms 1: the popover of a customizable select).
+    if text.eq_ignore_ascii_case("::picker(select)") {
+        return PseudoArg::Pseudo(PseudoElement::PickerSelect);
+    }
     let mut parser = cssparser::Parser::new(text);
     let mut next = || parser.next_including_whitespace_and_comments().ok().cloned();
     let _ = next(); // the leading colon

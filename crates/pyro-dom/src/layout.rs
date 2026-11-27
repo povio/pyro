@@ -5640,6 +5640,15 @@ impl Layout {
         if self.owned(dom, el).is_none() || !dom.is_connected(el).unwrap_or(false) {
             return String::new();
         }
+        // A select has a `::picker(select)` only when it renders as a drop-down box (not `multiple`,
+        // display size 1): the picker follows the `size` and `multiple` attributes.
+        if *pseudo == style::selector_parser::PseudoElement::PickerSelect {
+            let select = dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "select");
+            let size = dom.get_attribute(el, "size").ok().flatten().and_then(|s| s.trim().parse::<u32>().ok());
+            if !select || dom.has_attribute(el, "multiple").unwrap_or(false) || size.is_some_and(|s| s > 1) {
+                return String::new();
+            }
+        }
         let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, false) else { return String::new() };
         let name = resolved_property_name(name);
         // The animation and transition properties of a `::before`/`::after`, from the page's own
