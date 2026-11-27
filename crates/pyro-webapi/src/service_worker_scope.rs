@@ -430,6 +430,9 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         })
     })?;
     native.set_atom("internalHead", internal_head.value())?;
+    // An opaque response's bytes, which script's `body` hides: a promise of an ArrayBuffer.
+    let internal_body = s.function("internalBody", |s, _, a| crate::response::read_internal(s, a.get(0)))?;
+    native.set_atom("internalBody", internal_body.value())?;
     let chunk_fn = s.function("respondChunk", |s, _, a| {
         let key = a.get(0).to_number()? as u64;
         let bytes = crate::encoding::buffer_source_bytes(s, a.get(1))?.map(Bytes::from).unwrap_or_default();

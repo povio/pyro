@@ -411,7 +411,7 @@ fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<V
             ReadKind::Text => "text",
             ReadKind::Json => "json",
             // A script's stream has no pieces to share: its bytes, in a buffer.
-            ReadKind::ArrayBuffer | ReadKind::Chunks => "arrayBuffer",
+            ReadKind::ArrayBuffer | ReadKind::Chunks | ReadKind::Internal => "arrayBuffer",
             ReadKind::Bytes => "bytes",
         };
         data.used.set(true);
@@ -428,7 +428,8 @@ fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<V
         let args = [hidden(s, data, STREAM)?, s.string(name), package];
         return crate::streams::helper(s, &page, "consume", &args);
     }
-    let used = if data.body.is_null() { false } else { data.used.replace(true) };
+    let null = if matches!(kind, ReadKind::Chunks) { data.body.no_bytes() } else { data.body.is_null() };
+    let used = if null { false } else { data.used.replace(true) };
     data.body.read(s, kind, used, headers)
 }
 pub(crate) fn wrap<'s>(
@@ -466,10 +467,24 @@ pub(crate) fn wrap<'s>(
 /// `arrayBuffer()` does.
 pub(crate) fn read_for_cache<'s>(s: &Scope<'s>, response: Value<'_>) -> JsResult<Value<'s>> {
     let data = s.unwrap::<Response>(response).ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
-    if !data.script_stream.get() && data.body.is_null() {
+    // An opaque response's bytes are kept (a service worker's fetch): the cache stores them too.
+    if !data.script_stream.get() && data.body.no_bytes() {
         return Ok(s.null());
     }
     consume(s, &data, ReadKind::Chunks)
+}
+
+/// The bytes of an opaque response a service worker's fetch made, for `respondWith` to hand on to
+/// the page (script sees a null body): a promise of an ArrayBuffer once the body has arrived;
+/// `undefined` for any other Response.
+pub(crate) fn read_internal<'s>(s: &Scope<'s>, response: Value<'_>) -> JsResult<Value<'s>> {
+    let Some(data) = s.unwrap::<Response>(response) else { return Ok(s.undefined()) };
+    if data.origin != Origin::Network || data.head.kind != ResponseKind::Opaque {
+        return Ok(s.undefined());
+    }
+    // `read` ends with the release of a consumer; this read is not the Response's own.
+    data.body.add_consumer();
+    data.body.read(s, ReadKind::Internal, false, None)
 }
 
 /// The checks WebAssembly's "compile a potential WebAssembly response" makes of `response`
@@ -547,6 +562,9 @@ pub(crate) fn stored<'s>(
         head.headers.insert(pyro_net::http::HeaderName::from_static("cross-origin-resource-policy"), corp);
     }
     let body = crate::fetch::Body::constructed_chunks(s, body, mime.unwrap_or_default());
+    if origin == Origin::Network && kind == ResponseKind::Opaque {
+        body.mark_opaque();
+    }
     let headers = HeadersData::from_pairs(headers, origin != Origin::Script);
     wrap_script(s, None, origin, head, body, headers)
 }

@@ -112,6 +112,11 @@ struct Wire {
     closed: bool,
     scheduled: bool,
     null_body: bool,
+    /// A service worker's fetch: an opaque response keeps its bytes (script sees a null body,
+    /// but `respondWith` hands the body on to the page, `Body::read_internal`).
+    keep_opaque: bool,
+    /// The response is opaque and `keep_opaque` holds its bytes: [`Body::is_null`] is still true.
+    opaque: bool,
     /// A `response.body` reader exists: data chunks wake the page so reads
     /// resolve as bytes arrive.
     streaming: bool,
@@ -192,6 +197,9 @@ pub(crate) enum ReadKind {
     /// The body's pieces as they are, in a `cache_storage::StoredBody`: what
     /// `cache.put` keeps, without a copy.
     Chunks,
+    /// An opaque response's bytes, for the service worker that answers a request with it
+    /// (`Body::read_internal`): script never sees them.
+    Internal,
 }
 /// Package fully read bytes using the consuming Request or Response's own
 /// current headers. Clones can share body bytes but have separate header lists.
@@ -1042,6 +1050,8 @@ fn fetch_call<'s>(
                 closed: false,
                 scheduled: false,
                 null_body: request.method == Method::HEAD,
+                keep_opaque: s.global_data::<crate::worker_scope::ServiceWorkerGlobalScope>().is_some(),
+                opaque: false,
                 streaming: false,
                 budget: page.fetch_state.budget.clone(),
             }));
@@ -1168,9 +1178,11 @@ fn receive(
             ResponseEvent::Redirect { .. } => false,
             ResponseEvent::Response(head) => {
                 wire.frontier.response = true;
-                wire.null_body |=
-                    matches!(head.kind, pyro_net::ResponseKind::Opaque | pyro_net::ResponseKind::OpaqueRedirect)
-                        || matches!(head.status.as_u16(), 204 | 205 | 304);
+                let opaque = head.kind == pyro_net::ResponseKind::Opaque;
+                wire.null_body |= head.kind == pyro_net::ResponseKind::OpaqueRedirect
+                    || matches!(head.status.as_u16(), 204 | 205 | 304)
+                    || (opaque && !wire.keep_opaque);
+                wire.opaque = opaque && !wire.null_body;
                 wire.head = Some(Box::new(head));
                 true
             }
@@ -1387,6 +1399,8 @@ impl Body {
             closed: true,
             scheduled: false,
             null_body,
+            keep_opaque: false,
+            opaque: false,
             streaming: false,
             // Private budget pre-charged with this body so clear_body balances.
             budget: Arc::new(Budget { used: AtomicUsize::new(len), limit: AtomicUsize::new(usize::MAX) }),
@@ -1420,12 +1434,12 @@ impl Body {
         }
     }
     pub(crate) fn add_consumer(&self) {
-        if !self.is_null() {
+        if !self.no_bytes() {
             self.consumers.set(self.consumers.get() + 1);
         }
     }
     pub(crate) fn release_consumer(&self) {
-        if self.is_null() {
+        if self.no_bytes() {
             self.release_if_unused();
             return;
         }
@@ -1451,8 +1465,22 @@ impl Body {
             drop(self.abort_registration.take());
         }
     }
+    /// What script sees: no body (a null one, or an opaque response's, whose bytes stay for the
+    /// service worker that hands it on).
     pub(crate) fn is_null(&self) -> bool {
+        let wire = self.wire.lock().unwrap();
+        wire.null_body || wire.opaque
+    }
+    /// No bytes at all (a null body): nothing to count a consumer for. (An opaque response's body
+    /// is null to script only: [`Body::is_null`].)
+    pub(crate) fn no_bytes(&self) -> bool {
         self.wire.lock().unwrap().null_body
+    }
+    /// The body of an opaque response read back from a cache: its bytes stay for the service
+    /// worker that answers with it, and are hidden from script.
+    pub(crate) fn mark_opaque(&self) {
+        let mut wire = self.wire.lock().unwrap();
+        wire.opaque = !wire.null_body;
     }
     fn abort_error<'s>(&self, s: &Scope<'s>) -> Value<'s> {
         // The signal's reason when its wrapper is still alive; otherwise (no signal, or the
@@ -1484,7 +1512,7 @@ impl Body {
     ) -> JsResult<Value<'s>> {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
-        let ready = self.is_null() || self.visible_terminal.borrow().is_some();
+        let ready = (self.is_null() && !matches!(kind, ReadKind::Internal | ReadKind::Chunks)) || self.visible_terminal.borrow().is_some();
         if already_used {
             deferred.reject(s, JsError::Type("Response body has already been consumed".into()).to_value(s))?;
         } else if let Some(error) = self.error(s) {
@@ -1524,11 +1552,16 @@ impl Body {
             Vec::new()
         } else {
             let wire = self.wire.lock().unwrap();
-            let mut bytes = Vec::with_capacity(wire.bytes);
+            // An opaque response's body is empty to script.
+            if wire.opaque && !matches!(kind, ReadKind::Internal) {
+                Vec::new()
+            } else {
+                let mut bytes = Vec::with_capacity(wire.bytes);
             for chunk in &wire.chunks {
                 bytes.extend_from_slice(chunk);
             }
             bytes
+            }
         };
         let result = match kind {
             ReadKind::Chunks => {
@@ -1551,7 +1584,7 @@ impl Body {
                     Ok(unsafe { Value::from_raw(s.ctx(), raw) })
                 }
             }
-            ReadKind::ArrayBuffer => crate::encoding::array_buffer(s, &bytes),
+            ReadKind::ArrayBuffer | ReadKind::Internal => crate::encoding::array_buffer(s, &bytes),
             ReadKind::Bytes => crate::encoding::uint8_array(s, &bytes),
             ReadKind::Blob | ReadKind::FormData => package_body(s, kind, bytes, headers),
         };
@@ -1807,6 +1840,8 @@ mod tests {
             closed: false,
             scheduled: false,
             null_body: false,
+            keep_opaque: false,
+            opaque: false,
             streaming: false,
             budget: budget.clone(),
         }));

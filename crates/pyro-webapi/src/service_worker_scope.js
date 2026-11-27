@@ -551,6 +551,7 @@
     if (entry === undefined) return;
     streaming.delete(id);
     entry.cancelled = true;
+    if (entry.reader === null) return;
     try { readerCancel.call(entry.reader).then(undefined, () => {}); } catch (e) { /* already released */ }
   }
 
@@ -559,6 +560,27 @@
   // a truncated body, not a network error before it). The reader is taken before the head goes,
   // so a locked body is the network error `respondWith` wants.
   function stream(id, response) {
+    if (response.type === 'opaque') {
+      // An opaque response has no `body` for script, but its bytes are the page's: head, the
+      // bytes once they have arrived, end.
+      const bytes = native.internalBody(response);
+      if (bytes !== undefined) {
+        const entry = { reader: null, cancelled: false };
+        streaming.set(id, entry);
+        bytes.then((buffer) => {
+          if (entry.cancelled) return;
+          streaming.delete(id);
+          sendHead(id, response);
+          if (buffer.byteLength > 0) native.respondChunk(id, new Uint8Array(buffer));
+          native.respondEnd(id);
+        }, (error) => {
+          if (entry.cancelled) return;
+          streaming.delete(id);
+          native.failFetch(id, String(error && error.message || error));
+        });
+        return;
+      }
+    }
     const body = responseBody.call(response);
     const reader = body === null ? null : getReader.call(body);
     sendHead(id, response);
