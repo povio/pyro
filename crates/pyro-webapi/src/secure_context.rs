@@ -26,13 +26,19 @@ const GLOBALS: &[&str] = &[
     "StorageBucket",
     "AudioPlaybackStats",
     "FetchLaterResult",
+    "ML",
+    "MLContext",
+    "MLGraph",
+    "MLGraphBuilder",
+    "MLOperand",
+    "MLTensor",
     // `[SecureContext] readonly attribute CacheStorage caches`: absent rather than an accessor
     // reading undefined, so a page's own `var caches = ...` (fetch/api/request/request-init-001)
     // gets a plain global variable, as in Chrome.
     "caches",
 ];
 /// `Navigator` members that exist only in a secure context.
-const NAVIGATOR: &[&str] = &["keyboard", "locks", "storageBuckets", "mediaDevices", "registerProtocolHandler", "unregisterProtocolHandler"];
+const NAVIGATOR: &[&str] = &["keyboard", "locks", "storageBuckets", "mediaDevices", "ml", "registerProtocolHandler", "unregisterProtocolHandler"];
 
 /// A secure context (HTML): the document and every ancestor document are potentially trustworthy,
 /// as the embedder reports it (`PageHooks::is_secure_context`); without one, the realm's origin or the

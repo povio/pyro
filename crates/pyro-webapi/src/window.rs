@@ -266,6 +266,7 @@ where
     crate::media::define_globals(def);
     crate::media_source::define_globals(def);
     crate::webaudio::define_globals(def);
+    crate::webnn::define_globals(def);
     def.getter("screen", |s, w| {
         let key = pyro_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
@@ -519,6 +520,7 @@ impl JsClass for Navigator {
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
         def.getter("locks", |s, p| crate::web_locks::locks(s, p));
         def.getter("mediaDevices", |s, p| crate::media_devices::media_devices(s, p));
+        def.getter("ml", |s, p| crate::webnn::ml(s, p));
         def.getter("userActivation", |s, p| crate::user_activation::user_activation(s, p));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));

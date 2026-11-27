@@ -145,6 +145,7 @@ mod user_activation;
 pub mod util;
 pub mod validity;
 pub(crate) mod webaudio;
+pub(crate) mod webnn;
 pub mod websocket;
 pub mod window;
 pub mod window_features;
