@@ -1366,7 +1366,7 @@ impl LayoutPassState<'_> {
                         });
                         if scrolls { (thickness - taffy::CoreStyle::scrollbar_gutter_size(&style).width).max(0.0) } else { 0.0 }
                     };
-                    let output = compute_leaf_layout(
+                    let mut output = compute_leaf_layout(
                         inputs,
                         &node.layout_style(),
                         resolve_calc_value,
@@ -1409,6 +1409,7 @@ impl LayoutPassState<'_> {
                         // pyro: less its inline-axis scrollbar gutters (classic scrollbars).
                         let gutter = taffy::CoreStyle::scrollbar_gutter_size(&node.layout_style()).width;
                         let content_width = (output.size.width - pb.horizontal_axis_sum() - gutter).max(0.0);
+                        let suppresses_baseline = node.layout_style().contain().suppresses_baseline();
                         let doc = &mut *self.doc;
                         let scale = doc.viewport.scale();
                         let node = &mut doc.nodes[dom_node_id(node_id)];
@@ -1439,6 +1440,24 @@ impl LayoutPassState<'_> {
                             // to them: a classic `overflow: auto` scrollbar shows).
                             let text_height = input.editor.try_layout().map_or(0.0, |layout| layout.height() / scale);
                             let content_height = (output.size.height - pb.vertical_axis_sum()).max(0.0);
+                            // pyro: a textarea's first baseline is its first line's (the placeholder's while
+                            // it shows), clamped into its border box as a scroll container's is; it has no
+                            // last baseline (Chrome; WPT css-inline `baseline-source-first-textarea-001`).
+                            // (Horizontal lines: a vertical textarea keeps its synthesized baseline.)
+                            if !suppresses_baseline && style.as_deref().is_some_and(|style| !style.writing_mode.is_vertical()) {
+                                let placeholder_line = input
+                                    .placeholder
+                                    .as_deref()
+                                    .filter(|_| input.editor.raw_text().is_empty())
+                                    .and_then(|placeholder| placeholder.layout.lines().next().map(|line| line.metrics().baseline));
+                                let first_line = placeholder_line.or_else(|| {
+                                    input.editor.try_layout().and_then(|layout| layout.lines().next().map(|line| line.metrics().baseline))
+                                });
+                                if let Some(baseline) = first_line {
+                                    let baseline = (pb.top + baseline / scale).clamp(0.0, output.size.height);
+                                    output.baselines = taffy::Baselines::new(Some(baseline), None);
+                                }
+                            }
                             if text_width > content_width || text_height > content_height + 0.5 {
                                 let mut output = output;
                                 let overflow = output.scrollable_overflow_rect;
