@@ -1901,8 +1901,10 @@ impl JsClass for Document {
         });
         def.static_method("parseHTMLUnsafe", 1, |s, a| {
             a.require(1, "Document.parseHTMLUnsafe")?;
-            let html = dom_string(a.get(0))?;
+            // Trusted Types: "Document parseHTMLUnsafe" is a TrustedHTML sink, as `setHTMLUnsafe` is.
+            let input = crate::trusted_types::HtmlInput::convert(s, a.get(0))?;
             let page = page_of(s)?;
+            let (html, _options) = input.for_html_insertion(s, &page, a.get(1), "Document parseHTMLUnsafe")?;
             let doc = pyro_dom::parse::parse_html_unsafe(&page.dom, &html);
             Ok(wrap_node(s, &page, doc)?.value())
         });
@@ -2363,7 +2365,15 @@ impl JsClass for Document {
         def.method("execCommand", 1, |s, n, a| {
             editing_document_only(n, "execCommand")?;
             let command = arg_string(&a, 0, "Document.execCommand")?;
-            let value = if a.get(2).is_undefined() { String::new() } else { dom_string(a.get(2))? };
+            // Trusted Types: the value of "insertHTML" is a TrustedHTML sink ("Document execCommand"); other commands take a plain string.
+            let value = if command.eq_ignore_ascii_case("insertHTML") {
+                let html = if a.get(2).is_undefined() { s.string("") } else { a.get(2) };
+                crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, html, "Document execCommand", false)?
+            } else if a.get(2).is_undefined() {
+                String::new()
+            } else {
+                dom_string(a.get(2))?
+            };
             Ok(s.boolean(crate::edit_commands::exec_command(n.page(), n.id, &command, &value)))
         });
         def.method("queryCommandSupported", 1, |s, n, a| {

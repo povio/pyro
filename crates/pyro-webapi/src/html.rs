@@ -3550,7 +3550,16 @@ simple_class!(HtmlTableColElement, "HTMLTableColElement", HtmlElement, |def| {
 
 simple_class!(HtmlIFrameElement, "HTMLIFrameElement", HtmlElement, |def| {
     reflect_url!(def, "src", "src");
-    reflect_str!(def, "srcdoc", "srcdoc");
+    // `srcdoc` is a Trusted Types sink ("HTMLIFrameElement srcdoc", TrustedHTML) under the element's node document's policies.
+    def.accessor(
+        "srcdoc",
+        |s, n| Ok(s.string(n.page().dom.borrow().get_attribute(n.id, "srcdoc").js()?.unwrap_or(""))),
+        |s, n, v| {
+            let doc = n.page().dom.borrow().node_document(n.id).unwrap_or_else(|_| n.page().document());
+            let arg0 = crate::trusted_types::compliant_string_in(s, n.page(), doc, crate::trusted_types::Kind::Html, v, "HTMLIFrameElement srcdoc", false)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "srcdoc", &arg0).js()
+        },
+    );
     reflect_str!(def, "name", "name");
     reflect_str!(def, "allow", "allow");
     // CSP Embedded Enforcement: the policy the frame's documents must accept.
@@ -5411,12 +5420,26 @@ fn entry_document_url(page: &Rc<PageDom>, doc: NodeId) -> Option<String> {
 /// `document.write`/`writeln`.
 pub(crate) fn document_write<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, ln: bool) -> JsResult<Value<'s>> {
     let page = n.page();
+    // Trusted Types (document write steps 1-2): the arguments are converted and joined first,
+    // so a plain string throws its TypeError before an XML document's InvalidStateError
+    // (Document-write-exception-order.xhtml). All-TrustedHTML arguments are used as they are;
+    // otherwise the joined string goes through the policies once ("Document write[ln]").
+    let mut inputs = Vec::with_capacity(a.len());
+    for i in 0..a.len() {
+        inputs.push(crate::trusted_types::HtmlInput::convert(s, a.get(i))?);
+    }
+    let all_trusted = inputs.iter().all(|input| matches!(input, crate::trusted_types::HtmlInput::Trusted(_)));
+    let mut text = String::new();
+    for input in inputs {
+        match input {
+            crate::trusted_types::HtmlInput::Trusted(html) | crate::trusted_types::HtmlInput::String(html) => text.push_str(&html),
+        }
+    }
+    if !all_trusted {
+        text = crate::trusted_types::HtmlInput::String(text).compliant(s, page, if ln { "Document writeln" } else { "Document write" })?;
+    }
     html_document(page, n.id)?;
     crate::custom::check_dynamic_markup(page, n.id)?;
-    let mut text = String::new();
-    for i in 0..a.len() {
-        text.push_str(&dom_string(a.get(i))?);
-    }
     if ln {
         text.push('\n');
     }

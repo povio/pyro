@@ -671,8 +671,10 @@ impl JsClass for Range {
             ))
         });
         def.method("createContextualFragment", 1, |s, r, a| {
-            let html = arg_string(&a, 0, "Range.createContextualFragment")?;
+            a.require(1, "Range.createContextualFragment")?;
             let page = r.page();
+            // Trusted Types: the markup is a TrustedHTML sink ("Range createContextualFragment").
+            let html = crate::trusted_types::compliant_string(s, &page, crate::trusted_types::Kind::Html, a.get(0), "Range createContextualFragment", false)?;
             let ctx = {
                 let dom = page.dom.borrow();
                 let sn = points(r).0;
