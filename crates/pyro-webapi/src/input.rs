@@ -816,7 +816,9 @@ fn dispatch_click(page: &Rc<PageDom>, target: NodeId, ev: &EventData, handled: b
         && matches!(ev.iface, EventInterface::MouseEvent | EventInterface::PointerEvent);
     let Some(key) = key_of(page, target) else { return true };
     if !is_click {
-        return fire(page, key, ev);
+        // (An auxclick at a child of a disabled control stops below it as a click does.)
+        let stop = if ev.state.borrow().is_trusted { disabled_control_of(page, target).and_then(|control| key_of(page, control)) } else { None };
+        return crate::target::fire_with(page, key, stop, ev, &mut |_| {});
     }
     let (bubbles, trusted) = {
         let state = ev.state.borrow();
