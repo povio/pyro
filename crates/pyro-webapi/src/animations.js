@@ -224,6 +224,14 @@
     return n;
   };
 
+  // A CSSNumberish timing member: a percentage (progress-based timelines; a CSSUnitValue) or a
+  // number of milliseconds. `pct` tells which, so getTiming() hands back what was set.
+  const isPercentValue = v => typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue && v.unit === 'percent';
+  function timingNumber(v, what) {
+    if (isPercentValue(v)) return { n: v.value, pct: true };
+    return { n: toDouble(v, what), pct: false };
+  }
+
   function defaultTiming() {
     return {
       delay: 0, endDelay: 0, fill: 'auto', iterationStart: 0, iterations: 1, duration: 'auto',
@@ -240,13 +248,16 @@
       const n = Number(input);
       if (Number.isNaN(n) || n < 0) throw new TypeError('duration must be a non-negative number');
       next.duration = n;
+      if (next.pct) next.pct = { ...next.pct, duration: false };
       return next;
     }
     if (input === undefined || input === null) return next;
     if (!isObject(input)) throw new TypeError('The provided value is not of type EffectTiming');
     const has = k => input[k] !== undefined;
     // Read in WebIDL dictionary (alphabetical) order.
-    if (has('delay')) next.delay = toDouble(input.delay, 'delay');
+    const pct = { ...(timing.pct || {}) };
+    next.pct = pct;
+    if (has('delay')) { const r = timingNumber(input.delay, 'delay'); next.delay = r.n; pct.delay = r.pct; }
     if (has('direction')) {
       const d = String(input.direction);
       if (!DIRECTIONS.includes(d)) throw new TypeError(`'${d}' is not a valid value for direction`);
@@ -254,7 +265,12 @@
     }
     if (has('duration')) {
       const d = input.duration;
-      if (typeof d === 'string') {
+      pct.duration = false;
+      if (isPercentValue(d)) {
+        if (!(d.value >= 0)) throw new TypeError('duration must be a non-negative number');
+        next.duration = d.value;
+        pct.duration = true;
+      } else if (typeof d === 'string') {
         if (d !== 'auto') throw new TypeError(`'${d}' is not a valid value for duration`);
         next.duration = 'auto';
       } else {
@@ -264,7 +280,7 @@
       }
     }
     if (has('easing')) next.easing = parseEasing(input.easing);
-    if (has('endDelay')) next.endDelay = toDouble(input.endDelay, 'endDelay');
+    if (has('endDelay')) { const r = timingNumber(input.endDelay, 'endDelay'); next.endDelay = r.n; pct.endDelay = r.pct; }
     if (has('fill')) {
       const f = String(input.fill);
       if (!FILLS.includes(f)) throw new TypeError(`'${f}' is not a valid value for fill`);
@@ -819,9 +835,10 @@
     constructor() { throw illegal(); }
     getTiming() {
       const t = brand(effects, this, 'an AnimationEffect').timing;
+      const p = t.pct || {};
       return {
-        delay: t.delay, endDelay: t.endDelay, fill: t.fill, iterationStart: t.iterationStart,
-        iterations: t.iterations, duration: t.duration, direction: t.direction, easing: t.easing.text,
+        delay: p.delay ? percent(t.delay) : t.delay, endDelay: p.endDelay ? percent(t.endDelay) : t.endDelay, fill: t.fill,
+        iterationStart: t.iterationStart, iterations: t.iterations, duration: p.duration ? percent(t.duration) : t.duration, direction: t.direction, easing: t.easing.text,
       };
     }
     getComputedTiming() {
@@ -832,7 +849,8 @@
       const time = v => (onProgress && v !== null ? percent(v) : v);
       // (The delays as specified, as Chromium reports them; the rest in percentages.)
       return {
-        delay: st.timing.delay, endDelay: st.timing.endDelay, fill: t.fill === 'auto' ? 'none' : t.fill,
+        delay: st.timing.pct && st.timing.pct.delay ? percent(st.timing.delay) : st.timing.delay,
+        endDelay: st.timing.pct && st.timing.pct.endDelay ? percent(st.timing.endDelay) : st.timing.endDelay, fill: t.fill === 'auto' ? 'none' : t.fill,
         iterationStart: t.iterationStart, iterations: t.iterations, duration: time(iterationDuration(t)),
         direction: t.direction, easing: t.easing.text, endTime: time(c.end), activeDuration: time(c.active),
         localTime: time(c.localTime), progress: c.progress, currentIteration: c.currentIteration,
@@ -864,6 +882,15 @@
     // (Spread over the animation's attachment range, `rangeStart` to `rangeEnd`.)
     const range = rangeOffsets(anim) || [0, 100];
     const span = Math.max(range[1] - range[0], 0);
+    const p = t.pct;
+    if (p && (p.delay || p.endDelay || p.duration)) {
+      // Percentages are of the attachment range; an `auto` duration is what the delays leave of it.
+      const delay = p.delay ? t.delay * span / 100 : t.delay, endDelay = p.endDelay ? t.endDelay * span / 100 : t.endDelay;
+      let duration = t.duration;
+      if (duration === 'auto') duration = t.iterations > 0 && t.iterations !== Infinity ? Math.max(span - delay - endDelay, 0) / t.iterations : 0;
+      else if (p.duration) duration = duration * span / 100;
+      return { ...t, delay, endDelay, duration };
+    }
     if (t.duration === 'auto') {
       return { ...t, delay: 0, endDelay: 0, duration: t.iterations > 0 && t.iterations !== Infinity ? span / t.iterations : 0 };
     }
@@ -1042,7 +1069,7 @@
         throw new TypeError("Failed to construct 'AnimationPlaybackEvent': 1 argument required, but only 0 present.");
       }
       super(type, init);
-      const nullable = v => (v === undefined || v === null ? null : Number(v));
+      const nullable = v => (v === undefined || v === null ? null : (typeof CSSUnitValue === 'function' && v instanceof CSSUnitValue ? v : Number(v)));
       eventTimes.set(this, {
         currentTime: isObject(init) ? nullable(init.currentTime) : null,
         timelineTime: isObject(init) ? nullable(init.timelineTime) : null,
@@ -1414,7 +1441,13 @@
   // Events are dispatched as tasks of their own, after the promise
   // reactions of the step that queued them.
   function queueEvent(a, type, currentTime) {
-    const event = new AnimationPlaybackEvent(type, { currentTime, timelineTime: timelineTime(a.timeline) });
+    let tt = timelineTime(a.timeline);
+    // (On a progress-based timeline the times are percentages: CSSNumberish.)
+    if (progressBased(a)) {
+      if (currentTime !== null) currentTime = percent(currentTime);
+      if (tt !== null) tt = percent(tt);
+    }
+    const event = new AnimationPlaybackEvent(type, { currentTime, timelineTime: tt });
     schedule(0, () => { apply(dispatch, a.self, [event]); });
   }
 
@@ -1524,7 +1557,7 @@
       if (unit === 'percent') return v.value;
       throw new TypeError(`Failed to set the '${what}' property on 'Animation': CSSNumberish must be a percentage for progress-based animations.`);
     }
-    if (unit === 'ms') return v.value;
+    if (unit === 'ms' || unit === 'number') return v.value;
     if (unit === 's') return v.value * 1000;
     if (unit !== null) throw new TypeError(`Failed to set the '${what}' property on 'Animation': Invalid unit`);
     return toDouble(v, what);
