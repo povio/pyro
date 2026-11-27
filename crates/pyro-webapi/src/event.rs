@@ -151,6 +151,9 @@ pub struct EventFields {
     /// `coalescedEvents` / `predictedEvents` of the init dictionary.
     pub coalesced_events: Vec<Persistent>,
     pub predicted_events: Vec<Persistent>,
+    /// `MouseEvent.movementX/Y`: set for trusted moves, or by the init dictionary.
+    pub movement_x: f64,
+    pub movement_y: f64,
     pub delta_x: f64,
     pub delta_y: f64,
     pub delta_z: f64,
@@ -724,6 +727,8 @@ fn fill_mouse<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
     f.client_y = get_num(init, "clientY", 0.0)?;
     f.button = get_num(init, "button", 0.0)? as i16;
     f.buttons = get_num(init, "buttons", 0.0)? as u16;
+    f.movement_x = get_num(init, "movementX", 0.0)?;
+    f.movement_y = get_num(init, "movementY", 0.0)?;
     f.related_target = related(s, init)?;
     Ok(())
 }
@@ -1458,8 +1463,8 @@ impl JsClass for MouseEvent {
         def.getter("pageY", |s, e| Ok(s.number(e.fields.borrow().client_y)));
         def.getter("offsetX", |s, e| Ok(s.number(mouse_offset(e).0)));
         def.getter("offsetY", |s, e| Ok(s.number(mouse_offset(e).1)));
-        def.getter("movementX", |s, _e| Ok(s.number(0.0)));
-        def.getter("movementY", |s, _e| Ok(s.number(0.0)));
+        def.getter("movementX", |s, e| Ok(s.number(e.fields.borrow().movement_x)));
+        def.getter("movementY", |s, e| Ok(s.number(e.fields.borrow().movement_y)));
         def.getter("ctrlKey", |s, e| Ok(s.boolean(e.fields.borrow().ctrl_key)));
         def.getter("shiftKey", |s, e| Ok(s.boolean(e.fields.borrow().shift_key)));
         def.getter("altKey", |s, e| Ok(s.boolean(e.fields.borrow().alt_key)));

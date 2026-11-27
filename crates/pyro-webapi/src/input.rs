@@ -2815,6 +2815,9 @@ pub struct MouseInput {
     pub modifiers: Modifiers,
     pub delta_x: f64,
     pub delta_y: f64,
+    /// `movementX/Y` of a `pointermove`/`mousemove`: the move since the previous mouse input of
+    /// the document. Set by the dispatcher, not by callers.
+    pub movement: (f64, f64),
 }
 
 pub(crate) fn mouse_event(
@@ -2845,6 +2848,9 @@ pub(crate) fn mouse_event(
             _ => m.button.dom_button(),
         };
         f.buttons = m.buttons;
+        if matches!(ty, "pointermove" | "mousemove") {
+            (f.movement_x, f.movement_y) = m.movement;
+        }
         f.detail = m.click_count as f64;
         f.ctrl_key = m.modifiers.ctrl;
         f.shift_key = m.modifiers.shift;
@@ -3301,6 +3307,16 @@ fn dispatch_mouse_inner(
     // A press handler may open an overlay beneath a stationary pointer.
     // Reconcile boundaries before the next pointer event, including release:
     // otherwise the old trigger stays hovered and can open a stale tooltip.
+    // `movementX/Y`: the screen delta from the previous mouse input of this document (0 for the
+    // first one); only a move reports it, other events read 0.
+    let moved_input;
+    let m = if kind == MouseKind::Moved {
+        let prev = page.pointer.borrow().as_ref().map(|p| (p.x, p.y));
+        moved_input = MouseInput { movement: prev.map_or((0.0, 0.0), |(px, py)| (m.x - px, m.y - py)), ..m.clone() };
+        &moved_input
+    } else {
+        m
+    };
     if matches!(kind, MouseKind::Moved | MouseKind::Pressed | MouseKind::Released) {
         *page.pointer.borrow_mut() = Some(m.clone());
         let prev = page.hovered();
@@ -3699,6 +3715,8 @@ struct PointerState {
     width: f64,
     height: f64,
     pressure: f64,
+    /// `movementX/Y` of a pointermove: the move since the touch's previous position.
+    movement: (f64, f64),
 }
 
 impl PointerState {
@@ -3712,14 +3730,15 @@ impl PointerState {
             width: 2.0 * t.radius_x,
             height: 2.0 * t.radius_y,
             pressure: t.force,
+            movement: (0.0, 0.0),
         }
     }
-    fn moved(t: &TouchInput) -> Self {
-        PointerState { button: -1, ..Self::pressed(t) }
+    fn moved(t: &TouchInput, movement: (f64, f64)) -> Self {
+        PointerState { button: -1, movement, ..Self::pressed(t) }
     }
     /// Up and what follows it: Chrome reports a 1x1 contact without pressure.
     fn released(t: &TouchInput) -> Self {
-        PointerState { x: t.x, y: t.y, button: 0, buttons: 0, width: 1.0, height: 1.0, pressure: 0.0 }
+        PointerState { x: t.x, y: t.y, button: 0, buttons: 0, width: 1.0, height: 1.0, pressure: 0.0, movement: (0.0, 0.0) }
     }
     /// touchCancel's pointercancel keeps the contact size.
     fn cancelled(t: &TouchInput) -> Self {
@@ -3727,7 +3746,7 @@ impl PointerState {
     }
     /// A scroll's pointercancel carries no position (Chrome: 0,0, 1x1).
     fn scrolled() -> Self {
-        PointerState { x: 0.0, y: 0.0, button: 0, buttons: 0, width: 1.0, height: 1.0, pressure: 0.0 }
+        PointerState { x: 0.0, y: 0.0, button: 0, buttons: 0, width: 1.0, height: 1.0, pressure: 0.0, movement: (0.0, 0.0) }
     }
 }
 
@@ -3760,6 +3779,9 @@ fn touch_pointer_event(
         f.width = p.width;
         f.height = p.height;
         f.pressure = p.pressure;
+        if ty == "pointermove" {
+            (f.movement_x, f.movement_y) = p.movement;
+        }
         f.related_target = related;
     }
     ev
@@ -4097,16 +4119,17 @@ pub fn dispatch_touch(
         TouchKind::Cancel => {}
     }
     let pointer_moves: Vec<usize> = moved.iter().map(|(i, _)| *i).collect();
+    let movements: Vec<(f64, f64)> = moved.iter().map(|(i, p)| (p.x - seq.active[*i].input.x, p.y - seq.active[*i].input.y)).collect();
     for (i, p) in moved {
         seq.active[i].input = p;
     }
     if !pointer_moves.is_empty() {
-        for &i in &pointer_moves {
+        for (&i, &movement) in pointer_moves.iter().zip(&movements) {
             let t = &mut seq.active[i];
             if t.pointer_cancelled {
                 continue;
             }
-            let state = PointerState::moved(&t.input);
+            let state = PointerState::moved(&t.input, movement);
             capture(page, t, &state, modifiers);
             fire_touch_pointer_routed(page, "pointermove", t, &state, modifiers);
         }

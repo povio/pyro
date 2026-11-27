@@ -300,6 +300,7 @@ impl EngineHost {
                     modifiers: modifiers(p.modifiers)?,
                     delta_x: p.delta_x,
                     delta_y: p.delta_y,
+                    ..MouseInput::default()
                 };
                 let intercept = self.pages.get(&cmd.page).is_some_and(|state| state.intercept_drags);
                 let dragged = input::dispatch_mouse_intercepting_drags(&page, kind, &mouse, intercept)
