@@ -130,6 +130,10 @@ pub struct FrameScan {
     /// Viewport size (CSS px) the visible rectangles were clipped to.
     pub viewport: (f64, f64),
     pub candidates: Vec<Candidate>,
+    /// The walk skipped a poster or background image whose load Resource Timing has not
+    /// reported yet: it can become a candidate in a later frame without the document changing,
+    /// so a consumer that still wants candidates must ask for another frame.
+    pub waiting: bool,
 }
 
 impl FrameScan {
@@ -396,7 +400,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
         let key = (c.node, c.kind, c.url.clone());
         c.first_painted = *state.first.entry(key).or_insert(frame.presented);
     }
-    FrameScan { presented: frame.presented, viewport, candidates }
+    FrameScan { presented: frame.presented, viewport, candidates, waiting }
 }
 
 /// What pass 2 learned of a loaded `<img>`: its request's `src` and the source the loader chose.
