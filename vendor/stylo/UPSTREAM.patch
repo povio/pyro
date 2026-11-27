@@ -12658,7 +12658,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percentage.rs
 --- a/values/computed/length_percentage.rs	2026-11-11 19:55:57
-+++ b/values/computed/length_percentage.rs	2026-11-23 06:58:46
++++ b/values/computed/length_percentage.rs	2026-11-27 22:02:09
 @@ -149,6 +149,10 @@
          Self::new_percent(Percentage::hundred())
      }
@@ -12670,12 +12670,10 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
      fn to_calc_node(&self) -> CalcNode {
          match self.unpack() {
              Unpacked::Length(l) => CalcNode::Leaf(ComputedLeaf::Length(l)),
-@@ -157,6 +161,21 @@
-             )),
-             Unpacked::Calc(p) => p.node.clone(),
+@@ -159,6 +163,21 @@
          }
-+    }
-+
+     }
+ 
 +    pub(crate) fn substitute_size(&self, basis: &Self) -> Self {
 +        let mut result = self.to_calc_node();
 +        result.visit_depth_first(|node| {
@@ -12689,9 +12687,11 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
 +            }
 +        });
 +        Self::new_calc(result, AllowedNumericType::All)
-     }
- 
++    }
++
      fn map_lengths(&self, mut map_fn: impl FnMut(Length) -> Length) -> Self {
+         match self.unpack() {
+             Unpacked::Length(l) => Self::new_length(map_fn(l)),
 @@ -234,6 +253,9 @@
      pub fn new_calc(mut node: CalcNode, clamping_mode: AllowedNumericType) -> Self {
          node.simplify_and_sort();
@@ -12702,7 +12702,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
          match node {
              CalcNode::Leaf(l) => match l {
                  ComputedLeaf::Length(l) => {
-@@ -317,10 +339,33 @@
+@@ -317,13 +339,36 @@
      /// Resolves the percentage.
      #[inline]
      pub fn resolve(&self, basis: Length) -> Length {
@@ -12716,9 +12716,9 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
              Unpacked::Percentage(p) => (basis * p.0).normalized(),
 -            Unpacked::Calc(c) => c.resolve(basis),
 +            Unpacked::Calc(c) => c.resolve_size(size, basis),
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// Resolves an intrinsic calculation without assuming an indefinite percentage basis is zero.
 +    pub fn resolve_size_with_optional_basis(&self, size: Length, basis: Option<Length>) -> Option<Length> {
 +        if let Some(basis) = basis { return Some(self.resolve_size(size, basis)); }
@@ -12734,9 +12734,12 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
 +                let ComputedLeaf::Length(length) = value else { return None };
 +                Some(Length::new(calc.clamping_mode.clamp(length.px())).normalized())
 +            }
-         }
-     }
- 
++        }
++    }
++
+     /// Resolves the percentage. Just an alias of resolve().
+     #[inline]
+     pub fn percentage_relative_to(&self, basis: Length) -> Length {
 @@ -640,15 +685,42 @@
  }
  
@@ -12790,7 +12793,26 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
              },
              Leaf::Length(l) => ComputedLeaf::Length({
                  let result =
-@@ -988,8 +1060,23 @@
+@@ -984,17 +1056,44 @@
+                         CalcNode::Product(vec![node, number].into())
+                     } else {
+                         node
++                    }
++                }
++
++                // pyro: a zero length term of the mix drops out (`12.5%`, not `calc(12.5% + 0px)`;
++                // Chrome, WPT css/motion offset-path-interpolation-006).
++                fn without_zero_length(mut node: CalcNode) -> LengthPercentage {
++                    node.simplify_and_sort();
++                    if let CalcNode::Sum(terms) = &node {
++                        let is_zero_length =
++                            |t: &CalcNode| matches!(t, CalcNode::Leaf(ComputedLeaf::Length(l)) if l.px() == 0.0);
++                        if terms.iter().any(is_zero_length) && terms.iter().any(|t| !is_zero_length(t)) {
++                            let mut kept: Vec<CalcNode> = terms.iter().filter(|t| !is_zero_length(t)).cloned().collect();
++                            node = if kept.len() == 1 { kept.pop().expect("one term") } else { CalcNode::Sum(kept.into()) };
++                        }
+                     }
++                    LengthPercentage::new_calc(node, AllowedNumericType::All)
                  }
  
                  let (l, r) = procedure.weights();
@@ -12807,29 +12829,35 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
 +                            Ok::<_, ()>(CalcNode::Leaf(merged))
 +                        }).collect::<Result<Vec<_>, _>>();
 +                        if let Ok(terms) = terms {
-+                            return Ok(Self::new_calc(CalcNode::Sum(terms.into()), AllowedNumericType::All));
++                            return Ok(without_zero_length(CalcNode::Sum(terms.into())));
 +                        }
 +                    }
 +                }
 +                let one = product_with(one, l as f32);
 +                let other = product_with(other, r as f32);
  
-                 Self::new_calc(
-                     CalcNode::Sum(vec![one, other].into()),
-@@ -1002,6 +1089,12 @@
- 
+-                Self::new_calc(
+-                    CalcNode::Sum(vec![one, other].into()),
+-                    AllowedNumericType::All,
+-                )
++                without_zero_length(CalcNode::Sum(vec![one, other].into()))
+             },
+         })
+     }
+@@ -1003,6 +1102,12 @@
  /// A wrapper of LengthPercentage, whose value must be >= 0.
  pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
-+
+ 
 +impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
 +    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
 +        self.0.to_calc_node().write_size_calculation::<SIZE, _>(dest)
 +    }
 +}
- 
++
  impl NonNegativeLengthPercentage {
      /// Returns the used value.
-@@ -1050,3 +1143,98 @@
+     #[inline]
+@@ -1050,3 +1155,98 @@
          });
      }
  }
@@ -15252,7 +15280,7 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
  }
 diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
 --- a/values/specified/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/specified/basic_shape.rs	2026-11-23 06:58:46
++++ b/values/specified/basic_shape.rs	2026-11-27 22:02:09
 @@ -37,9 +37,55 @@
  /// A specified `clip-path` value.
  pub type ClipPath = generic::GenericClipPath<BasicShape, SpecifiedUrl>;
@@ -15376,6 +15404,20 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
      }
  }
  
+@@ -682,9 +739,11 @@
+     fn parse_function_arguments(
+         context: &ParserContext,
+         input: &mut Parser,
+-        shape_type: ShapeType,
++        _shape_type: ShapeType,
+     ) -> Result<Self, ParseError> {
+-        let fill = parse_fill_rule(input, shape_type, false /* no following comma */);
++        // pyro: shape()'s <fill-rule> is part of its grammar for outline shapes too (Chrome:
++        // `offset-path: shape(evenodd from 0px 0px, close)`), unlike path()'s.
++        let fill = parse_fill_rule(input, ShapeType::Filled, false /* no following comma */);
+ 
+         let mut first = true;
+         let commands = input.parse_comma_separated(|i| {
 diff -ruN a/values/specified/border.rs b/values/specified/border.rs
 --- a/values/specified/border.rs	2026-11-11 19:55:57
 +++ b/values/specified/border.rs	2026-11-23 06:58:46
