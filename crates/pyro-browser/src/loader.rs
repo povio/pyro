@@ -240,6 +240,10 @@ pub struct Resource {
     /// for the element's integrity check (`pyro_webapi::signature_sri`); `None` for a response with
     /// neither header.
     pub integrity_headers: Option<Box<pyro_webapi::signature_sri::Facts>>,
+    /// A document's `Permissions-Policy` response header, with its `Permissions-Policy-Report-Only`
+    /// header after a newline (`pyro_webapi::permissions_policy::pack_headers`; its declared
+    /// policy, `PageDom::set_permissions_policy_headers`). The legacy `Feature-Policy` is not read.
+    pub permissions_policy: Option<String>,
     /// A document's `Link: <url>; rel="compression-dictionary"` headers, resolved: fetched after
     /// its `load` event.
     pub dictionary_links: Vec<String>,
@@ -676,7 +680,7 @@ impl ResourceLoader for NetLoader {
                 refresh: None,
                 content_language: None,
                 last_modified: None,
-                reporting_endpoints: None,
+                reporting_endpoints: None, permissions_policy: None,
                 connection_allowlist: None,
                 link_fetches: Vec::new(),
                 integrity_headers: None,
@@ -774,7 +778,7 @@ impl ResourceLoader for NetLoader {
                     refresh: None,
                     content_language: None,
                     last_modified: None,
-                    reporting_endpoints: None,
+                    reporting_endpoints: None, permissions_policy: None,
                     connection_allowlist: None,
                     link_fetches: Vec::new(),
                     integrity_headers: None,
@@ -887,6 +891,16 @@ impl ResourceLoader for NetLoader {
                         } else {
                             Vec::new()
                         },
+                        permissions_policy: document
+                            .then(|| {
+                                let joined = |name: &str| {
+                                    let values = h.headers.get_all(name);
+                                    let values: Vec<&str> = values.iter().filter_map(|v| v.to_str().ok()).collect();
+                                    (!values.is_empty()).then(|| values.join(","))
+                                };
+                                pyro_webapi::permissions_policy::pack_headers(joined("permissions-policy"), joined("permissions-policy-report-only"))
+                            })
+                            .flatten(),
                         dictionary_links: if document {
                             crate::preload::compression_dictionary_links(
                                 h.headers.get_all(http::header::LINK).iter().filter_map(|v| v.to_str().ok()),
@@ -1598,7 +1612,7 @@ impl ResourceLoader for StaticLoader {
                         refresh: None,
                         content_language: None,
                         last_modified: None,
-                        reporting_endpoints: None,
+                        reporting_endpoints: None, permissions_policy: None,
                         connection_allowlist: None,
                         link_fetches: Vec::new(),
                         integrity_headers: None,
@@ -2663,7 +2677,7 @@ impl Browser {
             refresh: None,
             content_language: None,
             last_modified: None,
-            reporting_endpoints: None,
+            reporting_endpoints: None, permissions_policy: None,
             connection_allowlist: None,
             link_fetches: Vec::new(),
             integrity_headers: None,
@@ -3074,6 +3088,9 @@ impl Browser {
                 pyro_webapi::reporting_store::queue_endpoint_report(&page_dom, report);
             }
         }
+        // The document's declared permissions policy (`Permissions-Policy`, and report-only); its
+        // inherited one was set when the document was made (`bindings::create`).
+        page_dom.set_permissions_policy_headers(resource.permissions_policy.as_deref());
         // `bindings::create` parses every `about:blank` document from the blank markup (html,
         // head, body). A document made from a body at that URL (a `javascript:` URL's string
         // result replacing an about:blank document keeps its URL) must start empty: the parser
@@ -5402,7 +5419,7 @@ mod disposition_tests {
             refresh: None,
             content_language: None,
             last_modified: None,
-            reporting_endpoints: None,
+            reporting_endpoints: None, permissions_policy: None,
             connection_allowlist: None,
             link_fetches: Vec::new(),
             integrity_headers: None,

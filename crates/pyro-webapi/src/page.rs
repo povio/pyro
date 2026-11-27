@@ -504,14 +504,9 @@ pub struct PageDom {
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
     /// An `exitFullscreen()` task is queued: a further call joins it (`crate::fullscreen::exit`).
     pub(crate) fullscreen_exit_pending: Cell<bool>,
-    /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
-    fullscreen_allowed: Cell<bool>,
-    /// The document's permissions policy allows `compute-pressure` (`crate::pressure`).
-    compute_pressure_allowed: Cell<bool>,
-    /// The document's permissions policy allows `media-playback-while-not-visible` (default
-    /// allowed; false: its media is paused and its audio contexts interrupted while its frame is
-    /// not rendered, `crate::media::frame_rendered`).
-    pub(crate) media_while_hidden_allowed: Cell<bool>,
+    /// The document's permissions policy (`crate::permissions_policy`): the one source of every
+    /// feature gate (fullscreen, compute-pressure, media-playback-while-not-visible, ...).
+    pub(crate) permissions_policy: RefCell<crate::permissions_policy::PermissionsPolicy>,
     /// For a document whose policy does not allow it: whether its frame was rendered at the last
     /// checkpoint (`crate::media::refresh_frame_rendered`).
     pub(crate) media_frame_rendered: Cell<bool>,
@@ -1281,9 +1276,7 @@ impl PageDom {
             debugger_gesture: Cell::new(false),
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_exit_pending: Cell::new(false),
-            fullscreen_allowed: Cell::new(true),
-            compute_pressure_allowed: Cell::new(true),
-            media_while_hidden_allowed: Cell::new(true),
+            permissions_policy: RefCell::default(),
             media_frame_rendered: Cell::new(true),
             media_audio_blocked: Cell::new(false),
             paint_worklet: RefCell::new(None),
@@ -1346,11 +1339,6 @@ impl PageDom {
     pub(crate) fn is_nested_frame(&self) -> bool {
         self.nested_frame.get()
     }
-    /// Whether the document's permissions policy allows `fullscreen`: true for a top-level
-    /// document; the browser sets a child frame's ([`crate::fullscreen::allowed_in_frame`]).
-    pub fn set_fullscreen_allowed(&self, allowed: bool) {
-        self.fullscreen_allowed.set(allowed);
-    }
     /// Install the origin identity committed by the frame loader, including its opaque token.
     pub fn set_window_agent_cluster(&self, group: AgentClusterGroup, origin: String) {
         *self.agent_cluster.borrow_mut() = AgentCluster { group, origin: origin.into() };
@@ -1384,25 +1372,17 @@ impl PageDom {
     pub fn is_dispatching_load(&self) -> bool {
         self.dispatching_load.get()
     }
+    /// Whether the document's permissions policy allows `fullscreen`.
     pub fn fullscreen_allowed(&self) -> bool {
-        self.fullscreen_allowed.get()
+        crate::permissions_policy::feature_allowed(self, "fullscreen")
     }
-    /// Whether the document's permissions policy allows `compute-pressure`: true for a top-level document; the
-    /// browser sets a child frame's ([`crate::pressure::allowed_in_frame`]).
+    /// Whether the document's permissions policy allows `compute-pressure`.
     pub fn compute_pressure_allowed(&self) -> bool {
-        self.compute_pressure_allowed.get()
-    }
-    pub fn set_compute_pressure_allowed(&self, allowed: bool) {
-        self.compute_pressure_allowed.set(allowed);
+        crate::permissions_policy::feature_allowed(self, "compute-pressure")
     }
     /// Whether the document's permissions policy allows `media-playback-while-not-visible`.
     pub fn media_while_hidden_allowed(&self) -> bool {
-        self.media_while_hidden_allowed.get()
-    }
-    /// Sets that policy bit: the browser computes a child frame's from its container's `allow`
-    /// and its parent document's when the document is made.
-    pub fn set_media_while_hidden_allowed(&self, allowed: bool) {
-        self.media_while_hidden_allowed.set(allowed);
+        crate::permissions_policy::feature_allowed(self, "media-playback-while-not-visible")
     }
     pub fn context_services(&self) -> Rc<crate::navigator_extras::ContextServices> {
         self.context_services.borrow().clone()

@@ -20,7 +20,7 @@ use crate::page::{FrameContainer, PageDom, PageHooks};
 /// allows `fullscreen`), as the browser decided when it made the document
 /// ([`allowed_in_frame`] for a child frame's; always for a top-level one).
 pub(crate) fn enabled(page: &PageDom) -> bool {
-    page.fullscreen_allowed()
+    crate::permissions_policy::feature_allowed(page, "fullscreen")
 }
 
 /// Permissions Policy "define an inherited policy for feature in container at origin" for
@@ -50,10 +50,8 @@ pub fn allowed_in_frame(
     container_allows("fullscreen", allow, parent_origin, declared_origin, child_origin).unwrap_or(allowfullscreen || same_origin)
 }
 
-/// A frame container's `allow` attribute on `feature` for a child document at `child_origin`:
-/// `Some(allowed)` when the attribute declares the feature (an allowlist of `*`, `'self'` (the
-/// parent's origin), `'src'` (the container's declared origin, also the default with no tokens),
-/// `'none'` and origins), `None` when it does not mention it.
+/// A frame container's `allow` attribute on `feature` for a child document at `child_origin`
+/// (the engine's [`crate::permissions_policy::container_allows`]).
 pub fn container_allows(
     feature: &str,
     allow: Option<&str>,
@@ -61,25 +59,7 @@ pub fn container_allows(
     declared_origin: Option<&str>,
     child_origin: Option<&str>,
 ) -> Option<bool> {
-    let same = |a: Option<&str>| a.is_some() && a == child_origin;
-    let declared = allow.and_then(|allow| {
-        allow.split(';').find_map(|directive| {
-            let mut tokens = directive.split_ascii_whitespace();
-            (tokens.next()? == feature).then(|| tokens.map(str::to_owned).collect::<Vec<_>>())
-        })
-    })?;
-    Some(match declared {
-        // `'src'`: the frame's document must be at the origin the container delegated to (its
-        // `src` URL's), not wherever a redirect or a later navigation took it.
-        list if list.is_empty() => same(declared_origin),
-        list => list.iter().any(|t| match t.as_str() {
-            "*" => true,
-            "'self'" => same(parent_origin),
-            "'src'" => same(declared_origin),
-            "'none'" => false,
-            origin => same(Some(origin.trim_end_matches('/'))),
-        }),
-    })
+    crate::permissions_policy::container_allows(feature, allow, parent_origin, declared_origin, child_origin)
 }
 
 /// The document's fullscreen element: the topmost of its fullscreen elements that is still
@@ -303,6 +283,9 @@ pub(crate) fn request<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> JsRe
     let d = s.deferred()?;
     let promise = d.promise.get(s);
     let realm = s.realm().downgrade();
+    // A document the policy refuses (or report-only would) reports the violation, whatever else
+    // the request lacks (`ready` refuses it below).
+    crate::permissions_policy::check_feature(s, page, "fullscreen");
     // The request is denied unless the element is ready and the window has transient
     // activation, which a granted request consumes.
     let granted = ready(page, el) && page.has_transient_activation();

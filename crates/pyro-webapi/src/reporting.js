@@ -300,5 +300,9 @@
     return JSONStringify(body.toJSON());
   };
 
-  return { ReportingObserver, ReportBody, CSPViolationReportBody, queue, deprecation };
+  // The innermost page frame of the calling script, as JSON (null: none), for reports the engine
+  // makes on behalf of a script (permissions_policy.rs).
+  const callerSource = () => JSONStringify(callerLocation());
+
+  return { ReportingObserver, ReportBody, CSPViolationReportBody, queue, deprecation, callerSource };
 })

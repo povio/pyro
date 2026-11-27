@@ -335,11 +335,14 @@
       if (typeof success !== 'function') {
         throw new TypeErrorC("Failed to execute 'getCurrentPosition' on 'Geolocation': parameter 1 is not a function.");
       }
+      // Permissions Policy `geolocation`: asked (and a refusal reported) in the call, where the caller is on the stack.
+      const policyAllows = native.policy('geolocation');
       resolved().then(() => {
         if (!stillWanted()) return;
         const fail = (code, message) => {
           if (typeof error === 'function') error(new GeolocationPositionError(token, code, message));
         };
+        if (!policyAllows) return fail(1, 'Geolocation has been disabled in this document by permissions policy.');
         if (native.permissionState('geolocation') !== 'granted') return fail(1, 'User denied Geolocation');
         const position = native.geolocationPosition();
         if (position === null) return fail(2, 'Position update is unavailable');

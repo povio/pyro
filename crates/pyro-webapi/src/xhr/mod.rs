@@ -614,6 +614,10 @@ impl Xhr {
             return Err(invalid("XHR was reopened during body conversion"));
         }
         let page = self.page()?;
+        // Permissions Policy `sync-xhr`: a document's synchronous send fails as a network error.
+        if self.synchronous.get() && !self.worker && !crate::permissions_policy::check_feature(s, &page, "sync-xhr") {
+            return Err(JsError::dom("NetworkError", "Synchronous XMLHttpRequest is disabled by permissions policy"));
+        }
         // Referrer "client": the document, under its referrer policy.
         request.referrer = page.client_referrer();
         request.referrer_policy = page.referrer_policy();

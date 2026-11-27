@@ -293,7 +293,7 @@ fn the_required_policy_is_snapshot_when_the_navigation_starts() {
             refresh: None,
             content_language: None,
             last_modified: None,
-            reporting_endpoints: None,
+            reporting_endpoints: None, permissions_policy: None,
             connection_allowlist: None,
             link_fetches: Vec::new(),
             integrity_headers: None,

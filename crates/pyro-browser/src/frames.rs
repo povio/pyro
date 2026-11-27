@@ -1306,7 +1306,14 @@ impl FrameHost {
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub(crate) struct FullscreenContainer {
     pub allowfullscreen: bool,
+    /// The legacy `allowpaymentrequest` attribute (`allow="payment *"`).
+    pub allowpaymentrequest: bool,
     pub allow: Option<String>,
+    /// A `sandbox` without `allow-same-origin`: the declared origin is opaque, as its document's.
+    pub sandboxed: bool,
+    /// For a sandboxed container, the origin its `src` (`'src'` in `allow`) names, which its opaque
+    /// documents are matched against by the origin they were loaded from.
+    pub sandbox_src_origin: Option<String>,
     /// Permissions Policy "declared origin": opaque (`None`) for a `sandbox` without
     /// `allow-same-origin`; the container document's origin with `srcdoc` or without `src`; else the
     /// origin of the `src` URL, resolved against the container document.
@@ -1323,9 +1330,7 @@ pub(crate) fn fullscreen_container(dom: &pyro_dom::Dom, owner: NodeId, parent_or
     };
     let parent_origin = || parent_origin.map(str::to_owned);
     let sandboxed = attr("sandbox").is_some_and(|v| !v.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("allow-same-origin")));
-    let declared_origin = if sandboxed {
-        None
-    } else if attr("srcdoc").is_some() {
+    let declared_origin = if attr("srcdoc").is_some() {
         parent_origin()
     } else {
         match attr("src").filter(|v| !v.trim().is_empty()) {
@@ -1333,7 +1338,16 @@ pub(crate) fn fullscreen_container(dom: &pyro_dom::Dom, owner: NodeId, parent_or
             None => parent_origin(),
         }
     };
-    FullscreenContainer { allowfullscreen: attr("allowfullscreen").is_some(), allow: attr("allow"), declared_origin }
+    // A sandboxed container's declared origin is opaque; what its `src` names is kept for `'src'`.
+    let (declared_origin, sandbox_src_origin) = if sandboxed { (None, declared_origin) } else { (declared_origin, None) };
+    FullscreenContainer {
+        allowfullscreen: attr("allowfullscreen").is_some(),
+        allowpaymentrequest: attr("allowpaymentrequest").is_some(),
+        allow: attr("allow"),
+        sandboxed,
+        sandbox_src_origin,
+        declared_origin,
+    }
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -2782,7 +2796,7 @@ impl Browser {
             refresh: None,
             content_language: None,
             last_modified: None,
-            reporting_endpoints: None,
+            reporting_endpoints: None, permissions_policy: None,
             connection_allowlist: None,
             link_fetches: Vec::new(),
             integrity_headers: None,
@@ -2865,7 +2879,7 @@ impl Browser {
                 refresh: None,
                 content_language: None,
                 last_modified: None,
-                reporting_endpoints: None,
+                reporting_endpoints: None, permissions_policy: None,
                 connection_allowlist: None,
                 link_fetches: Vec::new(),
                 integrity_headers: None,

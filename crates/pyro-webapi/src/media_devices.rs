@@ -20,6 +20,13 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let native = s.object();
     let active = s.function("active", |s, _, _| Ok(s.boolean(crate::target::page_of(s)?.is_fully_active())))?;
     native.set_atom("active", active.value())?;
+    // policy(feature): whether the document's permissions policy lets it use `feature` (`camera`,
+    // `microphone`); a refusal is also reported (`crate::permissions_policy::check_feature`).
+    let policy = s.function("policy", |s, _, args| {
+        let page = crate::target::page_of(s)?;
+        Ok(s.boolean(crate::permissions_policy::check_feature(s, &page, &args.get(0).to_string()?)))
+    })?;
+    native.set_atom("policy", policy.value())?;
     Ok(native)
 }
 

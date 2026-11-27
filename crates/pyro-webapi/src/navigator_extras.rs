@@ -396,6 +396,13 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         Ok(s.string(permission_state(&page, &name).as_str()))
     })?;
     native.set_atom("permissionState", state.value())?;
+    // policy(feature): whether the document's permissions policy lets it use `feature`; a refusal is
+    // also reported (`crate::permissions_policy::check_feature`).
+    let policy = s.function("policy", |s, _, args| {
+        let page = crate::target::page_of(s)?;
+        Ok(s.boolean(crate::permissions_policy::check_feature(s, &page, &args.get(0).to_string()?)))
+    })?;
+    native.set_atom("policy", policy.value())?;
     let watch = s.function("watchPermissions", |s, _, args| {
         let page = crate::target::page_of(s)?;
         let refresh = args.get(0);

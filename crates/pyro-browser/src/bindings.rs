@@ -614,7 +614,8 @@ impl PageHooks for Hooks {
                 host.quiet_reinserts.borrow_mut().push((node, Rc::downgrade(first)));
             }
         }
-        let unload = unload_allowed(&host, key);
+        // `unload` fires at the frame's own document when its permissions policy allows it.
+        let unload = documents.first().is_some_and(|d| pyro_webapi::permissions_policy::feature_allowed(d, "unload"));
         for (i, document) in documents.iter().enumerate() {
             pyro_webapi::lifecycle::removed(document, i == 0 && unload);
         }
@@ -1368,86 +1369,50 @@ pub(crate) fn frame_origin(host: &crate::frames::FrameHost, key: FrameKey, url: 
     (origin != "null").then_some(origin)
 }
 
-/// Whether a child frame's new document at `url` may use fullscreen
-/// ([`pyro_webapi::fullscreen::allowed_in_frame`]): its parent document may, and its
-/// container's `allow` / `allowfullscreen` (or the default allowlist) admit its origin.
-fn fullscreen_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &str, opaque: bool) -> bool {
+/// The permissions policy a document at `url` starts with ([`pyro_webapi::permissions_policy`]): for
+/// a child frame, what it inherits through its container (its `allow` / `allowfullscreen` /
+/// `allowpaymentrequest` attributes as the navigation began, or the feature's default allowlist)
+/// from its parent document's policy; a top-level document inherits nothing. Its own
+/// `Permissions-Policy` header joins when the document commits.
+fn permissions_policy_in(
+    host: &crate::frames::FrameHost,
+    key: FrameKey,
+    url: &str,
+    opaque: bool,
+) -> pyro_webapi::permissions_policy::PermissionsPolicy {
+    use pyro_webapi::permissions_policy::{inherit, Container, PermissionsPolicy};
+    let child_origin = frame_origin(host, key, url, opaque);
     let parent = host.parent_key(key);
-    let Some(frame) = host.frame(key) else { return false };
-    let Some(pd) = host.frame(parent).and_then(|f| f.page_dom.clone()) else { return false };
+    if parent == key {
+        return PermissionsPolicy::top_level(child_origin);
+    }
+    let (Some(frame), Some(pd)) = (host.frame(key), host.frame(parent).and_then(|f| f.page_dom.clone())) else {
+        return PermissionsPolicy::top_level(child_origin);
+    };
     // The container policy as it was when this navigation began.
     let container = frame.fullscreen_container.clone();
     let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
     let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
-    let child_origin = frame_origin(host, key, url, opaque);
-    pyro_webapi::fullscreen::allowed_in_frame(
-        pd.fullscreen_allowed(),
-        container.allowfullscreen,
-        container.allow.as_deref(),
-        parent_origin.as_deref(),
-        container.declared_origin.as_deref(),
+    // The origin the document was loaded from, which an opaque (sandboxed) document's `'src'` match uses.
+    let child_precursor = if url.starts_with("about:") {
+        parent_origin.clone()
+    } else {
+        Some(crate::loader::origin_of(url)).filter(|o| o != "null")
+    };
+    inherit(
+        &pd,
+        &Container {
+            allowfullscreen: container.allowfullscreen,
+            allowpaymentrequest: container.allowpaymentrequest,
+            allow: container.allow.as_deref(),
+            parent_origin: parent_origin.as_deref(),
+            declared_origin: container.declared_origin.as_deref(),
+            sandboxed: container.sandboxed,
+            sandbox_src_origin: container.sandbox_src_origin.as_deref(),
+            child_precursor: child_precursor.as_deref(),
+        },
         child_origin.as_deref(),
     )
-}
-
-/// Whether a child frame's new document at `url` may play media while its frame is not rendered:
-/// its parent document may, and its container's `allow` does not disable
-/// `media-playback-while-not-visible` for the document's origin (no declaration: allowed).
-fn media_while_hidden_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &str, opaque: bool) -> bool {
-    let parent = host.parent_key(key);
-    let Some(frame) = host.frame(key) else { return true };
-    let Some(pd) = host.frame(parent).and_then(|f| f.page_dom.clone()) else { return true };
-    if !pd.media_while_hidden_allowed() {
-        return false;
-    }
-    let container = frame.fullscreen_container.clone();
-    let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
-    let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
-    let child_origin = frame_origin(host, key, url, opaque);
-    pyro_webapi::fullscreen::container_allows(
-        "media-playback-while-not-visible",
-        container.allow.as_deref(),
-        parent_origin.as_deref(),
-        container.declared_origin.as_deref(),
-        child_origin.as_deref(),
-    ) != Some(false)
-}
-
-/// Whether a child frame's new document at `url` may use Compute Pressure (`compute-pressure`, default allowlist
-/// `'self'`): its parent document may, and its container's `allow` admits the document's origin.
-fn compute_pressure_allowed_in(host: &crate::frames::FrameHost, key: FrameKey, url: &str, opaque: bool) -> bool {
-    let parent = host.parent_key(key);
-    let (Some(frame), Some(pd)) = (host.frame(key), host.frame(parent).and_then(|f| f.page_dom.clone())) else { return true };
-    let container = frame.fullscreen_container.clone();
-    let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
-    let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
-    let child_origin = frame_origin(host, key, url, opaque);
-    pyro_webapi::pressure::allowed_in_frame(
-        pd.compute_pressure_allowed(),
-        container.allow.as_deref(),
-        parent_origin.as_deref(),
-        container.declared_origin.as_deref(),
-        child_origin.as_deref(),
-    )
-}
-
-/// Whether a child frame's container lets its document fire `unload` (Chrome: only when the
-/// container's `allow` declares `unload` for the frame's origin; no declaration, no `unload`).
-fn unload_allowed(host: &crate::frames::FrameHost, key: FrameKey) -> bool {
-    let parent = host.parent_key(key);
-    let (Some(frame), Some(pd)) = (host.frame(key), host.frame(parent).and_then(|f| f.page_dom.clone())) else { return false };
-    let container = frame.fullscreen_container.clone();
-    let parent_url = pd.dom.borrow().document_url_parsed(pd.document()).ok().flatten().map(|u| u.to_string()).unwrap_or_default();
-    let parent_origin = frame_origin(host, parent, &parent_url, pd.has_opaque_origin());
-    let child_origin = frame_origin(host, key, &frame.url, frame.sandbox.opaque);
-    pyro_webapi::fullscreen::container_allows(
-        "unload",
-        container.allow.as_deref(),
-        parent_origin.as_deref(),
-        container.declared_origin.as_deref(),
-        child_origin.as_deref(),
-    )
-    .unwrap_or(false)
 }
 
 pub(crate) fn create(
@@ -1553,7 +1518,7 @@ pub(crate) fn create(
             let child_origin = frame_origin(host, page, url, frame.sandbox.opaque);
             let container = frame.fullscreen_container.clone();
             let enabled_for = |origin: Option<&str>| {
-                pyro_webapi::fullscreen::container_allows(
+                pyro_webapi::permissions_policy::container_allows(
                     "deferred-fetch",
                     container.allow.as_deref(),
                     parent_origin.as_deref(),
@@ -1565,19 +1530,13 @@ pub(crate) fn create(
         });
         pyro_webapi::fetch_later::join_quota(&bindings, parent.as_deref(), same_origin, delegated);
     }
-    // Permissions Policy for `fullscreen`, inherited through the container when the document is made.
-    if page.child.is_some() {
-        bindings.set_fullscreen_allowed(fullscreen_allowed_in(host, page, url, frame.sandbox.opaque));
-        bindings.set_compute_pressure_allowed(compute_pressure_allowed_in(host, page, url, frame.sandbox.opaque));
-    }
-    // Permissions Policy for `media-playback-while-not-visible` (iframe media pausing): disabled by
-    // the container's `allow` for this origin, or by the parent document's own policy.
-    if page.child.is_some() {
-        let allowed = media_while_hidden_allowed_in(host, page, url, frame.sandbox.opaque);
-        bindings.set_media_while_hidden_allowed(allowed);
-        if !allowed {
-            host.media_policy_frames.set(true);
-        }
+    // The document's permissions policy: inherited through its container when the document is made
+    // (every gate asks `pyro_webapi::permissions_policy::feature_allowed`); its header joins at commit.
+    bindings.set_permissions_policy(permissions_policy_in(host, page, url, frame.sandbox.opaque));
+    // A document whose policy disables `media-playback-while-not-visible` has the host check its
+    // frame's rendering (iframe media pausing).
+    if page.child.is_some() && !bindings.media_while_hidden_allowed() {
+        host.media_policy_frames.set(true);
     }
     bindings.set_max_touch_points(settings.max_touch_points);
     bindings

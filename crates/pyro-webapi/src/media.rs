@@ -414,9 +414,9 @@ fn may_play(page: &PageDom, node: NodeId) -> bool {
 
 /// Whether the document's permissions policy disables `media-playback-while-not-visible` and
 /// its frame is not rendered now (https://wicg.github.io/iframe-media-pausing/): its media may
-/// not play and its audio contexts do not run. Costs one `Cell` read for any other document.
+/// not play and its audio contexts do not run. Costs one `RefCell` read for any other document.
 pub(crate) fn frame_hidden_by_policy(page: &PageDom) -> bool {
-    !page.media_while_hidden_allowed.get() && !frame_rendered(page)
+    !page.media_while_hidden_allowed() && !frame_rendered(page)
 }
 
 /// Whether the document's frame is rendered: every frame owner up to the top-level document is
@@ -447,7 +447,7 @@ pub(crate) fn frame_rendered(page: &PageDom) -> bool {
 /// when its frame became rendered or not rendered since the last pass, a task pauses its playing
 /// media (not rendered) and tells its audio contexts (`webaudio.js` `frameRendered`).
 pub fn refresh_frame_rendered(page: &Rc<PageDom>) {
-    if page.media_while_hidden_allowed.get() || page.is_disposed() {
+    if page.media_while_hidden_allowed() || page.is_disposed() {
         return;
     }
     let rendered = frame_rendered(page);

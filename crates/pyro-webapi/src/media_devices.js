@@ -49,6 +49,10 @@
         if (!audio && !video) {
           throw new TypeErrorC("Failed to execute 'getUserMedia' on 'MediaDevices': At least one of audio and video must be requested");
         }
+        // Permissions Policy (`microphone` for audio, `camera` for video): refused before any device lookup.
+        const microphone = audio ? native.policy('microphone') : true;
+        const camera = video ? native.policy('camera') : true;
+        if (!microphone || !camera) throw new DOMExceptionC('Permission denied', 'NotAllowedError');
         return reject(new DOMExceptionC('Requested device not found', 'NotFoundError'));
       } catch (e) {
         return reject(e);
