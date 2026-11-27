@@ -32,7 +32,8 @@
     const application = enumeration(d.application, 'audio', ['audio', 'voip', 'lowdelay']);
     const complexity = d.complexity;
     const opus = { application };
-    if (complexity !== undefined) opus.complexity = unsigned(complexity);
+    // The encoder's default complexity (audio_encoder.rs `complexity`, as Chrome's 9 off mobile).
+    opus.complexity = complexity === undefined ? 9 : unsigned(complexity);
     opus.format = enumeration(d.format, 'opus', ['opus', 'ogg']);
     const duration = d.frameDuration;
     opus.frameDuration = duration === undefined ? 20000 : unsigned(duration, 64);
@@ -60,6 +61,12 @@
     config.sampleRate = unsigned(d.sampleRate);
     if (!/[^\t\n\f\r ]/.test(config.codec) || !config.numberOfChannels || !config.sampleRate)
       throw new TypeError('Expected a codec and positive sample rate and channel count.');
+    if (config.bitrate !== undefined) {
+      // The encoders take a 32-bit signed rate; zero is no rate. Opus works between 6 kbit/s and 510 kbit/s a channel.
+      if (!config.bitrate || config.bitrate > 2147483647) throw new TypeError('Invalid bitrate.');
+      if (config.codec === 'opus' && (config.bitrate < 6000 || config.bitrate > 510000 * config.numberOfChannels))
+        throw new TypeError('Invalid Opus bitrate.');
+    }
     if (config.opus) {
       const { frameDuration, complexity, packetlossperc } = config.opus;
       if (!frameDuration || frameDuration > 120000 || frameDuration % 2500 || complexity > 10 || packetlossperc > 100)
