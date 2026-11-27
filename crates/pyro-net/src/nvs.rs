@@ -126,8 +126,8 @@ impl NoVarySearch {
         let mut list: Vec<(String, String)> = url
             .query_pairs()
             .filter(|(k, _)| match &self.params {
-                Params::Ignore(skip) => !skip.iter().any(|s| s == k.as_ref()),
-                Params::OnlyThese(keep) => keep.iter().any(|s| s == k.as_ref()),
+                Params::Ignore(skip) => !skip.iter().any(|s| s.as_str() == &**k),
+                Params::OnlyThese(keep) => keep.iter().any(|s| s.as_str() == &**k),
             })
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
             .collect();
