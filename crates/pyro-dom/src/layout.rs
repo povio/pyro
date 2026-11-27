@@ -3971,26 +3971,41 @@ impl Layout {
             if self.overflow_anchor_none(dom, root) || self.viewport_style_element(dom).is_some_and(|el| self.overflow_anchor_none(dom, el)) {
                 return None;
             }
-            let top = self.window_scroll.1 as f64;
-            let height = self.without_scrollbars(dom, self.window_size()).1;
-            return self.anchor_in(dom, flow, self.document(), top, top + height, keep);
+            let (left, top) = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
+            let (width, height) = self.without_scrollbars(dom, self.window_size());
+            // (An absolute box's containing block is inside the document: `positioned`.)
+            return self.anchor_in(dom, flow, self.document(), [left, top, left + width, top + height], true, keep);
         };
         if self.overflow_anchor_none(dom, scroller) {
             return None;
         }
         let sb = flow.get(scroller)?;
-        let top = sb.rect.y + self.scroll_top(scroller) as f64;
-        self.anchor_in(dom, flow, scroller, top, top + sb.client_height, keep)
+        let top = sb.rect.y + sb.border[TOP] + self.scroll_top(scroller) as f64;
+        let left = sb.rect.x + sb.border[LEFT] + self.scroll_left(scroller) as f64;
+        let positioned = self.forms_containing_block(dom, scroller, sb);
+        self.anchor_in(dom, flow, scroller, [left, top, left + sb.client_width, top + sb.client_height], positioned, keep)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Whether `el` (laid out as `b`) is a containing block for absolutely positioned
+    /// descendants: positioned or transformed (CSS Position 3 § 3.1; the other triggers, such as
+    /// `contain` and `filter`, are not considered).
+    fn forms_containing_block(&self, dom: &Dom, el: NodeId, b: &LayoutBox) -> bool {
+        b.position != crate::geometry::BoxPosition::Static
+            || self.style.computed_value(dom, el, "transform").is_some_and(|v| !v.trim().eq_ignore_ascii_case("none"))
+    }
+
+    /// `port`: the scrollport in document coordinates (left, top, right, bottom). `positioned`: an
+    /// absolutely positioned box among `parent`'s descendants has its containing block inside the
+    /// scroller (`parent` or an ancestor up to the scroller forms one), so it moves with the
+    /// scroller's content and may be the anchor (CSS Scroll Anchoring 1 § 2.2; WPT
+    /// `abspos-containing-block-outside-scroller`). The viewport always is.
     fn anchor_in(
         &self,
         dom: &Dom,
         flow: &LayoutResult,
         parent: NodeId,
-        top: f64,
-        bottom: f64,
+        port: [f64; 4],
+        positioned: bool,
         keep: &dyn Fn(NodeId) -> bool,
     ) -> Option<NodeId> {
         for child in dom.children(parent).ok()? {
@@ -4000,15 +4015,16 @@ impl Layout {
             let Some(b) = flow.get(child) else {
                 // No box then (display: contents, or added since): its
                 // children may have one.
-                if let Some(a) = self.anchor_in(dom, flow, child, top, bottom, keep) {
+                if let Some(a) = self.anchor_in(dom, flow, child, port, positioned, keep) {
                     return Some(a);
                 }
                 continue;
             };
-            // Absolute and fixed boxes are skipped themselves; `b.fixed` also
-            // marks every box inside a fixed ancestor, which anchors normally
-            // when the scroller is inside it too (a scroller in a fixed drawer).
-            if !keep(child) || self.style.computed(dom, child).is_some_and(|c| c.absolutely_positioned) {
+            // Fixed boxes are skipped themselves, absolute ones unless their containing block is
+            // inside the scroller (`b.fixed` also marks every box inside a fixed ancestor, which
+            // anchors normally when the scroller is inside it too: a scroller in a fixed drawer).
+            let fixed = self.style.computed_value(dom, child, "position").is_some_and(|v| v.trim().eq_ignore_ascii_case("fixed"));
+            if !keep(child) || fixed || (!positioned && self.style.computed(dom, child).is_some_and(|c| c.absolutely_positioned)) {
                 continue;
             }
             // CSS Scroll Anchoring 1 § 2.2: sticky-positioned boxes are not candidates either
@@ -4016,24 +4032,56 @@ impl Layout {
             if self.style.computed_value(dom, child, "position").is_some_and(|v| v.trim().eq_ignore_ascii_case("sticky")) {
                 continue;
             }
-            let (y0, y1) = (b.rect.y, b.rect.y + b.rect.height);
-            if y1 <= top || y0 >= bottom {
-                continue;
-            }
-            if y0 >= top && y1 <= bottom {
-                return Some(child);
-            }
             // (The root's and `<body>`'s overflow is the viewport's, which does not clip them.)
             let clips = self.style.overflow_clip_axes(dom, child);
             let propagated = dom.element(child).is_ok_and(|e| matches!(&*e.name.local, "html" | "body"));
-            if propagated || !(clips.x || clips.y) {
-                if let Some(a) = self.anchor_in(dom, flow, child, top, bottom, keep) {
+            let clipped = !propagated && (clips.x || clips.y || self.contains_paint(dom, child));
+            // The bounds of a box that does not clip include the layout overflow of its
+            // descendants (floats, positioned ones, the children of a zero-height container: WPT
+            // `descend-into-container-with-overflow`, `-with-float`); the root's and `<body>`'s
+            // are the document's.
+            let [left, top, right, bottom] = port;
+            let (x0, y0) = (b.rect.x, b.rect.y);
+            let (mut x1, mut y1) = (b.rect.x + b.rect.width, b.rect.y + b.rect.height);
+            if propagated {
+                (x1, y1) = (x1.max(flow.document_width), y1.max(flow.document_height));
+            } else if !clipped {
+                x1 = x1.max(b.rect.x + b.border[LEFT] + b.scroll_width);
+                y1 = y1.max(b.rect.y + b.border[TOP] + b.scroll_height);
+            }
+            // Chromium: a candidate must occupy space and intersect the scrollport on both axes
+            // (WPT `negative-layout-overflow-on-anchor`: an anchor's child left of the viewport is
+            // not the anchor). A zero-height container may still hold out-of-flow content that
+            // is visible (WPT `abspos-contributes-to-static-parent-bounds`).
+            let intersects = y1 > top && y0 < bottom && x1 > left && x0 < right && y1 > y0 && x1 > x0;
+            if !intersects {
+                if !clipped && b.rect.height == 0.0 {
+                    let inside = positioned || self.forms_containing_block(dom, child, b);
+                    if let Some(a) = self.anchor_in(dom, flow, child, port, inside, keep) {
+                        return Some(a);
+                    }
+                }
+                continue;
+            }
+            if y0 >= top && y1 <= bottom && x0 >= left && x1 <= right {
+                return Some(child);
+            }
+            if !clipped {
+                let inside = positioned || self.forms_containing_block(dom, child, b);
+                if let Some(a) = self.anchor_in(dom, flow, child, port, inside, keep) {
                     return Some(a);
                 }
             }
             return Some(child);
         }
         None
+    }
+
+    /// `contain: paint` (also `strict`, `content`): the box clips its descendants' overflow.
+    fn contains_paint(&self, dom: &Dom, el: NodeId) -> bool {
+        self.style
+            .computed_value(dom, el, "contain")
+            .is_some_and(|v| v.split_ascii_whitespace().any(|t| matches!(t, "paint" | "strict" | "content")))
     }
 
     fn overflow_anchor_none(&self, dom: &Dom, el: NodeId) -> bool {
