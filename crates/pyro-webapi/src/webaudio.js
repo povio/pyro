@@ -1754,6 +1754,8 @@
     if (t < 0) throw new RangeErrorC(`Failed to execute 'start' on '${iface}': The start time provided (${t}) is less than the minimum bound (0).`);
     n.start = t;
     const c = ctxOf(n.ctx);
+    // A start time in the past plays from the next quantum on.
+    n.calledAt = c.time();
     c.sources.add(n);
     c.scheduleEnds();
     return n;
@@ -2743,13 +2745,15 @@
   // When a source of a running real-time context stops (context time).
   function sourceEnd(n, rate) {
     if (n.ended || n.start < 0) return Infinity;
+    // A context that computes its quanta (`c.pumpOn`) ends a source where it really stops, in the render.
+    if (ctxOf(n.ctx).pumpOn) return n.stop;
     let at = n.stop;
     const b = n.buffer && buffers.get(n.buffer);
     if (b && !n.loop) {
       const pr = params.get(n.playbackRate).value * pow(2, params.get(n.detune).value / 1200);
       if (pr > 0) {
         const remaining = min(n.duration === undefined ? Infinity : n.duration, max(0, b.length / b.rate - (n.offset || 0)));
-        at = min(at, n.start + remaining / pr);
+        at = min(at, max(n.start, n.calledAt ?? 0) + remaining / pr);
       }
     }
     return at;
