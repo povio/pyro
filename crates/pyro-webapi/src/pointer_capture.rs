@@ -197,6 +197,10 @@ pub(crate) fn set_pointer_capture<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
     if !page.dom.borrow().is_connected(n.id).unwrap_or(false) {
         return Err(JsError::dom("InvalidStateError", "The element is not connected."));
     }
+    // Pointer Events: no capture while the pointer is locked.
+    if crate::pointer_lock::target(page).is_some() {
+        return Err(JsError::dom("InvalidStateError", "The pointer is locked."));
+    }
     if id != mouse {
         if let Some(c) = touch_capture(page, id).filter(|_| capture_connected(page, n.id)) {
             set_touch_capture(page, id, TouchCapture { pending: Some(n.id), ..c });

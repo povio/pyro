@@ -1270,6 +1270,8 @@ impl JsClass for ShadowRoot {
         def.method("getSelection", 0, |s, n, _a| crate::range::get_selection(s, n.page()));
         // Fullscreen API: the document's fullscreen element, retargeted against this shadow root.
         def.accessor("fullscreenElement", |s, n| crate::fullscreen::element_for(s, n.page(), n.id), |_s, _n, _v| Ok(()));
+        // Pointer Lock API: the lock target, retargeted against this shadow root.
+        def.getter("pointerLockElement", |s, n| crate::pointer_lock::element_for(s, n.page(), n.id));
         def.getter("host", |s, n| {
             let h = n.page().dom.borrow().fragment_host(n.id).js()?;
             node_value(s, n.page(), h)
@@ -1375,6 +1377,11 @@ impl JsClass for Element {
         def.promise_method("requestFullscreen", 0, |s, n, a| {
             crate::fullscreen::check_options(a.get(0))?;
             crate::fullscreen::request(s, n.page(), n.id)
+        });
+        // Pointer Lock API (`crate::pointer_lock`).
+        def.promise_method("requestPointerLock", 0, |s, n, a| {
+            let unadjusted = crate::pointer_lock::unadjusted_option(a.get(0))?;
+            crate::pointer_lock::request(s, n.page(), n.id, unadjusted)
         });
         def.method("pseudo", 1, |s, n, a| {
             a.require(1, "Element.pseudo")?;
@@ -1967,6 +1974,14 @@ impl JsClass for Document {
         def.accessor("fullscreenEnabled", |s, n| Ok(s.boolean(n.id == n.page().document() && n.page().dom.borrow().is_in_active_document(n.id) && crate::fullscreen::enabled(n.page()))), |_s, _n, _v| Ok(()));
         def.accessor("fullscreen", |s, n| Ok(s.boolean(n.id == n.page().document() && crate::fullscreen::element(n.page()).is_some())), |_s, _n, _v| Ok(()));
         def.accessor("fullscreenElement", |s, n| if n.id == n.page().document() { crate::fullscreen::element_for(s, n.page(), n.id) } else { Ok(s.null()) }, |_s, _n, _v| Ok(()));
+        // Pointer Lock API (`crate::pointer_lock`); `pointerLockElement` is null in a document without a browsing context.
+        def.getter("pointerLockElement", |s, n| if n.id == n.page().document() { crate::pointer_lock::element_for(s, n.page(), n.id) } else { Ok(s.null()) });
+        def.method("exitPointerLock", 0, |s, n, _a| {
+            if n.id == n.page().document() {
+                crate::pointer_lock::exit(n.page());
+            }
+            Ok(s.undefined())
+        });
         def.promise_method("exitFullscreen", 0, |s, n, _a| {
             if n.id == n.page().document() {
                 return crate::fullscreen::exit(s, n.page());

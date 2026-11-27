@@ -1490,6 +1490,11 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
     if !accepts_keyboard(page) {
         return;
     }
+    // Escape ends a pointer lock, as the browser's own handling of it does: the page does not see the key.
+    if matches!(kind, KeyKind::KeyDown | KeyKind::RawKeyDown) && k.key == "Escape" && crate::pointer_lock::target(page).is_some() {
+        crate::pointer_lock::release(page);
+        return;
+    }
     let doc = page.document();
     let Some(target) = key_target(page) else { return };
     let Some(tkey) = key_of(page, target) else { return };
@@ -3540,7 +3545,7 @@ pub(crate) fn update_hover_after_task(page: &Rc<PageDom>) {
 fn update_hover_now(page: &Rc<PageDom>) {
     // Pointer capture owns the target until release, even if layout changes.
     let capture = page.mouse_capture.get();
-    if capture.current.is_some() || capture.pending.is_some() {
+    if capture.current.is_some() || capture.pending.is_some() || crate::pointer_lock::target(page).is_some() {
         return;
     }
     let Some(prev) = page.hovered_raw() else { return };
@@ -3728,8 +3733,14 @@ fn dispatch_mouse_inner(
     intercept_drags: bool,
     touch: Option<i32>,
 ) -> Result<Option<DragData>, String> {
+    // Pointer Lock: while an element holds the lock, it is the target of every mouse event, the position they report
+    // is the frozen one, and no hover or capture applies (`crate::pointer_lock`).
+    let locked = if touch.is_none() { crate::pointer_lock::target(page) } else { None };
     // Empty viewport space targets the root element, as Chromium hit-tests it.
-    let hit = pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?;
+    let hit = match locked {
+        Some((el, _, _)) => el,
+        None => pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?,
+    };
     // The pointer id `setPointerCapture` accepts for this mouse-like pointer: the mouse's or the pen's.
     if touch.is_none() {
         let id = if m.pen.is_some() { PEN_POINTER_ID } else { 1 };
@@ -3742,6 +3753,7 @@ fn dispatch_mouse_inner(
     // Mouse pointer events (and their compatibility mouse events) go to the
     // capture target while there is one.
     let captured = match (touch, kind) {
+        _ if locked.is_some() => None,
         (None, MouseKind::Pressed | MouseKind::Moved | MouseKind::Released) => {
             crate::pointer_capture::capture_target(page, m)
         }
@@ -3751,7 +3763,7 @@ fn dispatch_mouse_inner(
     // pyro: and, for a left release, the `::scroll-button()` of the target under the pointer (from
     // the same synced geometry: the click's default action needs no other).
     let release = matches!(kind, MouseKind::Released) && m.button == MouseButton::Left && touch.is_none();
-    let (pseudo, scroll_button) = if captured.is_none() {
+    let (pseudo, scroll_button) = if captured.is_none() && locked.is_none() {
         let dom = page.dom.borrow();
         let key = pyro_dom::snapshot::render_key(target);
         match page.layout().synced_geometry_source(&dom) {
@@ -3789,14 +3801,26 @@ fn dispatch_mouse_inner(
         update_hover_now(page);
     }
     if matches!(kind, MouseKind::Moved | MouseKind::Pressed | MouseKind::Released) {
+        // (The input as it came, also while locked: the next move's `movementX/Y` are measured from it.)
         *page.pointer.borrow_mut() = Some(m.clone());
-        page.layout().set_pointer(Some((m.x, m.y)));
-        let prev = page.hovered();
-        // (A hovered node that was removed, even if inserted again, is entered anew.)
-        if prev != Some(target) || refresh_hover_trail(page) {
-            dispatch_boundary_events(page, prev, target, tkey, m, touch);
+        if locked.is_none() {
+            page.layout().set_pointer(Some((m.x, m.y)));
+            let prev = page.hovered();
+            // (A hovered node that was removed, even if inserted again, is entered anew.)
+            if prev != Some(target) || refresh_hover_trail(page) {
+                dispatch_boundary_events(page, prev, target, tkey, m, touch);
+            }
         }
     }
+    // The events of a locked pointer report the position it was locked at.
+    let frozen;
+    let m = match locked {
+        Some((_, x, y)) => {
+            frozen = MouseInput { x, y, ..m.clone() };
+            &frozen
+        }
+        None => m,
+    };
     // A boundary listener may have removed the target (WPT mousemove_after_mouseover_target_removed).
     let target_removed = !page.dom.borrow().is_connected(target).unwrap_or(false);
     let (target, tkey) = live_target(page, target, tkey);
@@ -3814,18 +3838,18 @@ fn dispatch_mouse_inner(
             if !(page.compat_mouse_suppressed.get() && m.buttons != 0) {
                 fire_mouse(page, tkey, EventInterface::MouseEvent, "mousemove", m, true, pseudo);
             }
-            if m.buttons & 1 != 0 {
+            if m.buttons & 1 != 0 && locked.is_none() {
                 text_select_move(page, target, m);
                 range_drag_move(page, m);
             }
-            if intercept_drags {
+            if intercept_drags && locked.is_none() {
                 return Ok(start_drag(page, target, m));
             }
         }
         MouseKind::Pressed => {
             // A right press (the context menu) light-dismisses nothing, as in Chromium: a
             // popover its `contextmenu` handler shows stays open.
-            if m.button != MouseButton::Right {
+            if m.button != MouseButton::Right && locked.is_none() {
                 crate::popover::light_dismiss(page, target, m.x, m.y, true);
             }
             // Another button pressed while one is already down (a chord) is a `pointermove`
@@ -3854,6 +3878,13 @@ fn dispatch_mouse_inner(
                 || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true, pseudo);
             if !chorded {
                 page.compat_mouse_suppressed.set(!pd);
+            }
+            // A locked pointer's press has no default action (no focus, caret, drag or context menu): the page
+            // gets the events, the press target is the lock target.
+            if locked.is_some() && !chorded {
+                note_buttons(page, m);
+                page.set_press_target(Some(target));
+                return Ok(None);
             }
             if chorded {
                 // The first button's press stays the one a click is measured from.
@@ -3988,7 +4019,7 @@ fn dispatch_mouse_inner(
                 crate::pointer_capture::process_pending_capture(page, m);
             }
             let (target, tkey) = live_target(page, target, tkey);
-            if m.button != MouseButton::Right {
+            if m.button != MouseButton::Right && locked.is_none() {
                 crate::popover::light_dismiss(page, target, m.x, m.y, false);
             }
             // Only a canceled pointerdown holds back the mouseup (an app's

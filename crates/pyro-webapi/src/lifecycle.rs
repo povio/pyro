@@ -462,6 +462,10 @@ pub fn popstate(page: &Rc<PageDom>, state: Option<Persistent>) {
 /// HTML "focus update steps" for a document entering (`focus`) or leaving (`blur`) the page's
 /// focus chain: a FocusEvent at its Window, which does not bubble.
 pub fn window_focus(page: &Rc<PageDom>, focused: bool) {
+    // A document that loses focus gives up its pointer lock.
+    if !focused {
+        crate::pointer_lock::release(page);
+    }
     // Sensor readings go to the focused document and the ones of its origin.
     crate::sensors::state_changed(page);
     let Some(w) = page.window_target() else { return };

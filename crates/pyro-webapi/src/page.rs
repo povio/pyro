@@ -520,6 +520,8 @@ pub struct PageDom {
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
     /// An `exitFullscreen()` task is queued: a further call joins it (`crate::fullscreen::exit`).
     pub(crate) fullscreen_exit_pending: Cell<bool>,
+    /// Pointer Lock API: the lock target and the frozen pointer position (`crate::pointer_lock`).
+    pub(crate) pointer_lock: RefCell<crate::pointer_lock::State>,
     /// The document's permissions policy (`crate::permissions_policy`): the one source of every
     /// feature gate (fullscreen, compute-pressure, media-playback-while-not-visible, ...).
     pub(crate) permissions_policy: RefCell<crate::permissions_policy::PermissionsPolicy>,
@@ -1316,6 +1318,7 @@ impl PageDom {
             debugger_gesture: Cell::new(false),
             fullscreen_stack: RefCell::new(Vec::new()),
             fullscreen_exit_pending: Cell::new(false),
+            pointer_lock: RefCell::new(Default::default()),
             permissions_policy: RefCell::default(),
             fullscreen_implicit: RefCell::new(Vec::new()),
             media_frame_rendered: Cell::new(true),
@@ -1961,6 +1964,12 @@ impl PageDom {
             if let Some(page) = self.this.upgrade() {
                 let removed = self.dom.borrow_mut().take_removed_fullscreen(self.document());
                 crate::fullscreen::removed(&page, removed);
+            }
+        }
+        // Pointer Lock: a lock target a mutation took out of the document releases the lock.
+        if self.pointer_lock.try_borrow().is_ok_and(|state| state.held()) {
+            if let Some(page) = self.this.upgrade() {
+                crate::pointer_lock::check_removed(&page);
             }
         }
         // `<details>` toggles pyro-dom queued: one empty check otherwise.

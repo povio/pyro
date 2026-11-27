@@ -65,6 +65,7 @@ pub mod reporting_store;
 pub mod form_data;
 pub mod formdata;
 pub mod fullscreen;
+pub(crate) mod pointer_lock;
 pub mod permissions_policy;
 mod web_locks;
 mod media_devices;
