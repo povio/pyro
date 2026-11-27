@@ -167,37 +167,45 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
 }
 
 /// pyro: HTML-in-Canvas privacy: whether the paint of `id`'s subtree (`scene`) may show content a
-/// page must not read back from a canvas, after `render::Privacy` left out what it can classify
-/// (images of other origins, frames of other origins, visited link colours): any other image (a
-/// nested canvas, an SVG `<image>`, an `feImage`, one whose pixels are not among the `allowed`
-/// ones) or a referenced SVG document (`filter`, `clip-path`, `mask`) from an opaque response. The
-/// canvas drawn into is then no longer origin-clean.
+/// page must not read back from a canvas, after the paint left out what it can classify (images
+/// of other origins, frames of other origins, filter, mask and clip documents of other origins,
+/// the images of opaque responses in an inline `<svg>` and in the filters it and the page
+/// reference, what an `<svg>` or its filters take from outside the subtree, and visited link
+/// colours): any image drawn that is not among the `allowed` ones (a nested canvas, one whose
+/// origin was not told), or a visited link's eager pseudo-elements, whose styles (`::first-line`,
+/// `::first-letter`, `::marker`, `::selection`) are read where `UnvisitedPaint` does not reach.
+/// The canvas drawn into is then no longer origin-clean.
 fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u64]) -> bool {
     use anyrender::Paint;
-    use anyrender::filters::FilterEffect;
     use anyrender::recording::RenderCommand;
     let image = |paint: &Paint| match paint {
         Paint::Solid(_) | Paint::Gradient(_) => false,
         Paint::Image(brush) => !allowed.contains(&brush.image.data.id()),
         _ => true,
     };
-    let filter_image = |filter: &Option<std::sync::Arc<anyrender::Filter>>| {
-        filter.as_ref().is_some_and(|f| f.nodes().iter().any(|node| matches!(node.effect, FilterEffect::Image(_))))
-    };
+    // (A filter's own images, `FilterEffect::Image`, are not scanned: its `feImage`s are of the
+    // document's own or CORS-approved responses, or the filter was not applied: `filters::reference_graph`,
+    // blitz-dom `svg_images_for_paint`; the rest of them are its generated sources.)
     let in_scene = scene.commands.iter().any(|command| match command {
         RenderCommand::Fill(fill) => image(&fill.brush),
         RenderCommand::Stroke(stroke) => image(&stroke.brush),
         RenderCommand::GlyphRun(run) => image(&run.brush),
-        RenderCommand::PushLayer(layer) => filter_image(&layer.filter) || filter_image(&layer.backdrop_filter),
         _ => false,
     });
     if in_scene {
         return true;
     }
-    // A visited link (around the element, or in it) is painted as unvisited (`UnvisitedPaint`)
-    // by the styles of its elements; the styles of their eager pseudo-elements (`::first-line`,
-    // `::marker`, ...) and an inline `<svg>`'s serialised colours are not: they could show visited
-    // colours.
+    // (A frame of another origin, an `<embed>`'s, `<object>`'s or `<video>`'s image, a border,
+    // mask or list-style image and a filter, mask or clip document from an opaque response
+    // are left out by the paint, `render::Privacy`.)
+    visited_pseudos(doc, id)
+}
+
+/// pyro: HTML-in-Canvas privacy: whether the subtree of `id` has a visited link (or is in one) and
+/// an element with eager pseudo-element styles. A visited link is painted as unvisited
+/// (`UnvisitedPaint`) by the styles of its elements, and an inline `<svg>` is built again from
+/// them (`inline_svg_for_privacy`); the styles of eager pseudo-elements are not all read so.
+pub(crate) fn visited_pseudos(doc: &BaseDocument, id: NodeId) -> bool {
     let mut visited = false;
     let mut pseudos = false;
     let mut ancestor = doc.get_node(id).and_then(|node| node.parent);
@@ -209,22 +217,7 @@ fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u
     while let Some(n) = stack.pop() {
         let Some(node) = doc.get_node(n) else { continue };
         visited |= doc.is_visited_link(n);
-        pseudos |= node.try_stylo_element_data().and_then(|data| data.get()).is_some_and(|data| !data.styles.pseudos.is_empty())
-            // (an inline `<svg>` is serialised with its colours as they were styled, visited ones too)
-            || node.element_data().is_some_and(|element| &*element.name.local == "svg");
-        if let Some(element) = node.element_data() {
-            // (A frame of another origin, an `<embed>`'s, `<object>`'s or `<video>`'s image and a
-            // border, mask or list-style image from an opaque response are left out by the paint,
-            // `render::Privacy`.)
-            // (`reference_images`: the external SVG documents of its `clip-path`, `filter` and
-            // `mask` references, whose primitives and shapes reach the pixels.)
-            let foreign = |images: &[Option<blitz_dom::node::ImageResourceData>]| {
-                images.iter().flatten().any(|image| render::Privacy::opaque(&image.image))
-            };
-            if foreign(&element.reference_images) {
-                return true;
-            }
-        }
+        pseudos |= node.try_stylo_element_data().and_then(|data| data.get()).is_some_and(|data| !data.styles.pseudos.is_empty());
         stack.extend(node.children.iter().copied());
         if let Some(children) = node.layout_children.borrow().as_ref() {
             stack.extend(children.iter().copied());

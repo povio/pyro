@@ -721,6 +721,11 @@ pub(super) mod svg_reference {
         let ImageData::Svg(svg) = &loaded.image else {
             return None;
         };
+        // pyro: HTML-in-Canvas privacy: a document of an opaque response (another origin without
+        // CORS) is not read for what is painted for a canvas a page can read back.
+        if blitz_dom::node::UnvisitedPaint::active() && crate::render::Privacy::opaque(&loaded.image) {
+            return None;
+        }
         Some((svg.source.clone()?, percent_decode(fragment)))
     }
 

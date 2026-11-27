@@ -174,6 +174,17 @@ fn reference_graph(
     source_tainted: bool,
     references: &[Option<blitz_dom::node::ImageResourceData>],
 ) -> Option<anyrender_svg::FilterGraph> {
+    // pyro: HTML-in-Canvas privacy (painting for a canvas a page can read back): a filter document
+    // of an opaque response is not applied, nor is another filter of this document taken for it
+    // by its fragment.
+    let for_canvas = blitz_dom::node::UnvisitedPaint::active();
+    if for_canvas
+        && url.url().is_some_and(|url| {
+            references.iter().flatten().any(|image| *image.url == **url && crate::render::Privacy::opaque(&image.image))
+        })
+    {
+        return None;
+    }
     // pyro: a `<filter>` of another document the element has loaded (`url(filters.svg#blur)`,
     // its `reference_images`), else of this one.
     let external = crate::render::external_reference(references, url)
@@ -187,6 +198,11 @@ fn reference_graph(
             fragment = url.url()?.fragment()?.to_string();
             let node_id = dom.get_element_by_id(&fragment)?;
             if local_name(&dom.tree()[node_id]) != Some("filter") {
+                return None;
+            }
+            // pyro: and a filter with the image of an opaque response (an `feImage` of another
+            // origin) is ignored whole, as Chromium does, not applied with that image empty.
+            if for_canvas && dom.filter_has_opaque_image(node_id) {
                 return None;
             }
             (fragment.as_str(), Some(node_id))
