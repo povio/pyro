@@ -62,7 +62,7 @@ impl PageDom {
                 poster(Box::new(move || {
                     let page = PAGES.with(|pages| pages.borrow().get(&id).and_then(Weak::upgrade));
                     if let Some(page) = page {
-                        queue_violation(&page, violation.kind, &violation.blocked_url, violation.destination, violation.report_only);
+                        queue_violation(&page, None, violation.kind, &violation.blocked_url, violation.destination, violation.report_only);
                     }
                 }));
             }),
@@ -73,8 +73,9 @@ impl PageDom {
 /// Queues the COEP violation report of `page`'s context, of body type `kind` (`"corp"`, `"navigation"`
 /// or `"worker initialization"`): `blocked_url` (stripped for reports) was
 /// blocked by its enforced policy, or with `report_only` would have been by its report-only one.
-/// It goes to the context's observers and to the `report-to` endpoint of that policy.
-pub fn queue_violation(page: &Rc<PageDom>, kind: &str, blocked_url: &str, destination: Option<&str>, report_only: bool) {
+/// It goes to the context's observers and to the `report-to` endpoint of that policy. `scope` is the
+/// realm's when the caller runs inside one of its natives (see [`queue_report`]).
+pub fn queue_violation(page: &Rc<PageDom>, scope: Option<&pyro_js::Scope<'_>>, kind: &str, blocked_url: &str, destination: Option<&str>, report_only: bool) {
     let reporting = page.embedder_reporting();
     let endpoint = if report_only { reporting.report_only_report_to } else { reporting.report_to };
     let mut body = Map::new();
@@ -87,7 +88,7 @@ pub fn queue_violation(page: &Rc<PageDom>, kind: &str, blocked_url: &str, destin
     body.insert("disposition".into(), if report_only { "reporting" } else { "enforce" }.into());
     queue_report(
         page,
-        None,
+        scope,
         ReportInput {
             report_type: "coep",
             url: report_url(page),

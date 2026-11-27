@@ -490,6 +490,7 @@ pub(crate) fn read_for_wasm<'s>(s: &Scope<'s>, response: Value<'_>, method: Valu
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stored<'s>(
     s: &Scope<'s>,
+    corp: Option<&str>,
     kind: &str,
     url: &str,
     status: u16,
@@ -507,7 +508,7 @@ pub(crate) fn stored<'s>(
         _ => (Origin::Network, ResponseKind::Basic),
     };
     let mime = headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.clone());
-    let head = ResponseHead {
+    let mut head = ResponseHead {
         url: pyro_net::Url::parse(url).unwrap_or_else(|_| pyro_net::Url::parse("about:blank").expect("static URL")),
         // Opaque and error responses read 0 through their kind and origin.
         status: pyro_net::http::StatusCode::from_u16(status).unwrap_or(pyro_net::http::StatusCode::OK),
@@ -523,9 +524,26 @@ pub(crate) fn stored<'s>(
         protocol: pyro_net::http::Version::HTTP_11,
         timing: Default::default(),
     };
+    // A filtered response hides its `Cross-Origin-Resource-Policy` from script, but the cache keeps it
+    // for the embedder policy check of a later `match` (and of a `put` of the response again).
+    if let Some(corp) = corp.and_then(|c| pyro_net::http::HeaderValue::from_str(c).ok()) {
+        head.headers.insert(pyro_net::http::HeaderName::from_static("cross-origin-resource-policy"), corp);
+    }
     let body = crate::fetch::Body::constructed_chunks(s, body, mime.unwrap_or_default());
     let headers = HeadersData::from_pairs(headers, origin != Origin::Script);
     wrap_script(s, None, origin, head, body, headers)
+}
+
+/// The `Cross-Origin-Resource-Policy` header `response` arrived with, which a filtered (opaque)
+/// response hides from script: its value when it came once, else none (a repeated header is no
+/// valid policy). For `cache.put`, which keeps it.
+pub(crate) fn corp_header(response: Value<'_>, s: &Scope<'_>) -> Option<String> {
+    let data = s.unwrap::<Response>(response)?;
+    let mut values = data.head.headers.get_all("cross-origin-resource-policy").iter();
+    match (values.next(), values.next()) {
+        (Some(value), None) => value.to_str().ok().map(str::to_owned),
+        _ => None,
+    }
 }
 
 pub(crate) fn filtered_headers(head: &ResponseHead, credentials: Credentials) -> HeadersData {

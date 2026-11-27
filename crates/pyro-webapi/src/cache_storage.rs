@@ -208,6 +208,9 @@ pub struct Entry {
 
 /// A response as `cache.put` read it.
 struct Stored {
+    /// The response's `Cross-Origin-Resource-Policy` as it came (a filtered response hides it from
+    /// script): what a `match` under an embedder policy checks.
+    corp: Option<String>,
     /// Its `type`: "default", "basic", "cors", "opaque", "opaqueredirect" or "error".
     kind: String,
     url: String,
@@ -366,6 +369,7 @@ fn query(a: &pyro_js::Args<'_>, at: usize) -> JsResult<Option<Query>> {
 fn response<'s>(s: &Scope<'s>, stored: &Stored) -> JsResult<Value<'s>> {
     crate::response::stored(
         s,
+        stored.corp.as_deref(),
         &stored.kind,
         &stored.url,
         stored.status,
@@ -374,6 +378,39 @@ fn response<'s>(s: &Scope<'s>, stored: &Stored) -> JsResult<Value<'s>> {
         stored.redirected,
         stored.body.clone(),
     )
+}
+
+/// Fetch's "cross-origin resource policy check" of a cached opaque response against the embedder
+/// policy of the global that reads it (Service Workers "Cache match", HTML § 7.1.4): a response of
+/// a no-cors request without a `Cross-Origin-Resource-Policy` that admits the global's origin is
+/// refused under `require-corp` (a TypeError), and reported as a `corp` violation (`reporting`
+/// for the report-only policy, which refuses nothing). `request_url` is where the response came
+/// from, which the check compares with the global's origin.
+fn embedder_policy_check(s: &Scope<'_>, page: &Rc<PageDom>, request_url: &str, stored: &Stored) -> JsResult<()> {
+    use pyro_net::EmbedderPolicy::UnsafeNone;
+    if stored.kind != "opaque" {
+        return Ok(());
+    }
+    let (enforced, report_only) = (page.embedder_policy(), page.embedder_reporting().report_only);
+    if enforced == UnsafeNone && report_only == UnsafeNone {
+        return Ok(());
+    }
+    let Ok(url) = pyro_net::Url::parse(request_url) else { return Ok(()) };
+    let mut request = pyro_net::Request::get(url.clone(), pyro_net::Destination::Fetch);
+    request.mode = pyro_net::RequestMode::NoCors;
+    request.origin = s.realm().origin();
+    let mut headers = pyro_net::http::HeaderMap::new();
+    if let Some(corp) = stored.corp.as_deref().and_then(|c| pyro_net::http::HeaderValue::from_str(c).ok()) {
+        headers.insert(pyro_net::http::HeaderName::from_static("cross-origin-resource-policy"), corp);
+    }
+    if report_only != UnsafeNone && pyro_net::cors::corp_blocks_under(&request, &url, &headers, report_only) {
+        crate::coep_report::queue_violation(page, Some(s), "corp", request_url, Some(""), true);
+    }
+    if enforced != UnsafeNone && pyro_net::cors::corp_blocks_under(&request, &url, &headers, enforced) {
+        crate::coep_report::queue_violation(page, Some(s), "corp", request_url, Some(""), false);
+        return Err(JsError::Type("Failed to execute 'match' on 'Cache': the cached response is blocked by the Cross-Origin-Embedder-Policy".into()));
+    }
+    Ok(())
 }
 
 fn origin_caches(s: &Scope<'_>, page: &PageDom) -> JsResult<(Namespace, String)> {
@@ -455,12 +492,12 @@ fn storage_natives<'s>(s: &Scope<'s>, bucket: Option<(Namespace, String)>) -> Js
         } else {
             vec![cache_of(s, a.get(0))?]
         };
-        let mut found: Vec<Arc<Stored>> = Vec::new();
+        let mut found: Vec<(String, Arc<Stored>)> = Vec::new();
         for cache in caches {
             let entries = lock(&cache.entries);
             cache.check()?;
             for entry in entries.iter().filter(|e| q.as_ref().is_none_or(|q| q.matches(e))) {
-                found.push(entry.response.clone());
+                found.push((entry.request_url.clone(), entry.response.clone()));
                 if first {
                     break;
                 }
@@ -469,8 +506,10 @@ fn storage_natives<'s>(s: &Scope<'s>, bucket: Option<(Namespace, String)>) -> Js
                 break;
             }
         }
+        let page = crate::target::page_of(s)?;
         let mut items = Vec::with_capacity(found.len());
-        for stored in &found {
+        for (request_url, stored) in &found {
+            embedder_policy_check(s, &page, request_url, stored)?;
             items.push(response(s, stored)?);
         }
         Ok(s.array(&items)?.value())
@@ -503,9 +542,15 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     // null body; the body is used afterwards.
     let f = s.function("read", |s, _, a| crate::response::read_for_cache(s, a.get(0)))?;
     native.set_atom("read", f.value())?;
+    // corp(response): the response's `Cross-Origin-Resource-Policy` as it arrived, or null.
+    let f = s.function("corp", |s, _, a| match crate::response::corp_header(a.get(0), s) {
+        Some(corp) => Ok(s.string(&corp)),
+        None => Ok(s.null()),
+    })?;
+    native.set_atom("corp", f.value())?;
     // batch(handle, operations): "Batch Cache Operations", all or nothing.
     // An operation is ['put', url, method, headers, type, responseURL,
-    // status, statusText, responseHeaders, redirected, body | null] (body:
+    // status, statusText, responseHeaders, redirected, body | null, corp | null] (body:
     // what `read` resolved with) or
     // ['delete', url, method, headers, ignoreSearch, ignoreMethod,
     // ignoreVary]. Returns whether each delete removed something.
@@ -529,7 +574,9 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
                 } else {
                     Some(vec![Bytes::from(crate::encoding::buffer_source_bytes(s, body)?.unwrap_or_default())])
                 };
+                let corp = at(11)?;
                 let response = Stored {
+                    corp: if corp.is_nullish() { None } else { Some(corp.to_string()?) },
                     kind: at(4)?.to_string()?,
                     url: at(5)?.to_string()?,
                     status: at(6)?.to_number()? as u16,
@@ -647,6 +694,7 @@ mod tests {
             method: "GET".into(),
             headers: Vec::new(),
             response: Arc::new(Stored {
+                corp: None,
                 kind: "basic".into(),
                 url: url.into(),
                 status: 200,

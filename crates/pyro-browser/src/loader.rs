@@ -2619,11 +2619,11 @@ impl Browser {
         // (`reporting`) and, when its enforced policy refuses it, that too (`enforce`).
         use pyro_webapi::coep_report::queue_violation;
         if dom.embedder_reporting().report_only != pyro_net::EmbedderPolicy::UnsafeNone {
-            queue_violation(&dom, "navigation", &resource.url, None, true);
+            queue_violation(&dom, None, "navigation", &resource.url, None, true);
         }
         let blocks = dom.embedder_policy() != pyro_net::EmbedderPolicy::UnsafeNone;
         if blocks {
-            queue_violation(&dom, "navigation", &resource.url, None, false);
+            queue_violation(&dom, None, "navigation", &resource.url, None, false);
         }
         blocks
     }

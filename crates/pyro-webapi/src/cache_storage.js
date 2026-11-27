@@ -73,7 +73,7 @@
 
   const putOp = (r, response, body) => [
     'put', r.url, r.method, flat(r.headers), response.type, response.url, response.status, response.statusText,
-    flat(response.headers), response.redirected, body,
+    flat(response.headers), response.redirected, body, native.corp(response),
   ];
   // The body as the cache keeps it: the bytes the network delivered, shared.
   const readBody = (response) => PromiseC.resolve(native.read(response));
