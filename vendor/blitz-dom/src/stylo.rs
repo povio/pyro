@@ -102,6 +102,8 @@ impl Node {
 impl crate::document::BaseDocument {
     pub fn resolve_stylist(&mut self, now: f64) {
         let _layout_thread_scope = LayoutThreadScope::enter();
+        // pyro: the primary styles highlight styles inherit through are about to change.
+        self.highlight_style_cache.get_mut().clear();
 
         // pyro: shadow roots' sheets (`crate::shadow`).
         self.flush_shadow_styles();
@@ -706,6 +708,24 @@ impl crate::document::BaseDocument {
         if !node.is_element() || !node.flags.is_in_document() {
             return None;
         }
+        // No rule for the pseudo-element in any sheet that applies here and no shadow sheet in the
+        // document (whose `::slotted()`/`::part()` rules a light-tree ancestor chain can miss):
+        // neither this element nor an ancestor has a highlight style, and the walk is skipped.
+        if self.shadow_sheet_hosts.is_empty() && !self.stylist.may_have_rules_for_pseudo(node, pseudo) {
+            return None;
+        }
+        let generation = self.stylesheet_generation;
+        if let Some((known, style)) = self.highlight_style_cache.borrow().get(&(node_id, pseudo.clone())) {
+            if *known == generation {
+                return style.clone();
+            }
+        }
+        let style = self.compute_inherited_highlight_style(node_id, node, pseudo);
+        self.highlight_style_cache.borrow_mut().insert((node_id, pseudo.clone()), (generation, style.clone()));
+        style
+    }
+
+    fn compute_inherited_highlight_style(&self, node_id: NodeId, node: &Node, pseudo: &style::selector_parser::PseudoElement) -> Option<Arc<ComputedValues>> {
         let parent = node.parent.filter(|&p| self.nodes.get(p).is_some_and(|p| p.is_element()))
             .and_then(|p| crate::util::ensure_stack(|| self.inherited_highlight_style(p, pseudo)));
         let primary = match node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| d.styles.get_primary().cloned()) {

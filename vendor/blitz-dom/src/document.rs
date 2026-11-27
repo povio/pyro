@@ -567,6 +567,9 @@ pub struct BaseDocument {
     /// added, replaced or removed), so that CSSOM wrappers can detect that
     /// their cached rule data is stale.
     pub(crate) stylesheet_generation: u64,
+    /// pyro: [`BaseDocument::inherited_highlight_style`] results by (node, highlight pseudo), with the
+    /// stylesheet generation they were computed under; cleared whenever styles are resolved.
+    pub(crate) highlight_style_cache: RefCell<HashMap<(NodeId, style::selector_parser::PseudoElement), (u64, Option<ServoArc<ComputedValues>>)>>,
     /// Map from form control node ID's to their associated forms node ID's
     pub(crate) controls_to_form: HashMap<NodeId, NodeId>,
     /// Nodes that contain sub documents
@@ -1027,6 +1030,7 @@ impl BaseDocument {
             shadow_sheet_hosts: HashMap::new(),
             linked_page_css: BTreeMap::new(),
             stylesheet_generation: 0,
+            highlight_style_cache: RefCell::new(HashMap::new()),
             font_ctx,
             font_face_families: HashMap::new(),
             #[cfg(feature = "parallel-construct")]

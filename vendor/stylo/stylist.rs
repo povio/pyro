@@ -1226,6 +1226,18 @@ impl Stylist {
         doc_author_rules_apply && f(&self.cascade_data.author)
     }
 
+    /// pyro: whether any rule of any origin, or of a shadow tree that applies to `element`, is
+    /// filed under `pseudo`'s rule map key: a cheap test that a lazy cascade of `pseudo` on
+    /// `element` can find nothing when false (rules reached through a host's shadow tree, as
+    /// `::slotted()` ones are, are not seen from a light-tree child: the caller checks those).
+    pub fn may_have_rules_for_pseudo<E>(&self, element: E, pseudo: &PseudoElement) -> bool
+    where
+        E: TElement,
+    {
+        let key = pseudo.rule_map_key();
+        self.any_applicable_rule_data(element, |data| data.has_rules_for_pseudo(&key))
+    }
+
     /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
     /// cascaded for `element`) generate a box matches `element`, so that the full match and
     /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
@@ -4029,7 +4041,7 @@ impl CascadeData {
 
     /// pyro: whether any rule here is for `pseudo`, in any of the maps the rule
     /// collector reads for it.
-    fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
+    pub fn has_rules_for_pseudo(&self, pseudo: &PseudoElement) -> bool {
         let pseudos = std::slice::from_ref(pseudo);
         self.normal_rules(pseudos).is_some_and(|m| !m.is_empty())
             || self
