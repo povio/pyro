@@ -465,6 +465,26 @@ impl PolicyList {
         }
     }
 
+    /// CSP Integrity: the policies whose `script-src-elem` (or its fallback) holds
+    /// `'report-sha256'`, `'report-sha384'` or `'report-sha512'` source expressions, each with its
+    /// `report-to` group and those algorithms (`"sha256"`...), in order. Disposition does not
+    /// matter: a report-only policy asks for the hashes too, and nothing is blocked either way.
+    pub fn script_hash_reports(&self) -> Vec<(Option<String>, Vec<&'static str>)> {
+        let mut out = Vec::new();
+        for policy in &self.policies {
+            let Some(directive) = policy.directive_for("script-src-elem") else { continue };
+            let algorithms: Vec<&'static str> = [("'report-sha256'", "sha256"), ("'report-sha384'", "sha384"), ("'report-sha512'", "sha512")]
+                .into_iter()
+                .filter(|(keyword, _)| has_keyword(&directive.value, keyword))
+                .map(|(_, algorithm)| algorithm)
+                .collect();
+            if !algorithms.is_empty() {
+                out.push((policy.report_to(), algorithms));
+            }
+        }
+        out
+    }
+
     /// CSP3 §4.1.2 "Should request be blocked by Content Security Policy?" (the pre-request
     /// check of each policy's directive for the request's destination).
     pub fn pre_request(&self, request: &CspRequest) -> CheckOutcome {
@@ -896,6 +916,18 @@ impl HashAlgorithm {
     }
 }
 
+/// The hash-source value of `data` for `algorithm` (`"sha256"`, `"sha384"`, `"sha512"`):
+/// `sha256-<base64>`; `None` for another name.
+pub fn hash_expression(algorithm: &str, data: &[u8]) -> Option<String> {
+    let algorithm = HashAlgorithm::parse(algorithm)?;
+    let name = match algorithm {
+        HashAlgorithm::Sha256 => "sha256",
+        HashAlgorithm::Sha384 => "sha384",
+        HashAlgorithm::Sha512 => "sha512",
+    };
+    Some(format!("{name}-{}", algorithm.digest(data)))
+}
+
 /// A hash-source (`'sha256-<base64>'`): its algorithm and value.
 fn hash_source(expression: &str) -> Option<(HashAlgorithm, &str)> {
     let inner = expression.strip_prefix('\'')?.strip_suffix('\'')?;
@@ -1109,6 +1141,19 @@ mod tests {
         assert!(allowed("default-src 'none'; img-src 'self'", "https://a.test/i.png", RequestDest::Image));
         assert!(!allowed("default-src 'none'", "https://a.test/i.png", RequestDest::Image));
         assert!(allowed("connect-src 'self'", "wss://a.test/s", RequestDest::WebSocket));
+    }
+
+    #[test]
+    fn script_hash_reports_follow_the_fallback_list() {
+        let reports = |policy: &str| list(policy, "https://a.test/page.html").script_hash_reports();
+        assert_eq!(
+            reports("script-src 'self' 'report-sha256' 'report-SHA512'; report-to g"),
+            [(Some("g".to_owned()), vec!["sha256", "sha512"])]
+        );
+        assert_eq!(reports("default-src 'report-sha384'"), [(None, vec!["sha384"])]);
+        assert!(reports("script-src-elem 'self'; script-src 'report-sha256'").is_empty());
+        assert!(reports("img-src 'report-sha256'").is_empty());
+        assert!(hash_expression("sha256", b"").unwrap().starts_with("sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="));
     }
 
     #[test]

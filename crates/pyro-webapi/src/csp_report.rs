@@ -572,6 +572,28 @@ pub(crate) fn flush_pending(page: &PageDom) {
     }
 }
 
+/// CSP Integrity: the `csp-hash` reports a fetched script owes the document's policies that ask
+/// for its hashes (`'report-sha256'`...), sent to each policy's `report-to` endpoint. `data` is
+/// the response body, `None` for one the page may not read (a cross-origin no-CORS response:
+/// reported with an empty hash). No `securitypolicyviolation` and no `ReportingObserver` entry:
+/// nothing is blocked, the report only goes out. `url`: the script's request URL.
+pub fn report_script_hashes(page: &Rc<PageDom>, list: &pyro_net::csp::PolicyList, url: &str, data: Option<&[u8]>) {
+    for (group, algorithms) in list.script_hash_reports() {
+        let Some(group) = group else { continue };
+        for algorithm in algorithms {
+            let hash = data.and_then(|data| pyro_net::csp::hash_expression(algorithm, data)).unwrap_or_default();
+            let mut body = Map::new();
+            body.insert("documentURL".to_owned(), strip_url_for_report(&page.document_url()).into());
+            body.insert("subresourceURL".to_owned(), strip_url_for_report(url).into());
+            body.insert("hash".to_owned(), hash.into());
+            body.insert("type".to_owned(), "subresource".into());
+            body.insert("destination".to_owned(), "script".into());
+            let document = strip_url_for_report(&page.document_url());
+            report_to_group(page, &group, "csp-hash", &document, Json::Object(body));
+        }
+    }
+}
+
 /// The report POST of `body` to `endpoint`, as `delivery` makes it.
 fn report_request(page: &PageDom, endpoint: Url, delivery: Delivery, body: String) -> Request {
     // Both specs use destination "report" (`Sec-Fetch-Dest: report`).

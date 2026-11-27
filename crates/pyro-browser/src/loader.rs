@@ -3442,6 +3442,17 @@ impl Browser {
                                         )
                                     })
                             });
+                        // CSP Integrity: a script that passed its checks is reported with its hash to the
+                        // policies asking for it (an opaque response has none to give).
+                        if blocked.is_none() {
+                            if let Some(bindings) = &page_dom {
+                                if let Some(list) = pyro_webapi::csp::policy_list(bindings) {
+                                    let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                                    let data = (!is_opaque(&r, cors, &origin)).then_some(&r.body[..]);
+                                    pyro_webapi::csp_report::report_script_hashes(bindings, &list, &request_url, data);
+                                }
+                            }
+                        }
                         match blocked {
                             Some(e) => Err(e),
                             // A module script is UTF-8 whatever its charset
