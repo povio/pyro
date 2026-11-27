@@ -443,6 +443,18 @@ impl Browser {
         }
     }
 
+    /// Records on the page whether its document's rule sets wait for a pointer, for the embedder hook
+    /// that keeps hover and press tracking free otherwise.
+    pub(crate) fn sync_pointer_rules(&self, page: FrameKey) {
+        if page.child.is_some() {
+            return;
+        }
+        let wants = self.wants_pointer(page);
+        if let Some(p) = self.page(page.page) {
+            p.frames.pointer_rules.set(wants);
+        }
+    }
+
     /// Whether any rule of the document waits for a pointer (so hover and press matter).
     fn wants_pointer(&self, page: FrameKey) -> bool {
         self.doc(page).is_some_and(|d| d.speculation.entries().iter().any(|e| rules_of(&e.set).any(|r| r.eagerness != Eagerness::Immediate)))

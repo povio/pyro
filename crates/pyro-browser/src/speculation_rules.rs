@@ -727,6 +727,7 @@ impl Browser {
         let Some(mut doc) = self.doc_mut(page) else { return };
         let id = doc.speculation.add(source, set);
         drop(doc);
+        self.sync_pointer_rules(page);
         self.speculation_changed(page, SpeculationChange::Added(id));
     }
 
@@ -849,6 +850,7 @@ impl Browser {
         let removed = doc.speculation.remove_script(node);
         drop(doc);
         if let Some(id) = removed {
+            self.sync_pointer_rules(page);
             self.speculation_changed(page, SpeculationChange::Removed(id));
         }
     }

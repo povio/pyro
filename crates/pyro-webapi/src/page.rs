@@ -919,6 +919,12 @@ pub trait PageHooks {
     /// `moderate` and `eager` eagerness start on a hovered link. Runs inside the pointer event's
     /// dispatch: it must not run script or borrow the DOM.
     fn link_hover(&self, _link: Option<NodeId>) {}
+    /// Whether [`PageHooks::link_hover`] and [`PageHooks::link_pointer_down`] matter now (the document
+    /// has speculation rule sets that wait for a pointer): when false the page does not even look for
+    /// the link under the pointer.
+    fn wants_link_hover(&self) -> bool {
+        false
+    }
     /// A mouse button or touch went down on `link` (as [`PageHooks::link_hover`] names it), before
     /// `pointerdown` is dispatched. Speculation rules' `conservative` eagerness starts on it, even
     /// when the page cancels the event.

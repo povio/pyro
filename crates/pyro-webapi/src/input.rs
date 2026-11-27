@@ -2764,6 +2764,9 @@ fn closest_link(page: &PageDom, el: NodeId) -> Option<NodeId> {
 /// Tells the embedder a press went down on a link (speculation rules' `conservative` eagerness).
 fn note_link_pointer_down(page: &PageDom, target: NodeId) {
     let Some(hooks) = page.hooks() else { return };
+    if !hooks.wants_link_hover() {
+        return;
+    }
     if let Some(link) = closest_link(page, target) {
         hooks.link_pointer_down(link);
     }
@@ -3165,7 +3168,7 @@ fn dispatch_boundary_events(
     let _ = page.dom.borrow_mut().set_hovered(doc, Some(target));
     page.set_hovered(Some(target));
     // pyro: speculation rules' hover eagerness (a hook that only posts a task).
-    if let Some(hooks) = page.hooks() {
+    if let Some(hooks) = page.hooks().filter(|hooks| hooks.wants_link_hover()) {
         hooks.link_hover(closest_link(page, target));
     }
     // An event nobody listens for is not made (see `fire_mouse`).

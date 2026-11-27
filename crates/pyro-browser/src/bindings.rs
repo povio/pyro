@@ -230,6 +230,11 @@ impl PageHooks for Hooks {
         self.frames.upgrade().is_some_and(|host| host.request_focus(self.page, &self.loader, target, token))
     }
 
+    fn wants_link_hover(&self) -> bool {
+        // Only a top-level document's rule sets start speculation, and only those with a pointer rule.
+        self.page.child.is_none() && self.frames.upgrade().is_some_and(|host| host.pointer_rules.get())
+    }
+
     fn link_hover(&self, link: Option<pyro_dom::NodeId>) {
         // Only a top-level document's rule sets start speculation (see `speculation_document_rules`).
         if self.page.child.is_some() {

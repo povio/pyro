@@ -290,6 +290,10 @@ pub(crate) struct FrameHost {
     /// Some document of this page was made with `media-playback-while-not-visible` disabled by its
     /// container's `allow`: the checkpoint pass `refresh_media_visibility` has work. Never reset.
     pub(crate) media_policy_frames: Cell<bool>,
+    /// The top-level document has rule sets with a rule that waits for a pointer (hover or press
+    /// eagerness): what `PageHooks::wants_link_hover` reports. Only a hint: stale-true costs a task per
+    /// hover change, never stale-false (set when a rule set is added or removed).
+    pub(crate) pointer_rules: Cell<bool>,
     /// Lazy iframes navigated by something else (a link, `location`, a reload) while their
     /// lazy load was pending: HTML clears their lazy load resumption steps, so it never runs.
     pub(crate) lazy_cancelled: RefCell<Vec<FrameKey>>,
@@ -475,6 +479,7 @@ impl FrameHost {
             lazy_approved: RefCell::new(Vec::new()),
             lazy_requests: RefCell::new(Vec::new()),
             media_policy_frames: Cell::new(false),
+            pointer_rules: Cell::new(false),
             lazy_cancelled: RefCell::new(Vec::new()),
             attribute_navigation: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
@@ -571,6 +576,7 @@ impl FrameHost {
             lazy_approved: RefCell::new(Vec::new()),
             lazy_requests: RefCell::new(Vec::new()),
             media_policy_frames: Cell::new(false),
+            pointer_rules: Cell::new(false),
             lazy_cancelled: RefCell::new(Vec::new()),
             attribute_navigation: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
