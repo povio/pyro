@@ -1063,6 +1063,9 @@ fn try_activate(registration: &Rc<Registration>) {
     let old = registration.active.replace(Some(waiting.clone()));
     waiting.state.set(State::Activating);
     if let Some(handle) = waiting.thread.borrow().clone() { registration.cookies.activating(waiting.id, handle); }
+    // The registrations' clients see the new active worker before `controllerchange` fires
+    // (Activate: "set registration's active worker", then "Handle ... controllerchange").
+    registration.notify();
     if let Some(old) = &old {
         // Its clients move to the new worker.
         for client in context.service_workers.live_clients() {
@@ -1077,8 +1080,8 @@ fn try_activate(registration: &Rc<Registration>) {
             }
         }
         old.redundant();
+        registration.notify();
     }
-    registration.notify();
     waiting.run(|s, _| crate::service_worker_scope::lifecycle(s, Lifecycle::Activate));
 }
 
