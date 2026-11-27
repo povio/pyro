@@ -2262,7 +2262,7 @@ pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
 }
 
 /// Implicit ARIA role, by Playwright's `kImplicitRoleByTagName`.
-fn implicit_role(dom: &Dom, id: NodeId) -> Option<String> {
+pub(super) fn implicit_role(dom: &Dom, id: NodeId) -> Option<String> {
     let ty = || attr(dom, id, "type").unwrap_or("").to_ascii_lowercase();
     // `<header>`/`<footer>` are landmarks only outside sectioning content.
     let in_sectioning = || {

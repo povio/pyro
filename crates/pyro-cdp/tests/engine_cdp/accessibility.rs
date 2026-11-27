@@ -336,3 +336,58 @@ fn modal_dialog_leaves_the_blocked_document_out_of_the_tree() {
     eval_value(&mut h, "document.getElementById('d').close(); 1");
     assert_eq!(unignored_buttons(&mut h), ["Outside"]);
 }
+
+/// The role of the node of `selector` alone (`fetchRelatives: false`), as WebDriver's Get Computed Role reads it.
+fn own_role(h: &mut Harness, selector: &str) -> String {
+    let id = object(h, selector);
+    let r = h.page("Accessibility.getPartialAXTree", json!({"objectId": id, "fetchRelatives": false}));
+    nodes(&r)[0]["role"]["value"].as_str().unwrap_or_else(|| panic!("{selector}: {r}")).to_owned()
+}
+
+#[test]
+fn role_tokens_fall_back_and_html_aam_context_roles() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r##"<!doctype html><body>
+<nav id="invalid" role="foo">x</nav>
+<div id="fallback" role="foo Link" tabindex="0" aria-label="x">x</div>
+<nav id="unnamed-region" role="region group">x</nav>
+<nav id="unnamed-form" role="form">x</nav>
+<div id="named-region" role="foo ReGiOn" aria-label="x">x</div>
+<div id="dpub" role="doc-abstract">x</div>
+<main><footer id="main-footer">x</footer><header id="main-header">x</header></main>
+<footer id="page-footer">x</footer>
+<dir id="dir"><li>x</li></dir>
+<ul id="directory" role="directory"><li>x</li></ul>
+<article><aside id="nested-aside">x</aside><aside id="named-aside" aria-label="n">x</aside></article>
+<h1 id="conflict" role="none" aria-label="x">x</h1>
+<p id="plain-none" role="none">x</p>
+<ul role="none"><li id="inherited" aria-describedby="conflict">x</li></ul>
+<table><tbody id="tbody" aria-label="rows"><tr><td>x</td></tr></tbody></table>
+<map name="m"><area id="area" shape="rect" coords="0,0,1,1" href="#" alt="x"></map><img usemap="#m" alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==">
+</body>"##,
+    );
+    for (selector, role) in [
+        ("#invalid", "navigation"),
+        ("#fallback", "link"),
+        ("#unnamed-region", "group"),
+        ("#unnamed-form", "navigation"),
+        ("#named-region", "region"),
+        ("#dpub", "doc-abstract"),
+        ("#main-footer", "sectionfooter"),
+        ("#main-header", "sectionheader"),
+        ("#page-footer", "contentinfo"),
+        ("#dir", "list"),
+        ("#directory", "list"),
+        ("#nested-aside", "generic"),
+        ("#named-aside", "complementary"),
+        ("#conflict", "heading"),
+        ("#plain-none", "none"),
+        ("#inherited", "none"),
+        ("#tbody", "rowgroup"),
+        ("#area", "link"),
+    ] {
+        assert_eq!(own_role(&mut h, selector), role, "{selector}");
+    }
+}
