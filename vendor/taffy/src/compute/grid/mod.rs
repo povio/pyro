@@ -1212,6 +1212,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 item.baseline = old.baseline;
                 item.last_baseline = old.last_baseline;
                 item.dominant_baseline = old.dominant_baseline;
+                item.dominant_last_baseline = old.dominant_last_baseline;
                 continue;
             }
             Some(Some(moved)) => moved,
@@ -1269,6 +1270,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         item.baseline = placed.baseline;
         item.last_baseline = placed.last_baseline;
         item.dominant_baseline = placed.dominant_baseline;
+        item.dominant_last_baseline = placed.dominant_last_baseline;
         if index < positioned.len() {
             positioned[index] = placed;
         } else if table_rows {
@@ -1472,8 +1474,8 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 
     // Determine the grid container baselines
     // Layout containment suppresses the box's baseline for baseline-alignment purposes
-    let (grid_container_baseline, grid_container_last_baseline, grid_container_dominant) = if contain.suppresses_baseline() {
-        (None, None, None)
+    let (grid_container_baseline, grid_container_last_baseline, grid_container_dominant, grid_container_dominant_last) = if contain.suppresses_baseline() {
+        (None, None, None, None)
     } else {
         // Get the row index of the first row containing items
         let first_row = items.iter().map(|item| item.row_indexes.start).min().unwrap();
@@ -1563,7 +1565,9 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
                 last = baseline;
             }
         }
-        (Some(first), Some(last), dominant)
+        // pyro: and its last one, from the item the last baseline came from (a cell of a vertical table)
+        let dominant_last = item.dominant_last_baseline.filter(|_| table_rows).map(|baseline| item.y_position + baseline);
+        (Some(first), Some(last), dominant, dominant_last)
     };
 
     // A scroll container's own padding at the end of the content is part of its scrollable
@@ -1597,7 +1601,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let mut output = LayoutOutput::from_sizes_and_baselines(
         container_border_box,
         scrollable_overflow_rect,
-        Baselines { dominant_first: grid_container_dominant, ..Baselines::new(grid_container_baseline, grid_container_last_baseline) },
+        Baselines { dominant_first: grid_container_dominant, dominant_last: grid_container_dominant_last, ..Baselines::new(grid_container_baseline, grid_container_last_baseline) },
     );
     output.oof_candidates = oof_candidates;
     output.oof_positioning_area = oof_positioning_area;

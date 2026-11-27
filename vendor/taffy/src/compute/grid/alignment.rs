@@ -565,6 +565,7 @@ pub(super) fn align_and_position_item(
         baseline: child_first_baseline(layout_output.baselines.first, height, overflow.y),
         last_baseline: child_first_baseline(layout_output.baselines.last, height, overflow.y),
         dominant_baseline: layout_output.baselines.dominant_first.filter(|_| !overflow.y.is_scroll_container()),
+        dominant_last_baseline: layout_output.baselines.dominant_last.filter(|_| !overflow.y.is_scroll_container()),
         layout,
         area: grid_area,
         y_offset,
@@ -596,6 +597,8 @@ pub(super) struct PositionedItem {
     pub last_baseline: Option<f32>,
     /// pyro: see `GridItem::dominant_baseline`
     pub dominant_baseline: Option<f32>,
+    /// pyro: see `GridItem::dominant_last_baseline`
+    pub dominant_last_baseline: Option<f32>,
     /// The layout it was given, and the grid area it was positioned in
     pub layout: Layout,
     pub area: Rect<f32>,

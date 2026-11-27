@@ -74,6 +74,8 @@ pub(in super::super) struct GridItem {
     /// pyro: the item's first baseline in its dominant baseline (`Baselines::dominant_first`; a
     /// central one in a vertical writing mode), from its final layout
     pub dominant_baseline: Option<f32>,
+    /// pyro: the item's last baseline in its dominant baseline (`Baselines::dominant_last`), from its final layout
+    pub dominant_last_baseline: Option<f32>,
     /// pyro: for an item baseline-aligned in the axis last resolved, the distance from its track's edge (its
     /// group's side) to its group's baseline, without `extra_margin` (`subgrid::record_subgrid_baselines`)
     pub baseline_distance: Option<f32>,
@@ -198,6 +200,7 @@ impl GridItem {
             baseline: None,
             last_baseline: None,
             dominant_baseline: None,
+            dominant_last_baseline: None,
             baseline_distance: None,
             baseline_shim: 0.0,
             baseline_shim_block_end: 0.0,
