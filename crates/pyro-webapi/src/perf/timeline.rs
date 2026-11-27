@@ -108,6 +108,13 @@ pub struct TimelineBuffers {
     /// Paint entries modules reported (`report_paint`).
     paint: RefCell<Vec<PaintRecord>>,
     wants_rendering: Cell<bool>,
+    /// Document-clock time of the last trusted user input that Layout
+    /// Instability (`hadRecentInput`, `lastInputTime`) and LCP (stop at the
+    /// first input) count; see `perf::note_input`.
+    last_input: Cell<Option<f64>>,
+    /// Document-clock time of the last trusted `wheel` (a scroll input:
+    /// LCP stops at it, layout shifts do not count it as input).
+    last_wheel: Cell<Option<f64>>,
 }
 
 impl TimelineBuffers {
@@ -165,6 +172,33 @@ impl TimelineBuffers {
     /// Whether a module asked for a rendering update that did not run yet.
     pub fn wants_rendering(&self) -> bool {
         self.wants_rendering.get()
+    }
+
+    /// The `timeStamp` of the last trusted user input (`mousedown`, `pointerdown`,
+    /// `pointerup`, `keydown`, `touchstart`, `touchend`), `None` before the first.
+    /// Maintained only while `layout-shift`, `largest-contentful-paint` or `event`
+    /// is ENABLED (`perf::TRACK_INPUT`); always `None` otherwise.
+    pub fn last_input_time(&self) -> Option<f64> {
+        self.last_input.get()
+    }
+
+    /// The `timeStamp` of the last trusted `wheel` event (same gating).
+    pub fn last_wheel_time(&self) -> Option<f64> {
+        self.last_wheel.get()
+    }
+
+    /// Whether a trusted user input happened in `[now - window_ms, now]`
+    /// (layout-shift `hadRecentInput` is `recent_input(shift_time, 500.0)`).
+    pub fn recent_input(&self, now: f64, window_ms: f64) -> bool {
+        self.last_input.get().is_some_and(|t| t <= now && now - t < window_ms)
+    }
+
+    pub(crate) fn set_last_input(&self, time: f64) {
+        self.last_input.set(Some(time));
+    }
+
+    pub(crate) fn set_last_wheel(&self, time: f64) {
+        self.last_wheel.set(Some(time));
     }
 
     pub(crate) fn clear_wants_rendering(&self) {

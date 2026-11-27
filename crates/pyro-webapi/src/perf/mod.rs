@@ -61,6 +61,17 @@
 //! Pyro's own update is the definition). `start <= paint_time <= presented`.
 //! `TaskInfo`: `start` / `end` of the task in the document clock.
 //!
+//! # Last user input
+//!
+//! `page.timeline().last_input_time()` / `last_wheel_time()` / `recent_input(now, window)`:
+//! the `timeStamp` of the last trusted `mousedown`, `pointerdown`, `pointerup`,
+//! `keydown`, `touchstart`, `touchend` (`wheel` separately), for layout-shift
+//! (`hadRecentInput` = input within the last 500 ms of the shift, `lastInputTime`
+//! = `last_input_time()` or 0) and LCP (stops considering candidates after the
+//! first input or wheel). Set by [`dispatch_begin`] (and by [`note_unheard`] for
+//! events without a listener), only while `shift`, `lcp` or `event` is ENABLED
+//! ([`TRACK_INPUT`], a const): otherwise it costs nothing and reads `None`.
+//!
 //! # Asking for frames
 //!
 //! `timeline::request_rendering(page)` asks for one rendering update (a plain
@@ -252,6 +263,29 @@ pub fn task_finished(page: &Rc<PageDom>, task: &TaskInfo) {
     }
 }
 
+/// Whether the document tracks the last trusted user input
+/// (`TimelineBuffers::last_input_time`): only a module that reads it makes
+/// it worth a branch. A const, so a build with none of them enabled
+/// compiles the tracking away.
+pub(crate) const TRACK_INPUT: bool = shift::ENABLED || lcp::ENABLED || event::ENABLED;
+
+/// Records the time of a trusted user input of type `ty` (`time`: the event's
+/// `timeStamp`, document clock). Called from [`dispatch_begin`] for dispatched
+/// events and from [`note_unheard`] for the ones nobody listens for. Which
+/// events count (Chrome `LayoutShiftTracker`/LCP): `mousedown`, `pointerdown`,
+/// `pointerup`, `keydown`, `touchstart`, `touchend`; `wheel` goes to its own
+/// slot. Pointer type is not distinguished (Chrome ignores a touch
+/// `pointerdown`; a touch `pointerup` counts instead: a touch gesture's `pointerup`
+/// follows its `pointerdown` within the 500 ms window, so the difference is
+/// only visible for a long press).
+pub(crate) fn note_input(page: &PageDom, ty: &str, time: f64) {
+    match ty {
+        "mousedown" | "pointerdown" | "pointerup" | "keydown" | "touchstart" | "touchend" => page.timeline().set_last_input(time),
+        "wheel" => page.timeline().set_last_wheel(time),
+        _ => {}
+    }
+}
+
 /// What [`dispatch_begin`] hands [`dispatch_end`].
 #[derive(Default)]
 pub(crate) struct DispatchTokens {
@@ -261,8 +295,12 @@ pub(crate) struct DispatchTokens {
 
 /// A trusted event is about to run its listeners (`target.rs dispatch_at`).
 pub(crate) fn dispatch_begin(page: &PageDom, event: &EventData) -> DispatchTokens {
-    if !(event::ENABLED || softnav::ENABLED) || !event.state.borrow().is_trusted {
+    if !(event::ENABLED || softnav::ENABLED || TRACK_INPUT) || !event.state.borrow().is_trusted {
         return DispatchTokens::default();
+    }
+    if TRACK_INPUT {
+        let state = event.state.borrow();
+        note_input(page, &state.ty, state.time_stamp);
     }
     DispatchTokens {
         event: if event::ENABLED { event::dispatch_begin(page, event) } else { None },
