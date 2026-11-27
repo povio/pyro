@@ -69,7 +69,13 @@ impl Node {
         }
         let data = self.try_stylo_element_data()?.get()?;
         let base = data.styles.pseudos.get(&PseudoElement::WebkitScrollbar)?;
-        if data.styles.get_primary()?.clone_scrollbar_width() != ScrollbarWidth::Auto {
+        let primary = data.styles.get_primary()?;
+        if primary.clone_scrollbar_width() != ScrollbarWidth::Auto {
+            return None;
+        }
+        // CSS Scrollbars 1 § 4.3 (color-compat), as Chrome: a `scrollbar-color` other than `auto`
+        // turns the `::-webkit-scrollbar` styling off (the standard scrollbar is used).
+        if !matches!(primary.get_scrollbar_color(), style::values::computed::ScrollbarColor::Auto) {
             return None;
         }
         let length = |vertical: bool| {
