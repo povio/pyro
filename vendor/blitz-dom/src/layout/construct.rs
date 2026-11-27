@@ -799,7 +799,7 @@ fn place_inside_marker(doc: &mut BaseDocument, item: NodeId, out: &mut LayoutChi
 /// pyro: whether `node` is a drop-down select of base appearance (`appearance: base-select`,
 /// a customizable select) whose picker is open (`:open`, from pyro-dom's state tokens): its
 /// options, groups and separators have boxes, laid out below the select.
-pub(crate) fn is_open_base_select(node: &crate::node::Node) -> bool {
+pub fn is_open_base_select(node: &crate::node::Node) -> bool {
     node.element_data().is_some_and(|el| {
         el.name.local == local_name!("select")
             && el.element_state.contains(style_dom::ElementState::OPEN)

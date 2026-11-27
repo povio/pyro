@@ -59,6 +59,7 @@ mod html;
 mod iframe;
 /// Integration of taffy and the DOM.
 mod layout;
+pub use layout::construct::is_open_base_select;
 pub use layout::table::{CollapsedEdge, CollapsedEdges, TableCell, TableContext};
 pub use layout::multicol::{ColumnFragment, ColumnFragments};
 pub use layout::inline::span_edge_margins;

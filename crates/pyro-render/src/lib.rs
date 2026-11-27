@@ -2462,8 +2462,10 @@ impl Renderer {
                 return None;
             }
             // A drop-down select's descendants (its options) generate no
-            // boxes, as in Chromium's menu list (their `display` stays).
+            // boxes, as in Chromium's menu list (their `display` stays), unless its picker is
+            // open (a customizable select, whose options are laid out below it).
             if id != start
+                && !blitz_dom::is_open_base_select(node)
                 && node.data.downcast_element().is_some_and(|el| {
                     &*el.name.local == "select"
                         && el.attr(blitz_dom::local_name!("multiple")).is_none()
