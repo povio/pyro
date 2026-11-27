@@ -1672,6 +1672,23 @@ impl Dom {
         self.registry_associations.get(&node).copied().unwrap_or_else(|| self.implicit_registry(node))
     }
 
+    /// `node` was given a null registry explicitly (the parser's `customelementregistry`
+    /// attribute, `{customElementRegistry: null}`), whatever its document's default is.
+    pub(crate) fn has_explicit_null_registry(&self, node: u32) -> bool {
+        self.registry_associations.get(&node) == Some(&RegistryAssociation::Null)
+    }
+
+    /// The registry the parser gives the element it creates under `parent` (HTML "create an
+    /// element for the token"): none with a `customelementregistry` attribute, else the one
+    /// `parent` looks up.
+    pub(crate) fn parser_registry_for(&self, element: u32, parent: u32) -> RegistryAssociation {
+        if self.n(element).element().is_some_and(|e| e.attr("customelementregistry").is_some()) {
+            RegistryAssociation::Null
+        } else {
+            self.registry_idx(parent)
+        }
+    }
+
     pub(crate) fn set_registry_idx(&mut self, node: u32, registry: RegistryAssociation) {
         if registry == self.implicit_registry(node) {
             if !self.registry_associations.is_empty() { self.registry_associations.remove(&node); }
@@ -3625,7 +3642,8 @@ impl Dom {
             if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, ref reference_target, .. }) = self.n(src_sr).kind {
                 if flags & shadow_flags::CLONABLE != 0 {
                     let reference_target = reference_target.clone();
-                    let dst_sr = self.new_shadow_root(copy, mode, flags & !shadow_flags::AVAILABLE_TO_INTERNALS);
+                    // The copy is as available to its host's ElementInternals as the original (Chrome): the host's constructor runs after the clone.
+                    let dst_sr = self.new_shadow_root(copy, mode, flags);
                     if let NodeKind::Fragment(f) = &mut self.n_mut(dst_sr).kind {
                         f.reference_target = reference_target;
                     }

@@ -215,7 +215,7 @@ fn document_has_child(d: &Dom, doc: u32, pred: impl Fn(u32) -> bool) -> bool {
 fn assign_parser_registry(dom: &mut Dom, node: u32, parent: u32) {
     let Some(el) = dom.n_mut(node).element_mut() else { return };
     if std::mem::take(&mut el.parser_needs_registry) {
-        let registry = dom.registry_idx(parent);
+        let registry = dom.parser_registry_for(node, parent);
         dom.set_registry_idx(node, registry);
     }
 }
@@ -922,6 +922,10 @@ impl<A: DomAccess> Sink<A> {
         let attrs: Vec<(QualName, String)> = attrs.into_iter().map(|a| (a.name, a.value.to_string())).collect();
         let hooks = self.dom.with(|d| {
             assign_parser_registry(d, n, parent);
+            // No registry (a `customelementregistry` attribute, or a parent without one): no definition to look up.
+            if d.has_explicit_null_registry(n) {
+                return None;
+            }
             let (name, is) = d.n(n).element().map(|e| (e.name.clone(), e.is_value.clone()))?;
             let doc = self.doc_owner(d);
             (d.n(parent).owner_doc == doc).then(|| d.parser_custom_elements(doc, &name, is.as_ref())).flatten()

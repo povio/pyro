@@ -532,7 +532,10 @@ impl Load {
             // element for the token", synchronous custom elements flag): made without its attributes,
             // which are appended after the constructor ran. Before the first script nothing is defined.
             let mut custom = None;
-            if self.live && owner == document {
+            // A `customelementregistry` attribute, or a parent that has no registry, leaves the element without one.
+            let null_registry = dom.has_explicit_null_registry(parent)
+                || matches!(&kind, NodeKind::Element(e) if e.attr("customelementregistry").is_some());
+            if self.live && owner == document && !null_registry {
                 if let NodeKind::Element(e) = &mut kind {
                     if e.is_html() {
                         let is = e.attrs.iter().find(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == "is").map(|a| crate::LocalName::from(&*a.value));
@@ -546,6 +549,9 @@ impl Load {
                 }
             }
             let (id, target) = create(dom, kind, owner);
+            if null_registry && dom.n(id).element().is_some() {
+                dom.set_registry_idx(id, crate::RegistryAssociation::Null);
+            }
             if let Some((hooks, attrs)) = custom {
                 let el = dom.id_of(id);
                 // The constructor runs script: what is open (and the new element) must survive it.
@@ -724,7 +730,14 @@ fn attach(dom: &mut Dom, root: NodeId, nodes: Vec<Prepared>, registry: crate::Re
         let (parent, child_owner) = node.parent.map_or((root, owner), |index| targets[index]);
         let (id, target) = create(dom, node.kind, child_owner);
         if dom.n(id).element().is_some() {
-            let registry = if parent == root { registry } else { dom.registry_idx(parent) };
+            // A `customelementregistry` attribute leaves the element without a registry.
+            let registry = if dom.n(id).element().is_some_and(|e| e.attr("customelementregistry").is_some()) {
+                crate::RegistryAssociation::Null
+            } else if parent == root {
+                registry
+            } else {
+                dom.registry_idx(parent)
+            };
             dom.set_registry_idx(id, registry);
         }
         dom.link_raw(id, parent, NIL);
