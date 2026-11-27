@@ -177,7 +177,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     // Fullscreen and SVG animation handlers and the elements' own, for `getAttributeType`.
     let is_handler = s.function("isEventHandler", |s, _this, a| {
         let name = crate::util::dom_string(a.get(0))?;
-        Ok(s.boolean(crate::handlers::is_handler_attribute(&name).is_some()))
+        Ok(s.boolean(is_event_handler_name(&name)))
     })?;
     natives.set_atom("isEventHandler", is_handler.value())?;
     // ttLevel() -> Trusted Types' own eval level (the hooks also run for CSP's).
@@ -355,6 +355,20 @@ pub fn script_source_unverified(page: &PageDom, el: pyro_dom::NodeId, text: &str
     requires_for_script_in(page, doc) && page.dom.borrow().script_text(el) != text
 }
 
+/// Whether `local` (case-sensitive: `onclick`) names an event handler content attribute of some
+/// element: GlobalEventHandlers, WindowEventHandlers (not only on `<body>`), the Fullscreen,
+/// SVG animation, permission element and canvas handlers. Trusted Types decides by the name alone
+/// (`getAttributeType` and `setAttribute` agree), not by the element it is set on.
+pub(crate) fn is_event_handler_name(local: &str) -> bool {
+    let Some(ty) = local.strip_prefix("on") else { return false };
+    crate::handlers::GLOBAL.contains(&ty)
+        || crate::handlers::WINDOW.contains(&ty)
+        || crate::handlers::FULLSCREEN.contains(&ty)
+        || crate::handlers::PERMISSION_ELEMENT.contains(&ty)
+        || crate::handlers::CANVAS_ELEMENT.contains(&ty)
+        || crate::handlers::SVG_ANIMATION_ATTRIBUTES.iter().any(|(name, _)| *name == ty)
+}
+
 /// Trusted Types "get Trusted Types-compliant attribute value": the kind an attribute of `el`
 /// takes and its sink name (an event handler content attribute of the element: TrustedScript,
 /// "Element onclick"; `iframe srcdoc`: TrustedHTML; HTML `script src` and SVG `script href`:
@@ -368,17 +382,9 @@ pub(crate) fn attribute_kind(page: &PageDom, el: pyro_dom::NodeId, local: &str, 
     let svg = e.namespace() == &markup5ever::ns!(svg);
     let mathml = e.namespace() == &markup5ever::ns!(mathml);
     match ns.filter(|ns| !ns.is_empty()) {
-        None if (html || svg || mathml) && !local.bytes().any(|b| b.is_ascii_uppercase()) && {
-            // The element's event handler content attributes: GlobalEventHandlers, and
-            // WindowEventHandlers on `<body>` and `<frameset>`, and a permission element's own.
-            let ty = local.strip_prefix("on").unwrap_or("");
-            crate::handlers::GLOBAL.contains(&ty)
-                || crate::handlers::FULLSCREEN.contains(&ty)
-                || (svg && matches!(tag, "animate" | "animateMotion" | "animateTransform" | "set") && crate::handlers::SVG_ANIMATION_ATTRIBUTES.iter().any(|(name, _)| *name == ty))
-                || (html && crate::handlers::element_handler(tag, ty))
-                || (html && matches!(tag, "body" | "frameset") && crate::handlers::WINDOW.contains(&ty))
-        } =>
-        {
+        // An event handler content attribute of any HTML, SVG or MathML element: the name alone
+        // decides, whatever the element (Chrome, and `getAttributeType("dummy", "onunload")`).
+        None if (html || svg || mathml) && is_event_handler_name(local) => {
             Some((Kind::Script, format!("Element {local}")))
         }
         None if html && tag == "iframe" && local == "srcdoc" => Some((Kind::Html, "HTMLIFrameElement srcdoc".into())),
