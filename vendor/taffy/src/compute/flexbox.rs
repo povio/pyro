@@ -3567,7 +3567,21 @@ fn calculate_flex_item(
         let baseline_offset_main = *total_offset_main + item.offset_main + item.margin.main_start(direction);
         item.baseline = baseline_offset_main + inner_baseline;
         item.last_baseline = baseline_offset_main + inner_last_baseline;
-        item.dominant_last_baseline = None;
+        // pyro: a column container in a vertical writing mode exports the central baseline of its main-start
+        // (main-end) item too, offset by that item's main-axis position as the alphabetic ones are (WPT
+        // css-flexbox `flex-align-baseline-flex-002`: nested `flex-direction: column` in `vertical-rl`)
+        item.dominant_baseline = (constants.block_baseline_synthesis == 0.5).then(|| {
+            let baselines = &layout_output.baselines;
+            baseline_offset_main
+                + child_first_baseline(baselines.dominant_first.or(baselines.first), size.height, item.overflow.y)
+                    .unwrap_or(size.height * 0.5)
+        });
+        item.dominant_last_baseline = (constants.block_baseline_synthesis == 0.5).then(|| {
+            let baselines = &layout_output.baselines;
+            baseline_offset_main
+                + item_last_baseline(baselines.dominant_last.or(baselines.last), size.height, item.overflow.y)
+                    .unwrap_or(size.height * 0.5)
+        });
         item.aligned_baseline = None;
     }
 
