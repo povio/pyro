@@ -784,6 +784,7 @@ pub enum ElClass {
     SvgMarker,
     SvgStop,
     SvgScript,
+    SvgStyle,
     SvgPath,
     SvgPolyline,
     SvgPolygon,
@@ -835,6 +836,7 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
             // SVGGraphicsElement interfaces (SVG 2).
             "stop" => ElClass::SvgStop,
             "script" => ElClass::SvgScript,
+            "style" => ElClass::SvgStyle,
             "path" => ElClass::SvgPath,
             "polyline" => ElClass::SvgPolyline,
             "polygon" => ElClass::SvgPolygon,
@@ -1100,6 +1102,7 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgMarker => s.wrap::<SvgMarkerElement>(d, k),
         SvgStop => s.wrap::<SvgStopElement>(d, k),
         SvgScript => s.wrap::<SvgScriptElement>(d, k),
+        SvgStyle => s.wrap::<SvgStyleElement>(d, k),
         SvgPath => s.wrap::<SvgPathElement>(d, k),
         SvgPolyline => s.wrap::<SvgPolylineElement>(d, k),
         SvgPolygon => s.wrap::<SvgPolygonElement>(d, k),
@@ -1246,6 +1249,7 @@ pub fn interface_name(class: ElClass) -> &'static str {
         SvgMarker => SvgMarkerElement::NAME,
         SvgStop => SvgStopElement::NAME,
         SvgScript => SvgScriptElement::NAME,
+        SvgStyle => SvgStyleElement::NAME,
         SvgPath => SvgPathElement::NAME,
         SvgPolyline => SvgPolylineElement::NAME,
         SvgPolygon => SvgPolygonElement::NAME,
@@ -1409,6 +1413,7 @@ pub(crate) fn wrap_new_html_element<'s>(
         SvgMarker => crate::node::wrap_new_node::<SvgMarkerElement>(s, page, el, new_target),
         SvgStop => crate::node::wrap_new_node::<SvgStopElement>(s, page, el, new_target),
         SvgScript => crate::node::wrap_new_node::<SvgScriptElement>(s, page, el, new_target),
+        SvgStyle => crate::node::wrap_new_node::<SvgStyleElement>(s, page, el, new_target),
         SvgPath => crate::node::wrap_new_node::<SvgPathElement>(s, page, el, new_target),
         SvgPolyline => crate::node::wrap_new_node::<SvgPolylineElement>(s, page, el, new_target),
         SvgPolygon => crate::node::wrap_new_node::<SvgPolygonElement>(s, page, el, new_target),
@@ -4408,6 +4413,14 @@ simple_class!(SvgSwitchElement, "SVGSwitchElement", SvgGraphicsElement);
 simple_class!(SvgDescElement, "SVGDescElement", SvgElement);
 // `SVGScriptElement`: `href` (an SVGAnimatedString whose `baseVal` setter is a Trusted Types sink, see `SvgAnimatedString`).
 simple_class!(SvgScriptElement, "SVGScriptElement", SvgElement, svg_href);
+// SVG 2 `<style>`: `type`, `media` and `title` as reflected strings (a missing one is ""), and its sheet
+// (LinkStyle), as HTMLStyleElement's.
+simple_class!(SvgStyleElement, "SVGStyleElement", SvgElement, |def| {
+    reflect_str!(def, "type", "type");
+    reflect_str!(def, "media", "media");
+    reflect_str!(def, "title", "title");
+    def.getter("sheet", crate::css::element_sheet);
+});
 simple_class!(SvgMetadataElement, "SVGMetadataElement", SvgElement);
 fn svg_aspect_ratio<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.getter("preserveAspectRatio", |s, n| collections::animated_aspect(s, n));
@@ -5353,6 +5366,7 @@ simple_class!(SvgAElement, "SVGAElement", SvgGraphicsElement, |def| {
     reflect_tokens!(def, "relList", "rel");
     reflect_str!(def, "download", "download");
     reflect_str!(def, "ping", "ping");
+    reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_str!(def, "hreflang", "hreflang");
     reflect_str!(def, "type", "type");
 });
@@ -6045,6 +6059,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgTextPathElement>();
     engine.register::<SvgStopElement>();
     engine.register::<SvgScriptElement>();
+    engine.register::<SvgStyleElement>();
     engine.register::<SvgPathElement>();
     engine.register::<SvgPolylineElement>();
     engine.register::<SvgPolygonElement>();

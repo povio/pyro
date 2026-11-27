@@ -1125,7 +1125,8 @@ impl JsClass for DomTokenList {
             // `rel` per element, as Chromium answers: a `<link>`'s fetch and resource types;
             // `<a>`, `<area>` and `<form>`'s opener and referrer types.
             let rel_of = |t: &TokenListData| {
-                t.el.page.dom.borrow().element(t.el.id).ok().filter(|e| e.is_html()).map(|e| match &*e.name.local {
+                // (An SVG `<a>` has `<a>`'s: SVGAElement.relList is the same DOMTokenList.)
+                t.el.page.dom.borrow().element(t.el.id).ok().filter(|e| e.is_html() || (e.namespace() == &markup5ever::ns!(svg) && &*e.name.local == "a")).map(|e| match &*e.name.local {
                     "link" => 0,
                     "a" | "area" | "form" => 1,
                     _ => 2,
