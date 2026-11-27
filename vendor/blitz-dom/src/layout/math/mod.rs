@@ -376,19 +376,23 @@ pub(crate) fn build_children(doc: &BaseDocument, node_id: NodeId, children: &mut
     true
 }
 
-/// The baseline shift of an `mspace` (its `depth`, as `mathml_space` lowers it: a negative shift),
-/// 0 for any other box. Added to the ascent of the box measured: it is an inline-block that has
-/// no baseline of its own.
-fn mspace_baseline_shift(node: &Node) -> f32 {
-    use style::values::computed::{BaselineShift, Length};
-    if !node.element_data().is_some_and(|element| element.name.ns == ns!(mathml) && *element.name.local == *"mspace") {
-        return 0.0;
+/// The ascent of an `mspace` (MathML Core § 3.2.5: its `height` attribute, a non-negative length,
+/// else 0; its `depth` only sizes the box), `None` for any other box. The box is an inline-block
+/// without line boxes (`mathml_space`), whose size the author's `height` may override without
+/// moving the baseline from the attribute (WPT `mspace-width-height-001`).
+fn mspace_ascent(node: &Node) -> Option<f32> {
+    let element = node.element_data()?;
+    if !(element.name.ns == ns!(mathml) && *element.name.local == *"mspace") {
+        return None;
     }
-    let Some(style) = node.primary_styles() else { return 0.0 };
-    match style.get_box().get_baseline_shift() {
-        BaselineShift::Length(length) => length.resolve(Length::new(0.0)).px(),
-        _ => 0.0,
-    }
+    let style = node.primary_styles()?;
+    let font_size = style.slow_clone_font_size().used_size().px();
+    Some(
+        element
+            .attr(LocalName::from("height"))
+            .and_then(|value| fraction::parse_line_thickness(value, 0.0, font_size, font_size * 0.5))
+            .unwrap_or(0.0),
+    )
 }
 
 impl LayoutPassState<'_> {
@@ -397,7 +401,6 @@ impl LayoutPassState<'_> {
     #[inline(never)]
     pub(crate) fn measure_math_child(&mut self, child: NodeId, known: Size<Option<f32>>) -> ChildMetrics {
         let margin = self.nodes[child].layout_style().margin().resolve_or_zero(None, resolve_calc_value);
-        let shift = mspace_baseline_shift(&self.nodes[child]);
         let inputs = LayoutInput {
             run_mode: RunMode::PerformLayout,
             sizing_mode: SizingMode::InherentSize,
@@ -411,8 +414,9 @@ impl LayoutPassState<'_> {
         let output = self.compute_child_layout(taffy_node_id(child), inputs);
         // A child without a baseline has one at its bottom border edge (Chromium's
         // `FirstBaselineOrSynthesize`).
-        let baseline = output.baselines.first.or(output.baselines.last).unwrap_or(output.size.height);
-        let ascent = margin.top + baseline + shift;
+        let baseline = mspace_ascent(&self.nodes[child])
+            .unwrap_or_else(|| output.baselines.first.or(output.baselines.last).unwrap_or(output.size.height));
+        let ascent = margin.top + baseline;
         let descent = output.size.height + margin.top + margin.bottom - ascent;
         let element = self.nodes[child].element_data();
         ChildMetrics {
