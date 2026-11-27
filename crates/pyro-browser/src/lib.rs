@@ -1445,6 +1445,8 @@ impl Browser {
             }
             c.id != id
         });
+        // Prefetches of a context that is gone.
+        self.sweep_prefetches();
         before != self.contexts.len()
     }
 
@@ -2551,6 +2553,10 @@ impl Browser {
         if let Some(host) = self.page(page.page).map(|p| p.frames.clone()) {
             host.store_ancestor_origins(page);
         }
+        if page.child.is_none() {
+            // The document that asked for the speculation-rules prefetches is gone.
+            self.sweep_prefetches();
+        }
         let (old_dom, replaced) = old_dom;
         // A child frame's or popup's initial about:blank Window made reusable
         // (`FrameHost::reuse_realm`) becomes the new document's: it keeps its
@@ -2718,6 +2724,8 @@ impl Browser {
         }
         self.emit(page, PageEvent::FrameDestroyed { frame_id: p.main_frame.id.clone() });
         drop(p);
+        // The page's speculation-rules prefetches go with it.
+        self.sweep_prefetches();
         self.engine.release_closed();
         true
     }

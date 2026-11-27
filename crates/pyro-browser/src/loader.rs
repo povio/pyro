@@ -609,6 +609,9 @@ impl ResourceLoader for NetLoader {
         if let Some(Purpose::Prefetch { cross_site, tags, cookies, .. }) = &request.purpose {
             req.headers.insert(pyro_net::http::HeaderName::from_static("sec-purpose"), pyro_net::http::HeaderValue::from_static("prefetch"));
             req.cross_site_prefetch = *cross_site;
+            // A speculation prefetch is kept in memory until a navigation uses it: a larger
+            // response fails it (the navigation fetches it itself).
+            req.max_body = Some(crate::prefetch::MAX_BODY_BYTES.min(self.client.config().max_body));
             req.deferred_cookies = cross_site.then(|| cookies.clone());
             if let Some(value) = tags.as_deref().and_then(|t| pyro_net::http::HeaderValue::from_str(t).ok()) {
                 req.headers.insert(pyro_net::http::HeaderName::from_static("sec-speculation-tags"), value);

@@ -76,7 +76,11 @@
 //! network when the prefetch fails or is not 2xx). The navigation's timing is rebased on the
 //! navigation (`deliveryType` `navigational-prefetch`). An entry expires after five minutes;
 //! `Clear-Site-Data` naming `"prefetchCache"` or `"cache"` (`NetClient::prefetch_cache_cleared_since`)
-//! drops the origin's entries, in flight ones included. At most [`MAX_ENTRIES`] live.
+//! drops the origin's entries, in flight ones included. At most [`MAX_ENTRIES`] live, and
+//! [`MAX_PER_DOCUMENT`] of one document; a body over [`MAX_BODY_BYTES`] fails the prefetch and
+//! a document's ready entries keep at most [`MAX_DOCUMENT_BYTES`] of body together. Entries are
+//! swept when a task ends, when their page closes (`dispose_page`) and when a navigation commits
+//! (`commit_document`: the document that asked is gone).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -96,6 +100,16 @@ use crate::{Browser, ContextId, FetchRequest, NavigateOpts, NavigationReason, Pa
 const TTL: Duration = Duration::from_secs(300);
 /// The most prefetches alive at once; past it the oldest unclaimed one goes.
 const MAX_ENTRIES: usize = 64;
+/// The most prefetches one document keeps (in flight or ready) at once: a candidate past it is
+/// not started until one is used or dropped. Chrome limits speculative prefetches per document
+/// too (50 for the eager rules, 2 for the others).
+const MAX_PER_DOCUMENT: usize = 50;
+/// The largest response body a prefetch keeps: a larger one fails the prefetch (the loader's
+/// `max_body`), so a navigation fetches it itself.
+pub(crate) const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
+/// The most body bytes the ready prefetches of one document hold together: a response that does
+/// not fit is dropped when it arrives (unless a navigation already waits for it).
+const MAX_DOCUMENT_BYTES: usize = 20 * 1024 * 1024;
 
 /// What a navigation that joined a pending prefetch is given: the response (rebased on the
 /// navigation), or `None` when the prefetch failed, was not usable for the navigation's URL, or
@@ -215,6 +229,18 @@ pub(crate) fn rebase_timing(resource: &mut Resource, start: Instant) {
 impl PrefetchCache {
     fn find(&self, id: u64) -> Option<usize> {
         self.entries.iter().position(|e| e.id == id)
+    }
+
+    /// The body bytes the ready entries of `entry`'s document hold.
+    fn ready_bytes(&self, entry: &Entry) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| e.page == entry.page && e.initiator_loader == entry.initiator_loader)
+            .map(|e| match &e.state {
+                State::Ready(prefetched) => prefetched.resource.body.len(),
+                State::Pending { .. } => 0,
+            })
+            .sum()
     }
 
     /// Makes room for one more: the oldest entry no navigation waits on goes.
@@ -338,6 +364,9 @@ impl Browser {
             return;
         }
         self.sweep_prefetches();
+        if self.prefetches.entries.iter().filter(|e| e.page == page.page && e.initiator_loader == frame.loader_id.0).count() >= MAX_PER_DOCUMENT {
+            return;
+        }
         if !self.prefetches.attempted.insert((page.page, frame.loader_id.0.clone(), url.to_string())) {
             return;
         }
@@ -503,12 +532,13 @@ impl Browser {
                 }
                 waiter(self, resource);
             }
-            (None, Some(resource)) => {
+            (None, Some(resource)) if self.prefetches.ready_bytes(&entry) + resource.resource.body.len() <= MAX_DOCUMENT_BYTES => {
                 entry.nvs = nvs;
                 entry.state = State::Ready(resource);
                 self.prefetches.entries.insert(at.min(self.prefetches.entries.len()), entry);
             }
-            (None, None) => {}
+            // Nothing usable, or over the document's budget.
+            (None, _) => {}
         }
     }
 
