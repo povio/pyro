@@ -429,7 +429,11 @@
     // The native bridge owns the charge until construction succeeds.
     const bitmap = limits.canvasSnapshot(source);
     try {
-      if (init.timestamp === undefined) throw new TypeError('A timestamp is required for a bitmap source.');
+      // An HTMLVideoElement's own position is the default timestamp (microseconds); no other source has one.
+      if (init.timestamp === undefined) {
+        if (!isVideoElement(source)) throw new TypeError('A timestamp is required for a bitmap source.');
+        init.timestamp = to64(videoTime.call(source) * 1e6, true);
+      }
       const {width, height} = bitmap;
       const format = bitmap.opaque || init.alpha === 'discard' ? 'RGBX' : 'RGBA';
       const colorSpace = bitmap.colorSpace === 'display-p3' ? {
@@ -450,6 +454,18 @@
     }
   }
 
+  // Brand checks through the intrinsic getters: they also accept another realm's element.
+  const videoTime = typeof HTMLMediaElement === 'function' ? Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')?.get : undefined;
+  const videoBrand = typeof HTMLVideoElement === 'function' ? Object.getOwnPropertyDescriptor(HTMLVideoElement.prototype, 'videoWidth')?.get : undefined;
+  function isVideoElement(o) {
+    if (!videoBrand || !videoTime) return false;
+    try {
+      videoBrand.call(o);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   const decoderOwned = Symbol('decoder-owned frame bytes');
   class VideoFrame {
     constructor(source, init = {}, privateToken) {
@@ -459,6 +475,7 @@
         return;
       }
       let s;
+      let cropped_ = false;
       if (frames.has(source)) {
         s = { ...requireLive(source) };
         if (init.alpha !== undefined && enumValue(init.alpha, ['keep', 'discard']) === 'discard') {
@@ -478,19 +495,37 @@
         const rect = { x: 0, y: 0, width, height };
         // Only decodedImage receives an exclusive, tightly packed native
         // snapshot. Public buffer constructors always take their own copy.
-        const data = privateToken === decoderOwned ? bytes : new U8(output.size);
+        let data = privateToken === decoderOwned ? bytes : new U8(output.size);
         if (privateToken !== decoderOwned)
           copyPlanes({ format, layout: input.layout, data: bytes }, rect, data, output.layout);
+        // Chrome crops a buffer's frame to init.visibleRect when it is made: the frame's coded size is the
+        // visible size and the planes are the cropped region (a decoder's own frames keep their coded size).
+        let cw = width,
+          ch = height,
+          layout = output.layout;
+        if (privateToken !== decoderOwned && init.visibleRect !== undefined) {
+          const crop = rectOf(dictionary(init.visibleRect), width, height, format);
+          if (crop.x || crop.y || crop.width !== width || crop.height !== height) {
+            const tight = layoutOf(format, crop.width, crop.height);
+            const cropped = new U8(tight.size);
+            copyPlanes({ format, layout: output.layout, data }, crop, cropped, tight.layout);
+            data = cropped;
+            layout = tight.layout;
+            cw = crop.width;
+            ch = crop.height;
+            cropped_ = true;
+          }
+        }
         s = {
           data,
           imageLease: null,
           format,
-          width,
-          height,
-          layout: output.layout,
-          rect,
-          displayW: width,
-          displayH: height,
+          width: cw,
+          height: ch,
+          layout,
+          rect: { x: 0, y: 0, width: cw, height: ch },
+          displayW: cw,
+          displayH: ch,
           rotation: 0,
           flip: false,
           timestamp: integer(init.timestamp, Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
@@ -504,7 +539,8 @@
       } else if (init.duration !== undefined) {
         s.duration = integer(init.duration, 0, Number.MAX_SAFE_INTEGER);
       }
-      applyGeometry(s, init);
+      // A buffer frame cropped above has its visibleRect applied already.
+      applyGeometry(s, cropped_ ? { __proto__: init, visibleRect: undefined } : init);
       if (init.displayWidth !== undefined && s.rotation % 180) {
         [s.displayW, s.displayH] = [s.displayH, s.displayW];
       }

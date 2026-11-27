@@ -960,7 +960,11 @@ fn bitmap_triple<'s>(s: &Scope<'s>, handle: ImageHandle) -> JsResult<Value<'s>> 
 fn is_frame_canvas_source(s: &Scope<'_>, value: Value<'_>) -> JsResult<bool> {
     if let Some(node) = s.unwrap::<crate::node::Node>(value) {
         let dom = node.page().dom.borrow();
-        return Ok(dom.element(node.id).is_ok_and(|e| e.is_html() && &*e.name.local == "canvas"));
+        // Image sources whose pixels `image_source` reads: a canvas, an <img>, a <video> (its current frame)
+        // and an SVG <image>.
+        return Ok(dom.element(node.id).is_ok_and(|e| {
+            (e.is_html() && matches!(&*e.name.local, "canvas" | "img" | "video")) || (!e.is_html() && &*e.name.local == "image")
+        }));
     }
     let Some(realm) = value.as_object().and_then(|o| s.object_realm(o)) else { return Ok(false) };
     let home = realm.scope()?;
