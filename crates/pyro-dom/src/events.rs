@@ -725,10 +725,14 @@ pub fn dispatch_on_path(
             // UI Events permits a trusted wheel input to be non-cancelable
             // when no non-passive wheel listener is on its dispatch path.
             // A legacy mousewheel listener can also cancel the default scroll.
-            if ev.is_trusted && ev.cancelable && &*ev.ty == "wheel" {
+            // Chrome applies the same rule to touchstart/touchmove: with only
+            // passive listeners on the path the touch event is non-cancelable.
+            if ev.is_trusted && ev.cancelable && matches!(&*ev.ty, "wheel" | "touchstart" | "touchmove") {
+                let ty = ev.ty.clone();
+                let wheel = &*ty == "wheel";
                 ev.cancelable = items.iter().any(|item| {
                     d.events.map.get(&item.invocation_target).is_some_and(|listeners| {
-                        listeners.iter().any(|l| !l.passive && matches!(&*l.ty, "wheel" | "mousewheel"))
+                        listeners.iter().any(|l| !l.passive && if wheel { matches!(&*l.ty, "wheel" | "mousewheel") } else { l.ty == ty })
                     })
                 });
             }
