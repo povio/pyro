@@ -220,6 +220,9 @@ pub struct Resource {
     /// context, and only by the first document of its origin in the browsing
     /// context group ([`crate::frames::FrameHost::record_origin_keying`]).
     pub origin_agent_cluster: bool,
+    /// A document's response carries `Document-Policy: force-load-at-top`: no scroll to the fragment
+    /// or text directive on load.
+    pub force_load_at_top: bool,
     /// A document's `Cross-Origin-Embedder-Policy` (HTML § 7.1.4 "obtain an embedder policy"):
     /// `unsafe-none` for other kinds and for a local-scheme document, which inherits its creator's
     /// ([`pyro_webapi::csp::InheritedCsp::embedder_policy`]).
