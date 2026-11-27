@@ -316,7 +316,8 @@ pub fn style_element_allowed(page: &Rc<PageDom>, el: NodeId) -> bool {
         text
     };
     let nonce = element_nonce(page, el);
-    let allowed = inline_allowed(page, InlineKind::Style, &nonce, &text, Some(el));
+    let location = parser_location(page, el);
+    let allowed = inline_allowed_in_at(page, policy_list(page).as_deref(), InlineKind::Style, &nonce, &text, Some(el), location.as_ref());
     page.dom.borrow_mut().set_style_element_blocked(el, !allowed);
     allowed
 }
@@ -439,6 +440,14 @@ impl SourceLocation {
         violation.line = self.line;
         violation.column = self.column;
     }
+}
+
+/// Where the inline text of the parser-created `<script>` or `<style>` `node` of `page`'s document
+/// is: where its start tag ends (Chrome locates an inline violation there). `None` for an element
+/// no parser made (its violation is located by the script that made it, when one runs).
+pub fn parser_location(page: &Rc<PageDom>, node: NodeId) -> Option<SourceLocation> {
+    let (line, column) = page.dom.borrow().parser_start_position(node)?;
+    Some(SourceLocation { source_file: strip_source_file(&page.document_url()), line, column })
 }
 
 /// Sets the location of each of `violations` (fresh from a check, without one).

@@ -733,6 +733,26 @@ impl Dom {
         })
     }
 
+    /// The 1-based line and column just after the start tag of a `<script>` or `<style>` the
+    /// document's parser created (where a CSP violation of its inline text is located); `None` for
+    /// any other element. The tokenizer tracks lines only: the column is the length of the tag
+    /// as written when it is `<name attr="value" ...>` on one line (an approximation otherwise).
+    pub fn parser_start_position(&self, el: NodeId) -> Option<(u32, u32)> {
+        let e = self.element(el).ok()?;
+        if e.script_start_line == 0 {
+            return None;
+        }
+        // `<`, the name, `>`, and one more: the column after the tag.
+        let mut width = 3 + e.name.local.chars().count();
+        for a in &e.attrs {
+            width += 1 + a.qualified_name().chars().count();
+            if !a.value.is_empty() {
+                width += 3 + a.value.chars().count();
+            }
+        }
+        Some((e.script_start_line, u32::try_from(width).unwrap_or(u32::MAX)))
+    }
+
     /// Sets the script's "already started" flag (prepare step 1).
     pub fn mark_script_started(&mut self, script: NodeId) -> DomResult<()> {
         let i = self.check(script)?;

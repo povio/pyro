@@ -3221,7 +3221,10 @@ impl Browser {
         let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return true };
         let kind = pyro_webapi::csp::InlineKind::Script;
         let nonce = nonce.map_or_else(|| pyro_webapi::csp::element_nonce(&bindings, info.node), str::to_owned);
-        pyro_webapi::csp::inline_allowed(&bindings, kind, &nonce, &info.inline_text, Some(info.node))
+        // A parser-created inline script is located at its start tag's end (no script runs then).
+        let location = if info.parser_inserted { pyro_webapi::csp::parser_location(&bindings, info.node) } else { None };
+        let list = pyro_webapi::csp::policy_list(&bindings);
+        pyro_webapi::csp::inline_allowed_in_at(&bindings, list.as_deref(), kind, &nonce, &info.inline_text, Some(info.node), location.as_ref())
     }
 
     /// [`Browser::inline_script_allowed`] for an inline script the parser did not insert

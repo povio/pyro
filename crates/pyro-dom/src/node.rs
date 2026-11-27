@@ -405,8 +405,8 @@ pub struct ElementData {
     /// script (`createElement`, cloning), false for one a parser created.
     /// Meaningless for other elements.
     pub(crate) script_force_async: bool,
-    /// A `<script>` the document's parser created: the source line of its start tag's end (its
-    /// inline text's first line, 1-based); 0 for any other element or script.
+    /// A `<script>` or `<style>` the document's parser created: the source line of its start tag's
+    /// end (its inline text's first line, 1-based); 0 for any other element or script.
     pub(crate) script_start_line: u32,
     pub name: QualName,
     /// Read freely; written only through the methods that keep `id` and

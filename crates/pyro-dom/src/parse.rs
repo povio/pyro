@@ -688,8 +688,9 @@ impl<A: DomAccess> Sink<A> {
         if self.elem_flags & element_flags::FRAGMENT_PARSED == 0 {
             el.script_force_async = false;
             // The line of the start tag's end, where its inline text starts: the line its classic
-            // script is evaluated from (as Chrome numbers inline script lines in the document).
-            if el.name.local == local_name!("script") {
+            // script is evaluated from (as Chrome numbers inline script lines in the document),
+            // and where a CSP violation of its inline `<script>` or `<style>` is located.
+            if el.name.local == local_name!("script") || el.name.local == local_name!("style") {
                 el.script_start_line = u32::try_from(self.current_line.get()).unwrap_or(u32::MAX);
             }
         }
