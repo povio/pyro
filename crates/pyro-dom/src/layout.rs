@@ -5046,6 +5046,54 @@ impl Layout {
 
     /// `scrollIntoView` keeps the existing vertical start alignment for the
     /// viewport, after revealing clipped overflow ancestors inside-out.
+    /// pyro: the activation of a `::scroll-marker` scrolls the scroll container holding its target
+    /// (not the container's own ancestors, nor the viewport past it) to bring the target's scroll
+    /// snap area to its `scroll-snap-align` position, `start` where it has none (CSS Overflow 5
+    /// § 3.2; WPT css-overflow `scroll-marker-activation-scroll`, `-default-direction-position`,
+    /// `-specified-direction-position`). A target in the viewport scrolls it as `scrollIntoView`.
+    fn scroll_marker_target_into_view(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        if self.in_hidden_contents(dom, el) {
+            return Vec::new();
+        }
+        self.force_content_visibility(dom, el);
+        if !self.is_visible(dom, el) {
+            return Vec::new();
+        }
+        let mut cur = flat_parent_element(dom, el);
+        while let Some(node) = cur {
+            if self.is_root_container(dom, node) || self.is_scroll_container(dom, node) {
+                break;
+            }
+            cur = flat_parent_element(dom, node);
+        }
+        let Some(node) = cur.filter(|&node| !self.is_root_container(dom, node)) else {
+            return self.scroll_into_view_targets(dom, el);
+        };
+        let mode = self.style.stylo_style(dom, node).map_or_else(style::logical_geometry::WritingMode::horizontal_tb, |style| style.writing_mode);
+        let align = self.style.computed_value(dom, el, "scroll-snap-align").unwrap_or_default();
+        let [align_x, align_y] = snap_alignment(&align, mode);
+        let pick = |keyword: &str| -> ScrollOffsetFn {
+            match keyword {
+                "center" => ScrollAlign::Center,
+                "end" => ScrollAlign::End,
+                _ => ScrollAlign::Start,
+            }
+            .offset_fn()
+        };
+        let target = self.scroll_margin_rect(dom, el);
+        let (x, width, y, height) = self.rect_in_scrollport(dom, node, target);
+        let (port_width, port_height) = (self.client_width(dom, node), self.client_height(dom, node));
+        let alignment = RevealAlignment::Logical { block: ScrollAlign::Start, inline: ScrollAlign::Start };
+        let [pl, pt, pr, pb] = self.reveal_scroll_padding(dom, alignment, Some(node), port_width, port_height);
+        let left = pick(align_x)(x - pl, width, (port_width - pl - pr).max(0.0), self.scroll_left(node) as i64);
+        let top = pick(align_y)(y - pt, height, (port_height - pt - pb).max(0.0), self.scroll_top(node) as i64);
+        if self.element_scroll_to(dom, node, left, top) {
+            vec![ScrollTarget::Container(node)]
+        } else {
+            Vec::new()
+        }
+    }
+
     /// pyro: a click's default action on a `::scroll-marker` at the client point: scrolls to its
     /// target (CSS Overflow 5 § 3.2). A column's container scrolls the column into its
     /// scrollport as its `::column`'s `scroll-snap-align` aligns it (start without one); an
@@ -5057,7 +5105,7 @@ impl Layout {
         let Some((key, column)) = source.scroll_marker_at(doc_point.0, doc_point.1) else { return Vec::new() };
         let Some(target) = crate::geometry::node_of(dom, key) else { return Vec::new() };
         let Some(index) = column else {
-            return self.scroll_into_view_targets(dom, target);
+            return self.scroll_marker_target_into_view(dom, target);
         };
         let Some(&[cx, _cy, cw, _ch]) = source.column_boxes(key).get(index as usize) else { return Vec::new() };
         let value = |name: &str| self.style.computed_value(dom, target, name).unwrap_or_default();
