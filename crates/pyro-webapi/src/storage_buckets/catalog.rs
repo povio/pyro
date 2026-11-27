@@ -274,6 +274,11 @@ fn validate_name(name: &str) -> Result<(), Error> {
 pub(crate) struct Catalog(Arc<Mutex<FxHashMap<StorageKey, Shelf>>>);
 
 impl Catalog {
+    /// Whether `lease` belongs to a bucket of this catalog (a storage partition's), not another's.
+    pub(crate) fn holds(&self, lease: &Lease) -> bool {
+        lock(&self.0).values().any(|shelf| Arc::ptr_eq(&shelf.ledger, &lease.ledger))
+    }
+
     pub(crate) fn open(&self, key: &StorageKey, name: &str, options: Options) -> Result<Arc<Bucket>, Error> {
         validate_name(name)?;
         let now = now_ms();

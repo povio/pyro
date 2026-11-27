@@ -132,6 +132,15 @@ pub(crate) fn clone_handle<'s>(s: &Scope<'s>, handle: &Handle) -> JsResult<Value
     if !crate::secure_context::secure(s, &page) || receiver.as_deref() != Some(handle.origin()) {
         return Err(JsError::dom("DataCloneError", "The file system handle cannot be cloned into this context."));
     }
+    // The same storage partition too: a credentialless frame's file system is not the normal one's, though
+    // their origins are equal.
+    let (namespace, buckets) = {
+        let storage = page.local_storage.borrow();
+        (storage.opfs(), storage.buckets())
+    };
+    if !handle.in_partition(&namespace, &buckets) {
+        return Err(JsError::dom("DataCloneError", "The file system handle cannot be cloned into this context."));
+    }
     let dedicated = s.global_data::<crate::worker_scope::DedicatedWorkerGlobalScope>().is_some();
     let wrap = module(s, &page, dedicated)?.get_atom("wrapEntry")?.as_object().ok_or_else(invalid_handle)?;
     let entry = wrap_entry(s, handle.clone())?;

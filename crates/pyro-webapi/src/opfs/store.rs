@@ -298,6 +298,16 @@ impl Handle {
         &self.origin
     }
 
+    /// Whether this handle's file system is the one `namespace` (a default-bucket handle) or one of
+    /// `buckets`' (a named bucket's) of the receiving context holds: a storage namespace is a storage
+    /// partition (a credentialless frame tree has its own), and a handle never crosses it.
+    pub(crate) fn in_partition(&self, namespace: &Namespace, buckets: &crate::storage_buckets::catalog::Catalog) -> bool {
+        match lock(&self.tree).bucket.clone() {
+            Some(lease) => buckets.holds(&lease),
+            None => lock(&namespace.origins).get(&*self.origin).is_some_and(|tree| Arc::ptr_eq(tree, &self.tree)),
+        }
+    }
+
     pub(crate) fn kind(&self) -> Kind {
         self.kind
     }
