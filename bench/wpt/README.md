@@ -93,7 +93,7 @@ element: `.any.js` and `.window.js` files (their window variant) and markup file
 | **all** | **3,541** | 351 | 46 | 235 | 2 |
 
 Left out, counted by reason in the run's `excluded`: pages that load testdriver, names that need wptserve
-(`.sub.`, `.https.`, `.h2.`, `.www.`), pages that name a Python handler (`.py`) outside an HTML comment, and
+(`.sub.`, `.https.`, `.h2.`, `.www.`; under wptserve they all run), pages that name a Python handler (`.py`) outside an HTML comment, and
 `.any.js` files with no window global. Worker variants never run. A `.py` in a comment does not count (html/canvas's
 generated pages name their generator there). Generated pages that name no handler themselves but need wptserve are
 kept out by path: `referrer-policy/`, `content-security-policy/` and anything loading
@@ -483,8 +483,7 @@ table of empty cells paints nothing).
 
 Left out, counted by reason in the run's `excluded`: reference files (named or linked as one, no links of their own),
 markup with no reference (CSS2's visual tests, support pages), crash tests, manual tests (by name, or by CSS flags
-such as `interact`), print reftests, and pages whose page or references are named `.h2.` (none at the pinned
-revision: wptserve runs without HTTP/2). The gate serves them with wptserve and testdriver; with `--server static`
+such as `interact`), print reftests. The gate serves them with wptserve and testdriver; with `--server static`
 also the pages whose page or references need what `serve.mjs` lacks (`.sub` substitutions, `pipe=`, Python
 handlers; 78 at the pinned revision) and testdriver (9). Testharness pages in these directories are not reftests: the testharness run takes
 them ([What runs](#what-runs)). A reference that has references of its own (155 tests) is compared one level deep, as
@@ -672,7 +671,7 @@ restart: testharness 487 of 492 completed (5 timeouts, 285 s wall, 1.06 s per pa
 
 `run.mjs --server wptserve` (and `gate.mjs run --server wptserve`) serves the pages with WPT's own server instead of
 `serve.mjs` (`wptserve.mjs`): every origin a test names (`web-platform.test`, `www`/`www1`/`www2` and the IDN
-subdomains, `not-web-platform.test`; http, https with WPT's test certificates, ws, wss; no h2), the Python handlers,
+subdomains, `not-web-platform.test`; http, https with WPT's test certificates, ws, wss, and HTTP/2 with ALPN `h2` on its own port, RFC 8441 websockets included), the Python handlers,
 substitutions and all pipes. Discovery then keeps the pages that need them: at a421f2fe testharness 23,077 -> 31,590
 pages, reftests 27,802 -> 28,219, crashtests 2,031 -> 2,076 (with `--dirs all`). Testdriver pages stay out.
 
@@ -740,9 +739,11 @@ What keeps a broken server from passing pages (`wptserve.test.mjs`):
 - Reference renders are cached per full URL (origin included): an http and an https test with the same reference
   do not share a screenshot.
 
-h2: no reftest or crashtest is named `.h2.` at the pinned revision; one that appears is left out, counted under
-`needs HTTP/2 (wptserve runs with --no-h2)`. Serving it would need wptserve's HTTP/2 server (`h2` ports, ALPN over
-TLS, the `h2`/`hpack`/`hyperframe` libraries, which `wpt-paths.txt` already has) and HTTP/2 in pyro's network stack.
+h2: wptserve runs its HTTP/2 server (one `h2` port, TLS with ALPN `h2`, the vendored `h2`/`hpack`/`hyperframe`
+libraries, which `wpt-paths.txt` has). `run.mjs` loads a page named `.h2.` or with `?wpt_flags=h2` from
+`https://web-platform.test:<h2 port>` (wptrunner's rule, tools/manifest/item.py) and one with `?wpt_flags=https` from the
+https port; the forward proxy tunnels the TLS bytes, so ALPN `h2` reaches pyro. Baseline names print the h2 port as 9000
+(wptrunner's default). Under `--server static` a `.h2.` page is left out with the other names that need wptserve.
 
 ## Whole suite
 
@@ -858,7 +859,7 @@ from `serve.mjs`'s request log over a run of all of them, and from the URLs thei
 checkout (180 MB with its git directory), which is why all of them run rather than the 226.
 
 All 2,105 run, served by wptserve with testdriver (2,031 until 2026-11-19, under `serve.mjs`). Left out, counted by
-reason in the run's `excluded`: names with `.h2.` (none at the pinned revision; wptserve runs without HTTP/2). With
+reason in the run's `excluded`: nothing for h2 (wptserve serves HTTP/2). With
 `--server static` also 45 whose names need wptserve (`.sub`, `.https`, `.www`), 27 that load testdriver and 2 that
 name a Python handler or `pipe=`. A page's results are counted
 under its area (`css/css-multicol`, `html/semantics`, `dom`): the largest are css-multicol 164, editing 151,

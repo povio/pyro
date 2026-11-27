@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
+import http2 from 'node:http2';
 import path from 'node:path';
 import { documentError } from './lib.mjs';
 import { refKey } from './reftest.mjs';
@@ -63,6 +64,31 @@ test.skipIf(!HAS_WPT)('wptserve: a port another listener holds is not taken for 
       expect(await ws.alive()).toBe(false);
     } finally { ws.stop(); }
   } finally { foreign.close(); }
+}, 120000);
+
+// wptserve serves HTTP/2 on its h2 port (RFC 8441 websockets, `.h2.` pages): TLS with ALPN h2, and the substituted
+// `{{ports[h2][0]}}` is that port.
+test.skipIf(!HAS_WPT)('wptserve: the h2 port speaks HTTP/2 and is the port pages are told', async () => {
+  const ws = await startWptserve(WPT, { log: quiet });
+  try {
+    expect(await ws.alive()).toBe(true);
+    const session = http2.connect(`https://127.0.0.1:${ws.ports.h2}`, { rejectUnauthorized: false, servername: 'web-platform.test' });
+    try {
+      const body = await new Promise((resolve, reject) => {
+        session.on('error', reject);
+        const req = session.request({ ':path': '/infrastructure/server/wpt-server-wpt-flags.sub.html?wpt_flags=h2', ':authority': `web-platform.test:${ws.ports.h2}` });
+        let status = 0, text = '';
+        req.setEncoding('utf8');
+        req.on('response', (h) => { status = h[':status']; });
+        req.on('data', (d) => { text += d; });
+        req.on('end', () => resolve({ status, text }));
+        req.on('error', reject);
+      });
+      expect(session.alpnProtocol).toBe('h2');
+      expect(body.status).toBe(200);
+      expect(body.text).toContain(String(ws.ports.h2));
+    } finally { session.close(); }
+  } finally { ws.stop(); }
 }, 120000);
 
 // A page discovery keeps, served by a server that answers every request with an empty 502 (what the proxy answers

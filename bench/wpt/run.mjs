@@ -140,11 +140,13 @@ if (!BASE && WPTSERVE) {
 }
 
 // The origin a page loads from, as wptrunner picks it from the file name under wptserve: `.https.` (and
-// `.serviceworker.`) pages over https, `.www.` pages from the www subdomain. h2 is not served (wptserve --no-h2).
+// `.serviceworker.`) pages over https, `.www.` pages from the www subdomain. `.h2.` names and `?wpt_flags=h2` from wptserve's HTTP/2 server (the h2 port, https); `?wpt_flags=https` over https.
 function baseFor(url) {
   if (!wptserve) return BASE;
   const name = url.replace(/[?#].*$/, '').split('/').pop();
-  const https = /\.(https|serviceworker)\./.test(name);
+  // wptrunner's rule (tools/manifest/item.py): the flags are the dot-parts of the name and the `wpt_flags` query values.
+  if (/\.h2\./.test(name) || /[?&]wpt_flags=h2(&|#|$)/.test(url)) return `https://${BROWSER_HOST}:${wptserve.ports.h2}`;
+  const https = /\.(https|serviceworker)\./.test(name) || /[?&]wpt_flags=https(&|#|$)/.test(url);
   const host = /\.www\./.test(name) ? `www.${BROWSER_HOST}` : BROWSER_HOST;
   return https ? `https://${host}:${wptserve.ports.https}` : `http://${host}:${wptserve.ports.http}`;
 }
@@ -319,7 +321,7 @@ async function resetSlot(slot) {
 // server's origin, whose port differs from run to run: named by wptserve's origin instead, so the name is the same
 // in every run (the baseline keys passes by name).
 // Under wptserve every port is free-picked: each is named by wptserve's default for it.
-const PORT_NAMES = wptserve ? [[wptserve.ports.http, 8000], [wptserve.ports.http2, 8001], [wptserve.ports.https, 8443], [wptserve.ports.https2, 8444], [wptserve.ports.ws, 8888], [wptserve.ports.wss, 8889]] : [];
+const PORT_NAMES = wptserve ? [[wptserve.ports.http, 8000], [wptserve.ports.http2, 8001], [wptserve.ports.https, 8443], [wptserve.ports.https2, 8444], [wptserve.ports.ws, 8888], [wptserve.ports.wss, 8889], [wptserve.ports.h2, 9000]] : [];
 const stableName = (s) => PORT_NAMES.reduce((x, [from, to]) => x.replaceAll(`:${from}`, `:${to}`), s.replaceAll(BASE, 'http://web-platform.test:8000'));
 const LINE = /^(.*?)\|(Pass|Fail|Timeout|Not Run|Optional Feature Unsupported)(?:\|(.*))?$/s;
 function parse(log) {

@@ -68,7 +68,7 @@ function fetchLocal(port, host, pathname, { tls = false, timeout = 5000 } = {}) 
   });
 }
 
-const PORT_NAMES = ['http', 'http2', 'https', 'https2', 'httpLocal', 'httpPublic', 'httpsLocal', 'httpsPublic', 'ws', 'wss'];
+const PORT_NAMES = ['http', 'http2', 'https', 'https2', 'httpLocal', 'httpPublic', 'httpsLocal', 'httpsPublic', 'ws', 'wss', 'h2'];
 
 // Starts wptserve on free ports. Resolves { ports, base, stop, alive, onExit, logFile } once it is serving: its
 // http and https servers answer this run's token (a file only this run's config aliases, so a listener of another
@@ -104,10 +104,9 @@ async function startOnce(wpt, ports, log) {
       http: [ports.http, ports.http2], https: [ports.https, ports.https2],
       'http-local': [ports.httpLocal], 'http-public': [ports.httpPublic],
       'https-local': [ports.httpsLocal], 'https-public': [ports.httpsPublic],
-      // h2 is not started (--no-h2), but `{{ports[h2][0]}}` must substitute: websockets/constants.sub.js
-      // names it, and an empty list made wptserve answer that script with a 500 (SCHEME_DOMAIN_PORT undefined
-      // in every websockets page that loads it). A free port no server listens on.
-      ws: [ports.ws], wss: [ports.wss], h2: [await freePort()], 'webtransport-h3': [], dns: [],
+      // Exactly one h2 port: wptserve starts its HTTP/2 server (TLS, ALPN h2, RFC 8441 websockets) for it, and
+      // `{{ports[h2][0]}}` (websockets/constants.sub.js) substitutes to it.
+      ws: [ports.ws], wss: [ports.wss], h2: [ports.h2], 'webtransport-h3': [], dns: [],
     },
     aliases: [
       { 'url-path': '/resources/testharnessreport.js', 'local-dir': HERE },
@@ -124,7 +123,7 @@ async function startOnce(wpt, ports, log) {
   if (py === 'python3') log.write?.(`wptserve: no venv in ${wpt} and no WPT_PYTHON; using python3 (handlers that need tools/serve/requirements.txt fail: bench/wpt/fetch-wpt.sh --venv ${wpt})\n`);
   // `wpt serve` would make its own venv; the server needs only its requirements, so run serve.py's entry directly.
   const child = spawn(py, [path.join(wpt, 'wpt'), '--venv', path.dirname(path.dirname(py)), '--skip-venv-setup',
-    'serve', '--no-h2', '--config', cfg], { cwd: wpt, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    'serve', '--config', cfg], { cwd: wpt, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   const out = fs.createWriteStream(path.join(dir, 'serve.log'));
   child.stdout.pipe(out); child.stderr.pipe(out);
   let exited = null, stopped = false;
