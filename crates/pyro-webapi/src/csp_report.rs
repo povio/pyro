@@ -383,6 +383,14 @@ pub(crate) fn completed(page: &PageDom, v: &Violation) -> Violation {
 /// Delivers the reports of violation `v` of the page's document to `targets` (CSP 3 "report a
 /// violation", after its event). Returns the number of requests started.
 pub fn report_violation(page: &Rc<PageDom>, v: &Violation, targets: &ReportTargets) -> usize {
+    report_violation_from(page, v, targets, None)
+}
+
+/// [`report_violation`] for a violation of a response that never became a document (a
+/// `frame-ancestors` one): `page` only supplies the network and the slots, and `origin` (the
+/// response's, `None`: the page's) is the report request's origin, so a report to the embedder's
+/// origin is cross-origin for it and carries no cookies.
+pub fn report_violation_from(page: &Rc<PageDom>, v: &Violation, targets: &ReportTargets, origin: Option<&str>) -> usize {
     if targets.group.is_none() && targets.uris.is_empty() {
         return 0;
     }
@@ -390,7 +398,11 @@ pub fn report_violation(page: &Rc<PageDom>, v: &Violation, targets: &ReportTarge
     let v = completed(page, v);
     let mut started = 0;
     for (endpoint, delivery, body) in plan(page, &v, targets) {
-        net.fetch(report_request(page, endpoint, delivery, body), Box::new(|_| {}));
+        let mut request = report_request(page, endpoint, delivery, body);
+        if let Some(origin) = origin {
+            request.origin = Some(origin.to_owned());
+        }
+        net.fetch(request, Box::new(|_| {}));
         started += 1;
     }
     started

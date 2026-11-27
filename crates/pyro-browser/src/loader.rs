@@ -2135,7 +2135,8 @@ impl Browser {
     /// that bypasses CSP has none) against the origins of every frame above it. The
     /// violations are not fired at any document: the response never becomes one, and Chrome
     /// fires no `securitypolicyviolation` at the embedder (they only go to the response
-    /// policy's `report-uri`, which is not delivered yet). `X-Frame-Options` is not checked.
+    /// policy's `report-uri` / `report-to`, sent from here, report-only ones too).
+    /// `X-Frame-Options` is not checked.
     fn frame_ancestors_block(&self, page: FrameKey, resource: &Resource) -> bool {
         if page.child.is_none() || self.page(page.page).is_some_and(|p| p.bypass_csp) {
             return false;
@@ -2157,7 +2158,14 @@ impl Browser {
             ancestors.push(if frame.origin == "null" { None } else { url::Url::parse(&frame.origin).ok() });
             next = frame.parent;
         }
-        list.frame_ancestors_check(&ancestors).blocked
+        let outcome = list.frame_ancestors_check(&ancestors);
+        if !outcome.violations.is_empty() {
+            // The frame's current document supplies the network the reports go out on.
+            if let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+                pyro_webapi::csp::report_response_violations(&bindings, &outcome.violations, &resource.url, resource.status);
+            }
+        }
+        outcome.blocked
     }
 
     /// The document request of a navigation failed on the network. A new

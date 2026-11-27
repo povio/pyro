@@ -591,6 +591,19 @@ pub fn report(page: &Rc<PageDom>, violations: Vec<Violation>, target: Option<Nod
     }
 }
 
+/// Sends the reports of `violations` found in the navigation response `response_url` (status
+/// `status`) that never became a document: no event is fired anywhere (`frame-ancestors`). `page`
+/// is the document that was in the frame, whose network sends them from the response's origin.
+pub fn report_response_violations(page: &Rc<PageDom>, violations: &[Violation], response_url: &str, status: u16) {
+    let origin = url::Url::parse(response_url).ok().map(|u| u.origin().ascii_serialization());
+    for violation in violations {
+        let (mut report, targets) = report_parts(violation);
+        report.url = response_url.to_owned();
+        report.status_code = status;
+        crate::csp_report::report_violation_from(page, &report, &targets, origin.as_deref());
+    }
+}
+
 /// What `crate::csp_report` sends for `violation`: the report's fields, and where the policy
 /// sends it. Its URL and referrer are left empty, so they come from the document. The policy
 /// parse already left a `<meta>` policy's `report-uri` out of `report_uris`.
