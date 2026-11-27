@@ -921,15 +921,26 @@ impl Browser {
         p.main_frame.page_dom.as_ref().is_none_or(|d| d.quiet_since_last_task())
     }
 
-    /// Paint Timing without a renderer: a document has its first paint at
-    /// the first safe point at which it has a body and is not render-blocked
-    /// (HTML: a render-blocked document has no rendering opportunity).
+    /// Paint Timing: with the paint module (`pyro_webapi::perf::paint`) the entries are reported
+    /// from rendering updates, so here the document only asks for one while it still has no
+    /// `first-contentful-paint` (after each task that changed something: a page with no
+    /// `requestAnimationFrame` and no observer gets its frame too, and a document that sits still
+    /// asks for nothing). Without the module the first safe point with a body and no render block
+    /// is the first paint (HTML: a render-blocked document has no rendering opportunity).
     fn note_first_paint(&mut self, key: frames::FrameKey) {
-        // The paint module reports the paint entries from frames instead.
+        let Some(state) = self.doc(key) else { return };
         if pyro_webapi::perf::paint::ENABLED {
+            let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+            drop(state);
+            if pyro_webapi::perf::paint::wants_frame(&bindings) && !bindings.is_disposed() {
+                let has_body =
+                    bindings.dom.try_borrow().is_ok_and(|dom| dom.body(bindings.document()).ok().flatten().is_some());
+                if has_body {
+                    pyro_webapi::perf::timeline::request_rendering(&bindings);
+                }
+            }
             return;
         }
-        let Some(state) = self.doc(key) else { return };
         if state.nav.first_paint().is_some() {
             return;
         }
