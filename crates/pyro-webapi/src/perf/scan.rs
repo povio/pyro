@@ -363,21 +363,26 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
             }
             Found::Background(el) => {
                 let value = layout.computed_style_value(&dom, el, "background-image");
-                let Some(url) = first_url(&value) else { continue };
-                if !visible_el(el) {
-                    continue;
+                // An element whose `content` is an image is a replaced element showing it (an `img` with
+                // `content: url()`): a contentful image of its own, whatever its background.
+                let content = layout.computed_style_value(&dom, el, "content");
+                for (url, kind) in [(first_url(&value), Kind::BackgroundImage), (first_url(&content), Kind::Image)] {
+                    let Some(url) = url else { continue };
+                    if !visible_el(el) {
+                        continue;
+                    }
+                    let url = crate::html::resolve_url(&dom, el, &url);
+                    let load_time = if url.starts_with("data:") { Some(0.0) } else { finished.get(&url).copied() };
+                    if load_time.is_none() {
+                        waiting |= !failed.contains(&url);
+                        continue;
+                    }
+                    // The root element's background (the body's when the root has none) is the canvas
+                    // background: it paints the whole viewport, whatever size the element has.
+                    let border_box = if kind == Kind::BackgroundImage && paints_canvas(&dom, &layout, el) { view } else { layout.bounding_client_rect(&dom, el) };
+                    let Some(visible) = visible_rect(&dom, &layout, el, border_box, view) else { continue };
+                    candidates.push(Candidate { node: el, kind, url: Some(url), natural: None, border_box, visible, area: visible.width * visible.height, load_time, first_painted: 0.0 });
                 }
-                let url = crate::html::resolve_url(&dom, el, &url);
-                let load_time = if url.starts_with("data:") { Some(0.0) } else { finished.get(&url).copied() };
-                if load_time.is_none() {
-                    waiting |= !failed.contains(&url);
-                    continue;
-                }
-                // The root element's background (the body's when the root has none) is the canvas
-                // background: it paints the whole viewport, whatever size the element has.
-                let border_box = if paints_canvas(&dom, &layout, el) { view } else { layout.bounding_client_rect(&dom, el) };
-                let Some(visible) = visible_rect(&dom, &layout, el, border_box, view) else { continue };
-                candidates.push(Candidate { node: el, kind: Kind::BackgroundImage, url: Some(url), natural: None, border_box, visible, area: visible.width * visible.height, load_time, first_painted: 0.0 });
             }
             Found::Svg(el) => {
                 if !visible_el(el) || !has_painted_shape(&dom, el) {

@@ -1561,7 +1561,7 @@ impl Browser {
         options: SubresourceOptions,
         done: Box<dyn FnOnce(Result<pyro_dom::layout::LayoutBody, String>) + Send>,
     ) {
-        let (request, origin) = {
+        let (mut request, origin) = {
             let Some(state) = self.doc(frame) else { return };
             if state.main_frame.loader_id != *loader {
                 return;
@@ -1571,6 +1571,9 @@ impl Browser {
                 state.main_frame.origin.clone(),
             )
         };
+        // Resource Timing: what a style sheet's `url()` or `@import` fetches has an entry, initiator
+        // type "css" (Paint Timing's contentful paint of a CSS image reads it to know the image arrived).
+        request.initiator = Some(pyro_webapi::resource_timing::Initiator::Css);
         let cors = options.crossorigin.is_some();
         if kind == ResourceKind::Image && options.integrity.is_none() {
             let shape = speculate::Shape::of(self, &request).expect("whole image");
