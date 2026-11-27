@@ -59,7 +59,24 @@
 //! update (layout is final from there), `presented` the time at the end of
 //! the rendering update ("presentation": nothing is rasterized, the end of
 //! Pyro's own update is the definition). `start <= paint_time <= presented`.
-//! `TaskInfo`: `start` / `end` of the task in the document clock.
+//! `TaskInfo`: `start` / `end` of the task in the document clock, `depth`
+//! and `nested_ms` (below).
+//!
+//! # Nested event loops
+//!
+//! `task_finished` is also called for a task a nested event loop runs inside
+//! another task (a task that calls into `run_until`/`run_one`, e.g. a spin of
+//! the event loop while a sync request or `alert` waits): its `depth` is > 1
+//! and its span lies inside the outer task's, which is reported after it with
+//! `nested_ms` = what the nested tasks took. What the modules do:
+//! - `longtask`: ignore `task.is_nested()` tasks (a nested task is not a task of
+//!   the document's event loop: "spin the event loop is not a long task",
+//!   `spin-eventloop-not-longtask`); for the outer one use `end - start` (the
+//!   document did not respond for all of it, `longtask-sync-xhr`).
+//! - `loaf`: same, and attribute script time with `own_duration()` (the
+//!   nested tasks' scripts are counted by themselves or not at all) so
+//!   `blockingDuration` and the frame's `duration` do not count a span twice.
+//! Both calls come in finish order: nested ones first.
 //!
 //! # Last user input
 //!
@@ -138,6 +155,52 @@ pub struct FrameInfo {
 pub struct TaskInfo {
     pub start: f64,
     pub end: f64,
+    /// 1 for an ordinary task, more for a task run inside another task by a
+    /// nested event loop (`pyro_runtime::task_depth`). A nested task's
+    /// span lies inside its outer task's.
+    pub depth: u32,
+    /// Milliseconds the tasks run inside this one by nested event loops took
+    /// (their own `depth > 1` calls came before this one); 0 for a task that
+    /// spun no loop.
+    pub nested_ms: f64,
+}
+
+impl TaskInfo {
+    /// Whether the task ran inside another one's nested event loop.
+    pub fn is_nested(&self) -> bool {
+        self.depth > 1
+    }
+
+    /// `end - start` less the time of the tasks nested in it: what the task's
+    /// own code ran.
+    pub fn own_duration(&self) -> f64 {
+        (self.end - self.start - self.nested_ms).max(0.0)
+    }
+}
+
+thread_local! {
+    /// Per task depth (index 0 = depth 1): milliseconds finished tasks one depth
+    /// deeper took since a task of this depth last finished.
+    static NESTED_MS: std::cell::RefCell<Vec<f64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Accounts a finished task of `depth` (`pyro_runtime::task_depth`, 1 = outermost) that took
+/// `duration` ms, once per task before its documents are told: returns the ms
+/// the tasks nested in it took ([`TaskInfo::nested_ms`]) and adds its own
+/// duration to its outer task's. No allocation after the first deep task.
+pub fn task_accounted(depth: u32, duration: f64) -> f64 {
+    let depth = depth.max(1) as usize;
+    NESTED_MS.with(|nested| {
+        let mut nested = nested.borrow_mut();
+        if nested.len() < depth {
+            nested.resize(depth, 0.0);
+        }
+        let inside = std::mem::take(&mut nested[depth - 1]);
+        if depth > 1 {
+            nested[depth - 2] += duration;
+        }
+        inside
+    })
 }
 
 /// Entry types every window has (User Timing, Resource Timing, Navigation

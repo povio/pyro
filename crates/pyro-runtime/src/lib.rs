@@ -2410,6 +2410,16 @@ pub fn task_seq() -> Option<u64> {
     (TASK_DEPTH.with(Cell::get) > 0).then(|| TASK_SEQ.with(Cell::get))
 }
 
+/// How many tasks of this thread's loops are running now, the innermost
+/// included: 1 inside an ordinary task, more inside a task run by a nested
+/// event loop (a task that itself calls `run_until`/`run_one`, as a spin
+/// of the event loop does); 0 between tasks. Read from
+/// [`LoopState::task_finished`] (it runs before the task counts as ended),
+/// it is the depth of the task that finished.
+pub fn task_depth() -> u32 {
+    TASK_DEPTH.with(Cell::get)
+}
+
 fn next_task() {
     TASK_SEQ.with(|seq| seq.set(seq.get().wrapping_add(1)));
 }
