@@ -1006,6 +1006,7 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
 /// HTML "resource selection algorithm": the synchronous part, then a task
 /// for the rest (after "await a stable state").
 fn resource_selection(page: &Rc<PageDom>, node: NodeId) {
+    let approved = peek(page, node, |st| st.lazy_approved);
     if defer_lazy(page, node) {
         // A deferred element does not delay the load event (a previous load may have set it).
         set_delaying(page, node, false);
@@ -1017,7 +1018,18 @@ fn resource_selection(page: &Rc<PageDom>, node: NodeId) {
         st.generation
     });
     set_delaying(page, node, true);
-    queue(page, node, generation, move |page| select(page, node, generation));
+    queue(page, node, generation, move |page| {
+        // After "await a stable state" the element's `loading` is what script left it as: a
+        // `src` set before `loading=lazy` in one task is a lazy element too (WPT
+        // video-loading-lazy-below-viewport-load-event). An element the lazy load check let go
+        // is not deferred again.
+        if !approved && defer_lazy(page, node) {
+            with(page, node, |st| st.network = NETWORK_EMPTY);
+            set_delaying(page, node, false);
+            return;
+        }
+        select(page, node, generation)
+    });
 }
 
 /// HTML "will lazy load element steps" for a media element (`loading=lazy`, scripting

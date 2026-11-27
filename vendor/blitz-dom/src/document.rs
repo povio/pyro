@@ -2324,9 +2324,18 @@ impl BaseDocument {
     /// The requests (URL and request options) of those images, not only their URLs: a variant of
     /// the same URL made otherwise is another request.
     pub fn referenced_images(&self) -> Vec<(String, blitz_traits::net::FetchOptions)> {
+        self.referenced_images_with(true)
+    }
+
+    /// pyro: [`Self::referenced_images`] without those of `<img>` elements (`elements`: false),
+    /// whose loads the document's own image loader tracks (and delays `load` for unless the image
+    /// is lazy): what the document's `load` waits for on the renderer's side.
+    pub fn referenced_images_with(&self, elements: bool) -> Vec<(String, blitz_traits::net::FetchOptions)> {
         let mut out = Vec::new();
         for element in self.image_owners() {
-            out.extend(element.source_image_request.as_deref().cloned());
+            if elements || element.name.local != local_name!("img") {
+                out.extend(element.source_image_request.as_deref().cloned());
+            }
             if element.name.ns == markup5ever::ns!(svg) && matches!(&*element.name.local, "image" | "feImage" | "use") {
                 for attr in element.attrs() {
                     if &*attr.name.local == "href" && !attr.value.trim().starts_with('#') {

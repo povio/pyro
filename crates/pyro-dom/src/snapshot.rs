@@ -733,7 +733,10 @@ impl Dom {
                     let input_type = (html && local == "input").then(|| self.input_type_idx(n));
                     // The source an `<img>` selected from `srcset` or `<picture>` is its `src`
                     // to the renderer, which reads no other.
-                    let image_source = (html && local == "img").then(|| self.image_source(id)).flatten();
+                    // pyro: a lazy `<img>` whose fetch waits has no `src` there at all (the renderer
+                    // would fetch it at its first layout).
+                    let image_deferred = html && local == "img" && self.image_deferred(id);
+                    let image_source = (html && local == "img" && !image_deferred).then(|| self.image_source(id)).flatten();
                     let mut attrs: Vec<RAttr<'_>> = Vec::with_capacity(e.attrs.len() + 1);
                     for a in &e.attrs {
                         let name: &str = &a.name.local;
@@ -759,7 +762,7 @@ impl Dom {
                                 ("object", "data" | "srcdoc") | ("embed", "src" | "srcdoc") => {
                                     html && self.frame_documents.contains_key(&n)
                                 }
-                                ("img", "src") => image_source.is_some(),
+                                ("img", "src") => image_source.is_some() || image_deferred,
                                 // pyro: a script-made template's `shadowrootmode` would reparse as
                                 // a declarative shadow root of its parent in the renderer.
                                 ("template", "shadowrootmode") => html,

@@ -368,6 +368,9 @@ pub struct Dom {
     /// The source an `<img>` selected from its `srcset` or its `<picture>`'s `<source>`s (the URL
     /// as written), set by the image loader: what a render snapshot gives as the image's `src`.
     image_sources: rustc_hash::FxHashMap<NodeId, String>,
+    /// The lazy `<img>`s whose fetch waits for the lazy load check (HTML "lazy loading
+    /// attributes"): a render snapshot gives them no `src`, so the renderer does not fetch them.
+    image_deferred: rustc_hash::FxHashSet<NodeId>,
     /// Named access on the Window, per document (see `window_names`).
     pub(crate) window_names: std::cell::RefCell<rustc_hash::FxHashMap<u32, crate::window_names::WindowNames>>,
     /// Attr nodes of an element's attributes, by element slot (see `attr_node`).
@@ -469,6 +472,7 @@ impl Dom {
             natural_sizes: Default::default(),
             reported_natural_sizes: Default::default(),
             image_sources: Default::default(),
+            image_deferred: Default::default(),
             window_names: Default::default(),
             attr_nodes: Default::default(),
         }
@@ -600,6 +604,20 @@ impl Dom {
             Some(s) => self.natural_sizes.insert(el, s) != Some(s),
             None => self.natural_sizes.remove(&el).is_some(),
         };
+        if changed {
+            self.bump();
+            self.note(Change::Attr(i, 0, false));
+        }
+    }
+    /// Whether the lazy `<img>` `el` still waits for the lazy load check ([`Dom::set_image_deferred`]).
+    pub fn image_deferred(&self, el: NodeId) -> bool {
+        self.image_deferred.contains(&el)
+    }
+    /// Records that the image loader defers (or stops deferring) the fetch of `el`; a change is
+    /// journaled like an attribute change of the image.
+    pub fn set_image_deferred(&mut self, el: NodeId, deferred: bool) {
+        let Ok(i) = self.check(el) else { return };
+        let changed = if deferred { self.image_deferred.insert(el) } else { self.image_deferred.remove(&el) };
         if changed {
             self.bump();
             self.note(Change::Attr(i, 0, false));

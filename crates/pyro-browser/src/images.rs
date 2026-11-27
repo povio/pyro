@@ -498,7 +498,12 @@ impl Browser {
         };
         if deferred_now {
             // Not rendered and lazy: select now, fetch once rendered (or eager).
-            bindings.dom.borrow_mut().set_image_source(node, candidate.as_ref().map(|c| c.url.as_str()));
+            {
+                // The renderer gets no `src` meanwhile: it would fetch the image at its first layout.
+                let mut dom = bindings.dom.borrow_mut();
+                dom.set_image_source(node, candidate.as_ref().map(|c| c.url.as_str()));
+                dom.set_image_deferred(node, true);
+            }
             if let Some(mut p) = self.doc_mut(page) {
                 p.images.deferred.insert(node, candidate);
             }
@@ -508,7 +513,11 @@ impl Browser {
         let density = candidate.as_ref().map_or(1.0, |c| c.density);
         let picture_source = candidate.map(|c| c.url);
         // The renderer draws the selected source (its snapshot's `src`).
-        bindings.dom.borrow_mut().set_image_source(node, picture_source.as_deref());
+        {
+            let mut dom = bindings.dom.borrow_mut();
+            dom.set_image_deferred(node, false);
+            dom.set_image_source(node, picture_source.as_deref());
+        }
         let source = {
             let dom = bindings.dom.borrow();
             match picture_source.as_deref().or(dom.get_attribute(node, "src").ok().flatten()) {

@@ -912,8 +912,10 @@ impl GeometrySource for BlitzGeometry {
         // pyro: only image requests the document still references (as laid out last), by request
         // (URL and options), not URL: one whose only rule or element went away is not waited for,
         // though another variant of its URL remains.
+        // pyro: not an `<img>`'s own request: the document's image loader tracks those (an eager
+        // image delays `load` there, a lazy one never does, whatever the renderer's request).
         let referenced = RENDERER.with(|r| {
-            r.try_borrow().ok().and_then(|r| r.as_ref().and_then(|r| r.referenced_images(self.page)))
+            r.try_borrow().ok().and_then(|r| r.as_ref().and_then(|r| r.referenced_non_element_images(self.page)))
         });
         let requested = |key: &pyro_dom::layout::LayoutBodyKey| {
             referenced.as_ref().is_none_or(|images| {

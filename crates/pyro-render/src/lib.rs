@@ -1340,6 +1340,12 @@ impl Renderer {
         self.mirrors.get(&page).map(|m| m.doc.referenced_images())
     }
 
+    /// [`Self::referenced_images`] without the `<img>` elements' own: those the document's image
+    /// loader tracks, which a lazy one does not delay `load` for.
+    pub fn referenced_non_element_images(&self, page: u64) -> Option<Vec<(String, FetchOptions)>> {
+        self.mirrors.get(&page).map(|m| m.doc.referenced_images_with(false))
+    }
+
     /// The markup of `page`'s persistent document (tests, diagnostics).
     #[doc(hidden)]
     pub fn mirrored_html(&self, page: u64) -> Option<String> {
