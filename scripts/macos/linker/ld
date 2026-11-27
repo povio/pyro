@@ -13,12 +13,20 @@
 # loads that libLTO instead of Xcode's, which cannot read a newer LLVM's
 # bitcode (the ThinLTO JavaScriptCore archive). Last on the line: cc passes
 # Xcode's with -lto_library too, and the last one counts.
+#
+# Static JavaScriptCore (libJavaScriptCore.a on the line): the archive's
+# LowLevelInterpreter.cpp.o is one hand-written assembly blob (section
+# __TEXT,__jsc_int, subsections via symbols) with pc-relative `adr` targets
+# and fixed-stride handler tables that the assembler already resolved; Mach-O
+# arm64 has no relocation for them. rustc links with -dead_strip, which drops
+# the atoms nothing references (unused IPInt handlers, vmEntryToJavaScript...),
+# moves the rest up, and every WebAssembly export call then jumps to garbage.
+# So every external symbol of that section is passed as `-u` (a dead-strip
+# root), and the output is checked afterwards. PYRO_KEEP_JSC_INTERPRETER_ATOMS=0
+# skips both. Other links (system JavaScriptCore, dylibs) are not touched.
+#
+# `ld --check-jsc-interpreter <libJavaScriptCore.a> <binary>` runs only the check.
 set -eu
-if [ -n "${PYRO_LTO_LIBRARY:-}" ]; then
-    xcrun ld "$@" -lto_library "$PYRO_LTO_LIBRARY"
-else
-    xcrun ld "$@"
-fi
 # The arguments, one per line, response files (`@file`, which cc passes when
 # the command line is long, e.g. with the render feature) expanded.
 args() {
@@ -29,9 +37,94 @@ args() {
         esac
     done
 }
+# The static JavaScriptCore archive on the link line, if any: a path argument,
+# or -lJavaScriptCore found as a .a in one of the -L directories.
+jsc_archive() {
+    args "$@" | awk '
+        /\/libJavaScriptCore\.a$/ { print; found = 1; exit }
+        prev == "-L" { dirs[n++] = $0 }
+        /^-L./ { dirs[n++] = substr($0, 3) }
+        $0 == "-lJavaScriptCore" { lib = 1 }
+        { prev = $0 }
+        END {
+            if (found || !lib) exit
+            for (i = 0; i < n; i++) {
+                f = dirs[i] "/libJavaScriptCore.a"
+                if ((getline line < f) >= 0) { print f; close(f); exit }
+                close(f)
+            }
+        }'
+}
+# Address and name of the interpreter section's external symbols, "addr name"
+# per line, from the LowLevelInterpreter.cpp.o member of archive $1. Apple's
+# `nm -m` prints "<member>:" headers (with the archive path in front when given
+# several files) and "<addr> (<segment>,<section>) <external kind> <name>".
+jsc_interpreter_symbols() {
+    nm -g -U -m "$1" 2>/dev/null | awk '
+        /:$/ { member = ($0 ~ /(^|[(\/])LowLevelInterpreter\.cpp\.o\)?:$/); next }
+        member && /\(__TEXT,__jsc_int\)/ && $NF ~ /^_/ { print $1, $NF }'
+}
+# Fails, saying why, when binary $2 lacks what the archive $1 provides: the
+# two sentinel atoms that dead stripping removes, and the distance between two
+# symbols that every table stride in the blob depends on. A binary without a
+# symbol table (or without these local symbols) is skipped.
+check_jsc_interpreter() {
+    syms="$(nm "$2" 2>/dev/null | awk '
+        $NF == "_wasmIPIntPCRangeStart" || $NF == "_ipint_argumINT_a0_validate" ||
+        $NF == "_ipint_i64_add128_validate" ||
+        $NF == "_ipint_simd_i8x16_relaxed_swizzle_validate" { print $1, $NF }')" || return 0
+    case "$syms" in *_wasmIPIntPCRangeStart*|*_ipint_argumINT_a0_validate*) ;; *) return 0 ;; esac
+    want="$(jsc_interpreter_symbols "$1")"
+    for name in _ipint_i64_add128_validate _ipint_simd_i8x16_relaxed_swizzle_validate; do
+        case "$want" in *" $name"*) ;; *) continue ;; esac
+        case "$syms" in
+            *" $name"*) ;;
+            *) echo "ld wrapper: $2 lost $name; dead stripping removed atoms from JavaScriptCore's interpreter blob (LowLevelInterpreter.cpp.o), WebAssembly calls would crash" >&2; return 1 ;;
+        esac
+    done
+    for pair in "$want" "$syms"; do
+        a="$(printf '%s\n' "$pair" | awk '$2 == "_ipint_argumINT_a0_validate" { print $1 }')"
+        s="$(printf '%s\n' "$pair" | awk '$2 == "_wasmIPIntPCRangeStart" { print $1 }')"
+        [ -n "$a" ] && [ -n "$s" ] || continue
+        echo "$((0x$a - 0x$s))"
+    done > "${TMPDIR:-/tmp}/jsc-ipint-delta.$$"
+    deltas="$(sort -u "${TMPDIR:-/tmp}/jsc-ipint-delta.$$" | wc -l | tr -d ' ')"
+    rm -f "${TMPDIR:-/tmp}/jsc-ipint-delta.$$"
+    if [ "$deltas" -gt 1 ]; then
+        echo "ld wrapper: in $2 the IPInt handlers moved relative to the archive's; JavaScriptCore's interpreter blob was altered by the linker, WebAssembly calls would crash" >&2
+        return 1
+    fi
+}
+if [ "${1:-}" = --check-jsc-interpreter ]; then
+    check_jsc_interpreter "$2" "$3"
+    exit
+fi
+
+archive=
+if [ "${PYRO_KEEP_JSC_INTERPRETER_ATOMS:-1}" != 0 ] && ! args "$@" | grep -qx -e -dylib -e -bundle; then
+    archive="$(jsc_archive "$@")"
+fi
+if [ -n "$archive" ]; then
+    names="$(jsc_interpreter_symbols "$archive" | awk '{ print $2 }')"
+    if [ -n "$names" ]; then
+        # Symbols have no blanks or glob characters; split them into -u options.
+        set -f
+        for name in $names; do set -- "$@" -u "$name"; done
+        set +f
+    else
+        echo "ld wrapper: warning: no interpreter symbols (LowLevelInterpreter.cpp.o, __TEXT,__jsc_int) in $archive; linking without keeping them" >&2
+        archive=
+    fi
+fi
+if [ -n "${PYRO_LTO_LIBRARY:-}" ]; then
+    xcrun ld "$@" -lto_library "$PYRO_LTO_LIBRARY"
+else
+    xcrun ld "$@"
+fi
 if args "$@" | grep -qx -e -dylib -e -bundle; then exit 0; fi
 out="$(args "$@" | awk 'prev == "-o" { print; exit } { prev = $0 }')"
 [ -n "$out" ] || exit 0
+if [ -n "$archive" ]; then check_jsc_interpreter "$archive" "$out" || exit 1; fi
 entitlements="$(cd "$(dirname "$0")/.." && pwd)/jit.entitlements"
 # codesign reports "replacing existing signature" on stderr; rustc would
 # surface that as a linker warning, so its output is shown only on failure.

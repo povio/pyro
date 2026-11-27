@@ -57,6 +57,16 @@ signal-based traps do not stop JIT-compiled loops, so `pyro_js::configure_proces
 start of the CLI) sets `JSC_usePollingTraps=true` unless that variable is already set; script timeouts and termination
 depend on it.
 
+The same wrapper protects the static patched JavaScriptCore (`libJavaScriptCore.a` on the link line). Its
+`LowLevelInterpreter.cpp.o` is one hand-written assembly blob (section `__TEXT,__jsc_int`) whose pc-relative `adr`
+targets and fixed-stride IPInt handler tables are resolved by the assembler, and Mach-O arm64 has no relocation for
+them. rustc links with `-dead_strip`, which would remove the atoms nothing references (unused IPInt handlers,
+`_vmEntryToJavaScriptWith6Arguments`, ...), shift everything after them, and make every JS to WebAssembly export call
+jump to garbage (SIGSEGV). The wrapper therefore passes `-u <symbol>` (a dead-strip root) for each of the 792 external
+symbols of that section, and after the link checks that the removed-today sentinels are present and that the IPInt
+handlers keep their distance from `_wasmIPIntPCRangeStart`; a failed check fails the link. `PYRO_KEEP_JSC_INTERPRETER_ATOMS=0`
+skips both. Test the wrapper without linking: `scripts/macos/test-linker.sh <libJavaScriptCore.a>`.
+
 The release profile keeps `strip = "none"`: Cargo otherwise strips after linking when
 `CARGO_PROFILE_RELEASE_DEBUG=0`, which removes the JIT entitlement added by the linker wrapper.
 An explicit strip override requires re-signing the final binary afterward. Check this build contract with
