@@ -207,6 +207,11 @@ impl BaseDocument {
             if let Some(target) = part.target {
                 let filter = self.resolved_style_value(target, "backdrop-filter");
                 if !filter.is_empty() && filter != "none" { css.push_str("backdrop-filter:"); css.push_str(&filter); css.push(';'); }
+                // The group takes these from the element (css-view-transitions-1 § 3.4.2 "setup transition pseudo-elements").
+                for (property, initial) in [("mix-blend-mode", "normal"), ("text-orientation", "mixed"), ("color-scheme", "normal")] {
+                    let value = self.resolved_style_value(target, property);
+                    if !value.is_empty() && value != initial { css.push_str(property); css.push(':'); css.push_str(&value); css.push(';'); }
+                }
             }
             let both = part.old.is_some() && part.new.is_some();
             if both {
