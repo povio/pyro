@@ -3201,8 +3201,18 @@ fn push_columns(
     column_sizes: &mut Vec<TrackSizingFunction>,
 ) {
     let style = table_taffy_style(node, wm);
-    let span: u16 =
-        node.attr(local_name!("span")).and_then(|val| val.parse::<u16>().ok()).map(|v| v.max(1)).unwrap_or(1);
+    // pyro: HTML § 4.9.4 / § 4.9.5: `span` is a non-negative integer clamped to 1 to 1000 (0, a
+    // negative number and junk are 1; a value too large for any integer is 1000: WPT tabular-data
+    // `col-span-limits`).
+    let span: u16 = node
+        .attr(local_name!("span"))
+        .map(|val| {
+            let val = val.trim_start_matches(|c: char| c.is_ascii_whitespace());
+            let digits = val.strip_prefix('+').unwrap_or(val);
+            let digits = &digits[..digits.find(|c: char| !c.is_ascii_digit()).unwrap_or(digits.len())];
+            if digits.is_empty() { 1 } else { digits.parse::<u64>().unwrap_or(u64::MAX).clamp(1, 1000) as u16 }
+        })
+        .unwrap_or(1);
     let column: TrackSizingFunction = match style.size.width.tag() {
         taffy::CompactLength::LENGTH_TAG => {
             // A definite `max-width` clamps the column width; a zero width is treated as auto
