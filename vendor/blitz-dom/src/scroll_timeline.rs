@@ -263,6 +263,29 @@ fn view_ranges(doc: &BaseDocument, subject: NodeId, resolved: &Resolved, scroll:
         None => (0.0, 0.0),
     };
     let port = scroll.port;
+    // pyro: a sticky subject (or one in a sticky box) moves while it is stuck: its start edge is
+    // `start + shift(scroll offset)`, and each range edge is where that moving edge meets the
+    // port's (Scroll-driven Animations 1 § "view progress timeline", Chrome's sticky ranges).
+    if let Some(sticky) = sticky_travel(doc, subject, resolved, port, port_start) {
+        let edges = (
+            sticky.first(start, port - inset_end),
+            sticky.first(start, port - inset_end - subject_size),
+            sticky.last(start, inset_start),
+            sticky.last(start, inset_start - subject_size),
+        );
+        if let (Some(a), Some(b), Some(c), Some(d)) = edges {
+            let cover = (a, d);
+            let contain = if subject_size <= port - inset_start - inset_end { (b, c) } else { (c, b) };
+            return Some(ViewRanges {
+                cover,
+                contain,
+                entry: (cover.0, contain.0),
+                exit: (contain.1, cover.1),
+                entry_crossing: (a, b),
+                exit_crossing: (c, d),
+            });
+        }
+    }
     let cover = (start - port + inset_end, end - inset_start);
     let contain = if subject_size <= port - inset_start - inset_end {
         (end - port + inset_end, start - inset_start)
@@ -277,6 +300,166 @@ fn view_ranges(doc: &BaseDocument, subject: NodeId, resolved: &Resolved, scroll:
         entry_crossing: (cover.0, cover.0 + subject_size),
         exit_crossing: (cover.1 - subject_size, cover.1),
     })
+}
+
+/// How far the sticky box holding a view timeline's subject moves with the scroll offset (along the
+/// timeline's axis): the box's constraint rectangle, in the scroll container's content coordinates.
+struct StickyTravel {
+    /// The sticky box's static start edge, its size and its margins along the axis.
+    top: f64,
+    size: f64,
+    margin: (f64, f64),
+    /// Its `top`/`left` and `bottom`/`right` insets (`None`: auto).
+    inset: (Option<f64>, Option<f64>),
+    /// The content box of its containing block.
+    block: (f64, f64),
+    port: f64,
+}
+
+impl StickyTravel {
+    /// The offset of the box from its static place at scroll offset `scroll` (CSS Positioned Layout 3
+    /// § 3.4: the insets move it into the scrollport, its containing block holds it).
+    fn shift(&self, scroll: f64) -> f64 {
+        let mut shift: f64 = 0.0;
+        if let Some(end) = self.inset.1 {
+            shift = shift.min(scroll + self.port - end - (self.top + self.size));
+        }
+        if let Some(start) = self.inset.0 {
+            shift = shift.max(scroll + start - self.top);
+        }
+        let high = self.block.1 - (self.top + self.size + self.margin.1);
+        let low = self.block.0 - (self.top - self.margin.0);
+        shift.min(high).max(low)
+    }
+
+    /// The scroll offsets where `shift` changes its slope.
+    fn breaks(&self) -> Vec<f64> {
+        let high = self.block.1 - (self.top + self.size + self.margin.1);
+        let low = self.block.0 - (self.top - self.margin.0);
+        let mut out = vec![0.0];
+        for (shift, from_start) in [(0.0, true), (high, true), (low, true), (0.0, false), (high, false), (low, false)] {
+            if from_start {
+                if let Some(start) = self.inset.0 { out.push(shift + self.top - start); }
+            } else if let Some(end) = self.inset.1 {
+                out.push(shift + self.top + self.size + end - self.port);
+            }
+        }
+        out.retain(|s| s.is_finite());
+        out.sort_by(|a, b| a.total_cmp(b));
+        out.dedup();
+        out
+    }
+
+    /// The subject's start edge, in port coordinates, at `scroll`; `start` is its static content start.
+    fn edge(&self, start: f64, scroll: f64) -> f64 {
+        start + self.shift(scroll) - scroll
+    }
+
+    /// The smallest scroll offset where the (never rising) edge is at or before `at`.
+    fn first(&self, start: f64, at: f64) -> Option<f64> {
+        let breaks = self.breaks();
+        let y = |s: f64| self.edge(start, s);
+        let (first, last) = (*breaks.first()?, *breaks.last()?);
+        if y(first) <= at {
+            let slope = y(first) - y(first - 1.0);
+            return Some(if slope < 0.0 { first + y(first) - at } else { first });
+        }
+        for pair in breaks.windows(2) {
+            let (y0, y1) = (y(pair[0]), y(pair[1]));
+            if y1 <= at {
+                return Some(pair[0] + (at - y0) * (pair[1] - pair[0]) / (y1 - y0));
+            }
+        }
+        let slope = y(last + 1.0) - y(last);
+        (slope < 0.0).then(|| last + (at - y(last)) / slope)
+    }
+
+    /// The largest scroll offset where the edge is at or after `at`.
+    fn last(&self, start: f64, at: f64) -> Option<f64> {
+        let breaks = self.breaks();
+        let y = |s: f64| self.edge(start, s);
+        let (first, last) = (*breaks.first()?, *breaks.last()?);
+        if y(last) >= at {
+            let slope = y(last + 1.0) - y(last);
+            return Some(if slope < 0.0 { last + (at - y(last)) / slope } else { last });
+        }
+        for pair in breaks.windows(2).rev() {
+            let (y0, y1) = (y(pair[0]), y(pair[1]));
+            if y0 >= at {
+                return Some(pair[0] + (at - y0) * (pair[1] - pair[0]) / (y1 - y0));
+            }
+        }
+        let slope = y(first) - y(first - 1.0);
+        (slope < 0.0).then(|| first - (at - y(first)))
+    }
+}
+
+/// The travel of the nearest `position: sticky` box holding `subject` (it or an ancestor, inside its
+/// scroll container) along the axis, when it has an inset on that axis; `None` otherwise. `port_start`
+/// is the container's content origin in layout coordinates.
+fn sticky_travel(doc: &BaseDocument, subject: NodeId, resolved: &Resolved, port: f64, port_start: f64) -> Option<StickyTravel> {
+    use style::values::generics::position::GenericInset;
+    let mut current = Some(subject);
+    let sticky = loop {
+        let id = current?;
+        if Some(id) == resolved.source {
+            return None;
+        }
+        let node = doc.get_node(id)?;
+        if crate::stylo::is_sticky(node) {
+            break node;
+        }
+        current = node.parent;
+    };
+    let style = sticky.primary_styles()?;
+    let inset = |v: style::values::computed::Inset| match v {
+        GenericInset::LengthPercentage(lp) => Some(lp.resolve(style::values::computed::Length::new(port as f32)).px() as f64),
+        _ => None,
+    };
+    let (first, second) = if resolved.vertical {
+        (inset(style.slow_clone_top()), inset(style.slow_clone_bottom()))
+    } else {
+        (inset(style.slow_clone_left()), inset(style.slow_clone_right()))
+    };
+    if first.is_none() && second.is_none() {
+        return None;
+    }
+    let layout = sticky.final_layout();
+    let axis = |size: taffy::Size<f32>| if resolved.vertical { size.height } else { size.width } as f64;
+    let along = |node: &Node| {
+        let (p, scroll) = (node.absolute_position(0.0, 0.0), node.scroll_offset());
+        if resolved.vertical { p.y as f64 + scroll.y } else { p.x as f64 + scroll.x }
+    };
+    let origin = along(sticky) - port_start;
+    let margin = if resolved.vertical { (layout.margin.top, layout.margin.bottom) } else { (layout.margin.left, layout.margin.right) };
+    // The containing block: the nearest ancestor that is no inline box.
+    let mut block = sticky.parent;
+    while let Some(id) = block {
+        let node = doc.get_node(id)?;
+        if node.primary_styles().is_some_and(|s| {
+            let display = s.clone_display();
+            !(display.is_inline_flow() || display.is_contents())
+        }) {
+            break;
+        }
+        block = node.parent;
+    }
+    let block_node = doc.get_node(block?)?;
+    let range = if Some(block_node.id) == resolved.source {
+        // A direct child of the scroll container: its scrollable content bounds it.
+        let size = if resolved.vertical { block_node.scroll_height() } else { block_node.scroll_width() } as f64;
+        (0.0, size)
+    } else {
+        let layout = block_node.final_layout();
+        let (before, after) = if resolved.vertical {
+            (layout.border.top + layout.padding.top, layout.border.bottom + layout.padding.bottom)
+        } else {
+            (layout.border.left + layout.padding.left, layout.border.right + layout.padding.right)
+        };
+        let begin = along(block_node) - port_start;
+        (begin + before as f64, begin + axis(layout.size) - after as f64)
+    };
+    Some(StickyTravel { top: origin, size: axis(layout.size), margin: (margin.0 as f64, margin.1 as f64), inset: (first, second), block: range, port })
 }
 
 fn inset_px(value: &LengthPercentageOrAuto, port: f64) -> f64 {
