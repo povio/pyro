@@ -140,6 +140,24 @@ fn can_focus(page: &PageDom, el: NodeId) -> bool {
 thread_local! {
     /// The `focusVisible` member of the `focus(options)` being run, if given.
     static FOCUS_VISIBLE_OPTION: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// The last mouse press: its page (the `Rc` address) and the flat-tree chain from the pressed
+    /// element up. Keyboard scrolling with nothing focused starts at the first node of the chain
+    /// still in the document (Chrome's `last_clicked_node_` falls back to a removed node's parent).
+    static LAST_PRESS: std::cell::RefCell<Option<(usize, Vec<NodeId>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Remembers `target`'s flat-tree chain as the last mouse press (see [`LAST_PRESS`]).
+fn remember_press(page: &Rc<PageDom>, target: NodeId) {
+    let mut chain = Vec::new();
+    {
+        let dom = page.dom.borrow();
+        let mut cur = Some(target);
+        while let Some(e) = cur {
+            chain.push(e);
+            cur = flat_parent_element(&dom, e);
+        }
+    }
+    LAST_PRESS.with(|c| *c.borrow_mut() = Some((Rc::as_ptr(page) as usize, chain)));
 }
 
 /// `element.focus(options)`: [`focus_element_with_options`] with the `focusVisible` member, which
@@ -1445,7 +1463,9 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
     if k.text == "\r" || k.text == "\n" {
         enter_key(page, target);
-    } else if !select_typeahead(page, target, &k.text) {
+    } else if !select_typeahead(page, target, &k.text) && !(k.key == " " && keyboard_scroll(page, k)) {
+        // (Space that activates nothing and is no text scrolls by a page: Chrome's
+        // `DefaultSpaceEventHandler`, a keypress default action.)
         insert_text_at(page, target, &k.text);
     }
 }
@@ -1554,12 +1574,9 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         "ArrowLeft" | "ArrowRight" | "Home" | "End" if editable => move_caret(page, target, &k.key, k.modifiers.shift),
         // Outside editable content Home/End scroll the document (Chrome's
         // scrollToBeginningOfDocument / scrollToEndOfDocument).
+        // The focused element's nearest scroller that can move, else the viewport.
         "Home" | "End" if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta || k.modifiers.shift) => {
-            let top = if k.key == "Home" { 0 } else { i32::MAX };
-            let moved = page.layout.borrow_mut().window_scroll_to(&page.dom.borrow(), None, Some(top));
-            if moved {
-                crate::layout_api::fire_scroll(page, None);
-            }
+            keyboard_scroll(page, k);
         }
         "ArrowUp" | "ArrowDown"
             if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta)
@@ -1567,7 +1584,164 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         {
             move_caret_vertically(page, target, k.key == "ArrowUp", k.modifiers.shift)
         }
+        "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "PageUp" | "PageDown" | " " => {
+            keyboard_scroll(page, k);
+        }
         _ => {}
+    }
+}
+
+/// How far a keyboard scroll goes (Chrome's scroll granularities).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum KeyScrollStep {
+    /// An arrow key: `kPixelsPerLineStep` (40 CSS px).
+    Line,
+    /// PageUp, PageDown and Space: most of the scrollport.
+    Page,
+    /// Home and End: to the start or the end.
+    Edge,
+}
+
+/// The default action of the keys that scroll (Chrome's `KeyboardEventManager` default handlers
+/// and `ScrollManager::BubblingScroll`): an arrow key scrolls by a line (40px), PageUp, PageDown
+/// and Space (Shift reverses) by a page along the block axis, Home and End to the start or end
+/// of it. The scroll starts at the focused element, else at the last mouse press (or the
+/// nearest ancestor of it still in the document), else at the viewport, and goes to the nearest
+/// scroll container on the way up that can move in that direction (the viewport last); one that
+/// is at its limit passes the scroll on unless its `overscroll-behavior` contains it. A scroller
+/// with `scroll-behavior: smooth` animates, as for script. Returns whether the key is a scroll
+/// key this applies to (a control that keeps the key, or one Space activates, is not).
+fn keyboard_scroll(page: &Rc<PageDom>, k: &KeyInput) -> bool {
+    if k.modifiers.ctrl || k.modifiers.alt || k.modifiers.meta {
+        return false;
+    }
+    let shift = k.modifiers.shift;
+    // (granularity, physical direction of an arrow, direction along the block axis).
+    let (step, physical, block): (KeyScrollStep, (i32, i32), i32) = match (k.key.as_str(), shift) {
+        ("ArrowUp", false) => (KeyScrollStep::Line, (0, -1), 0),
+        ("ArrowDown", false) => (KeyScrollStep::Line, (0, 1), 0),
+        ("ArrowLeft", false) => (KeyScrollStep::Line, (-1, 0), 0),
+        ("ArrowRight", false) => (KeyScrollStep::Line, (1, 0), 0),
+        ("PageUp", false) => (KeyScrollStep::Page, (0, 0), -1),
+        ("PageDown", false) => (KeyScrollStep::Page, (0, 0), 1),
+        (" ", shift) => (KeyScrollStep::Page, (0, 0), if shift { -1 } else { 1 }),
+        ("Home", false) => (KeyScrollStep::Edge, (0, 0), -1),
+        ("End", false) => (KeyScrollStep::Edge, (0, 0), 1),
+        _ => return false,
+    };
+    let (start, root) = {
+        let dom = page.dom.borrow();
+        let doc = page.document();
+        let root = dom.document_element(doc).ok().flatten();
+        let start = match dom.focused(doc).ok().flatten() {
+            Some(f) => {
+                // The control keeps its keys (caret, value, picker), a button, checkbox or summary
+                // takes Space.
+                if is_directional_input_handler(&dom, f) || (k.key == " " && space_clickable(&dom, f)) {
+                    return false;
+                }
+                Some(f)
+            }
+            None => LAST_PRESS.with(|c| {
+                let c = c.borrow();
+                let (owner, chain) = (*c).as_ref()?;
+                if *owner != Rc::as_ptr(page) as usize {
+                    return None;
+                }
+                let found = chain.iter().copied().find(|&n| dom.is_connected(n).unwrap_or(false));
+                found
+            }),
+        };
+        (start, root)
+    };
+    // (No borrow is held here: a smooth scroll starts its animation and queues the events.)
+    let _ = crate::layout_api::perform_scroll(page, crate::layout_api::ScrollBehavior::Auto, &[], |dom, layout| {
+        keyboard_scroll_write(dom, layout, start, root, step, physical, block)
+    });
+    true
+}
+
+/// The write of [`keyboard_scroll`]: walks up from `start` (`None`: straight to the viewport) and
+/// scrolls the first scroll container that moves, else the viewport, returning the box it moved
+/// (`None`: the viewport).
+fn keyboard_scroll_write(
+    dom: &Dom,
+    layout: &mut pyro_dom::layout::Layout,
+    start: Option<NodeId>,
+    root: Option<NodeId>,
+    step: KeyScrollStep,
+    physical: (i32, i32),
+    block: i32,
+) -> Vec<Option<NodeId>> {
+    // The direction (dx, dy) of the scroll, each -1, 0 or 1, for a box of writing mode `wm`: a
+    // block-axis key follows the box's block axis (horizontal in a vertical writing mode, toward
+    // the left in `vertical-rl`).
+    let direction = |wm: &str| -> (i32, i32) {
+        if block == 0 {
+            return physical;
+        }
+        if wm.starts_with("vertical") || wm.starts_with("sideways") {
+            (if matches!(wm, "vertical-rl" | "sideways-rl") { -block } else { block }, 0)
+        } else {
+            (0, block)
+        }
+    };
+    // Scrolls a box by `dir`, `size` being its scrollport on each axis: whether it moved.
+    let scroll = |layout: &mut pyro_dom::layout::Layout, el: Option<NodeId>, dir: (i32, i32), size: (f64, f64)| -> bool {
+        let amount = |d: i32, extent: f64| -> Option<i32> {
+            if d == 0 {
+                return None;
+            }
+            Some(match step {
+                // To the start: 0; to the end: as far as the box goes in the direction.
+                KeyScrollStep::Edge => {
+                    if block < 0 {
+                        0
+                    } else {
+                        d.saturating_mul(i32::MAX)
+                    }
+                }
+                KeyScrollStep::Line => 40 * d,
+                // Chromium pages by 87.5% of the scrollport along the axis (at least 1px).
+                KeyScrollStep::Page => d * (extent * 0.875).round().max(1.0).min(i32::MAX as f64) as i32,
+            })
+        };
+        let (l, t) = (amount(dir.0, size.0), amount(dir.1, size.1));
+        let edge = step == KeyScrollStep::Edge;
+        match el {
+            Some(el) if edge => layout.element_scroll_to(dom, el, l, t),
+            Some(el) => layout.element_scroll_by(dom, el, l, t),
+            None if edge => layout.window_scroll_to(dom, l, t),
+            None => layout.window_scroll_by(dom, l, t),
+        }
+    };
+    let mut cur = start;
+    while let Some(e) = cur {
+        if layout.is_root_container(dom, e) {
+            break;
+        }
+        let wm = layout.style().computed_value(dom, e, "writing-mode").unwrap_or_default();
+        let dir = direction(wm.as_str());
+        let axes = pyro_dom::style::ScrollAxes { x: dir.0 != 0, y: dir.1 != 0 };
+        let scrolls = layout.style().overflow_axes(dom, e);
+        if (axes.x && scrolls.x) || (axes.y && scrolls.y) {
+            let size = (layout.client_width(dom, e), layout.client_height(dom, e));
+            if scroll(&mut *layout, Some(e), dir, size) {
+                return vec![Some(e)];
+            }
+            if layout.contains_overscroll(dom, e, axes) {
+                return Vec::new();
+            }
+        }
+        cur = flat_parent_element(dom, e);
+    }
+    let wm = root.and_then(|r| layout.style().computed_value(dom, r, "writing-mode")).unwrap_or_default();
+    let dir = direction(wm.as_str());
+    let (w, h) = layout.window_size();
+    if scroll(&mut *layout, None, dir, (w as f64, h as f64)) {
+        vec![None]
+    } else {
+        Vec::new()
     }
 }
 
@@ -3036,6 +3210,7 @@ fn dispatch_mouse_inner(
                 || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true, pseudo);
             page.compat_mouse_suppressed.set(!pd);
             page.set_press_target(Some(target));
+            remember_press(page, target);
             page.pressed_pseudo.set(pseudo);
             note_buttons(page, m);
             let place_caret = m.button == MouseButton::Left && pd && md;
