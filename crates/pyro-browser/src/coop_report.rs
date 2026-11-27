@@ -144,6 +144,23 @@ pub(crate) fn queue_navigation_reports(
             state.origin.clone(),
         )
     };
+    // No policy of the active document or of any response names a reporting endpoint: nothing is
+    // reported, so none of the report bodies below is built (the common case: no COOP at all).
+    if active_enforced.report_to.is_none()
+        && active_report_only.report_to.is_none()
+        && chain.iter().all(|r| r.enforced.report_to.is_none() && r.report_only.report_to.is_none())
+    {
+        // (The group switch the chain asks for still counts.)
+        for response in chain {
+            out.virtual_switch |= coop_requires_switch(initial_blank, active_enforced.value, &active_origin, response.enforced.value, &response.origin)
+                || coop_requires_switch(initial_blank, active_report_only.value, &active_origin, response.report_only.value, &response.origin);
+            initial_blank = false;
+            active_enforced = response.enforced.clone();
+            active_report_only = response.report_only.clone();
+            active_origin = response.origin.clone();
+        }
+        return out;
+    }
     let old_doc = old_doc.or_else(|| carrier.cloned());
     let mut active_url = old_doc.as_ref().map(|d| d.document_url());
     // The endpoints of the response before: its own for a redirect, the old document's for none.
