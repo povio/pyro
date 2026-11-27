@@ -1316,7 +1316,7 @@ impl GeometrySource for BlitzGeometry {
     }
 
     fn scroll_marker_at(&self, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
-        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.scroll_marker_at(self.page, x, y))
+        RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.scroll_marker_at(self.page, x, y))
     }
 
     fn scroll_button_hit(&self, owner: u64, x: f64, y: f64) -> Option<((i8, i8), bool)> {

@@ -1137,10 +1137,11 @@ impl Renderer {
 
     /// pyro: the target of the scroll marker at the document point (`x`, `y`) of `page`: its
     /// element's key, or its multi-column container's and the column's index.
-    pub fn scroll_marker_at(&self, page: u64, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
-        let m = self.mirrors.get(&page)?;
-        let (id, column) = m.doc.scroll_marker_at(x as f32, y as f32)?;
-        Some((m.key_of(id)?, column))
+    pub fn scroll_marker_at(&mut self, page: u64, x: f64, y: f64) -> Option<(u64, Option<u32>)> {
+        self.at_page_scroll(page, |m| {
+            let (id, column) = m.doc.scroll_marker_at(x as f32, y as f32)?;
+            Some((m.key_of(id)?, column))
+        })?
     }
 
     /// pyro: the key of the originating element of the `::scroll-button()` that the painted hit
@@ -1870,8 +1871,9 @@ impl Renderer {
         let mirrored = profiling.then(|| started.elapsed());
         let mirror::Mirror { doc, bridge, .. } = m;
         // (Scroll-driven animations' values follow the layout: a style read lays the document out
-        // too, else a new view timeline subject samples the last layout, which lacks it.)
-        let style_only = style_only && !doc.has_scroll_driven_animations();
+        // too, else a new view timeline subject samples the last layout, which lacks it. So do the
+        // active scroll marker's and the buttons' states.)
+        let style_only = style_only && !doc.has_scroll_driven_animations() && !doc.uses_scroll_markers();
         let geometry_generation = doc.root_node().tree().geometry_generation();
         let (fetch, passes, resolved_latest) =
             bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait, style_only);
@@ -1940,7 +1942,7 @@ impl Renderer {
             m.undisplayed.get_mut().clear();
         }
         // (As in `sync_delta`: scroll-driven animations need the layout.)
-        let style_only = style_only && !m.doc.has_scroll_driven_animations();
+        let style_only = style_only && !m.doc.has_scroll_driven_animations() && !m.doc.uses_scroll_markers();
         if changed && style_only {
             let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);

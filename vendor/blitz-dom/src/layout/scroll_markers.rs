@@ -1200,7 +1200,11 @@ impl BaseDocument {
             sorted.dedup_by(|a, b| (*a - *b).abs() < 0.5);
             const EPSILON: f32 = 0.5;
             let mut selected: Option<f32> = None;
-            for &p in &sorted {
+            // A target the scroll position has not reached is selected only when it is less than
+            // half a scrollport away (Chromium; WPT `scroll-marker-active-unreached-target`).
+            let reached = |p: f32| p <= position || p - position <= port / 2.0;
+            let any_reached = sorted.iter().any(|&p| reached(p));
+            for &p in sorted.iter().filter(|&&p| !any_reached || reached(p)) {
                 if selected.is_none_or(|best| (p - position).abs() < (best - position).abs() - 0.01) {
                     selected = Some(p);
                 }
@@ -1375,25 +1379,32 @@ impl BaseDocument {
     /// pyro: the target of the `::scroll-marker` box at the document point (`x`, `y`): its
     /// element, or its multi-column container and column (CSS Overflow 5 § 3.2: activating a
     /// marker scrolls to its target; WPT css-overflow `column-scroll-marker-002`).
-    pub fn scroll_marker_at(&self, x: f32, y: f32) -> Option<(NodeId, Option<u32>)> {
-        for &owner in &self.scroll_pseudo_owners {
-            let Some(group) = self.nodes.get(owner).and_then(|n| n.scroll_pseudos()).and_then(|s| s.group) else { continue };
-            let Some(group_node) = self.nodes.get(group) else { continue };
-            let markers: Vec<NodeId> = group_node.layout_children.borrow().iter().flatten().copied().collect();
-            for marker in markers {
-                let Some(node) = self.nodes.get(marker) else { continue };
-                if !matches!(node.scroll_pseudo(), Some((PseudoElement::ScrollMarker, _))) {
-                    continue;
-                }
-                let origin = node.absolute_position(0.0, 0.0);
-                let (left, top) = (origin.x + node.scroll_offset().x as f32, origin.y + node.scroll_offset().y as f32);
-                let size = node.final_layout().size;
-                if x >= left && y >= top && x < left + size.width && y < top + size.height {
-                    return self.marker_target(marker);
-                }
-            }
+    pub fn scroll_marker_at(&mut self, x: f32, y: f32) -> Option<(NodeId, Option<u32>)> {
+        if self.scroll_pseudo_owners.is_empty() {
+            return None;
         }
-        None
+        // The painted hit test (stacking order, clips, `pointer-events`, a `display: contents`
+        // marker's text): from the hit box up to the marker whose box or content it is.
+        let mut id = self.hit(x, y)?.node_id;
+        let marker = loop {
+            let node = self.nodes.get(id)?;
+            match node.scroll_pseudo() {
+                Some((PseudoElement::ScrollMarker, _)) => break id,
+                Some(_) => return None,
+                None if node.is_element() => return None,
+                None => id = node.parent?,
+            }
+        };
+        // A marker is inert when its group is (WPT css-overflow `scroll-marker-inert-001`, `-003`:
+        // not when only its originating element is).
+        let group = self.nodes.get(marker)?.parent?;
+        let inert = self.nodes.get(group)?.primary_styles().is_some_and(|style| {
+            style.get_inherited_ui().interactivity == style::values::specified::ui::Interactivity::Inert
+        });
+        if inert {
+            return None;
+        }
+        self.marker_target(marker)
     }
 
     /// pyro: the `::scroll-button()` of `owner` hit at the document point (`x`, `y`), by the
