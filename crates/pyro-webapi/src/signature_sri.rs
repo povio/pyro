@@ -22,7 +22,7 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use pyro_net::http::HeaderMap;
 use pyro_net::Url;
 use sha2::{Digest, Sha256, Sha512};
@@ -39,9 +39,15 @@ pub struct Facts {
     pub headers: HeaderMap,
 }
 
-/// Whether a response has headers that make it subject to a check.
+/// Whether a response has headers that make it subject to a check: an `Unencoded-Digest`, or a
+/// `Signature-Input` with a member tagged `"sri"` (an HTTP message signature for anything else
+/// is none of this module's business: the response is not held for it).
 pub fn wants_check(headers: &HeaderMap) -> bool {
-    headers.contains_key("unencoded-digest") || headers.contains_key("signature-input")
+    headers.contains_key("unencoded-digest")
+        || (headers.contains_key("signature-input")
+            && header_dictionary(headers, "signature-input").is_some_and(|inputs| {
+                inputs.iter().any(|(_, member)| matches!(member, Member::List(_, params) if param_str(params, "tag") == Some("sri")))
+            }))
 }
 
 /// The facts of a response subject to a check, `None` otherwise (no copy of the headers).
@@ -212,8 +218,13 @@ impl Cursor<'_> {
                 }
                 let text = &self.s[start..self.i];
                 if decimal {
-                    Some(Bare::Decimal(text.to_owned()))
+                    canonical_decimal(text).map(Bare::Decimal)
                 } else {
+                    // RFC 9651 §3.3.1: at most 15 digits.
+                    let digits = text.trim_start_matches('-');
+                    if digits.is_empty() || digits.len() > 15 {
+                        return None;
+                    }
                     text.parse().ok().map(Bare::Int)
                 }
             }
@@ -315,6 +326,26 @@ fn parse_dictionary(text: &str) -> Option<Vec<(String, Member)>> {
             return None;
         }
     }
+}
+
+/// RFC 9651 §3.3.2 and §4.1.5.2: a decimal of at most 12 integer and 3 fractional digits (none
+/// of either is a parse failure), serialized with no leading zeros and at least one fractional
+/// digit, trailing zeros dropped (`-0.0` is `0.0`).
+fn canonical_decimal(text: &str) -> Option<String> {
+    let (negative, unsigned) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let (int, frac) = unsigned.split_once('.')?;
+    if int.is_empty() || int.len() > 12 || frac.is_empty() || frac.len() > 3 {
+        return None;
+    }
+    let int = int.trim_start_matches('0');
+    let int = if int.is_empty() { "0" } else { int };
+    let frac = frac.trim_end_matches('0');
+    let frac = if frac.is_empty() { "0" } else { frac };
+    let zero = int == "0" && frac == "0";
+    Some(format!("{}{int}.{frac}", if negative && !zero { "-" } else { "" }))
 }
 
 fn serialize_bare(bare: &Bare) -> String {
@@ -514,7 +545,7 @@ fn verified_keys(url: &Url, status: u16, headers: &HeaderMap) -> Option<Vec<Key>
         let base = signature_base(url, status, headers, components, params)?;
         let signature = Signature::from_slice(signature).ok()?;
         let public = VerifyingKey::from_bytes(&key).ok()?;
-        public.verify(base.as_bytes(), &signature).ok()?;
+        public.verify_strict(base.as_bytes(), &signature).ok()?;
         verified.push(key);
     }
     Some(verified)
@@ -611,6 +642,29 @@ mod tests {
         // A covered header the response lacks fails the signature.
         let missing = input("").replace("(\"unencoded-digest\";sf)", "(\"x-missing\" \"unencoded-digest\";sf)");
         assert!(!verify(&url(), 200, &headers(Some(DIGEST), Some(&missing), Some(SIGNATURE)), &[BODY], &[]));
+    }
+
+    #[test]
+    fn only_digests_and_sri_signatures_hold_a_response() {
+        assert!(!wants_check(&HeaderMap::new()));
+        assert!(wants_check(&headers(Some(DIGEST), None, None)));
+        assert!(wants_check(&headers(None, Some(&input("")), None)));
+        // An unrelated message signature (another tag, none, or not a dictionary): not held.
+        assert!(!wants_check(&headers(None, Some("sig1=(\"@status\");keyid=\"k\";tag=\"app\""), None)));
+        assert!(!wants_check(&headers(None, Some("sig1=(\"@status\");keyid=\"k\""), None)));
+        assert!(!wants_check(&headers(None, Some("(((("), None)));
+    }
+
+    #[test]
+    fn decimals_serialize_canonically() {
+        for (written, canonical) in [("1.50", "1.5"), ("001.000", "1.0"), ("-0.0", "0.0"), ("-12.340", "-12.34"), ("0.001", "0.001")] {
+            assert_eq!(canonical_decimal(written).as_deref(), Some(canonical), "{written}");
+        }
+        for bad in ["1.2345", "1234567890123.0", "1.", ".5"] {
+            assert_eq!(canonical_decimal(bad), None, "{bad}");
+        }
+        let mut cursor = Cursor { s: "4.50", i: 0 };
+        assert_eq!(serialize_item(&cursor.item().unwrap()), "4.5");
     }
 
     #[test]
