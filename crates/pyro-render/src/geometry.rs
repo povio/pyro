@@ -432,11 +432,19 @@ impl Geometry {
         const EDGE: f64 = 1e-3;
         let l = doc.physical_unrounded_layout(id);
         let (w, h) = (l.size.width as f64, l.size.height as f64);
-        let inside = match self.local_point(doc, id, x, y) {
-            // Half-open as the rect test is; the tolerance absorbs f32 layout noise on the edges.
+        // Chromium hit-tests the 1 x 1 px footprint of the point (`HitTestLocation`'s bounding box,
+        // mapped through the transforms), not its infinitely small centre: a box is hit when
+        // the footprint reaches it, which a slanted edge (a perspective, a rotation) decides a
+        // pixel earlier than the point alone (WPT css-transforms `3d-point-mapping-origins`). The
+        // far corners are pulled in by `FOOTPRINT_END`: the footprint is half-open, so one that
+        // only touches the box's edge misses it. The tolerance absorbs f32 layout noise.
+        const FOOTPRINT_END: f64 = 0.01;
+        let hit = |px: f64, py: f64| match self.local_point(doc, id, px, py) {
             Some((u, v, front)) => front && u >= -EDGE && u < w - EDGE && v >= -EDGE && v < h - EDGE,
             None => false,
-        } && !node.plane_3d().is_some_and(|plane| plane.own_hidden);
+        };
+        let inside = (hit(x, y) || hit(x + 1.0 - FOOTPRINT_END, y) || hit(x, y + 1.0 - FOOTPRINT_END) || hit(x + 1.0 - FOOTPRINT_END, y + 1.0 - FOOTPRINT_END))
+            && !node.plane_3d().is_some_and(|plane| plane.own_hidden);
         let depth = plane_node.and_then(|n| {
             let plane = n.plane_3d()?;
             let (u, v, front) = self.local_point(doc, n.id, x, y)?;
