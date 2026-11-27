@@ -124,8 +124,14 @@ pub(crate) fn removed(page: &Rc<PageDom>, gone: Vec<NodeId>) {
     if gone.is_empty() {
         return;
     }
+    // The removing steps fire `fullscreenchange` only when the document's fullscreen element
+    // (the stack's top) is what left; removing a lower entry just drops it from the top layer.
+    let top_left = page.fullscreen_stack.borrow().last().is_some_and(|top| gone.contains(top));
     // Drop the departed elements from the stack now (their flags are already clear).
     let _ = element(page);
+    if !top_left {
+        return;
+    }
     let weak = Rc::downgrade(page);
     page.post_task(Box::new(move || {
         let Some(page) = weak.upgrade() else { return };
