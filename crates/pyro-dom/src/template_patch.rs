@@ -19,6 +19,9 @@ pub(super) struct Patches {
     // The document's own parser (the loader's, `document.open()`'s): patched
     // contents become live as they are parsed, scripts and custom elements included.
     pub(super) live: bool,
+    // A streaming fragment parser (`streamAppendHTMLUnsafe`) inserts into its target's own tree,
+    // not into a document the parser owns: markers are searched in that tree.
+    pub(super) stream_target: Option<u32>,
     // The tree builder asks for the template contents when inserting its
     // children. Nested template elements have different content fragments.
     by_contents: FxHashMap<u32, Patch>,
@@ -53,7 +56,8 @@ impl Patches {
         let Some(name) = el.attr("for").filter(|name| !name.is_empty()) else { return false };
         // Never search outwards into the caller's fragment context, its
         // template contents, or a neighboring shadow tree.
-        if !owned_scope(dom, scope, parser_doc) {
+        let owned_root = self.stream_target.map_or(parser_doc, |target| dom.root_idx(target));
+        if !owned_scope(dom, scope, owned_root) {
             return false;
         }
         let scope = if self.document_scope && dom.body(dom.id_of(parser_doc)).ok().flatten() == Some(dom.id_of(scope)) {

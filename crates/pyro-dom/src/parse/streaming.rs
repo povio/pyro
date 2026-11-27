@@ -142,6 +142,16 @@ impl StreamingFragmentParser {
         let scripting = opts.tree_builder.scripting_enabled;
         let mut tree = TreeBuilder::new_for_fragment(sink, context.idx, form, opts.tree_builder);
         install_formatting_filter(&mut tree);
+        // `<template for>` patches the markers already in the target (or an earlier chunk's) with
+        // the template's content, as the other fragment parsers do (WPT template-for-*).
+        if tree.sink.filter.is_none() && !tree.sink.dom.with(|d| d.is_xml_document(doc)) {
+            super::enable_inline_patches(&mut tree, false);
+            if let Some(patches) = &tree.sink.patches {
+                let mut patches = patches.borrow_mut();
+                patches.live = true;
+                patches.stream_target = Some(target.idx);
+            }
+        }
         let initial_state = tree.tokenizer_state_for_context_elem(scripting);
         let tokenizer =
             Tokenizer::new(AbortableTree(tree), TokenizerOpts { initial_state: Some(initial_state), ..opts.tokenizer });
