@@ -2869,18 +2869,18 @@ impl LayoutPassState<'_> {
             if wm.is_vertical() && !wm.is_sideways() && exports_baseline && !alphabetic_atomics {
                 let dominant = |line: parley::Line<'_, _>| {
                     let m = line.metrics();
-                    let central = (m.content_block_min_coord + m.content_block_max_coord) / 2.0;
+                    // pyro: Blink's `FontMetrics` rounds the font's ascent and descent to whole pixels
+                    // each, and the central baseline is half of their sum from the top of the content
+                    // area: a whole or a half pixel (WPT css-flexbox `flex-align-baseline-001`).
+                    let ascent = ((m.baseline - m.content_block_min_coord) / scale).round();
+                    let descent = ((m.content_block_max_coord - m.baseline) / scale).round();
+                    let central = m.content_block_min_coord / scale + (ascent + descent) / 2.0;
                     let central = if wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED) {
-                        m.block_min_coord + m.block_max_coord - central
+                        (m.block_min_coord + m.block_max_coord) / scale - central
                     } else {
                         central
                     };
-                    // pyro: Blink's central baseline is a whole number of pixels, the half of an odd
-                    // ascent + descent rounded up (measured against Chrome for font sizes 8..40, both
-                    // `vertical-lr` and `-rl`: WPT css-flexbox `flex-align-baseline-001`); a fractional one
-                    // put the item on a half pixel. (The small allowance keeps float noise from
-                    // rounding a whole value up.)
-                    (central / scale + line_box_top - 0.001).ceil()
+                    central + line_box_top
                 };
                 (
                     inline_layout.layout.lines().next().map(dominant),
