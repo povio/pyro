@@ -1433,12 +1433,44 @@ pub(crate) fn set_attribute_node<'s>(
     let Some(a) = s.unwrap::<Attr>(attr) else {
         return Err(JsError::Type("parameter 1 is not of type 'Attr'.".into()));
     };
+    // Trusted Types "set an attribute": the attribute's value is made compliant first, before the
+    // in-use check and the same-attribute early return; a default policy's result becomes the
+    // Attr's value. The policy can run script that gives the Attr an owner: the DOM's in-use
+    // check below then sees it (`modify-attributes-in-callback`). No borrow is held across it.
+    let (local, ns, value) = {
+        let dom = page.dom.borrow();
+        let data = dom.attr_node_data(a.id).js()?;
+        (data.name.local.to_string(), data.name.ns.to_string(), dom.attr_node_value(a.id).js()?.to_owned())
+    };
+    if let Some(compliant) = crate::trusted_types::attribute_value(s, page, el, &local, Some(ns.as_str()), s.string(&value))? {
+        // An Attr some element owns by now is that element's attribute: left alone.
+        let unowned = page.dom.borrow().attr_owner_element(a.id).js()?.is_none();
+        if unowned && compliant != value {
+            page.dom.borrow_mut().set_attr_node_value(a.id, &compliant).js()?;
+        }
+    }
     let replaced = page.dom.borrow_mut().set_attribute_node(el, a.id).js()?;
     match replaced {
         Some(old) if old == a.id => Ok(attr),
         Some(old) => Ok(wrap_node(s, page, old)?.value()),
         None => Ok(s.null()),
     }
+}
+
+/// Setting the value of the Attr `n` (`Attr.value`, `nodeValue`, `textContent`): an Attr with an
+/// owner element is a Trusted Types sink when the element's attribute is (`attribute_value`, the
+/// element's node document's policies), else the text is set as it is. `text` is the converted
+/// DOMString (a Trusted* object arrives as its string, so a default policy applies to it).
+pub(crate) fn set_attr_value_checked(s: &Scope<'_>, n: &NodeData, text: &str) -> JsResult<()> {
+    let page = n.page();
+    let (owner, name) = attr_of(n).ok_or_else(|| JsError::Type("Not an Attr".into()))?;
+    let mut text = std::borrow::Cow::Borrowed(text);
+    if let Some(el) = owner {
+        if let Some(compliant) = crate::trusted_types::attribute_value(s, page, el, &name.local, name.ns(), s.string(&text))? {
+            text = std::borrow::Cow::Owned(compliant);
+        }
+    }
+    page.dom.borrow_mut().set_attr_node_value(n.id, &text).js()
 }
 
 /// `Element.removeAttributeNode`.
@@ -1488,9 +1520,9 @@ impl JsClass for Attr {
         def.accessor(
             "value",
             |s, a| Ok(s.string(a.page().dom.borrow().attr_node_value(a.id).js()?)),
-            |_s, a, v| {
+            |s, a, v| {
                 let value = dom_string(v)?;
-                a.page().dom.borrow_mut().set_attr_node_value(a.id, &value).js()
+                set_attr_value_checked(s, a, &value)
             },
         );
         def.getter("ownerElement", |s, a| {
@@ -1982,7 +2014,23 @@ impl JsClass for SvgAnimatedString {
     type Data = AnimatedAttrData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.accessor("baseVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())), |_s, t, v| t.set(&dom_string(v)?));
+        // `baseVal` writes the attribute: SVGScriptElement's `href` is a Trusted Types sink (a
+        // TrustedScriptURL or what the default policy makes of the string), as `setAttribute` is.
+        def.accessor(
+            "baseVal",
+            |s, t| Ok(s.string(&t.text().unwrap_or_default())),
+            |s, t, v| {
+                let (ns, name) = {
+                    let dom = t.el.page.dom.borrow();
+                    let name = t.name(&dom);
+                    name
+                };
+                match crate::trusted_types::attribute_value(s, &t.el.page, t.el.id, name, ns, v)? {
+                    Some(compliant) => t.set(&compliant),
+                    None => t.set(&dom_string(v)?),
+                }
+            },
+        );
         def.getter("animVal", |s, t| Ok(s.string(&t.animated_text().or_else(|| t.text()).unwrap_or_default())));
     }
 }

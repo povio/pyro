@@ -172,6 +172,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.undefined())
     })?;
     natives.set_atom("installCompileHooks", install.value())?;
+    // isEventHandler(name) -> whether `name` (lowercase, `onclick`) is an event handler content
+    // attribute of some element: GlobalEventHandlers, WindowEventHandlers (`<body>`), the
+    // Fullscreen and SVG animation handlers and the elements' own, for `getAttributeType`.
+    let is_handler = s.function("isEventHandler", |s, _this, a| {
+        let name = crate::util::dom_string(a.get(0))?;
+        Ok(s.boolean(crate::handlers::is_handler_attribute(&name).is_some()))
+    })?;
+    natives.set_atom("isEventHandler", is_handler.value())?;
     // ttLevel() -> Trusted Types' own eval level (the hooks also run for CSP's).
     let tt = s.function("ttLevel", |s, _this, _a| {
         let level = crate::target::page_of(s).map_or(0, |page| tt_level(&page));
@@ -370,6 +378,8 @@ pub(crate) fn attribute_kind(page: &PageDom, el: pyro_dom::NodeId, local: &str, 
             // WindowEventHandlers on `<body>` and `<frameset>`, and a permission element's own.
             let ty = local.strip_prefix("on").unwrap_or("");
             crate::handlers::GLOBAL.contains(&ty)
+                || crate::handlers::FULLSCREEN.contains(&ty)
+                || (svg && matches!(tag, "animate" | "animateMotion" | "animateTransform" | "set") && crate::handlers::SVG_ANIMATION_ATTRIBUTES.iter().any(|(name, _)| *name == ty))
                 || (html && crate::handlers::element_handler(tag, ty))
                 || (html && matches!(tag, "body" | "frameset") && crate::handlers::WINDOW.contains(&ty))
         } =>

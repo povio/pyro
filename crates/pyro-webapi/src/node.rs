@@ -68,6 +68,11 @@ impl NodeData {
     }
 }
 
+/// Whether `n` is an Attr node.
+fn is_attr_node(n: &NodeData) -> bool {
+    n.page().dom.borrow().node(n.id).is_ok_and(|x| x.kind.node_type() == NodeType::Attribute)
+}
+
 impl Drop for NodeData {
     fn drop(&mut self) {
         let wrapper = self.wrapper.get();
@@ -438,7 +443,13 @@ impl JsClass for Node {
                     None => s.null(),
                 })
             },
-            |_s, n, v| {
+            |s, n, v| {
+                // An Attr's value is a Trusted Types sink when its element's attribute is; the
+                // policy can run script, so no borrow is held across it.
+                if is_attr_node(n) {
+                    let text = if v.is_null() { String::new() } else { dom_string(v)? };
+                    return collections::set_attr_value_checked(s, n, &text);
+                }
                 let set = |text: &str| {
                     let mut dom = n.page().dom.borrow_mut();
                     let kind = &dom.node(n.id).js()?.kind;
@@ -473,6 +484,11 @@ impl JsClass for Node {
                 // GC can then free the old one.
                 let blur = || crate::input::blur_before_removal(n.page(), n.id, true);
                 let set = |text: &str| n.page().dom.borrow_mut().set_text_content(n.id, text).js();
+                // An Attr's textContent is its value: a Trusted Types sink as `Attr.value` is.
+                if is_attr_node(n) {
+                    let text = if v.is_nullish() { String::new() } else { dom_string(v)? };
+                    return collections::set_attr_value_checked(s, n, &text);
+                }
                 // A `<script>`'s text is a Trusted Types sink when the document requires them, and
                 // the script is trusted with it ([[ScriptText]]) whether or not they are.
                 if crate::trusted_types::is_html_script(n.page(), n.id) {

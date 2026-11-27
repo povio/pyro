@@ -139,6 +139,10 @@
       if (blocked) {
         throw new TypeError(`Failed to execute 'createPolicy' on 'TrustedTypePolicyFactory': Policy "${name}" disallowed.`);
       }
+      // The default policy exists once, whether or not a `trusted-types` directive restricts names.
+      if (name === 'default' && defaultPolicy !== null) {
+        throw new TypeError('Failed to execute \'createPolicy\' on \'TrustedTypePolicyFactory\': Policy "default" already exists.');
+      }
       const callback = callbacks.createParserOptions;
       const createOptions = (options, args) => {
         const input = parserDictionary(options);
@@ -180,13 +184,15 @@
   const HTML_NS = 'http://www.w3.org/1999/xhtml';
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const XLINK_NS = 'http://www.w3.org/1999/xlink';
+  const MATHML_NS = 'http://www.w3.org/1998/Math/MathML';
   // An empty or null namespace is the HTML namespace for elements (the spec's default).
   const nsOf = ns => (ns === undefined || ns === null || ns === '' ? '' : String_(ns));
   // "Get Trusted Type data for attribute": event handler content attributes are TrustedScript;
   // the table: iframe srcdoc (TrustedHTML), HTML script src and SVG script href (TrustedScriptURL).
   function attributeType(tag, attribute, elementNs, attrNs) {
     const elNs = elementNs === '' ? HTML_NS : elementNs;
-    if (attrNs === '' && attribute.startsWith('on') && attribute.length > 2) return 'TrustedScript';
+    // Event handler content attributes of an HTML, SVG or MathML element (not a foreign one's).
+    if (attrNs === '' && (elNs === HTML_NS || elNs === SVG_NS || elNs === MATHML_NS) && native.isEventHandler(attribute)) return 'TrustedScript';
     if (elNs === HTML_NS && attrNs === '' && tag === 'iframe' && attribute === 'srcdoc') return 'TrustedHTML';
     if (elNs === HTML_NS && attrNs === '' && tag === 'script' && attribute === 'src') return 'TrustedScriptURL';
     if (elNs === SVG_NS && tag === 'script' && attribute === 'href' && (attrNs === '' || attrNs === XLINK_NS)) return 'TrustedScriptURL';
