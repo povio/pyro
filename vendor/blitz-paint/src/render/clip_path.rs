@@ -441,7 +441,29 @@ impl ElementCx<'_, '_> {
 
 /// pyro: whether `p` is inside `path` filled with `fill`.
 pub(super) fn path_contains(path: &BezPath, fill: Fill, p: Point) -> bool {
-    let winding = path.winding(p);
+    // A fill closes every subpath, but `BezPath::winding` only counts the segments drawn: the
+    // frame's border-box path (a rounded rectangle built from arcs and lines) ends open, and
+    // without its closing edge the point was outside for every row between the corners' arcs.
+    use kurbo::PathEl;
+    let mut closed = BezPath::new();
+    let mut open = false;
+    for el in path.elements() {
+        match el {
+            PathEl::MoveTo(_) => {
+                if open {
+                    closed.push(PathEl::ClosePath);
+                }
+                open = true;
+            }
+            PathEl::ClosePath => open = false,
+            _ => {}
+        }
+        closed.push(*el);
+    }
+    if open {
+        closed.push(PathEl::ClosePath);
+    }
+    let winding = closed.winding(p);
     match fill {
         Fill::EvenOdd => winding % 2 != 0,
         _ => winding != 0,
