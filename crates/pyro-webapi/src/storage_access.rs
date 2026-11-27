@@ -61,7 +61,11 @@ impl PageDom {
     /// blocks anything (every context by default): then nothing is asked of a request, and a
     /// first-party or same-site request has no cost.
     pub fn cookie_blocking(&self) -> Option<Arc<CookieBlocking>> {
-        let rules = self.context_services().cookie_access_rules();
+        let services = self.context_services();
+        if !services.has_cookie_access_rules() {
+            return None;
+        }
+        let rules = services.cookie_access_rules();
         if rules.is_empty() {
             return None;
         }

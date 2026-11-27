@@ -210,6 +210,9 @@ type ClipboardEntry = (String, String, bool);
 pub(crate) struct PermissionTable(
     Arc<RwLock<FxHashMap<Option<String>, OriginPermissions>>>,
     Arc<RwLock<Arc<Vec<pyro_net::cookies::CookieAccessRule>>>>,
+    /// Whether the storage access rules are not empty: every request asks it, and a context without rules
+    /// (the default) answers with this load alone, not the lock and the `Arc` clone of the list.
+    Arc<std::sync::atomic::AtomicBool>,
 );
 
 /// State a browser context's pages share: its permission table and its
@@ -293,7 +296,14 @@ impl ContextServices {
         if next.iter().all(|r| !r.blocked) {
             next.clear();
         }
+        // (Under the write lock: a reader of the flag then finds the list it announces.)
+        self.permissions.2.store(!next.is_empty(), std::sync::atomic::Ordering::Release);
         *rules = Arc::new(next);
+    }
+
+    /// Whether the context has any storage access rule: false for a context without one, by one atomic load.
+    pub(crate) fn has_cookie_access_rules(&self) -> bool {
+        self.permissions.2.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// The context's storage access rules (empty: no document is a third party for cookies).
