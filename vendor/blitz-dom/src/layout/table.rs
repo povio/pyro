@@ -3154,8 +3154,15 @@ fn collect_columns(
                 collect_columns(doc, child_id, wm, columns, column_sizes);
             }
             doc.nodes[node_id].children = children;
-            for column in &mut columns[first_column..] {
+            // pyro: a column group's `width` is the width of its columns that have none of their own (a `<col>`
+            // wins over its group; css-tables-3 § 3.3 and the group's own width used when it has no columns;
+            // Chromium; WPT css-tables `width-distribution/computing-column-measure-0`, `tentative/colgroup-col`).
+            let group_track = (columns.len() > first_column).then(|| column_track(&doc.nodes[node_id], wm));
+            for (column, size) in columns[first_column..].iter_mut().zip(&mut column_sizes[first_column..]) {
                 column.group.get_or_insert(node_id);
+                if let Some(track) = group_track.filter(|_| size.min.is_auto() && size.max.is_auto()) {
+                    *size = track;
+                }
             }
             // pyro: a column group without columns stands for its `span` columns (HTML's `colgroup`;
             // Chromium: one), with its own width, background and borders as theirs.
@@ -3194,25 +3201,9 @@ fn collapsed_rows(doc: &BaseDocument, rows: &[TableRow]) -> Vec<u16> {
     }).collect()
 }
 
-fn push_columns(
-    node: &crate::Node,
-    wm: WritingMode,
-    columns: &mut Vec<TableColumn>,
-    column_sizes: &mut Vec<TrackSizingFunction>,
-) {
+/// The track a `<col>` or `<colgroup>` (`node`) asks for with its `width`, `max-width` and `min-width`.
+fn column_track(node: &crate::Node, wm: WritingMode) -> TrackSizingFunction {
     let style = table_taffy_style(node, wm);
-    // pyro: HTML § 4.9.4 / § 4.9.5: `span` is a non-negative integer clamped to 1 to 1000 (0, a
-    // negative number and junk are 1; a value too large for any integer is 1000: WPT tabular-data
-    // `col-span-limits`).
-    let span: u16 = node
-        .attr(local_name!("span"))
-        .map(|val| {
-            let val = val.trim_start_matches(|c: char| c.is_ascii_whitespace());
-            let digits = val.strip_prefix('+').unwrap_or(val);
-            let digits = &digits[..digits.find(|c: char| !c.is_ascii_digit()).unwrap_or(digits.len())];
-            if digits.is_empty() { 1 } else { digits.parse::<u64>().unwrap_or(u64::MAX).clamp(1, 1000) as u16 }
-        })
-        .unwrap_or(1);
     let column: TrackSizingFunction = match style.size.width.tag() {
         taffy::CompactLength::LENGTH_TAG => {
             // A definite `max-width` clamps the column width; a zero width is treated as auto
@@ -3237,6 +3228,28 @@ fn push_columns(
         }
         _ => column,
     };
+    column
+}
+
+fn push_columns(
+    node: &crate::Node,
+    wm: WritingMode,
+    columns: &mut Vec<TableColumn>,
+    column_sizes: &mut Vec<TrackSizingFunction>,
+) {
+    let column = column_track(node, wm);
+    // pyro: HTML § 4.9.4 / § 4.9.5: `span` is a non-negative integer clamped to 1 to 1000 (0, a
+    // negative number and junk are 1; a value too large for any integer is 1000: WPT tabular-data
+    // `col-span-limits`).
+    let span: u16 = node
+        .attr(local_name!("span"))
+        .map(|val| {
+            let val = val.trim_start_matches(|c: char| c.is_ascii_whitespace());
+            let digits = val.strip_prefix('+').unwrap_or(val);
+            let digits = &digits[..digits.find(|c: char| !c.is_ascii_digit()).unwrap_or(digits.len())];
+            if digits.is_empty() { 1 } else { digits.parse::<u64>().unwrap_or(u64::MAX).clamp(1, 1000) as u16 }
+        })
+        .unwrap_or(1);
     for _ in 0..span {
         columns.push(TableColumn { node_id: node.id, group: None });
         column_sizes.push(column);
