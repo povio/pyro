@@ -405,7 +405,7 @@ impl LayoutPassState<'_> {
             let font_size = style.slow_clone_font_size().used_size().px();
             let display_style = style.get_font().math_style == style::values::computed::MathStyle::Normal;
             let math_depth = style.get_font().math_depth as i32;
-            let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
+            let rtl = style.slow_clone_direction() == style::computed_values::direction::T::Rtl;
             // The row reads no constant: the font is looked up for the classes that do.
             let font = if kind == MathKind::Row {
                 MathFontParameters::default()
