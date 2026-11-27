@@ -422,15 +422,10 @@
       o.event.interception = 'committed';
       o.event.scrollAtCommit = native.viewportScroll();
     }
-    const runs = o.handlers.map((handler) => {
-      try {
-        return PromiseC.resolve(handler());
-      } catch (e) {
-        return PromiseC.reject(e);
-      }
-    });
-    PromiseC.all(runs).then(
-      () => {
+    // HTML "react to" each handler promise directly: `navigatesuccess` fires one microtask after the
+    // last handler settled, so it precedes the reactions the page attached to `committed` right after
+    // the method returned. (`Promise.all` would add two ticks and put them first.)
+    const succeed = () => {
         if (ongoing !== o) return;
         // HTML "potentially process scroll behavior": after the handlers, unless "manual" or
         // `scroll()` already did.
@@ -451,11 +446,31 @@
         if (o.result !== null) o.result.finished.resolve(entry);
         if (o.transitionFinished !== null) o.transitionFinished.resolve();
         if (o.transition !== null && transition === o.transition) transition = null;
-      },
-      (error) => {
-        if (ongoing === o) fail(o, error);
-      },
-    );
+    };
+    if (o.handlers.length === 0) {
+      PromiseC.resolve().then(succeed);
+      return;
+    }
+    let remaining = o.handlers.length;
+    let failed = false;
+    for (const handler of o.handlers) {
+      let run;
+      try {
+        run = PromiseC.resolve(handler());
+      } catch (e) {
+        run = PromiseC.reject(e);
+      }
+      run.then(
+        () => {
+          if (--remaining === 0 && !failed) succeed();
+        },
+        (error) => {
+          if (failed) return;
+          failed = true;
+          if (ongoing === o) fail(o, error);
+        },
+      );
+    }
   };
 
   native.watch((kind, a, b, c, d, e, f, formData, sourceElement) => {
