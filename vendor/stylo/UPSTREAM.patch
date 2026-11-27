@@ -2742,8 +2742,8 @@ diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/
  }
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
 --- a/properties/helpers.mako.rs	2026-11-11 19:55:57
-+++ b/properties/helpers.mako.rs	2026-11-23 06:58:46
-@@ -55,6 +55,13 @@
++++ b/properties/helpers.mako.rs	2026-11-27 22:59:03
+@@ -55,6 +55,23 @@
                      CSSWideKeyword::Initial => {
                          % if not property.style_struct.inherited:
                              declaration.debug_crash("Unexpected initial or unset for non-inherited property");
@@ -2754,10 +2754,20 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
 +                                let value = get_initial_specified_value().to_computed_value(context);
 +                                context.builder.set_${property.ident}(value);
 +                            }
++                        % elif engine == "servo" and property.name == "color":
++                            // pyro: the initial `color` is the system color CanvasText of the element's used
++                            // color scheme (css-color-adjust-1 § color-scheme-processing).
++                            {
++                                let canvas_text = context.device().system_color(
++                                    crate::values::specified::color::SystemColor::Canvastext,
++                                    context.builder.color_scheme,
++                                );
++                                context.builder.set_${property.ident}(canvas_text);
++                            }
                          % else:
                              context.builder.reset_${property.ident}();
                          % endif
-@@ -64,7 +71,17 @@
+@@ -64,7 +81,17 @@
                      % endif
                      CSSWideKeyword::Inherit => {
                          % if not property.style_struct.inherited:
@@ -2775,7 +2785,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % endif
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
-@@ -111,6 +128,9 @@
+@@ -111,6 +138,9 @@
          }
          % endif
  
@@ -2785,19 +2795,21 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
          % if property.vector and not property.vector.simple_bindings and engine == "gecko":
              // In the case of a vector property we want to pass down an
              // iterator so that this can be computed without allocation.
-@@ -133,7 +153,10 @@
+@@ -133,9 +163,12 @@
              % else:
              let computed = specified_value.to_computed_value(context);
              % endif
 -            context.builder.set_${property.ident}(computed)
 +            context.builder.set_${property.ident}(computed);
-+        % endif
+         % endif
 +        % if property.is_font_affecting():
 +        context.for_font_affecting_property = previous_font_basis;
          % endif
-         % endif
++        % endif
      }
-@@ -613,7 +636,13 @@
+ 
+     pub fn parse_declared(
+@@ -613,7 +646,13 @@
          % if shorthand.kind == "four_sides":
          ${self.four_sides_shorthand(shorthand)}
          % endif
@@ -2812,7 +2824,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
          ${self.single_border_shorthand(shorthand)}
          % endif
          % if "IS_LEGACY_SHORTHAND" in shorthand.flags:
-@@ -650,6 +679,48 @@
+@@ -650,6 +689,48 @@
                  dest.write_char(' ')?;
                  second.to_css(dest)?;
              }
@@ -2861,7 +2873,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
              Ok(())
          }
      }
-@@ -692,13 +763,37 @@
+@@ -692,13 +773,37 @@
      }
  </%def>
  
@@ -2900,7 +2912,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
              ${shorthand.sub_properties[0].ident}: width,
              ${shorthand.sub_properties[1].ident}: style,
              ${shorthand.sub_properties[2].ident}: color,
-@@ -707,7 +802,12 @@
+@@ -707,7 +812,12 @@
  
      impl<'a> ToCss for LonghandsToSerialize<'a>  {
          fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result where W: fmt::Write {
@@ -2916,7 +2928,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                  self.${shorthand.sub_properties[i].ident},
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-27 21:31:57
++++ b/properties/longhands.toml	2026-11-27 22:59:03
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -3615,7 +3627,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/pservers.html#StopOpacityProperty"
  affects = "paint"
  
-@@ -2117,7 +2315,6 @@
+@@ -2107,7 +2305,6 @@
+ type = "Transform"
+ initial = "generics::transform::Transform::none()"
+ struct = "box"
+-extra_prefixes = ["moz:layout.css.prefixes.transforms"]
+ flags = "CAN_ANIMATE_ON_COMPOSITOR SCROLL_LINKED_EFFECTIVE"
+ spec = "https://drafts.csswg.org/css-transforms/#propdef-transform"
+ servo_restyle_damage = "recalculate_overflow"
+@@ -2117,7 +2314,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
  struct = "box"
@@ -3623,7 +3643,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2150,8 +2347,24 @@
+@@ -2150,8 +2346,24 @@
  vector = { need_index = true }
  animation_type = "none"
  spec = "https://drafts.csswg.org/css-transitions-2/#transition-behavior-property"
@@ -3648,7 +3668,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [transition-delay]
  type = "Time"
  initial = "computed::Time::zero()"
-@@ -2272,10 +2485,10 @@
+@@ -2272,10 +2484,10 @@
  type = "ScrollAxis"
  initial = "computed::ScrollAxis::default()"
  struct = "ui"
@@ -3660,7 +3680,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2284,10 +2497,10 @@
+@@ -2284,10 +2496,10 @@
  type = "TimelineName"
  initial = "computed::TimelineName::none()"
  struct = "ui"
@@ -3672,7 +3692,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-name"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2296,10 +2509,10 @@
+@@ -2296,10 +2508,10 @@
  type = "ScrollAxis"
  initial = "computed::ScrollAxis::default()"
  struct = "ui"
@@ -3684,7 +3704,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2308,10 +2521,10 @@
+@@ -2308,10 +2520,10 @@
  type = "ViewTimelineInset"
  initial = "computed::ViewTimelineInset::default()"
  struct = "ui"
@@ -3696,7 +3716,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2320,10 +2533,10 @@
+@@ -2320,10 +2532,10 @@
  type = "TimelineName"
  initial = "computed::TimelineName::none()"
  struct = "ui"
@@ -3708,7 +3728,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-name"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2335,6 +2548,16 @@
+@@ -2335,6 +2547,16 @@
  servo_pref = "layout.css.view-transitions.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-view-transitions-2/#view-transition-class-prop"
@@ -3725,7 +3745,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = ""
  
  [view-transition-name]
-@@ -2350,7 +2573,6 @@
+@@ -2350,7 +2572,6 @@
  type = "VectorEffect"
  initial = "computed::VectorEffect::none()"
  struct = "svg"
@@ -3733,7 +3753,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/coords.html#VectorEffects"
  affects = "layout"
-@@ -2521,7 +2743,6 @@
+@@ -2521,7 +2742,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
  struct = "inherited_text"
@@ -3741,7 +3761,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  ignored_when_colors_disabled = true
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-color"
  affects = "paint"
-@@ -2530,7 +2751,6 @@
+@@ -2530,7 +2750,6 @@
  type = "LineWidth"
  initial = "app_units::Au(0)"
  struct = "inherited_text"
@@ -3749,7 +3769,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-width"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2586,8 +2806,58 @@
+@@ -2586,8 +2805,58 @@
  struct = "inherited_text"
  spec = "https://drafts.csswg.org/css-text-3/#tab-size-property"
  extra_gecko_aliases = ["-moz-tab-size"]
@@ -3808,7 +3828,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-autospace]
  type = "TextAutospace"
  initial = "computed::text::TextAutospace::NO_AUTOSPACE"
-@@ -2599,6 +2869,28 @@
+@@ -2599,6 +2868,28 @@
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
  affects = "layout"
  
@@ -3837,7 +3857,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-autospace-size]
  type = "Number"
  initial = "0.125"
-@@ -2635,7 +2927,6 @@
+@@ -2635,7 +2926,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -3845,7 +3865,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2956,7 @@
+@@ -2665,6 +2955,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -3853,7 +3873,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3173,6 +3465,14 @@
+@@ -3173,6 +3464,14 @@
  logical = true
  affects = "paint"
  
@@ -3868,7 +3888,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [corner-top-left-shape]
  type = "CornerShape"
  initial = "computed::CornerShape::round()"
-@@ -3383,9 +3683,9 @@
+@@ -3383,9 +3682,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -3879,7 +3899,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3393,7 +3693,6 @@
+@@ -3393,7 +3692,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -3887,7 +3907,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-top"
-@@ -3403,7 +3702,6 @@
+@@ -3403,7 +3701,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -3895,7 +3915,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-right"
-@@ -3413,7 +3711,6 @@
+@@ -3413,7 +3710,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -3903,7 +3923,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-bottom"
-@@ -3423,7 +3720,6 @@
+@@ -3423,7 +3719,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -3911,7 +3931,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-left"
-@@ -3433,7 +3729,6 @@
+@@ -3433,7 +3728,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -3919,7 +3939,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.4"
-@@ -3444,7 +3739,6 @@
+@@ -3444,7 +3738,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -3927,7 +3947,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.5"
-@@ -3455,7 +3749,6 @@
+@@ -3455,7 +3748,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -3935,7 +3955,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.6"
-@@ -3466,7 +3759,6 @@
+@@ -3466,7 +3758,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -3943,7 +3963,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.7"
-@@ -3567,7 +3859,6 @@
+@@ -3567,7 +3858,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -3951,7 +3971,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-top"
-@@ -3577,7 +3868,6 @@
+@@ -3577,7 +3867,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -3959,7 +3979,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-right"
-@@ -3587,7 +3877,6 @@
+@@ -3587,7 +3876,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -3967,7 +3987,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-bottom"
-@@ -3597,7 +3886,6 @@
+@@ -3597,7 +3885,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -3975,7 +3995,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-left"
-@@ -3607,7 +3895,6 @@
+@@ -3607,7 +3894,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -3983,7 +4003,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.4"
-@@ -3618,7 +3905,6 @@
+@@ -3618,7 +3904,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -3991,7 +4011,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.5"
-@@ -3629,7 +3915,6 @@
+@@ -3629,7 +3914,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -3999,7 +4019,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.6"
-@@ -3640,7 +3925,6 @@
+@@ -3640,7 +3924,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -4007,7 +4027,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.7"
-@@ -3694,6 +3978,7 @@
+@@ -3694,6 +3977,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -4015,7 +4035,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3726,10 +4011,31 @@
+@@ -3726,10 +4010,31 @@
  spec = "Internal (not web-exposed)"
  animation_type = "none"
  enabled_in = "ua"
@@ -4047,7 +4067,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [scroll-behavior]
  struct = "box"
  servo_pref = "layout.css.scroll-behavior.enabled"
-@@ -3770,13 +4076,31 @@
+@@ -3770,13 +4075,31 @@
  
  [column-fill]
  struct = "column"
@@ -4080,7 +4100,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [column-span]
  struct = "column"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-span"
-@@ -3845,7 +4169,7 @@
+@@ -3845,7 +4168,7 @@
  
  [math-shift]
  struct = "font"
@@ -4089,11 +4109,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://w3c.github.io/mathml-core/#the-math-shift"
  animation_type = "discrete"
  affects = "layout"
-@@ -3864,6 +4188,15 @@
- has_effect_on_gecko_scrollbars = false
+@@ -3865,6 +4188,15 @@
  type = "FontSmoothing"
  initial = "computed::FontSmoothing::Auto"
-+
+ 
 +[speak]
 +struct = "inherited_box"
 +engine = "servo"
@@ -4102,10 +4121,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +affects = ""
 +type = "Speak"
 +initial = "computed::Speak::Auto"
- 
++
  [visibility]
  struct = "inherited_box"
-@@ -3873,6 +4206,15 @@
+ spec = "https://drafts.csswg.org/css-box/#propdef-visibility"
+@@ -3873,6 +4205,15 @@
  type = "Visibility"
  initial = "computed::Visibility::Visible"
  
@@ -4121,7 +4141,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [direction]
  struct = "inherited_box"
  spec = "https://drafts.csswg.org/css-writing-modes/#propdef-direction"
-@@ -3901,9 +4243,9 @@
+@@ -3901,9 +4242,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -4132,7 +4152,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -3912,7 +4254,6 @@
+@@ -3912,7 +4253,6 @@
  
  [text-anchor]
  struct = "inherited_svg"
@@ -4140,7 +4160,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/text.html#TextAnchorProperty"
  animation_type = "discrete"
  affects = "layout"
-@@ -3921,7 +4262,6 @@
+@@ -3921,7 +4261,6 @@
  
  [color-interpolation]
  struct = "inherited_svg"
@@ -4148,7 +4168,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3930,7 +4270,6 @@
+@@ -3930,7 +4269,6 @@
  
  [color-interpolation-filters]
  struct = "inherited_svg"
@@ -4156,7 +4176,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationFiltersProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3939,7 +4278,6 @@
+@@ -3939,7 +4277,6 @@
  
  [shape-rendering]
  struct = "inherited_svg"
@@ -4164,7 +4184,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ShapeRenderingProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -4001,6 +4339,16 @@
+@@ -4001,6 +4338,16 @@
  type = "TextSizeAdjust"
  initial = "computed::TextSizeAdjust::Auto"
  
@@ -4181,7 +4201,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [ruby-align]
  struct = "inherited_text"
  servo_pref = "layout.css.ruby.enabled"
-@@ -4010,6 +4358,16 @@
+@@ -4010,6 +4357,16 @@
  type = "RubyAlign"
  initial = "computed::RubyAlign::SpaceAround"
  
@@ -4198,7 +4218,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-combine-upright]
  struct = "inherited_text"
  servo_pref = "layout.css.text-combine-upright.enabled"
-@@ -4092,6 +4450,17 @@
+@@ -4092,6 +4449,17 @@
  servo_restyle_damage = "rebuild_box"
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
@@ -4216,11 +4236,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [object-fit]
  struct = "position"
-@@ -4109,7 +4478,62 @@
- affects = "paint"
+@@ -4110,6 +4478,61 @@
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
-+
+ 
 +[mask-border-source]
 +type = "Image"
 +initial = "computed::Image::None"
@@ -4257,7 +4276,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border-outset"
 +boxed = true
 +affects = "paint"
- 
++
 +[mask-border-repeat]
 +type = "BorderImageRepeat"
 +initial = "computed::BorderImageRepeat::stretch()"
@@ -4279,7 +4298,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [mask-mode]
  struct = "svg"
  servo_pref = "layout.css.masking.enabled"
-@@ -4249,7 +4673,7 @@
+@@ -4249,7 +4672,7 @@
  
  [field-sizing]
  struct = "ui"
@@ -4288,10 +4307,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4714,61 @@
+@@ -4289,7 +4712,62 @@
+ aliases = ["-webkit-box-orient"]
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
- 
++
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -4316,7 +4336,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_restyle_damage = "rebuild_box"
 +type = "BoxAlign"
 +initial = "computed::BoxAlign::Stretch"
-+
+ 
 +[-webkit-box-pack]
 +struct = "box"
 +engine = "servo"
@@ -4350,7 +4370,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [-moz-box-pack]
  struct = "xul"
  engine = "gecko"
-@@ -4344,8 +4823,8 @@
+@@ -4344,8 +4822,8 @@
  type = "ScopedName"
  initial = "computed::ScopedName::none()"
  struct = "ui"
@@ -12522,7 +12542,7 @@ diff -ruN a/values/computed/effects.rs b/values/computed/effects.rs
  pub type SimpleShadow = GenericSimpleShadow<Color, Length, NonNegativeLength>;
 diff -ruN a/values/computed/font.rs b/values/computed/font.rs
 --- a/values/computed/font.rs	2026-11-11 19:55:57
-+++ b/values/computed/font.rs	2026-11-27 21:18:39
++++ b/values/computed/font.rs	2026-11-27 22:59:03
 @@ -32,11 +32,14 @@
  use style_traits::{CssWriter, ParseError, ToCss};
  use thin_vec::ThinVec;
@@ -12577,6 +12597,27 @@ diff -ruN a/values/computed/font.rs b/values/computed/font.rs
              Self::Serif | Self::SansSerif | Self::Monospace => true,
          }
      }
+@@ -1244,6 +1246,10 @@
+     /// The default angle for `font-style: oblique`.
+     /// See also https://github.com/w3c/csswg-drafts/issues/2295
+     pub const DEFAULT_OBLIQUE_DEGREES: i16 = 14;
++
++    /// pyro: an explicit `oblique 14deg` is stored one fixed-point step (1/256 degree) above the
++    /// keyword `oblique`, so the two serialize apart as in Chrome (`oblique` and `oblique 14deg`).
++    pub const EXPLICIT_DEFAULT_OBLIQUE_DEGREES: f32 = 14.0 + 1.0 / 256.0;
+ 
+     /// The `oblique` keyword with the default degrees.
+     pub const OBLIQUE: FontStyle = FontStyle(FontStyleFixedPoint {
+@@ -1287,6 +1293,9 @@
+         if *self != Self::OBLIQUE {
+             // It's not the default oblique amount, so append the angle in degrees.
+             dest.write_char(' ')?;
++            if *self == Self::oblique(Self::EXPLICIT_DEFAULT_OBLIQUE_DEGREES) {
++                return dest.write_str("14deg");
++            }
+             Angle::from_degrees(self.oblique_degrees()).to_css(dest)?;
+         }
+         Ok(())
 diff -ruN a/values/computed/image.rs b/values/computed/image.rs
 --- a/values/computed/image.rs	2026-11-11 19:55:57
 +++ b/values/computed/image.rs	2026-11-15 07:03:49
@@ -16953,7 +16994,7 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
              let f = input.expect_function()?;
 diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 --- a/values/specified/font.rs	2026-11-11 19:55:57
-+++ b/values/specified/font.rs	2026-11-23 06:58:46
++++ b/values/specified/font.rs	2026-11-27 22:59:03
 @@ -20,6 +20,7 @@
  use crate::values::specified::calc::{Leaf, PercentageContext};
  use crate::values::specified::length::{FontBaseSize, LengthUnit, LineHeightBase, PX_PER_PT};
@@ -16979,7 +17020,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
  pub enum SystemFont {
      /// https://drafts.csswg.org/css-fonts/#valdef-font-caption
      Caption,
-@@ -89,42 +89,24 @@
+@@ -89,44 +89,26 @@
      /// https://drafts.csswg.org/css-fonts/#valdef-font-status-bar
      StatusBar,
      /// Internal system font, used by the `<menupopup>`s on macOS.
@@ -17016,18 +17057,59 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 -pub struct SystemFont {
 -    #[css(skip)]
 -    _forbid_construction: (),
--}
--
+ }
+ 
 -#[allow(missing_docs)]
 -#[cfg(feature = "servo")]
 -impl SystemFont {
 -    pub fn parse(_context: &ParserContext, _input: &mut Parser) -> Result<Self, ()> {
 -        Err(())
 -    }
- }
- 
+-}
+-
  const DEFAULT_SCRIPT_MIN_SIZE_PT: u32 = 8;
-@@ -515,7 +497,7 @@
+ const DEFAULT_SCRIPT_SIZE_MULTIPLIER: f64 = 0.71;
+ 
+@@ -283,7 +265,10 @@
+                     dest.write_str("normal")?;
+                 } else {
+                     dest.write_str("oblique")?;
+-                    if *angle != Self::default_angle() {
++                    if *angle == Self::explicit_default_angle() {
++                        // pyro: an explicit `oblique 14deg` keeps its angle (see `parse`).
++                        dest.write_str(" 14deg")?;
++                    } else if *angle != Self::default_angle() {
+                         dest.write_char(' ')?;
+                         angle.to_css(dest)?;
+                     }
+@@ -300,7 +285,14 @@
+             "normal" => generics::FontStyle::normal(),
+             "italic" => generics::FontStyle::Italic,
+             "oblique" => {
++                // pyro: `oblique` and `oblique 14deg` are distinct values that serialize apart
++                // (Chrome); the explicit default angle is kept as `explicit_default_angle`.
+                 let angle = input.try_parse(|input| Self::parse_angle(context, input))
++                    .map(|angle| if angle.degrees() == Some(computed::FontStyle::DEFAULT_OBLIQUE_DEGREES as f32) {
++                        Self::explicit_default_angle()
++                    } else {
++                        angle
++                    })
+                     .unwrap_or_else(|_| Self::default_angle());
+ 
+                 generics::FontStyle::Oblique(angle)
+@@ -359,6 +351,11 @@
+         Ok(angle)
+     }
+ 
++    /// pyro: the angle an explicit `oblique 14deg` is stored as (one computed step above the default).
++    pub fn explicit_default_angle() -> Angle {
++        Angle::from_degrees(computed::FontStyle::EXPLICIT_DEFAULT_OBLIQUE_DEGREES)
++    }
++
+     /// The default angle for `font-style: oblique`.
+     pub fn default_angle() -> Angle {
+         Angle::from_degrees(computed::FontStyle::DEFAULT_OBLIQUE_DEGREES as f32)
+@@ -515,7 +512,7 @@
      XXXLarge,
      /// Indicate whether to apply font-size: math is specified so that extra
      /// scaling due to math-depth changes is applied during the cascade.
@@ -17036,7 +17118,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
      Math,
      #[css(skip)]
      None,
-@@ -529,15 +511,8 @@
+@@ -529,15 +526,8 @@
      }
  
      /// Returns true if the font size is the math keyword
@@ -17052,7 +17134,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
      }
  }
  
-@@ -971,10 +946,10 @@
+@@ -971,10 +961,10 @@
                          line_height_base,
                      )
                  },
@@ -17065,7 +17147,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
                      }
                      #[cfg(feature = "gecko")]
                      {
-@@ -1642,44 +1617,178 @@
+@@ -1642,44 +1632,178 @@
  #[derive(
      Clone,
      Debug,
@@ -17092,13 +17174,6 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +    Mix(Box<FontPaletteMix<P>>),
 +}
  
--#[allow(missing_docs)]
--impl FontPalette {
--    pub fn normal() -> Self {
--        Self(atom!("normal"))
--    }
--    pub fn light() -> Self {
--        Self(atom!("light"))
 +/// A specified palette retains percentage expressions until the element is styled.
 +pub type FontPalette = GenericFontPalette<crate::values::specified::Percentage>;
 +
@@ -17120,7 +17195,10 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +}
 +
 +#[derive(Clone, Debug, Deserialize, MallocSizeOf, PartialEq, Serialize, ToShmem)]
-+#[allow(missing_docs)]
+ #[allow(missing_docs)]
+-impl FontPalette {
+-    pub fn normal() -> Self {
+-        Self(atom!("normal"))
 +pub struct PaletteMixItem<P> {
 +    pub palette: GenericFontPalette<P>,
 +    pub weight: Option<P>,
@@ -17141,19 +17219,18 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +            ],
 +        })))
      }
--    pub fn dark() -> Self {
--        Self(atom!("dark"))
+-    pub fn light() -> Self {
+-        Self(atom!("light"))
 +}
 +
 +impl crate::values::distance::ComputeSquaredDistance for computed::FontPalette {
 +    fn compute_squared_distance(&self, other: &Self) -> Result<crate::values::distance::SquaredDistance, ()> {
 +        if self == other { Ok(crate::values::distance::SquaredDistance::from_sqrt(0.0)) } else { Err(()) }
      }
- }
- 
--impl Parse for FontPalette {
--    /// normal | light | dark | dashed-ident
--    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
+-    pub fn dark() -> Self {
+-        Self(atom!("dark"))
++}
++
 +impl crate::values::animated::ToAnimatedZero for computed::FontPalette {
 +    fn to_animated_zero(&self) -> Result<Self, ()> { Err(()) }
 +}
@@ -17163,13 +17240,16 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +
 +    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
 +        self.map_weights(&|weight| weight.to_computed_value(context))
-+    }
+     }
 +
 +    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
 +        computed.map_weights(&crate::values::specified::Percentage::from_computed_value)
 +    }
-+}
-+
+ }
+ 
+-impl Parse for FontPalette {
+-    /// normal | light | dark | dashed-ident
+-    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
 +impl crate::values::resolved::ToResolvedValue for computed::FontPalette {
 +    type ResolvedValue = Self;
 +
@@ -17262,7 +17342,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
              } else {
                  Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent))
              },
-@@ -1687,12 +1796,48 @@
+@@ -1687,12 +1811,48 @@
      }
  }
  
