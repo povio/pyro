@@ -358,6 +358,9 @@ impl Browser {
                         let kind = match as_.as_deref().map(str::to_ascii_lowercase).as_deref() {
                             Some("script") => ResourceKind::Script,
                             Some("style") => ResourceKind::Stylesheet,
+                            Some("font") => ResourceKind::Font,
+                            Some("track") => ResourceKind::Track,
+                            Some("fetch") => ResourceKind::Fetch,
                             _ => ResourceKind::Image,
                         };
                         with_policy(requester.request(url, kind, crossorigin, None), referrer_policy)
