@@ -1491,6 +1491,19 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             first_row_items.find(|item| first_group(item)).unwrap_or(first_item)
         };
         let mut first = item.y_position + item.baseline.unwrap_or(item.height);
+        // pyro: when no item of the first row is in a first-baseline group but some are in a last-baseline group,
+        // the container's first baseline is their shared (last) baseline, as in Blink (WPT css-flexbox
+        // `flex-align-baseline-grid-001`): the row's baseline-aligned items generate the set, whatever their side.
+        if !first_group(item) && !table_rows {
+            if let Some(shared) = items
+                .iter()
+                .filter(|item| item.row_indexes.start == first_row && item.participates_in_baseline_alignment())
+                .map(|item| item.y_position + item.last_baseline.unwrap_or(item.height))
+                .reduce(f32::max)
+            {
+                first = shared;
+            }
+        }
         // pyro: a table's is its first row's: the lowest baseline of its baseline-aligned cells that have one,
         // else the bottom of the lowest content box of its cells (css-tables-3 § 3.10, CSS 2.1 § 17.5.3).
         if table_rows {
@@ -1518,6 +1531,19 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         let last_row_items = || items.iter().filter(|item| item.row_indexes.end == last_row);
         let item = last_row_items().find(|item| last_group(item)).or_else(|| last_row_items().last()).unwrap();
         let mut last = item.y_position + item.last_baseline.unwrap_or(item.height);
+        // pyro: when no item of the last row is in a last-baseline group but some are in a first-baseline group,
+        // the container's last baseline is their shared (first) baseline, as in Blink: the last row's
+        // baseline-aligned items generate the set, whatever their side (probe: flex parent `align-items: last
+        // baseline`, inner grid `align-items: first baseline`: Chrome 65, previously 55 from the last item).
+        if !last_group(item) && !table_rows {
+            if let Some(shared) = last_row_items()
+                .filter(|item| item.participates_in_baseline_alignment())
+                .map(|item| item.y_position + item.baseline.unwrap_or(item.height))
+                .reduce(f32::max)
+            {
+                last = shared;
+            }
+        }
         // pyro: a table's last baseline is its LAST row's, found as the first one is in its first row: the lowest
         // baseline of the baseline-aligned cells of that row that have one, else the bottom of the lowest content
         // box of its cells (css-tables-3 § 3.10; WPT css-flexbox `flex-align-baseline-table-001`, css-grid
