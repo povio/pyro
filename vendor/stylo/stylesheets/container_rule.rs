@@ -350,6 +350,12 @@ impl ContainerCondition {
         .map(|(_, result)| result)
     }
 
+    /// pyro: whether the condition queries a size (a size feature, or a container axis): not a
+    /// style or scroll-state query alone.
+    pub fn has_size_query(&self) -> bool {
+        !self.flags.container_axes().is_empty()
+    }
+
     /// Tries to match a container query condition for a given element.
     pub fn matches<E>(
         &self,

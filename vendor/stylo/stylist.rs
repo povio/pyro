@@ -4102,8 +4102,9 @@ impl CascadeData {
                 return true;
             }
             // pyro: a scroll pseudo-element's size container is found from the ancestors of its
-            // originating element, which is itself no candidate (Conditional 5 § 3.3).
-            let (start, originating_element_style) = match context.extra_data.originating_element_style {
+            // originating element, which is itself no candidate (Conditional 5 § 3.3); its style and
+            // scroll-state queries do query the originating element.
+            let skipping = match context.extra_data.originating_element_style {
                 Some(style) if context.extra_data.skip_originating_container => {
                     // (The box of the pseudo-element is matched as itself: look from its originating element.)
                     let origin = if element.implemented_pseudo_element().is_some() {
@@ -4112,11 +4113,16 @@ impl CascadeData {
                         element
                     };
                     // The root element has no ancestors: it is the container, as for its own children.
-                    if origin.traversal_parent().is_some() { (origin, None) } else { (origin, Some(style)) }
+                    Some(if origin.traversal_parent().is_some() { (origin, None) } else { (origin, Some(style)) })
                 },
-                other => (element, other),
+                _ => None,
             };
+            let plain = (element, context.extra_data.originating_element_style);
             let matches = condition_ref.conditions.iter().any(|condition| {
+                let (start, originating_element_style) = match skipping {
+                    Some(skipping) if condition.has_size_query() => skipping,
+                    _ => plain,
+                };
                 condition
                     .matches(
                         stylist,
