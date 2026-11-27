@@ -109,11 +109,18 @@ impl Layout {
         if dom.document_element(self.document()).ok().flatten() == Some(el) {
             return self.viewport_scrollbar_hit(dom, &source, point);
         }
-        if self.is_root_container(dom, el) {
-            return None;
-        }
         let b = source.element_box(crate::snapshot::render_key(el))?;
         if b.hidden {
+            return None;
+        }
+        // Whether the box has a scrollbar gutter at all, from the box alone (the padding box is
+        // what the border leaves of it; the content box is `client_*`): nearly every element of a
+        // press's path has none, and then the rect and the root test below are not computed.
+        let (padding_width, padding_height) = (b.width - b.border[LEFT] - b.border[RIGHT], b.height - b.border[TOP] - b.border[BOTTOM]);
+        if (padding_width - b.client_width).max(0.0) < 0.5 && (padding_height - b.client_height).max(0.0) < 0.5 {
+            return None;
+        }
+        if self.is_root_container(dom, el) {
             return None;
         }
         let r = self.bounding_client_rect(dom, el);
