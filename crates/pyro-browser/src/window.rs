@@ -847,20 +847,20 @@ fn schedule_animation_frame(s: &Scope<'_>, w: &WindowData, frame: &mut Animation
     if frame.timer.is_none() {
         // Timers must not keep a disposed realm alive: hold it weakly.
         let realm_weak = s.realm().downgrade();
-        let run = move |_browser: &mut Browser| {
+        let run = move |browser: &mut Browser| {
             let Some(realm) = realm_weak.upgrade() else { return };
             let Ok(scope) = realm.scope() else { return };
-            run_animation_frame(&scope);
+            run_animation_frame(&scope, browser);
         };
         // Moving animations must advance their layout sample between callbacks,
         // including after a client command replenishes the eager-frame budget.
         let animation_interval = w.target.page.moving_animation_frame_interval();
         frame.timer = Some(if animation_interval.is_none() && take_eager_frame() {
             let realm_weak = s.realm().downgrade();
-            frame.backup = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |_browser: &mut Browser| {
+            frame.backup = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |browser: &mut Browser| {
                 let Some(realm) = realm_weak.upgrade() else { return };
                 let Ok(scope) = realm.scope() else { return };
-                run_animation_frame(&scope);
+                run_animation_frame(&scope, browser);
             }));
             w.sched.set_idle_timer(true, run)
         } else {
@@ -904,10 +904,10 @@ pub(crate) fn request_rendering_frame(realm: &Realm) {
         return;
     }
     let realm_weak = realm.downgrade();
-    frame.timer = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |_browser: &mut Browser| {
+    frame.timer = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |browser: &mut Browser| {
         let Some(realm) = realm_weak.upgrade() else { return };
         let Ok(scope) = realm.scope() else { return };
-        run_animation_frame(&scope);
+        run_animation_frame(&scope, browser);
     }));
 }
 
@@ -951,16 +951,16 @@ fn defer_frame_until_unblocked(scope: &Scope<'_>, w: &WindowData) {
                 || w.target.page.timeline().wants_rendering())
         {
             let realm_weak = realm.downgrade();
-            frame.timer = Some(w.sched.set_timer(Duration::ZERO, false, true, move |_browser: &mut Browser| {
+            frame.timer = Some(w.sched.set_timer(Duration::ZERO, false, true, move |browser: &mut Browser| {
                 let Some(realm) = realm_weak.upgrade() else { return };
                 let Ok(scope) = realm.scope() else { return };
-                run_animation_frame(&scope);
+                run_animation_frame(&scope, browser);
             }));
         }
     }));
 }
 
-fn run_animation_frame(scope: &Scope<'_>) {
+fn run_animation_frame(scope: &Scope<'_>, browser: &Browser) {
     let Some(w) = scope.global_data::<Window>() else { return };
     // A render-blocked document (a pending render-blocking stylesheet or
     // script, an unresolved `<link rel=expect>`) has no rendering
@@ -974,7 +974,11 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // HTML "update the rendering": a document's first rendering update reveals it (`pagereveal`),
     // then autofocus candidates flush before the scroll steps.
     pyro_webapi::lifecycle::reveal(&w.target.page);
-    pyro_webapi::lifecycle::flush_autofocus_candidates(&w.target.page);
+    // (Not while a script-blocking style sheet is pending: step 1 of "flush autofocus candidates";
+    // `Browser::stylesheets_changed` asks for the frame that flushes them once it is gone.)
+    if !w.frame_key().is_some_and(|key| browser.stylesheets_block_scripts(key)) {
+        pyro_webapi::lifecycle::flush_autofocus_candidates(&w.target.page);
+    }
     // The resize steps: child frames resized since the last update (an autofocus listener may
     // have resized one) fire `resize` before the animation frame callbacks.
     pyro_webapi::PageDom::run_pending_frame_resizes();

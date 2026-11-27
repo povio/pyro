@@ -5086,6 +5086,9 @@ impl Browser {
     pub(crate) fn stylesheets_changed(&mut self, page: FrameKey) {
         self.drain_dom_resources(page);
         if !self.stylesheets_block_scripts(page) {
+            if let Some(dom) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+                pyro_webapi::lifecycle::autofocus_unblocked(&dom);
+            }
             let pending = self.load_mut(page).and_then(|mut l| l.stylesheet_blocked_script.take());
             if let Some((element, source, nonce)) = pending {
                 self.load_mut(page).expect("load").blocked = false;

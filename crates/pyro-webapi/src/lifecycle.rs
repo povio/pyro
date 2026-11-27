@@ -44,6 +44,14 @@ fn flush_autofocus(page: &Rc<PageDom>, _doc: NodeId) {
     }
 }
 
+/// A script-blocking style sheet is gone: the rendering update that skipped flushing the
+/// autofocus candidates while it was pending must be followed by one that flushes them.
+pub fn autofocus_unblocked(page: &Rc<PageDom>) {
+    if !page.autofocus_processed.get() && (!page.autofocus_candidates.borrow().is_empty() || page.dom.borrow().has_autofocus_insertions()) {
+        request_top_level_frames(page);
+    }
+}
+
 /// Asks for a rendering update of the top-level page(s) sharing `page`'s DOM, whose flush
 /// handles the autofocus candidates: a child frame's candidates join its top-level
 /// document's, whose page may be idle (no animation frame of its own pending).
