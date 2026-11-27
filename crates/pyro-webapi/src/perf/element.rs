@@ -111,7 +111,7 @@ fn watching(page: &PageDom) -> bool {
 /// Whether a document change since the last scan may have painted something this module reports
 /// (`Browser::note_first_paint` asks, and requests the frame).
 pub fn wants_frame(page: &PageDom) -> bool {
-    ENABLED && watching(page) && scan::stale(page)
+    ENABLED && !page.is_hidden() && watching(page) && scan::stale(page)
 }
 
 /// A node an entry names, held without keeping its page alive: the entry's `element` is that
@@ -293,7 +293,7 @@ impl TimelineEntry for ElementTimingEntry {
 }
 
 /// Natural size of a `data:` image URL, from its header.
-fn data_url_dimensions(url: &str) -> Option<(f64, f64)> {
+pub(super) fn data_url_dimensions(url: &str) -> Option<(f64, f64)> {
     if !url.starts_with("data:") {
         return None;
     }
