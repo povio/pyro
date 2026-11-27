@@ -269,8 +269,10 @@
       try {
         state(keys, this);
         const d = dictionary(policy, "Failed to execute 'getStatusForPolicy' on 'MediaKeys'");
-        if (d.minHdcpVersion !== undefined) str(d.minHdcpVersion);
-        // Clear Key has no output protection to measure: every policy is met.
+        // Chrome (checked against stable, Clear Key): the empty string and the HDCP versions 1.0 to 1.4 and 2.0 to 2.3
+        // are valid and resolve 'usable'; any other string rejects TypeError. Clear Key decrypts in software with no
+        // output path to protect, so it has no output restriction that could make a version unmet.
+        if (d.minHdcpVersion !== undefined && !HDCP_VERSIONS.has(str(d.minHdcpVersion))) throw new TypeErrorC("Failed to execute 'getStatusForPolicy' on 'MediaKeys': Invalid HDCP version");
         return PromiseC.resolve('usable');
       } catch (e) { return reject(e); }
     }
@@ -280,11 +282,14 @@
         if (arguments.length < 1) throw new TypeErrorC("Failed to execute 'setServerCertificate' on 'MediaKeys': 1 argument required, but only 0 present.");
         const cert = toBytes(serverCertificate, "Failed to execute 'setServerCertificate' on 'MediaKeys'");
         if (!cert.length) throw new TypeErrorC("Failed to execute 'setServerCertificate' on 'MediaKeys': The serverCertificate parameter is empty.");
-        // Clear Key has no use for a server certificate: not supported.
+        // Clear Key has no use for a server certificate: resolving false ("not supported") is what the spec allows a key
+        // system that does not support certificates, and what Chrome's Clear Key does.
         return PromiseC.resolve(false);
       } catch (e) { return reject(e); }
     }
   }
+
+  const HDCP_VERSIONS = new Set(['', '1.0', '1.1', '1.2', '1.3', '1.4', '2.0', '2.1', '2.2', '2.3']);
 
   // The key IDs of a keyids / cenc request, or TypeError.
   function keyIdsOf(type, data) {
