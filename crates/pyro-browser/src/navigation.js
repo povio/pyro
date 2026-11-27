@@ -23,6 +23,7 @@
   const EventTargetC = EventTarget;
   const EventC = Event;
   const ErrorEventC = ErrorEvent;
+  const HTMLElementC = HTMLElement;
   const AbortControllerC = AbortController;
   const DOMExceptionC = DOMException;
   const PromiseC = Promise;
@@ -219,6 +220,7 @@
         // HTML NavigateEvent "interception state" and "scroll behavior".
         interception: 'none',
         scrollBehavior: null,
+        focusReset: null,
       });
     }
     intercept(options) {
@@ -240,6 +242,14 @@
       if (handler !== undefined && typeof handler !== 'function') {
         throw new TypeErrorC("Failed to execute 'intercept' on 'NavigateEvent': Failed to read the 'handler' property from 'NavigationInterceptOptions': The provided value is not a function.");
       }
+      const focusReset = options === undefined || options === null ? undefined : options.focusReset;
+      let focusResetValue;
+      if (focusReset !== undefined) {
+        focusResetValue = String(focusReset);
+        if (focusResetValue !== 'after-transition' && focusResetValue !== 'manual') {
+          throw new TypeErrorC("Failed to execute 'intercept' on 'NavigateEvent': Failed to read the 'focusReset' property from 'NavigationInterceptOptions': The provided value '" + focusResetValue + "' is not a valid enum value of type NavigationFocusReset.");
+        }
+      }
       const scroll = options === undefined || options === null ? undefined : options.scroll;
       if (scroll !== undefined) {
         const value = String(scroll);
@@ -248,6 +258,8 @@
         }
         d.scrollBehavior = value;
       }
+      // The last `intercept()` that gives a `focusReset` decides.
+      if (focusResetValue !== undefined) d.focusReset = focusResetValue;
       d.handlers.push(handler === undefined ? () => undefined : handler);
       d.interception = 'intercepted';
     }
@@ -352,11 +364,39 @@
   // HTML "abort the ongoing navigation" / "reject the finished promise":
   // `navigateerror` fires while `navigation.transition` is still this one,
   // then the transition's `finished` rejects and it is cleared.
-  const fail = (o, error) => {
+  // HTML "potentially reset the focus" of an intercepted navigation, before `navigatesuccess` and
+  // `navigateerror`: unless `focusReset: "manual"`, or the page moved the focus itself since the
+  // navigation began, the focused element is blurred (focus goes back to the document). The
+  // document's autofocus candidates are not processed.
+  const resetFocus = (o) => {
+    if (o.handlers.length === 0 || o.event.focusReset === 'manual' || !native.active()) return;
+    const active = document.activeElement;
+    if (active !== o.focused || active === null || active === document.body || active === document.documentElement) return;
+    try {
+      HTMLElementC.prototype.blur.call(active);
+    } catch (e) {
+      // Not an HTMLElement (an SVG element): left focused.
+    }
+  };
+  // The ErrorEvent's message, as the console shows an uncaught throw ("TypeError: a message").
+  const errorMessage = (error) => {
+    try {
+      if (error !== null && typeof error === 'object' && typeof error.name === 'string' && error.message !== undefined) {
+        return error.name + ': ' + String(error.message);
+      }
+      return String(error);
+    } catch (e) {
+      return '';
+    }
+  };
+  const fail = (o, error, resetsFocus) => {
     if (ongoing === o) ongoing = null;
     o.event.interception = 'finished';
+    if (resetsFocus === true) resetFocus(o);
     if (!o.controller.signal.aborted) o.controller.abort(error);
-    const ev = new ErrorEventC('navigateerror', { error, message: error && error.message !== undefined ? String(error.message) : String(error) });
+    // `filename` is the document's URL when the navigation began; Chrome reports the throw site
+    // as the position, here any position (1:1) stands for it.
+    const ev = new ErrorEventC('navigateerror', { error, message: errorMessage(error), filename: o.href, lineno: 1, colno: 1 });
     dispatch.call(navigation, ev);
     if (o.result !== null) {
       o.result.committed.reject(error);
@@ -396,7 +436,7 @@
     });
     const d = eventData.get(event);
     d.trusted = true;
-    const o = { type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state, event: d };
+    const o = { type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state, event: d, href: location.href, focused: document.activeElement };
     ongoing = o;
     d.dispatching = true;
     try {
@@ -449,6 +489,7 @@
             processScroll(o.event);
           }
         }
+        resetFocus(o);
         o.event.interception = 'finished';
         ongoing = null;
         // HTML: `navigatesuccess` fires with `navigation.transition` still
@@ -479,7 +520,7 @@
         (error) => {
           if (failed) return;
           failed = true;
-          if (ongoing === o) fail(o, error);
+          if (ongoing === o) fail(o, error, true);
         },
       );
     }
