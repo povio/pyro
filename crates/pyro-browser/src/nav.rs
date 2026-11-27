@@ -1959,7 +1959,26 @@ fn incumbent_page(s: &Scope<'_>) -> Option<Rc<pyro_webapi::PageDom>> {
             && document_url(&own).as_deref() == Some(url)
             && document_url(&entry).as_deref() != Some(url)
     });
-    Some(if is_own { own } else { entry })
+    if is_own {
+        return Some(own);
+    }
+    // A third document of the frame tree, whose function runs: neither the Location's nor the
+    // entry's, but the one whose URL the running script has (an inline script has its
+    // document's), as in WPT multiple-globals (the incumbent is a sibling of the relevant frame).
+    if let Some(url) = script.filter(|url| !url.starts_with("about:") && document_url(&entry).as_deref() != Some(url)) {
+        let tree = s.global_data::<crate::Window>().and_then(|w| Some((w.frame_host()?, w.frame_key()?)));
+        if let Some((host, key)) = tree {
+            for realm in host.sibling_realms(key, s.realm_id()) {
+                let Some(page) = realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()) else {
+                    continue;
+                };
+                if !Rc::ptr_eq(&page, &own) && !page.is_disposed() && document_url(&page).as_deref() == Some(url) {
+                    return Some(page);
+                }
+            }
+        }
+    }
+    Some(entry)
 }
 
 fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
