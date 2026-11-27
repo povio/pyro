@@ -17,6 +17,7 @@ mod media;
 mod nav;
 mod network_idle;
 mod preload;
+mod prefetch;
 mod quiet;
 mod refresh;
 mod responsive_frames;
@@ -38,7 +39,7 @@ pub use frames::{realm_page, FrameInfo};
 pub use images::LazyStarted;
 use frames::{FrameHost, FrameKey};
 pub use loader::{
-    FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
+    FetchDone, FetchRequest, NetLoader, Purpose, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
 };
 pub use nav::{set_navigation_rate_limit, History, HistoryEntry, Location, PageNav, Performance};
 pub use network_idle::NetworkIdle;
@@ -158,6 +159,7 @@ fn subresource_request_with(
     FetchRequest {
         csp: None,
         required_csp: None,
+        purpose: None,
         parser_priority: false,
         credentials: None,
         post: None,
@@ -857,6 +859,12 @@ pub struct Browser {
     /// Completions of in-flight fetches, keyed by completion id.
     pub(crate) completions: std::collections::HashMap<u64, FetchDone>,
     ready_responses: loader::ReadyResponses,
+    /// The speculation-rules prefetches of this browser's documents (`prefetch`).
+    prefetches: prefetch::PrefetchCache,
+    /// The URL of the document that is traversing the session history (the frame that called
+    /// `history.go()`), while the traversal's navigations start: the initiator a prefetch must
+    /// have been made by (`prefetch`). `None` otherwise.
+    prefetch_navigation_source: Option<String>,
     /// The CSP the next document committed in this frame inherits instead of what its URL would
     /// give (a `javascript:` result: the document it replaces), taken by that commit.
     csp_inherit_next: Option<(FrameKey, pyro_webapi::csp::InheritedCsp)>,
@@ -1115,6 +1123,8 @@ impl BrowserThread {
             local_storage_seed: Default::default(),
             completions: std::collections::HashMap::new(),
             ready_responses: Default::default(),
+            prefetches: Default::default(),
+            prefetch_navigation_source: None,
             csp_inherit_next: None,
             csp_sandbox_next: None,
             document_rules: Default::default(),

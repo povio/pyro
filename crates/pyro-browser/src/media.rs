@@ -79,6 +79,7 @@ impl Browser {
         let fetch = FetchRequest {
             csp: None,
             required_csp: None,
+            purpose: None,
             parser_priority: false,
             credentials: None,
             post: None,

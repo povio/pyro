@@ -106,6 +106,17 @@ pub enum ResourceKind {
     SpeculationRules,
 }
 
+/// What a request is for beyond its kind: a request that says so in `Sec-Purpose`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Purpose {
+    /// A speculation-rules prefetch of a document (nav-speculation "prefetch"): a
+    /// [`ResourceKind::Document`] navigation request (`Sec-Fetch-Dest: document`, mode `navigate`)
+    /// that says `Sec-Purpose: prefetch` and has no `Sec-Fetch-User`. `cross_site`: its initiator
+    /// is another site, so it carries no cookies and no non-default client hints. Its result goes
+    /// to the initiator document's prefetch cache (`crate::prefetch`), never to a frame.
+    Prefetch { cross_site: bool },
+}
+
 #[derive(Debug, Clone)]
 pub struct FetchRequest {
     pub parser_priority: bool,
@@ -146,6 +157,8 @@ pub struct FetchRequest {
     /// `Sec-Required-CSP` (on every hop of its redirects). The commit checks the response against
     /// the same snapshot.
     pub required_csp: Option<String>,
+    /// `Some`: the request says what it is for in `Sec-Purpose` (see [`Purpose`]).
+    pub purpose: Option<Purpose>,
 }
 
 impl FetchRequest {
@@ -218,6 +231,9 @@ pub struct Resource {
     /// A top-level document's `Speculation-Rules` header values (one per header line), raw;
     /// `speculation_rules::parse_header_urls` reads them.
     pub speculation_rules: Vec<String>,
+    /// A document's `No-Vary-Search` response header (`None`: absent), which the prefetch cache
+    /// matches a navigation's URL against (`crate::prefetch`).
+    pub no_vary_search: Option<pyro_net::nvs::NoVarySearch>,
     /// The response's `Referrer-Policy` header (a document's default policy).
     pub referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// A document's response asked for an origin-keyed agent cluster
@@ -526,6 +542,12 @@ impl ResourceLoader for NetLoader {
         let referrer = request_referrer(browser, &request);
         req.referrer = referrer.referrer;
         req.referrer_policy = referrer.policy;
+        // A speculation-rules prefetch says so on every hop (the client keeps a request's headers
+        // across redirects); it is not a user's navigation, and cross-site it is credential-less.
+        if let Some(Purpose::Prefetch { cross_site }) = request.purpose {
+            req.headers.insert(pyro_net::http::HeaderName::from_static("sec-purpose"), pyro_net::http::HeaderValue::from_static("prefetch"));
+            req.cross_site_prefetch = cross_site;
+        }
         let part = request.part;
         if let Some(start) = part.map(|p| p.start).filter(|&s| s > 0) {
             if let Ok(value) = pyro_net::http::HeaderValue::from_str(&format!("bytes={start}-")) {
@@ -616,6 +638,7 @@ impl ResourceLoader for NetLoader {
                 reporting_endpoints: None,
                 dictionary_links: Vec::new(),
                 speculation_rules: Vec::new(),
+                no_vary_search: None,
                 referrer_policy: None,
                 origin_agent_cluster: false, force_load_at_top: false,
                 embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
@@ -710,6 +733,7 @@ impl ResourceLoader for NetLoader {
                     reporting_endpoints: None,
                     dictionary_links: Vec::new(),
                     speculation_rules: Vec::new(),
+                    no_vary_search: None,
                     referrer_policy: None,
                     origin_agent_cluster: false, force_load_at_top: false,
                     embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
@@ -806,6 +830,9 @@ impl ResourceLoader for NetLoader {
                         } else {
                             Vec::new()
                         },
+                        no_vary_search: document
+                            .then(|| pyro_net::nvs::NoVarySearch::from_headers(&h.headers))
+                            .filter(|nvs| !nvs.is_default()),
                         referrer_policy: pyro_net::ReferrerPolicy::from_header(
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
@@ -1087,7 +1114,7 @@ pub(crate) fn coop_requires_switch(
 /// service workers), any other request to the requesting document's
 /// controller. `None` at the cost of one emptiness test when the context has
 /// no registrations.
-fn service_worker_route(
+pub(crate) fn service_worker_route(
     browser: &Browser,
     page: PageId,
     req: &pyro_net::Request,
@@ -1423,6 +1450,7 @@ impl ResourceLoader for StaticLoader {
                         reporting_endpoints: None,
                         dictionary_links: Vec::new(),
                         speculation_rules: Vec::new(),
+                        no_vary_search: None,
                         referrer_policy,
                         origin_agent_cluster: false, force_load_at_top: false,
                         embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
@@ -2121,6 +2149,7 @@ impl Browser {
         let req = FetchRequest {
             csp: None,
             required_csp: requirement.as_ref().map(|r| r.policy.clone()),
+            purpose: None,
             parser_priority: false,
             credentials: None,
             post: opts.post.clone(),
@@ -2150,10 +2179,11 @@ impl Browser {
             part: None,
         };
         let pending_id = loader_id.clone();
-        let cancel = loader.fetch_cancellable(
-            self,
-            req,
-            Box::new(move |b, res| {
+        // A speculation-rules prefetch of this URL, made by the document that navigates, answers it
+        // instead of the network (`crate::prefetch`).
+        let claim = self.claim_prefetch(page, &opts);
+        let claim_url = opts.url.clone();
+        let done: FetchDone = Box::new(move |b, res| {
                 let current = b.doc(page).and_then(|p| p.pending_loader.clone());
                 if current.as_ref() != Some(&loader_id) {
                     return; // superseded by another navigation
@@ -2255,8 +2285,40 @@ impl Browser {
                 if let Some(nav) = b.doc(page).filter(|p| p.pending_loader.is_none()).map(|p| p.nav.clone()) {
                     nav.abandon_traversal();
                 }
-            }),
-        );
+        });
+        let fallback_id = pending_id.clone();
+        let cancel = match claim {
+            Some(crate::prefetch::Claim::Ready(resource)) => {
+                self.scheduler().post(TaskSource::Networking, move |b| done(b, Ok(resource)));
+                None
+            }
+            Some(crate::prefetch::Claim::Pending(prefetch, started)) => {
+                let target = url::Url::parse(&claim_url).ok();
+                let waiter: crate::prefetch::Waiter = Box::new(move |b, resource| match resource {
+                    Some(mut resource) => {
+                        crate::prefetch::rebase_timing(&mut resource, started);
+                        done(b, Ok(resource));
+                    }
+                    // The prefetch failed, was not a success, was cleared, or its response does not
+                    // serve this URL: the navigation goes to the network after all.
+                    None => {
+                        if !b.doc(page).is_some_and(|d| d.pending_loader.as_ref() == Some(&fallback_id)) {
+                            return;
+                        }
+                        let cancel = loader.fetch_cancellable(b, req, done);
+                        if let Some(mut d) = b.doc_mut(page).filter(|d| d.pending_loader.as_ref() == Some(&fallback_id)) {
+                            d.pending_cancel = cancel;
+                        }
+                    }
+                });
+                match target {
+                    Some(target) => self.prefetch_wait(prefetch, target, waiter),
+                    None => waiter(self, None),
+                }
+                None
+            }
+            None => loader.fetch_cancellable(self, req, done),
+        };
         if let Some(mut d) = self.doc_mut(page).filter(|d| d.pending_loader.as_ref() == Some(&pending_id)) {
             d.pending_cancel = cancel;
         }
@@ -2412,6 +2474,7 @@ impl Browser {
             reporting_endpoints: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
+            no_vary_search: None,
             referrer_policy: None,
             origin_agent_cluster: false, force_load_at_top: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
@@ -3404,6 +3467,7 @@ impl Browser {
         let req = FetchRequest {
             csp: csp_guard.clone(),
             required_csp: None,
+            purpose: None,
             parser_priority,
             post: None,
             url,
@@ -3978,6 +4042,7 @@ impl Browser {
                 let req = FetchRequest {
                     csp: None,
                     required_csp: None,
+                    purpose: None,
                     parser_priority: false,
                     credentials: None,
                     post: None,
@@ -5114,6 +5179,7 @@ mod disposition_tests {
             reporting_endpoints: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
+            no_vary_search: None,
             referrer_policy: None,
             origin_agent_cluster: false, force_load_at_top: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,

@@ -123,6 +123,9 @@ pub struct ReportedResponse {
     /// A `no-cors` cross-origin response: status and type are hidden.
     pub opaque: bool,
     pub from_cache: bool,
+    /// A navigation's response was a speculation-rules prefetch's (`deliveryType`
+    /// "navigational-prefetch").
+    pub prefetched: bool,
     pub protocol: Option<pyro_net::http::Version>,
     pub mime: String,
     pub encoded: u64,
@@ -178,6 +181,7 @@ impl ReportedResponse {
             status: head.status.as_u16(),
             opaque,
             from_cache: head.from_cache,
+            prefetched: false,
             protocol: Some(head.protocol),
             mime: if opaque { String::new() } else { head.mime.clone() },
             encoded: 0,
@@ -317,7 +321,13 @@ fn entry_with_clock(report: &FetchReport, ms: impl Fn(Instant) -> f64) -> Resour
         (Some(_), Some(p)) => protocol_name(p),
         _ => "",
     };
-    e.delivery_type = if r.from_cache { "cache" } else { "" };
+    e.delivery_type = if r.prefetched {
+        "navigational-prefetch"
+    } else if r.from_cache {
+        "cache"
+    } else {
+        ""
+    };
     e
 }
 

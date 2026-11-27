@@ -276,6 +276,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             reporting_endpoints: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
+            no_vary_search: None,
             referrer_policy: None,
             origin_agent_cluster: false, force_load_at_top: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,

@@ -1188,9 +1188,17 @@ impl PageNav {
             }
             let prev = joint.current.replace(target);
             joint.traversals.set(traversals + 1);
+            // The document whose `history.go()` this is: the initiator a speculation-rules prefetch
+            // must have been made by to answer a navigation it causes (`prefetch`); an iframe's
+            // call does not use its parent's prefetch.
+            b.prefetch_navigation_source = b
+                .page(source.0)
+                .and_then(|p| p.frames.key(&source.1))
+                .and_then(|key| b.doc(key).map(|d| d.main_frame.url.clone()));
             for (nav, (index, entry, current_doc)) in changes {
                 apply_traversal(b, nav.page, &nav.frame_id, index, entry, current_doc, prev);
             }
+            b.prefetch_navigation_source = None;
         });
     }
 

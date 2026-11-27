@@ -229,6 +229,10 @@ pub struct Request {
     /// every redirect target against it before following it, and fails the request with
     /// [`crate::csp::BLOCKED_BY_CSP`] when an enforced policy blocks the hop. `None`: no policy.
     pub csp: Option<std::sync::Arc<crate::csp::RequestCsp>>,
+    /// A speculation-rules prefetch of another site than its initiator (nav-speculation
+    /// "prefetch"; Chrome fetches it in an isolated context): it sends no cookies and no
+    /// non-default client hints. The cookies its response sets are still stored.
+    pub cross_site_prefetch: bool,
 }
 
 /// A `Blob` served for a `blob:` URL: its bytes and its `type`.
@@ -299,6 +303,7 @@ impl Request {
             blob: None,
             body_from_stream: false,
             csp: None,
+            cross_site_prefetch: false,
         }
     }
 }

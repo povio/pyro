@@ -711,7 +711,7 @@ impl Browser {
     /// hook point of the lanes that act on rules: they call their driver from here. The registry
     /// already reflects the change; `Browser::speculation_candidates` is the current state.
     pub(crate) fn speculation_changed(&mut self, page: FrameKey, change: SpeculationChange) {
-        let _ = (page, change);
+        self.prefetch_rules_changed(page, change);
     }
 
     /// Registers `set` for `page`'s document, warns about what it skipped, and notifies.
@@ -820,6 +820,7 @@ impl Browser {
             let request = FetchRequest {
                 csp: None,
                 required_csp: None,
+                purpose: None,
                 parser_priority: false,
                 credentials: None,
                 post: None,

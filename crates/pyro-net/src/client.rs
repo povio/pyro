@@ -414,6 +414,9 @@ struct Shared {
     basic_auth_stored: std::sync::atomic::AtomicBool,
     /// `Accept-CH`: the client hints each origin asked for, for the session.
     client_hints: Mutex<crate::client_hints::Store>,
+    /// `Clear-Site-Data` that named the prefetch cache (`"prefetchCache"`, `"cache"`, `"*"`): the
+    /// serialized origin of the response and when it arrived (the newest 64).
+    prefetch_clears: Mutex<Vec<(String, Instant)>>,
     epoch: Instant,
     /// `Security.setIgnoreCertificateErrors`: HTTPS requests skip certificate
     /// verification (handshake signatures are still checked).
@@ -535,7 +538,7 @@ impl Shared {
                     h.entry(name).or_insert(value);
                 }
             }
-            if same_origin || req.destination == Destination::Document {
+            if (same_origin || req.destination == Destination::Document) && !req.cross_site_prefetch {
                 self.client_hints.lock().unwrap().add_to(&req.url, default_agent, &mut h);
             }
         }
@@ -592,14 +595,15 @@ impl Shared {
             h.insert(SEC_FETCH_SITE, HeaderValue::from_static(site.as_str()));
             h.insert(SEC_FETCH_MODE, HeaderValue::from_static(crate::referrer::fetch_mode(req.mode, req.destination)));
             h.insert(SEC_FETCH_DEST, HeaderValue::from_static(crate::referrer::fetch_dest(req.destination)));
-            if site == FetchSite::None && req.destination == Destination::Document {
+            // (A prefetch is not a user's navigation: no `Sec-Fetch-User`.)
+            if site == FetchSite::None && req.destination == Destination::Document && !h.contains_key(SEC_PURPOSE) {
                 h.insert(SEC_FETCH_USER, HeaderValue::from_static("?1"));
             }
         }
         // Cookies.
         // (`same_origin` is the hop's response tainting being "basic": `includes_credentials`.)
         let send_cookies = includes_credentials(req.hop_credentials(same_origin), same_origin);
-        if send_cookies && !h.contains_key(header::COOKIE) {
+        if send_cookies && !req.cross_site_prefetch && !h.contains_key(header::COOKIE) {
             let top = matches!(req.destination, Destination::Document);
             let safe = matches!(req.method, Method::GET | Method::HEAD);
             let ancestor = cookie_partition_cross_site(req, &req.url);
@@ -813,6 +817,7 @@ impl NetClient {
             basic_auth: Mutex::default(),
             basic_auth_stored: std::sync::atomic::AtomicBool::new(false),
             client_hints: Mutex::default(),
+            prefetch_clears: Mutex::default(),
             epoch: Instant::now(),
             ignore_certificate_errors: std::sync::atomic::AtomicBool::new(false),
             proxy,
@@ -837,6 +842,13 @@ impl NetClient {
 
     pub fn cookies(&self) -> &Arc<Mutex<CookieJar>> {
         &self.inner.cookies
+    }
+
+    /// Whether a response of `origin` (serialized) named the prefetch cache in `Clear-Site-Data`
+    /// (`"prefetchCache"`, `"cache"` or `"*"`) after `since`: the speculation-rules prefetches of
+    /// that origin started before then are gone.
+    pub fn prefetch_cache_cleared_since(&self, origin: &str, since: Instant) -> bool {
+        self.inner.shared.prefetch_clears.lock().unwrap().iter().any(|(o, at)| o == origin && *at >= since)
     }
     pub fn config(&self) -> &NetConfig {
         &self.inner.shared.config
@@ -1965,6 +1977,7 @@ const SEC_FETCH_SITE: header::HeaderName = header::HeaderName::from_static("sec-
 const SEC_FETCH_MODE: header::HeaderName = header::HeaderName::from_static("sec-fetch-mode");
 const SEC_FETCH_DEST: header::HeaderName = header::HeaderName::from_static("sec-fetch-dest");
 const SEC_FETCH_USER: header::HeaderName = header::HeaderName::from_static("sec-fetch-user");
+const SEC_PURPOSE: header::HeaderName = header::HeaderName::from_static("sec-purpose");
 
 /// The `Sec-Fetch-Site` relation of one hop: to the requesting document's
 /// origin, else (a navigation a document started) its referrer, else none
@@ -2893,6 +2906,13 @@ impl Io {
             // Clear-Site-Data "cache": the origin's responses in the HTTP cache go too.
             if clear.cache {
                 self.shared.cache.lock().unwrap().clear_origin(&url);
+            }
+            if clear.prefetch_cache {
+                let mut clears = self.shared.prefetch_clears.lock().unwrap();
+                if clears.len() >= 64 {
+                    clears.remove(0);
+                }
+                clears.push((url.origin().ascii_serialization(), Instant::now()));
             }
             let registration = (!matches!(kind, ResponseKind::Opaque)
                 && status == StatusCode::OK
