@@ -1247,6 +1247,10 @@ impl FontStyle {
     /// See also https://github.com/w3c/csswg-drafts/issues/2295
     pub const DEFAULT_OBLIQUE_DEGREES: i16 = 14;
 
+    /// pyro: an explicit `oblique 14deg` is stored one fixed-point step (1/256 degree) above the
+    /// keyword `oblique`, so the two serialize apart as in Chrome (`oblique` and `oblique 14deg`).
+    pub const EXPLICIT_DEFAULT_OBLIQUE_DEGREES: f32 = 14.0 + 1.0 / 256.0;
+
     /// The `oblique` keyword with the default degrees.
     pub const OBLIQUE: FontStyle = FontStyle(FontStyleFixedPoint {
         value: Self::DEFAULT_OBLIQUE_DEGREES << FONT_STYLE_FRACTION_BITS,
@@ -1289,6 +1293,9 @@ impl ToCss for FontStyle {
         if *self != Self::OBLIQUE {
             // It's not the default oblique amount, so append the angle in degrees.
             dest.write_char(' ')?;
+            if *self == Self::oblique(Self::EXPLICIT_DEFAULT_OBLIQUE_DEGREES) {
+                return dest.write_str("14deg");
+            }
             Angle::from_degrees(self.oblique_degrees()).to_css(dest)?;
         }
         Ok(())
