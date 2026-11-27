@@ -414,8 +414,9 @@ pub struct BaseDocument {
     /// Fetched SVG image resources accessible to this document's href resolver.
     pub svg_images: crate::util::SvgResources,
     /// pyro: HTML-in-Canvas privacy: [`Self::svg_images`] without the resources of an opaque
-    /// response, with the fingerprint of the map it was taken from ([`Self::svg_images_for_paint`]).
-    pub(crate) privacy_svg_images: std::cell::RefCell<Option<(usize, crate::util::SvgResources)>>,
+    /// response, with the generation of the map it was taken from ([`Self::svg_images_for_paint`],
+    /// `SvgResourceMap::generation`).
+    pub(crate) privacy_svg_images: std::cell::RefCell<Option<(u64, crate::util::SvgResources)>>,
     /// Changes to the stylist [`Device`] that have been requested since the
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
@@ -4189,17 +4190,17 @@ impl BaseDocument {
             return self.svg_images.clone();
         }
         let Ok(images) = self.svg_images.read() else { return Default::default() };
-        // (The count, and which resources: a replaced one is another address.)
-        let fingerprint = images.values().fold(images.len(), |hash, image| hash ^ (Arc::as_ptr(image) as usize).rotate_left(7));
+        // (The map's generation, read under the read lock: a change after it is another one.)
+        let generation = self.svg_images.generation();
         if let Some((known, kept)) = &*self.privacy_svg_images.borrow()
-            && *known == fingerprint
+            && *known == generation
         {
             return kept.clone();
         }
-        let kept: crate::util::SvgResources = Arc::new(std::sync::RwLock::new(
+        let kept: crate::util::SvgResources = Arc::new(crate::util::SvgResourceMap::new(
             images.iter().filter(|(_, image)| !image.is_opaque()).map(|(href, image)| (href.clone(), image.clone())).collect(),
         ));
-        *self.privacy_svg_images.borrow_mut() = Some((fingerprint, kept.clone()));
+        *self.privacy_svg_images.borrow_mut() = Some((generation, kept.clone()));
         kept
     }
 

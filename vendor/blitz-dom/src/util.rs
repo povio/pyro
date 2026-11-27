@@ -39,7 +39,67 @@ impl SvgResource {
         })
     }
 }
-pub type SvgResourceMap = std::sync::RwLock<std::collections::HashMap<String, std::sync::Arc<SvgResource>>>;
+type SvgResourceEntries = std::collections::HashMap<String, std::sync::Arc<SvgResource>>;
+
+/// The SVG image resources a document's `<svg>`s resolve hrefs against, by href. pyro: it counts its
+/// changes ([`Self::generation`]: a write guard adds one as it is released), which what is derived
+/// from it (`BaseDocument::svg_images_for_paint`) is kept by.
+#[derive(Default)]
+pub struct SvgResourceMap {
+    entries: std::sync::RwLock<SvgResourceEntries>,
+    generation: std::sync::atomic::AtomicU64,
+}
+
+impl std::fmt::Debug for SvgResourceMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SvgResourceMap").field("generation", &self.generation()).finish_non_exhaustive()
+    }
+}
+
+impl SvgResourceMap {
+    pub fn new(entries: SvgResourceEntries) -> Self {
+        Self { entries: std::sync::RwLock::new(entries), generation: Default::default() }
+    }
+
+    pub fn read(&self) -> std::sync::LockResult<std::sync::RwLockReadGuard<'_, SvgResourceEntries>> {
+        self.entries.read()
+    }
+
+    /// The resources for changing: the map counts the change when the guard is dropped, while the
+    /// lock is still held, so a reader that sees a generation sees the resources it counts.
+    pub fn write(&self) -> std::sync::LockResult<SvgResourceWrite<'_>> {
+        let wrap = |guard| SvgResourceWrite { guard, generation: &self.generation };
+        match self.entries.write() {
+            Ok(guard) => Ok(wrap(guard)),
+            Err(poisoned) => Err(std::sync::PoisonError::new(wrap(poisoned.into_inner()))),
+        }
+    }
+
+    /// How many times the resources were changed (a write guard was released).
+    pub fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+pub struct SvgResourceWrite<'a> {
+    guard: std::sync::RwLockWriteGuard<'a, SvgResourceEntries>,
+    generation: &'a std::sync::atomic::AtomicU64,
+}
+
+impl std::ops::Deref for SvgResourceWrite<'_> {
+    type Target = SvgResourceEntries;
+    fn deref(&self) -> &SvgResourceEntries { &self.guard }
+}
+
+impl std::ops::DerefMut for SvgResourceWrite<'_> {
+    fn deref_mut(&mut self) -> &mut SvgResourceEntries { &mut self.guard }
+}
+
+impl Drop for SvgResourceWrite<'_> {
+    fn drop(&mut self) {
+        self.generation.fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+}
 pub type SvgResources = std::sync::Arc<SvgResourceMap>;
 
 #[derive(Debug)]

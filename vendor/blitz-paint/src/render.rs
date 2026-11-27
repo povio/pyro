@@ -7329,7 +7329,7 @@ impl ElementCx<'_, '_> {
         }
         let sub_doc = entry.document.inner();
         let translation = self.transform.translation();
-        let painter = BlitzDomPainter::new(
+        let mut painter = BlitzDomPainter::new(
             &sub_doc,
             scale,
             width.ceil() as u32,
@@ -7338,9 +7338,20 @@ impl ElementCx<'_, '_> {
             translation.y + content.origin().y,
             self.custom_widget_scenes,
         );
+        // pyro: HTML-in-Canvas privacy: the image's document is painted by the same rules (its own
+        // images classified), and what it draws is noted in this paint's.
+        if self.context.privacy.is_some() {
+            painter.privacy = Some(Privacy::default());
+        }
         scene.push_clip_layer(Fill::NonZero, self.transform, &content);
         painter.paint_scene(scene);
         scene.pop_layer();
+        if let (Some(outer), Some(inner)) = (&self.context.privacy, painter.privacy.take()) {
+            outer.allowed.borrow_mut().extend(inner.allowed.into_inner());
+            if inner.unclassified.get() {
+                outer.unclassified.set(true);
+            }
+        }
         true
     }
 

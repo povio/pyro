@@ -438,6 +438,7 @@ fn serve_capture(b: &mut Browser, request: CaptureRequest, done: Box<dyn FnOnce(
         Box::new(move |_, result| {
             done(result.and_then(|r| {
                 if (200..300).contains(&r.status) {
+                    // (`r.opaque` is the final origin's tainting: `fetch_subresource_options`, `loader::is_opaque`.)
                     let (url, opaque) = (r.url.clone(), r.opaque);
                     let referrer_policy = r.referrer_policy.map(|p| p.as_str().to_owned());
                     let body = if kind == ResourceKind::Image { r.body } else { r.render_body(environment.as_slice()).into() };

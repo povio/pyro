@@ -1578,10 +1578,11 @@ impl Browser {
             self.scheduler().post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("page is gone".into())));
             return;
         };
+        let cors = options.crossorigin.is_some();
+        let document_origin = origin.clone();
         let done: FetchDone = match options.integrity {
             None => done,
             Some(integrity) => {
-                let cors = options.crossorigin.is_some();
                 Box::new(move |b, result| {
                     let result = result.and_then(|r| match loader::integrity_error(&r, Some(&integrity), cors, &origin) {
                         Some(message) => Err(message),
@@ -1591,6 +1592,15 @@ impl Browser {
                 })
             }
         };
+        // pyro: the tainting the response is used with is the final origin's, as the document's own
+        // layout fetches take it (`loader::is_opaque`: a no-cors redirect through another origin, or
+        // a loader that does not report it, is opaque though the response says otherwise).
+        let done: FetchDone = Box::new(move |b, result| {
+            done(b, result.map(|mut r| {
+                r.opaque = loader::is_opaque(&r, cors, &document_origin);
+                r
+            }))
+        });
         let Some(loader) = self.loader_for(page) else {
             self.scheduler()
                 .post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
