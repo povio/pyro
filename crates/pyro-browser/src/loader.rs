@@ -2435,7 +2435,10 @@ impl Browser {
         let pending_id = loader_id.clone();
         // A speculation-rules prefetch of this URL, made by the document that navigates, answers it
         // instead of the network (`crate::prefetch`).
-        let claim = self.claim_prefetch(page, &opts);
+        // Chrome does not serve a reload or a history traversal from the prefetch cache (it could
+        // be minutes old, and the entry's document is not the one being reloaded).
+        let reloading = opts.reason == crate::NavigationReason::History || matches!(history, HistoryHandling::Traverse | HistoryHandling::Reload);
+        let claim = if reloading { None } else { self.claim_prefetch(page, &opts) };
         let claim_url = opts.url.clone();
         let done: FetchDone = Box::new(move |b, res| {
                 if let Some((dom, guard)) = &nav_guard {

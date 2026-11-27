@@ -868,10 +868,6 @@ pub struct Browser {
     ready_responses: loader::ReadyResponses,
     /// The speculation-rules prefetches of this browser's documents (`prefetch`).
     prefetches: prefetch::PrefetchCache,
-    /// The URL of the document that is traversing the session history (the frame that called
-    /// `history.go()`), while the traversal's navigations start: the initiator a prefetch must
-    /// have been made by (`prefetch`). `None` otherwise.
-    prefetch_navigation_source: Option<String>,
     /// The CSP the next document committed in this frame inherits instead of what its URL would
     /// give (a `javascript:` result: the document it replaces), taken by that commit.
     csp_inherit_next: Option<(FrameKey, pyro_webapi::csp::InheritedCsp)>,
@@ -1159,7 +1155,6 @@ impl BrowserThread {
             completions: std::collections::HashMap::new(),
             ready_responses: Default::default(),
             prefetches: Default::default(),
-            prefetch_navigation_source: None,
             csp_inherit_next: None,
             csp_sandbox_next: None,
             document_rules: Default::default(),

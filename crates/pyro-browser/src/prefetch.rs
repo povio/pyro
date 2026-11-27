@@ -20,7 +20,7 @@
 //!   from or to a plain http page is never made;
 //! - the URL has credentials, or only differs from the document's URL by a fragment (that is a
 //!   same-document navigation; the document's own URL without a fragment is prefetchable: a
-//!   reload uses it);
+//!   navigation to it, but not a reload, uses it);
 //! - the rule `requires: ["anonymous-client-ip-when-cross-origin"]` and the URL is cross-origin
 //!   (it needs a proxy this browser has not);
 //! - the URL is cross-site and the effective referrer policy (the rule's, else the document's) is
@@ -67,8 +67,8 @@
 //! One cache per [`Browser`], entries tagged with their browsing context; an entry is usable
 //! once, by a navigation of the same context started by the document that asked for it, in the
 //! page that asked or in a popup its `window.open` made (another tab at the same URL cannot) (matched
-//! by the document's URL: the `Referer` source of the navigation, which for a traversal is the
-//! document of the frame that called `history.go()`), of the top-level frame, with GET, to the
+//! by the document's URL: the `Referer` source of the navigation), of the top-level frame, with
+//! GET, never a reload or a history traversal (Chrome does not serve those from it), to the
 //! requested URL (the first one of a redirect chain: a navigation to a URL in the middle of the
 //! chain, or redirected to the prefetched URL, does not match), through [`NoVarySearch`]
 //! equivalence (the rule's `expects_no_vary_search` hint while the response is pending, the
@@ -95,7 +95,7 @@ use crate::frames::FrameKey;
 use crate::loader::{PrefetchedHead, Purpose, ResourceCancellation};
 use crate::speculation_tags::tag_header;
 use crate::speculation_rules::{Action, Candidate, Eagerness, Requirement, RuleSetId, SpeculationChange};
-use crate::{Browser, ContextId, FetchRequest, NavigateOpts, NavigationReason, PageId, Resource, ResourceKind};
+use crate::{Browser, ContextId, FetchRequest, NavigateOpts, PageId, Resource, ResourceKind};
 
 /// How long a prefetch may wait for its navigation.
 const TTL: Duration = Duration::from_secs(300);
@@ -555,12 +555,9 @@ impl Browser {
         }
         let started = Instant::now();
         self.sweep_prefetches();
-        // The document that navigates: a traversal's is the one that called `history.go()`;
-        // otherwise the navigation's referrer source is the initiator document's URL (a popup's
-        // is its opener's), and a traversal or reload with none is the frame's own document.
-        let source = self.prefetch_navigation_source.clone().or_else(|| opts.referrer.clone()).or_else(|| {
-            (opts.reason == NavigationReason::History).then(|| self.document_url_of(page).map(|u| u.to_string())).flatten()
-        })?;
+        // The navigation's referrer source is the initiator document's URL (a popup's is its
+        // opener's); a navigation without one has no initiator that could have prefetched.
+        let source = opts.referrer.clone()?;
         let initiator = without_fragment(Url::parse(&source).ok()?);
         let target = without_fragment(Url::parse(&opts.url).ok()?);
         if !pyro_net::cookies::is_trustworthy(&target) {
