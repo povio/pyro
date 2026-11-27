@@ -408,6 +408,11 @@ impl NonCustomPropertyId {
         if rule_types == CssRuleTypes::from(CssRuleType::Margin) {
             return true;
         }
+        // pyro: an `@page` rule keeps every property too, whether or not it applies to a page box
+        // (`column-count`, `display`, ...), as Chrome's CSSOM does (WPT css-page cssom/margin-001).
+        if rule_types == CssRuleTypes::from(CssRuleType::Page) {
+            return true;
+        }
         let allowed_types = rule_types.intersection(CssRuleTypes::DECLARATION_ALLOWED_TYPES);
         debug_assert!(
             !allowed_types.is_empty(),
