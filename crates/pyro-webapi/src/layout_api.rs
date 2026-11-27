@@ -310,6 +310,16 @@ pub(crate) fn window_scroll<'s>(
 }
 
 pub(crate) fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
+    // pyro: a scroll the page asked for (script, input, a smooth scroll's step) is a scroll to
+    // report whatever offset it ends at: only a layout adjustment that undoes itself is none
+    // (`scroll_back_where_reported`; `clamp_scrolls` queues those through `queue_layout_scroll`).
+    page.scroll_reported.borrow_mut().remove(&(page.document(), target));
+    queue_layout_scroll(page, target, scrollend);
+}
+
+/// [`queue_scroll`] for an adjustment layout made (a clamp, a re-snap, scroll anchoring): it keeps
+/// the offset its last `scroll` event reported, so an adjustment brought back there fires nothing.
+fn queue_layout_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
     // HTML "run the scroll steps": a scrolled target is queued once and its
     // scroll event fires in the next rendering update before animation
     // callbacks. A 16 ms fallback also delivers it when no frame was requested.
@@ -711,13 +721,13 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
             pyro_dom::layout::ScrollTarget::Viewport => None,
         };
         if !now {
-            queue_scroll(page, node, true);
+            queue_layout_scroll(page, node, true);
         } else if scroll_back_where_reported(page, doc, node) {
             // (A queued `scroll` finds the same at its flush.)
             continue;
         } else if page.pending_scrolls.borrow().iter().any(|(key, _, _)| *key == (doc, node)) {
             // Its queued `scroll` is still to come: let it carry the `scrollend`.
-            queue_scroll(page, node, true);
+            queue_layout_scroll(page, node, true);
         } else {
             dispatch_scroll(page, doc, node, "scroll");
             ended.push(node);
