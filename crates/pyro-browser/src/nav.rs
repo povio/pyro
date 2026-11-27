@@ -1214,6 +1214,15 @@ impl PageNav {
         }
     }
 
+    /// HTML "process scroll behavior" of a push, replace or reload the Navigation API
+    /// intercepted (as Chrome does it): the scroll to `target`'s fragment, or to the top of the
+    /// document when the URL has none or no element is indicated.
+    fn scroll_to_fragment_or_top(&self, target: &Url) {
+        if let Some(page) = self.page_dom.borrow().upgrade() {
+            pyro_webapi::layout_api::scroll_to_fragment_or_top(&page, target.fragment().unwrap_or(""));
+        }
+    }
+
         /// Queues `hashchange` at the window when a same-document navigation
     /// changed only the fragment.
     fn queue_hashchange(&self, old_url: &str, new_url: &str) {
@@ -2710,6 +2719,14 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         if let Some(mut entry) = entry {
             entry.scroll_manual = false;
             nav.restore_scroll(&entry);
+        }
+        Ok(s.undefined())
+    });
+    // scrollToFragment(url): the scroll an intercepted push, replace or reload does after its
+    // handlers (or on `scroll()`): to the URL's fragment, else the top of the document.
+    native!("scrollToFragment", |s, nav, a| {
+        if let Ok(url) = Url::parse(&a.get(0).to_string()?) {
+            nav.scroll_to_fragment_or_top(&url);
         }
         Ok(s.undefined())
     });

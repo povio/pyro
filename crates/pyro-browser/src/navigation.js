@@ -173,11 +173,14 @@
 
   const eventData = new WeakMap();
   const NAVIGATION_TYPES = ['push', 'replace', 'reload', 'traverse'];
-  // HTML "process scroll behavior". Only a traversal's is done here (its restore was
-  // suppressed when it was intercepted); push, replace and reload keep the scroll of commit.
+  // HTML "process scroll behavior". A traversal's restore was suppressed when it was
+  // intercepted, so it is done here; a push, replace or reload (Chrome: also the reload, whatever
+  // its saved scroll position) scrolls to the destination URL's fragment, or to the top of the
+  // document when there is none or no element is indicated.
   const processScroll = (d) => {
     d.interception = 'scrolled';
     if (d.navigationType === 'traverse') native.restoreScroll();
+    else native.scrollToFragment(d.destination.url);
   };
   class NavigateEvent extends EventC {
     constructor(type, init) {
@@ -211,6 +214,7 @@
         hasUAVisualTransition: !!init.hasUAVisualTransition,
         sourceElement: init.sourceElement ?? null,
         handlers: [],
+        trusted: false,
         dispatching: false,
         // HTML NavigateEvent "interception state" and "scroll behavior".
         interception: 'none',
@@ -250,15 +254,19 @@
     scroll() {
       const d = eventData.get(this);
       if (d === undefined) throw new TypeErrorC('Illegal invocation');
+      if (!native.active()) {
+        throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': The document is not fully active.");
+      }
+      // HTML "ensure the event is ok to process scroll behavior": a synthetic event is never ok.
+      if (!d.trusted) {
+        throw new DOMExceptionC("Failed to execute 'scroll' on 'NavigateEvent': scroll() may only be called on a trusted event.", 'SecurityError');
+      }
       if (d.handlers.length === 0) {
         throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': scroll() may only be called on an intercepted navigation.");
       }
-      // HTML "ensure the event is ok to process scroll behavior": only once, after commit.
+      // ... only once, after commit and before the navigation finished.
       if (d.interception !== 'committed') {
         throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': scroll() may only be called after commit, and only once.");
-      }
-      if (!native.active()) {
-        throw invalidState("Failed to execute 'scroll' on 'NavigateEvent': The document is not fully active.");
       }
       processScroll(d);
     }
@@ -346,6 +354,7 @@
   // then the transition's `finished` rejects and it is cleared.
   const fail = (o, error) => {
     if (ongoing === o) ongoing = null;
+    o.event.interception = 'finished';
     if (!o.controller.signal.aborted) o.controller.abort(error);
     const ev = new ErrorEventC('navigateerror', { error, message: error && error.message !== undefined ? String(error.message) : String(error) });
     dispatch.call(navigation, ev);
@@ -386,6 +395,7 @@
       info, cancelable, formData, sourceElement,
     });
     const d = eventData.get(event);
+    d.trusted = true;
     const o = { type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state, event: d };
     ongoing = o;
     d.dispatching = true;
@@ -439,6 +449,7 @@
             processScroll(o.event);
           }
         }
+        o.event.interception = 'finished';
         ongoing = null;
         // HTML: `navigatesuccess` fires with `navigation.transition` still
         // set; then the method's and the transition's `finished` resolve and

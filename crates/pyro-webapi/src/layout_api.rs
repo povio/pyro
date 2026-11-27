@@ -747,6 +747,17 @@ pub fn restore_viewport_scroll(page: &Rc<PageDom>, (x, y): (i32, i32)) {
 /// start, inline nearest), or the top of the document for an empty fragment or `top`. Nothing
 /// moves when no element is indicated.
 pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
+    scroll_to_fragment_or(page, fragment, false);
+}
+
+/// [`scroll_to_fragment`] that, with `top_if_missing`, also scrolls to the top of the document
+/// when no element is indicated (the Navigation API's "process scroll behavior", which Chrome
+/// does for a missing fragment as for an empty one).
+pub fn scroll_to_fragment_or_top(page: &Rc<PageDom>, fragment: &str) {
+    scroll_to_fragment_or(page, fragment, true);
+}
+
+fn scroll_to_fragment_or(page: &Rc<PageDom>, fragment: &str, top_if_missing: bool) {
     use pyro_dom::layout::ScrollAlign;
     let doc = page.document();
     let decoded = percent_encoding::percent_decode_str(fragment).decode_utf8_lossy().into_owned();
@@ -804,7 +815,7 @@ pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
                 }
             }
         }
-        None if fragment.is_empty() || decoded.eq_ignore_ascii_case("top") => {
+        None if top_if_missing || fragment.is_empty() || decoded.eq_ignore_ascii_case("top") => {
             perform_scroll(page, ScrollBehavior::Auto, &[None], |dom, layout| {
                 layout.window_scroll_to(dom, Some(0), Some(0)).then_some(None).into_iter().collect()
             });
