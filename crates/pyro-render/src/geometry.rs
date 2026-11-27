@@ -379,6 +379,22 @@ impl Geometry {
         (p.x.is_finite() && p.y.is_finite()).then_some((p.x, p.y, true))
     }
 
+    /// pyro: whether `(x, y)` (document CSS px, as [`Self::element_box`] places the box) is inside
+    /// the shape `shape` of `id` (`blitz_paint::hit_shape_contains`: its `clip-path`, its own box
+    /// with a `border-shape` or rounded and shaped corners, what its `border-shape` leaves of its
+    /// clipped overflow), the point taken into the element's own coordinates through the inverse of
+    /// its transforms. `true` where it has no such shape, or none can be told.
+    pub(crate) fn hit_shape(&self, doc: &BaseDocument, id: NodeId, shape: blitz_paint::HitShape, x: f64, y: f64) -> bool {
+        if !self.in_layout_tree(doc, id) {
+            return true;
+        }
+        match self.local_point(doc, id, x, y) {
+            Some((u, v, true)) => blitz_paint::hit_shape_contains(doc, id, shape, u, v),
+            Some((_, _, false)) => false,
+            None => true,
+        }
+    }
+
     /// pyro: how a box under a transform answers a hit test at `(x, y)` (document CSS px, as
     /// [`Self::element_box`] places it): whether the point maps back into the border box through
     /// the inverse of its transforms (Chromium hit-tests the local point, not the bounds of the

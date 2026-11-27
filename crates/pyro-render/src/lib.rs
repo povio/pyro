@@ -65,6 +65,7 @@ pub use compare::{
 pub use geometry::{BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
 pub use hit::{HitProbe, HitVisit};
+pub use blitz_paint::HitShape;
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use blitz_traits::net::{CorsCredentials, Destination, FetchOptions};
 pub use net::{is_plain_cors, Fetched, Fetcher};
@@ -2766,6 +2767,13 @@ impl Renderer {
         let m = self.mirrors.get(&page)?;
         let (inside, depth) = self.geometry.get(&page)?.hit_plane(&m.doc, m.node(key)?, x, y)?;
         Some((inside, depth.and_then(|(root, z)| Some((m.key_of(root)?, z)))))
+    }
+
+    /// pyro: whether `(x, y)` (document CSS px, as the box is placed) is inside the shape `shape`
+    /// of the element `key` (see `Geometry::hit_shape`); `true` when it has none or is unknown.
+    pub fn hit_shape(&self, page: u64, key: u64, shape: HitShape, x: f64, y: f64) -> bool {
+        let (Some(m), Some(g)) = (self.mirrors.get(&page), self.geometry.get(&page)) else { return true };
+        m.node(key).is_none_or(|id| g.hit_shape(&m.doc, id, shape, x, y))
     }
 
     pub fn overflowing_text_hits(&self, page: u64, key: u64, border: [f64; 4]) -> Vec<[f64; 4]> {

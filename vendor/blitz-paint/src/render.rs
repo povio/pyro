@@ -288,40 +288,67 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         initial_y: f64,
         custom_widget_scenes: &'a CustomWidgetSceneMap,
     ) -> Self {
-        let selection_ranges: HashMap<NodeId, (usize, usize)> = dom
-            .get_text_selection_ranges()
-            .into_iter()
-            .map(|(node_id, start, end)| (node_id, (start, end)))
-            .collect();
+        Self::with_extras(dom, scale, width, height, initial_x, initial_y, custom_widget_scenes, true)
+    }
+
+    /// pyro: [`Self::new`], with `extras` false a painter that only builds boxes' shapes (hit
+    /// testing's `hit_shape_contains`): without the selection, the highlights, the caret and the
+    /// document-wide effect sets, which take a pass over the document.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn with_extras(
+        dom: &'dom BaseDocument,
+        scale: f64,
+        width: u32,
+        height: u32,
+        initial_x: f64,
+        initial_y: f64,
+        custom_widget_scenes: &'a CustomWidgetSceneMap,
+        extras: bool,
+    ) -> Self {
+        let selection_ranges: HashMap<NodeId, (usize, usize)> = if extras {
+            dom.get_text_selection_ranges()
+                .into_iter()
+                .map(|(node_id, start, end)| (node_id, (start, end)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
 
         // pyro: at most 31 highlights below the selection (bits of a mask).
         let mut highlight_layers = Vec::new();
         let mut highlight_ranges: HashMap<NodeId, Vec<(usize, usize, usize)>> = HashMap::new();
-        for (name, ranges) in dom.highlight_layer_ranges().into_iter().take(31) {
-            let layer = highlight_layers.len();
-            highlight_layers.push(crate::highlight::Layer::Named(name));
-            for (node_id, start, end) in ranges {
-                highlight_ranges.entry(node_id).or_default().push((layer, start, end));
+        let mut caret = None;
+        if extras {
+            for (name, ranges) in dom.highlight_layer_ranges().into_iter().take(31) {
+                let layer = highlight_layers.len();
+                highlight_layers.push(crate::highlight::Layer::Named(name));
+                for (node_id, start, end) in ranges {
+                    highlight_ranges.entry(node_id).or_default().push((layer, start, end));
+                }
             }
-        }
-        let selection_layer = highlight_layers.len();
-        highlight_layers.push(crate::highlight::Layer::Selection);
-        for (&node_id, &(start, end)) in &selection_ranges {
-            highlight_ranges.entry(node_id).or_default().push((selection_layer, start, end));
-        }
-        // pyro: the caret, a block one over the character after it as the top highlight.
-        let mut caret = crate::caret::caret_paint(dom);
-        if let Some(paint) = &caret
-            && let Some(end) = paint.covers
-        {
-            let layer = highlight_layers.len();
-            highlight_layers.push(crate::highlight::Layer::Caret(paint.color, paint.text_color));
-            highlight_ranges.entry(paint.node).or_default().push((layer, paint.byte, end));
-            caret = None;
+            let selection_layer = highlight_layers.len();
+            highlight_layers.push(crate::highlight::Layer::Selection);
+            for (&node_id, &(start, end)) in &selection_ranges {
+                highlight_ranges.entry(node_id).or_default().push((selection_layer, start, end));
+            }
+            // pyro: the caret, a block one over the character after it as the top highlight.
+            caret = crate::caret::caret_paint(dom);
+            if let Some(paint) = &caret
+                && let Some(end) = paint.covers
+            {
+                let layer = highlight_layers.len();
+                highlight_layers.push(crate::highlight::Layer::Caret(paint.color, paint.text_color));
+                highlight_ranges.entry(paint.node).or_default().push((layer, paint.byte, end));
+                caret = None;
+            }
         }
 
         let layer_manager = LayerManager::default();
-        let effects = crate::layers::document_effects(dom);
+        let effects = if extras {
+            crate::layers::document_effects(dom)
+        } else {
+            crate::layers::DocumentEffects { blend_isolated: HashSet::new(), backdrop_ancestors: HashSet::new() }
+        };
         let root_element_id = dom.try_root_element().map(|el| el.id);
         let canvas_background = canvas_background_source(dom);
 
@@ -2520,6 +2547,42 @@ enum ColumnShare {
     Outside,
     /// A break goes through it: each column shows its slice.
     Cut,
+}
+
+/// pyro: which of an element's shapes a hit test asks about ([`hit_shape_contains`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HitShape {
+    /// The region its `clip-path` leaves: it clips the element and its descendants.
+    ClipPath,
+    /// The element's own box as it is painted: its `border-shape`'s outer edge, or its border box
+    /// with the rounded or shaped (`corner-shape`) corners of its `border-radius`.
+    Own,
+    /// What its `border-shape` leaves of the content an `overflow` other than `visible` clips (the
+    /// shape's inner edge): it clips the element's descendants.
+    Overflow,
+}
+
+/// pyro: whether the point (`x`, `y`) (CSS px from `id`'s border box's origin, in its own
+/// coordinates) is inside the shape `shape` of the element `id`, built as it is painted (zoom,
+/// `corner-shape`, `border-shape`, the reference boxes of a `clip-path`, an SVG `<clipPath>`).
+/// `true` when the element has no such shape: nothing is cut away.
+pub(crate) fn hit_shape_contains(dom: &BaseDocument, id: NodeId, shape: HitShape, x: f64, y: f64) -> bool {
+    let Some(node) = dom.get_node(id) else { return true };
+    if node.element_data().is_none() || node.primary_styles().is_none() {
+        return true;
+    }
+    #[cfg(feature = "svg")]
+    let _raster_scope = anyrender_svg::PageRasterScope::enter(&dom.raster_budget);
+    let scale = dom.viewport().scale_f64();
+    let (width, height) = dom.viewport().window_size;
+    let widgets = HashMap::new();
+    let painter = BlitzDomPainter::with_extras(dom, scale, width, height, 0.0, 0.0, &widgets, false);
+    let cx = painter.element_cx(node, *node.final_layout(), Affine::IDENTITY, None);
+    match shape {
+        HitShape::ClipPath => cx.clip_path_contains(Point::new(x, y)),
+        HitShape::Own => cx.own_shape_contains(Point::new(x * scale, y * scale)),
+        HitShape::Overflow => cx.overflow_shape_contains(Point::new(x * scale, y * scale)),
+    }
 }
 
 /// pyro: the element whose background paints the canvas (CSS Backgrounds 3 §2.11.2), as Blink's

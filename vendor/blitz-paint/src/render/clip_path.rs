@@ -330,6 +330,18 @@ impl ElementCx<'_, '_> {
         flat
     }
 
+    /// pyro: whether `p` (CSS px from the border box's origin) is in the region this element's
+    /// `clip-path` leaves, as it is painted; `true` without one.
+    pub(super) fn clip_path_contains(&self, p: Point) -> bool {
+        match self.element_clip() {
+            None => true,
+            Some(ElementClip::Nothing) => false,
+            Some(ElementClip::Shape(path, fill)) => path_contains(&path, fill, p),
+            #[cfg(feature = "svg")]
+            Some(ElementClip::Svg { tree, transform }) => svg_clip_contains(&tree, transform, p),
+        }
+    }
+
     /// Convert a CSS basic-shape in its reference box (CSS px) to a clip.
     pub(super) fn basic_shape_clip(&self, shape: &BasicShape, reference: Rect) -> ElementClip {
         self.basic_shape_clip_with(shape, reference, true)
@@ -425,6 +437,52 @@ impl ElementCx<'_, '_> {
             }
         }
     }
+}
+
+/// pyro: whether `p` is inside `path` filled with `fill`.
+pub(super) fn path_contains(path: &BezPath, fill: Fill, p: Point) -> bool {
+    let winding = path.winding(p);
+    match fill {
+        Fill::EvenOdd => winding % 2 != 0,
+        _ => winding != 0,
+    }
+}
+
+/// pyro: whether `p` (CSS px from the border box's origin) is inside the shapes of the `<clipPath>`
+/// a clip's document (`ElementClip::Svg`) draws: the union of its visible shapes, each filled by
+/// its clip rule, in user units that `user` takes to CSS px (a clip path inside a clip path, a
+/// mask or a filter on a shape of it is not followed).
+#[cfg(feature = "svg")]
+fn svg_clip_contains(tree: &blitz_dom::node::SvgTree, user: Affine, p: Point) -> bool {
+    use anyrender_svg::usvg;
+    use svg_reference::{clipped_group, to_affine, to_bez_path};
+    fn collect(group: &usvg::Group, clip: Affine, out: &mut Vec<(BezPath, Fill)>) {
+        for node in group.children() {
+            match node {
+                usvg::Node::Path(path) if path.is_visible() => {
+                    let mut shape = to_bez_path(path.data());
+                    shape.apply_affine(clip * to_affine(path.abs_transform()));
+                    let fill = match path.fill().map(|fill| fill.rule()) {
+                        Some(usvg::FillRule::EvenOdd) => Fill::EvenOdd,
+                        _ => Fill::NonZero,
+                    };
+                    out.push((shape, fill));
+                }
+                usvg::Node::Group(child) => collect(child, clip, out),
+                _ => {}
+            }
+        }
+    }
+    let Some(clip) = clipped_group(tree.root()).and_then(|group| group.clip_path()) else {
+        return false;
+    };
+    if user.determinant().abs() < 1e-12 {
+        return false;
+    }
+    let p = user.inverse() * p;
+    let mut shapes = Vec::new();
+    collect(clip.root(), to_affine(clip.transform()), &mut shapes);
+    shapes.iter().any(|(shape, fill)| path_contains(shape, *fill, p))
 }
 
 fn fill_rule(rule: FillRule) -> Fill {
@@ -845,7 +903,7 @@ pub(super) mod svg_reference {
         Affine::new([ts.sx, ts.ky, ts.kx, ts.sy, ts.tx, ts.ty].map(f64::from))
     }
 
-    fn to_bez_path(path: &usvg::tiny_skia_path::Path) -> BezPath {
+    pub(in crate::render) fn to_bez_path(path: &usvg::tiny_skia_path::Path) -> BezPath {
         use usvg::tiny_skia_path::PathSegment;
         let point = |p: usvg::tiny_skia_path::Point| kurbo::Point::new(p.x as f64, p.y as f64);
         let mut out = BezPath::new();

@@ -187,6 +187,18 @@ pub struct HitPlane {
     pub depth: Option<(u64, f64)>,
 }
 
+/// pyro: which shape of an element a hit test asks about ([`GeometrySource::hit_shape`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HitShapeKind {
+    /// The region its `clip-path` leaves (it clips the element and its descendants).
+    ClipPath,
+    /// The element's own box as painted: a `border-shape`'s outer edge, or the rounded and
+    /// shaped (`corner-shape`) corners of its `border-radius`.
+    Own,
+    /// What its `border-shape` leaves of the content its `overflow` clips (its descendants).
+    Overflow,
+}
+
 /// What a sub-resource a geometry source loads is for (the request's
 /// destination: its `Accept`, `Sec-Fetch-Dest` and CDP resource type).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -795,6 +807,13 @@ pub trait GeometrySource {
     /// the caller tests its rect.
     fn hit_plane(&self, _key: u64, _x: f64, _y: f64) -> Option<HitPlane> {
         None
+    }
+    /// pyro: whether the point `(x, y)` (document CSS px, where [`Self::element_box`] places the
+    /// box) is inside the shape `kind` of the element, built as it is painted (zoom, reference
+    /// boxes, `border-shape`, `corner-shape`, SVG `<clipPath>`), through the inverse of the box's
+    /// transforms. `true` (the default) when the element has none, or the engine cannot tell.
+    fn hit_shape(&self, _key: u64, _kind: HitShapeKind, _x: f64, _y: f64) -> bool {
+        true
     }
     /// Hit regions (document x, y, width, height) when fragmentation restricts the element's
     /// bounds. `None` uses the whole box; an empty list admits no hits.

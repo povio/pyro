@@ -21,6 +21,15 @@ mod render;
 mod sizing;
 mod text;
 pub use text::with_glyph_grid;
+pub use render::HitShape;
+
+/// pyro: whether the point (`x`, `y`) (CSS px in the element's own coordinates: from its border
+/// box's origin) is inside the shape `shape` of the element `id` as it is painted (see
+/// [`HitShape`]); `true` when the element has none. Hit testing asks it for the elements that
+/// have a `clip-path`, a `border-shape` or rounded corners.
+pub fn hit_shape_contains(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, shape: HitShape, x: f64, y: f64) -> bool {
+    render::hit_shape_contains(doc, id, shape, x, y)
+}
 
 use std::collections::HashMap;
 

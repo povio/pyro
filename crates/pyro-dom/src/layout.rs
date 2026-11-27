@@ -2507,8 +2507,14 @@ impl Layout {
         state
     }
 
-    /// An inset clip-path clips the element and its descendants, including
-    /// positioned descendants that escape an ancestor's overflow clip.
+    /// A clip-path clips the element and its descendants, including positioned descendants that
+    /// escape an ancestor's overflow clip. An `inset()` of the border box is tested here; any
+    /// other clip path (`circle()`, `polygon()`, `path()`, an SVG `<clipPath>`, a rounded inset, a
+    /// geometry box), and the `border-shape` or the rounded and shaped (`corner-shape`) corners of
+    /// the element itself, and what the `border-shape` of an ancestor that clips its overflow
+    /// leaves, are asked of the engine ([`GeometrySource::hit_shape`]), which builds them as they
+    /// are painted. Only boxes with such a style ask it. `client_rect` gives a box's client rect
+    /// and how far that moved it from the engine's box (`hit_shape` takes the engine's points).
     fn outside_inset_clip_path(
         &self,
         dom: &Dom,
@@ -2516,37 +2522,86 @@ impl Layout {
         x: f64,
         y: f64,
         ignore_x: bool,
-        mut client_rect: impl FnMut(NodeId) -> Rect,
+        mut client_rect: impl FnMut(NodeId) -> (Rect, (f64, f64)),
     ) -> bool {
         use style::values::computed::basic_shape::{BasicShape, ClipPath};
         use style::values::computed::CSSPixelLength;
-        use style::values::generics::basic_shape::{ShapeBox, ShapeGeometryBox};
+        use style::values::generics::basic_shape::{GenericBorderShape, ShapeBox, ShapeGeometryBox};
 
+        let rounded = |radius: &style::values::computed::BorderCornerRadius| {
+            let hundred = CSSPixelLength::new(100.0);
+            radius.0.width.0.resolve(hundred).px() > 0.0 && radius.0.height.0.resolve(hundred).px() > 0.0
+        };
         let mut current = Some(el);
         while let Some(node) = current {
             if let Some(style) = self.style.stylo_style(dom, node) {
-                if let ClipPath::Shape(shape, reference) = style.slow_clone_clip_path() {
-                    // The default reference box for inset() is the border box.
-                    if matches!(
-                        reference,
-                        ShapeGeometryBox::ElementDependent | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox)
-                    ) {
-                        if let BasicShape::Rect(inset) = &*shape {
-                            let rect = client_rect(node);
-                            let horizontal = CSSPixelLength::new(rect.width as f32);
-                            let vertical = CSSPixelLength::new(rect.height as f32);
-                            let left = rect.x + inset.rect.3.resolve(horizontal).px() as f64;
-                            let right = rect.x + rect.width - inset.rect.1.resolve(horizontal).px() as f64;
-                            let top = rect.y + inset.rect.0.resolve(vertical).px() as f64;
-                            let bottom = rect.y + rect.height - inset.rect.2.resolve(vertical).px() as f64;
-                            if right <= left
-                                || bottom <= top
-                                || y < top
-                                || y > bottom
-                                || (!ignore_x && (x < left || x > right))
+                let mut clip_shape = false;
+                match style.slow_clone_clip_path() {
+                    ClipPath::None => {}
+                    ClipPath::Shape(shape, reference) => {
+                        // The default reference box for inset() is the border box.
+                        let inset = match &*shape {
+                            BasicShape::Rect(inset)
+                                if matches!(
+                                    reference,
+                                    ShapeGeometryBox::ElementDependent | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox)
+                                ) =>
                             {
-                                return true;
+                                Some(inset)
                             }
+                            _ => None,
+                        };
+                        match inset {
+                            Some(inset) => {
+                                let rect = client_rect(node).0;
+                                let horizontal = CSSPixelLength::new(rect.width as f32);
+                                let vertical = CSSPixelLength::new(rect.height as f32);
+                                let left = rect.x + inset.rect.3.resolve(horizontal).px() as f64;
+                                let right = rect.x + rect.width - inset.rect.1.resolve(horizontal).px() as f64;
+                                let top = rect.y + inset.rect.0.resolve(vertical).px() as f64;
+                                let bottom = rect.y + rect.height - inset.rect.2.resolve(vertical).px() as f64;
+                                if right <= left
+                                    || bottom <= top
+                                    || y < top
+                                    || y > bottom
+                                    || (!ignore_x && (x < left || x > right))
+                                {
+                                    return true;
+                                }
+                                let round = &inset.round;
+                                clip_shape = [&round.top_left, &round.top_right, &round.bottom_right, &round.bottom_left]
+                                    .into_iter()
+                                    .any(rounded);
+                            }
+                            None => clip_shape = true,
+                        }
+                    }
+                    ClipPath::Url(_) | ClipPath::Box(_) => clip_shape = true,
+                }
+                let border = style.get_border();
+                let border_shape = !matches!(border.border_shape, GenericBorderShape::None);
+                let own_shape = node == el
+                    && (border_shape
+                        || [
+                            &border.border_top_left_radius,
+                            &border.border_top_right_radius,
+                            &border.border_bottom_right_radius,
+                            &border.border_bottom_left_radius,
+                        ]
+                        .into_iter()
+                        .any(rounded));
+                let overflow_shape = node != el && border_shape;
+                if (clip_shape || own_shape || overflow_shape) && !ignore_x {
+                    if let Some(source) = self.external.as_ref() {
+                        use crate::geometry::HitShapeKind;
+                        let (_, (dx, dy)) = client_rect(node);
+                        let (px, py) = (x - dx, y - dy);
+                        let key = crate::snapshot::render_key(node);
+                        if (clip_shape && !source.hit_shape(key, HitShapeKind::ClipPath, px, py))
+                            || (own_shape && !source.hit_shape(key, HitShapeKind::Own, px, py))
+                            || (overflow_shape && !source.hit_shape(key, HitShapeKind::Overflow, px, py))
+                        {
+                            return true;
                         }
                     }
                 }
@@ -3008,7 +3063,9 @@ impl Layout {
                 }
             }
             if self.outside_inset_clip_path(dom, el, x, y, ignore_x, |node| {
-                self.hit_test_client_rect(dom, result, node, geometry)
+                let rect = self.hit_test_client_rect(dom, result, node, geometry);
+                let moved = result.get(node).map_or((0.0, 0.0), |b| (rect.x - b.rect.x, rect.y - b.rect.y));
+                (rect, moved)
             }) {
                 continue;
             }

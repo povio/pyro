@@ -1113,6 +1113,16 @@ impl GeometrySource for BlitzGeometry {
         Some(pyro_dom::geometry::HitPlane { inside, depth })
     }
 
+    fn hit_shape(&self, key: u64, kind: pyro_dom::geometry::HitShapeKind, x: f64, y: f64) -> bool {
+        use pyro_dom::geometry::HitShapeKind;
+        let shape = match kind {
+            HitShapeKind::ClipPath => pyro_render::HitShape::ClipPath,
+            HitShapeKind::Own => pyro_render::HitShape::Own,
+            HitShapeKind::Overflow => pyro_render::HitShape::Overflow,
+        };
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| r.as_ref().map(|r| r.hit_shape(self.page, key, shape, x, y)))).unwrap_or(true)
+    }
+
     fn element_fragments(&self, key: u64) -> Option<Vec<[f64; 4]>> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_fragments(self.page, key))
     }
