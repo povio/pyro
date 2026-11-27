@@ -67,6 +67,8 @@ where
         "OfflineAudioCompletionEvent",
         "AudioParamMap",
         "AudioWorkletNode",
+        "AudioProcessingEvent",
+        "ScriptProcessorNode",
     );
 }
 

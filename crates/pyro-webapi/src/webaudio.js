@@ -552,7 +552,7 @@
         throw new DE('This node supports only explicit or clamped-max channel count.', 'NotSupportedError');
       }
       if (n.fixedMode && mode !== n.mode) {
-        throw new DE(`Failed to set the 'channelCountMode' property on 'AudioNode': ChannelCountMode cannot be changed from '${n.mode}' to '${mode}'`, 'InvalidStateError');
+        throw new DE(`Failed to set the 'channelCountMode' property on 'AudioNode': ChannelCountMode cannot be changed from '${n.mode}' to '${mode}'`, n.modeError ?? 'InvalidStateError');
       }
       n.mode = mode;
     }
@@ -2268,6 +2268,119 @@
   handler(AudioWorkletNode, 'processorerror');
   webidl(AudioWorkletNode, 'AudioWorkletNode');
 
+  // ---- ScriptProcessorNode (deprecated) ---------------------------------------------------------------
+  // Input is collected into a buffer of `bufferSize` frames; each time it fills, `audioprocess` runs
+  // with it and an empty output buffer. What the handler writes plays during the buffer after the
+  // next one (two buffers of latency, as in Chrome), and silence plays until then.
+  class AudioProcessingEvent extends Ev {
+    #playbackTime;
+    #inputBuffer;
+    #outputBuffer;
+    constructor(type, eventInitDict) {
+      if (arguments.length < 2) {
+        throw new TypeErrorC(`Failed to construct 'AudioProcessingEvent': 2 arguments required, but only ${arguments.length} present.`);
+      }
+      const init = eventInitDict;
+      if (init === null || typeof init !== 'object') {
+        throw new TypeErrorC("Failed to construct 'AudioProcessingEvent': The provided value is not of type 'AudioProcessingEventInit'.");
+      }
+      for (const member of ['inputBuffer', 'outputBuffer', 'playbackTime']) {
+        if (init[member] === undefined) {
+          throw new TypeErrorC(`Failed to construct 'AudioProcessingEvent': Failed to read the '${member}' property from 'AudioProcessingEventInit': Required member is undefined.`);
+        }
+      }
+      for (const member of ['inputBuffer', 'outputBuffer']) {
+        if (!buffers.has(init[member])) {
+          throw new TypeErrorC(`Failed to construct 'AudioProcessingEvent': Failed to read the '${member}' property from 'AudioProcessingEventInit': The provided value is not of type 'AudioBuffer'.`);
+        }
+      }
+      const playbackTime = finite(init.playbackTime, 'construct', 'AudioProcessingEvent', 'double');
+      super(type, init);
+      this.#playbackTime = playbackTime;
+      this.#inputBuffer = init.inputBuffer;
+      this.#outputBuffer = init.outputBuffer;
+    }
+    get playbackTime() { return this.#playbackTime; }
+    get inputBuffer() { return this.#inputBuffer; }
+    get outputBuffer() { return this.#outputBuffer; }
+  }
+  webidl(AudioProcessingEvent, 'AudioProcessingEvent');
+
+  const SCRIPT_BUFFER_SIZES = [256, 512, 1024, 2048, 4096, 8192, 16384];
+  function processScript(n, f0, q) {
+    const s = n.script;
+    const size = n.blockSize;
+    const bus = input(n, q, f0);
+    const at = s.index;
+    for (let ch = 0; ch < s.inputChannels; ch++) {
+      if (bus && bus[ch]) s.input[ch].set(bus[ch].subarray(0, size), at);
+    }
+    const out = [];
+    for (let ch = 0; ch < s.outputChannels; ch++) {
+      const channel = new F32(size);
+      channel.set(s.output[s.current][ch].subarray(at, at + size));
+      out.push(channel);
+    }
+    s.index += size;
+    if (s.index >= s.bufferSize) {
+      const c = ctxOf(n.ctx);
+      const inputBuffer = makeBuffer(c.rate, s.input);
+      const outputData = [];
+      for (let ch = 0; ch < max(1, s.outputChannels); ch++) outputData.push(new F32(s.bufferSize));
+      const outputBuffer = makeBuffer(c.rate, outputData);
+      s.input = Array.from({ length: max(1, s.inputChannels) }, () => new F32(s.bufferSize));
+      s.index = 0;
+      // The buffer that plays out next time round is the one the handler fills now.
+      const filled = s.current;
+      s.current = 1 - s.current;
+      const event = new AudioProcessingEvent('audioprocess', { playbackTime: (f0 + size) / c.rate, inputBuffer, outputBuffer });
+      apply(dispatch, n.self, [event]);
+      s.output[filled] = outputData;
+    }
+    return s.outputChannels ? out : silentBus(size);
+  }
+  class ScriptProcessorNode extends AudioNode {
+    constructor(token, ctx, bufferSize, inputChannels, outputChannels) {
+      if (token !== secret) throw illegal();
+      super(secret, ctx, {
+        channelCount: inputChannels, mode: 'explicit', modeError: 'NotSupportedError', fixedMode: true,
+        checkCount(count) {
+          if (count !== inputChannels) {
+            throw new DE(`Failed to set the 'channelCount' property on 'AudioNode': channelCount cannot be changed from ${inputChannels} to ${count}`, 'NotSupportedError');
+          }
+        },
+      });
+      const n = nodeOf(this);
+      n.script = {
+        bufferSize, inputChannels, outputChannels, index: 0, current: 0,
+        input: Array.from({ length: max(1, inputChannels) }, () => new F32(bufferSize)),
+        output: [0, 1].map(() => Array.from({ length: max(1, outputChannels) }, () => new F32(bufferSize))),
+      };
+      n.process = (f0, q) => processScript(n, f0, q);
+      const c = ctxOf(ctx);
+      addPuller(c, n);
+    }
+    get bufferSize() { return nodeOf(this).script.bufferSize; }
+  }
+  handler(ScriptProcessorNode, 'audioprocess');
+  webidl(ScriptProcessorNode, 'ScriptProcessorNode');
+  function createScriptProcessor(context, bufferSize, inputChannels, outputChannels) {
+    const c = ctxOf(context);
+    const method = "Failed to execute 'createScriptProcessor' on 'BaseAudioContext'";
+    const inputs = ulong(inputChannels), outputs = ulong(outputChannels);
+    let size = ulong(bufferSize);
+    if (size === 0) size = c.offline ? 16384 : 512;
+    else if (!SCRIPT_BUFFER_SIZES.includes(size)) {
+      throw new DE(`${method}: buffer size (${size}) must be 0 or a power of two between 256 and 16384.`, 'IndexSizeError');
+    }
+    if (inputs === 0 && outputs === 0) throw new DE(`${method}: number of input channels and output channels cannot both be zero.`, 'IndexSizeError');
+    if (inputs > MAX_CHANNELS) throw new DE(`${method}: number of input channels (${inputs}) exceeds maximum (${MAX_CHANNELS}).`, 'IndexSizeError');
+    if (outputs > MAX_CHANNELS) throw new DE(`${method}: number of output channels (${outputs}) exceeds maximum (${MAX_CHANNELS}).`, 'IndexSizeError');
+    // The buffer is made of whole render quanta.
+    if (size % c.quantum !== 0) throw new DE(`${method}: buffer size (${size}) is not a multiple of the render quantum size (${c.quantum}).`, 'NotSupportedError');
+    return new ScriptProcessorNode(secret, context, size, inputs, outputs);
+  }
+
   // ---- Contexts ------------------------------------------------------------------
   const contexts = new WeakMap();
   function ctxOf(self) {
@@ -2356,6 +2469,9 @@
       return new PeriodicWave(this, {real: cosine, imag: sine, disableNormalization: constraints?.disableNormalization});
     }
     createConstantSource() { return new ConstantSourceNode(this); }
+    createScriptProcessor(bufferSize = 0, numberOfInputChannels = 2, numberOfOutputChannels = 2) {
+      return createScriptProcessor(this, bufferSize, numberOfInputChannels, numberOfOutputChannels);
+    }
     decodeAudioData(audioData, successCallback, errorCallback) {
       const c = ctxOf(this);
       if (arguments.length < 1) {
@@ -2830,6 +2946,6 @@
     localImpulseInfo, frameRendered, BaseAudioContext, AudioContext, AudioPlaybackStats, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode, PeriodicWave,
     ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, DynamicsCompressorNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
-    AudioParamMap, AudioWorkletNode,
+    AudioParamMap, AudioWorkletNode, AudioProcessingEvent, ScriptProcessorNode,
   };
 })
