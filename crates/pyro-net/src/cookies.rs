@@ -221,11 +221,15 @@ fn starts_with_ci(s: &str, prefix: &str) -> bool {
     s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
-/// Cookie name prefixes match case-insensitively (RFC 6265bis 5.7).
-fn valid_prefix(name: &str, secure: bool, host_only: bool, path: &str, site: SameSite) -> bool {
+/// Cookie name prefixes match case-insensitively (RFC 6265bis 5.7, and the
+/// layered-cookies draft: `__Host-` needs an explicit `Path=/` attribute, not just a
+/// default path of "/"; `__Http-` and `__Host-Http-` need `Secure` and `HttpOnly`).
+fn valid_prefix(name: &str, secure: bool, host_only: bool, root_path: bool, http_only: bool, site: SameSite) -> bool {
     (site != SameSite::None || secure)
         && (!starts_with_ci(name, "__Secure-") || secure)
-        && (!starts_with_ci(name, "__Host-") || (secure && host_only && path == "/"))
+        && (!starts_with_ci(name, "__Host-") || (secure && host_only && root_path))
+        && (!starts_with_ci(name, "__Http-") || (secure && http_only))
+        && (!starts_with_ci(name, "__Host-Http-") || (secure && http_only))
 }
 
 /// Longest cookie lifetime: Chrome caps Expires and Max-Age at 400 days
@@ -259,6 +263,13 @@ fn trim_wsp(s: &str) -> &str {
 /// malformed attributes are ignored, and a control character other than
 /// tab rejects the whole string.
 fn parse_set_cookie(header: &str) -> Option<ParsedSetCookie<'_>> {
+    // As Chrome: a NUL, CR or LF in the name-value pair ends the cookie line there
+    // (`test=13\nZYX` is `test=13`); one in an attribute rejects the line below.
+    let pair_end = header.find(';').unwrap_or(header.len());
+    let header = match header.as_bytes()[..pair_end].iter().copied().position(|b| matches!(b, 0 | b'\r' | b'\n')) {
+        Some(end) => &header[..end],
+        None => header,
+    };
     if header.bytes().any(|b| (b < 0x20 && b != b'\t') || b == 0x7f) {
         return None;
     }
@@ -271,7 +282,7 @@ fn parse_set_cookie(header: &str) -> Option<ParsedSetCookie<'_>> {
         return None;
     }
     // A nameless cookie must not pass for a prefixed one.
-    if name.is_empty() && (starts_with_ci(value, "__Secure-") || starts_with_ci(value, "__Host-")) {
+    if name.is_empty() && (starts_with_ci(value, "__Secure-") || starts_with_ci(value, "__Host-") || starts_with_ci(value, "__Http-")) {
         return None;
     }
     let mut out = ParsedSetCookie { name, value, ..Default::default() };
@@ -295,9 +306,8 @@ fn parse_set_cookie(header: &str) -> Option<ParsedSetCookie<'_>> {
                 out.max_age = Some(if val.starts_with('-') { -n } else { n });
             }
         } else if key.eq_ignore_ascii_case("domain") {
-            if !val.is_empty() {
-                out.domain = Some(val);
-            }
+            // An empty Domain clears an earlier one: the cookie is host-only again.
+            out.domain = (!val.is_empty()).then_some(val);
         } else if key.eq_ignore_ascii_case("path") {
             out.path = Some(val);
         } else if key.eq_ignore_ascii_case("secure") {
@@ -497,7 +507,7 @@ impl CookieJar {
         let path = if options.path.is_empty() { default_path(url) } else { options.path.to_owned() };
         if !path.starts_with('/')
             || path.len() > MAX_COOKIE_ATTRIBUTE_BYTES
-            || !valid_prefix(name, true, options.domain.is_none(), &path, options.same_site)
+            || !valid_prefix(name, true, options.domain.is_none(), path == "/", false, options.same_site)
         {
             return Err("Invalid cookie path or cookie name prefix.");
         }
@@ -562,7 +572,12 @@ impl CookieJar {
         let Some(host) = host_str(url) else { return false };
         let (domain, host_only) = match parsed.domain {
             Some(d) => {
-                let d = d.trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
+                // One leading dot is dropped; a second one, or a trailing dot, makes the attribute invalid.
+                let d = d.strip_prefix('.').unwrap_or(d);
+                if d.is_empty() || d.starts_with('.') || d.ends_with('.') {
+                    return false;
+                }
+                let d = d.to_ascii_lowercase();
                 let public_suffix = !is_ip(&d) && pyro_psl::suffix_str(&d) == Some(d.as_str());
                 if public_suffix && d != host {
                     return false;
@@ -608,7 +623,7 @@ impl CookieJar {
             return false;
         }
         let name = parsed.name;
-        if !valid_prefix(name, secure, host_only, &path, same_site) {
+        if !valid_prefix(name, secure, host_only, parsed.path == Some("/"), http_only, same_site) {
             return false;
         }
         // Max-Age wins over Expires; both are capped at 400 days like Chrome.
@@ -890,7 +905,7 @@ impl CookieJar {
             || path.len() > MAX_COOKIE_ATTRIBUTE_BYTES
             || path.trim_matches(' ') != path
             || path.bytes().any(|b| b.is_ascii_control() || b == b';')
-            || !valid_prefix(name, secure, host_only, path, same_site)
+            || !valid_prefix(name, secure, host_only, path == "/", http_only, same_site)
         {
             return false;
         }
@@ -1269,6 +1284,32 @@ mod tests {
             jar.set_from_header(&url, s, Access::Script, now);
         }
         jar.document_cookie(&url, now)
+    }
+
+    /// WPT cookies/attributes/domain, cookies/value and cookies/prefix.
+    #[test]
+    fn domain_value_and_prefix_edge_cases() {
+        assert_eq!(doc_cookie_after(&["a=1; Domain=..example.com"]), "");
+        assert_eq!(doc_cookie_after(&["a=1; Domain=example.com."]), "");
+        assert_eq!(doc_cookie_after(&["a=1; Domain=example.com.."]), "");
+        assert_eq!(doc_cookie_after(&["a=1; Domain=.example.com"]), "a=1");
+        // An empty Domain after a mismatched one leaves a host-only cookie.
+        assert_eq!(doc_cookie_after(&["a=1; Domain=other.example.com; Domain="]), "a=1");
+        assert_eq!(doc_cookie_after(&["a=1\nZYX"]), "a=1");
+        assert_eq!(doc_cookie_after(&["a=1; Path=/\n"]), "");
+        // `__Host-` needs an explicit Path=/ attribute.
+        assert_eq!(doc_cookie_after(&["__Host-a=1; Secure"]), "");
+        assert_eq!(doc_cookie_after(&["__Host-a=1; Secure; Path"]), "");
+        assert_eq!(doc_cookie_after(&["__Host-a=1; Secure; Path=/"]), "__Host-a=1");
+        // `__Http-` and `__Host-Http-` cannot be set from script (they need HttpOnly).
+        assert_eq!(doc_cookie_after(&["__Http-a=1; Secure; Path=/"]), "");
+        assert_eq!(doc_cookie_after(&["__Host-Http-a=1; Secure; Path=/"]), "");
+        let mut jar = CookieJar::new();
+        let url = Url::parse("https://example.com/").unwrap();
+        assert!(!jar.set_from_header(&url, "__Http-a=1; Secure", Access::Http, 1.0));
+        assert!(jar.set_from_header(&url, "__Http-a=1; Secure; HttpOnly", Access::Http, 1.0));
+        assert!(!jar.set_from_header(&url, "__Host-Http-b=1; Secure; HttpOnly", Access::Http, 1.0));
+        assert!(jar.set_from_header(&url, "__Host-Http-b=1; Secure; HttpOnly; Path=/", Access::Http, 1.0));
     }
 
     /// RFC 6265 5.1.1: browsers accept any delimiters, token order, `UTC`
