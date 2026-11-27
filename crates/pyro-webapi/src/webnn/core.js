@@ -8,7 +8,7 @@
 // HOW THE FILES FIT TOGETHER
 //
 // webnn.rs evaluates this file (the factory below, called with `native`) and, as `native.families`, one
-// function per file listed in FAMILIES in webnn.rs, in that order: core_ops.js first, then one file per
+// function per file listed in FAMILIES in webnn.rs, in that order: one file per
 // operator family (elementwise, activations, reduce, conv, norm, recurrent, tensor_ops, linear). Each family
 // file is ONE EXPRESSION that evaluates to `(api) => { ... }`, for example
 //
@@ -20,8 +20,7 @@
 // The factory calls every family function with the same `api` object (documented below), in order, before
 // the module is returned, and installs one method on `MLGraphBuilder.prototype` for every registered op. An
 // op that is not registered has no method (and no `opSupportLimits()` entry). Defining a name again replaces
-// the earlier definition (the last one wins), so a family file simply defines its ops; core_ops.js holds
-// throw-away copies of add/sub/mul/identity that the elementwise and tensor_ops families override.
+// the earlier definition (the last one wins), so a family file simply defines its ops.
 // Family files never edit core.js or webnn.rs; they may only use what `api` hands them. webnn.rs pastes the
 // files into one script (`[file1, file2, ...]`, then this factory), so a family file must be exactly one
 // expression: no `'use strict'`, no `export`, and NO trailing semicolon after the closing brace.
@@ -96,7 +95,8 @@
 //   'long' ([EnforceRange] long), 'double' (finite), 'udouble' (unrestricted double), 'float', 'ufloat',
 //   'boolean', 'string' (DOMString), 'usv' (USVString), 'dtype' (MLOperandDataType), 'mlnumber' (MLNumber:
 //   a BigInt stays a BigInt, anything else becomes a double), 'enum:a|b|c', and 'seq<T>' of any of these
-//   (an array of converted values; 'seq<operand>' yields an array of operands).
+//   (an array of converted values; 'seq<operand>' yields an array of operands), and 'ul-or-seq<T>': the union
+//   `(T or sequence<T>)` (an object with @@iterator becomes an array of converted T, anything else one converted T).
 //
 // Errors: argument problems are TypeError (ctx.fail); lifecycle problems are DOMExceptions made by the core
 // (a destroyed context, an already built builder: InvalidStateError). Kernels never throw for valid graphs;
@@ -303,6 +303,10 @@
     if (t.startsWith('seq<') && t.endsWith('>')) {
       const inner = typeConv(t.slice(4, -1));
       c = (v) => seqOf(v, inner);
+    } else if (t.startsWith('ul-or-seq<') && t.endsWith('>')) {
+      // WebIDL union `(T or sequence<T>)`: an object with @@iterator is a sequence, anything else converts to T.
+      const inner = typeConv(t.slice(10, -1));
+      c = (v) => (isObject(v) && typeof v[Symbol.iterator] === 'function' ? seqOf(v, inner) : inner(v));
     } else if (t.startsWith('enum:')) {
       c = enumConv(t.slice(5).split('|'));
     } else {

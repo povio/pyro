@@ -5,22 +5,13 @@
 // float32 NaN keeps its bit pattern, int64/uint64 never go through a double). Only resample2d computes: in double
 // precision, rounded once to the output type. One expression evaluating to `(api) => {...}`, no trailing semicolon.
 (api) => {
-  const { defineOp, tl, ALL_TYPES, typedArrayFor, stridesOf, sizeOf, conv } = api;
+  const { defineOp, tl, ALL_TYPES, typedArrayFor, stridesOf, sizeOf } = api;
   const MAX_DIM = 2 ** 32 - 1;
   const MAX_SPLITS = 8192; // most outputs of split() and most inputs of concat()
   const INDEX_TYPES = ['int32', 'uint32', 'int64'];
   const R = (min = 0, max = 8) => tl(ALL_TYPES, min, max);
   const IDX = (min) => tl(INDEX_TYPES, min, 8);
   const fresh = (dataType, n) => new (typedArrayFor(dataType))(n);
-
-  // `splits` is `(unsigned long or sequence<unsigned long>)`: core's declarative signature has no union type, so
-  // register one converter under a private name (core's `api.conv` is the table its type strings are looked up in).
-  conv.pyroSplits = (v) => {
-    if ((typeof v === 'object' && v !== null) || typeof v === 'function') {
-      if (typeof v[Symbol.iterator] === 'function') return Array.from(v, conv.ul);
-    }
-    return conv.ul(v);
-  };
 
   // An unsigned view over the same memory as `a`: copying through it preserves every bit pattern.
   const bits = (a) => {
@@ -177,7 +168,7 @@
   });
 
   defineOp('split', {
-    args: ['input:operand', 'splits:pyroSplits', 'options'],
+    args: ['input:operand', 'splits:ul-or-seq<ul>', 'options'],
     options: { axis: { type: 'ul', default: 0 } },
     limits: { input: R(1), outputs: R(1) },
     validate(ctx, input, splits, options) {
