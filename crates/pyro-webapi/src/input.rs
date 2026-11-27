@@ -133,8 +133,28 @@ fn request_focus(page: &Rc<PageDom>, target: FocusTarget, prevent_scroll: bool) 
 /// Recheck effective inertness after focus listeners have had a chance to change styles.
 fn can_focus(page: &PageDom, el: NodeId) -> bool {
     let dom = page.dom.borrow();
-    (dom.is_focusable(el).unwrap_or(false) || page.popover.forced_focus(el))
-        && !page.layout().style().is_inert(&dom, el)
+    let layout = page.layout();
+    (dom.is_focusable(el).unwrap_or(false) || page.popover.forced_focus(el) || is_keyboard_focusable_scroller(&layout, &dom, el))
+        && !layout.style().is_inert(&dom, el)
+}
+
+/// Chrome's keyboard-focusable scroller (`Element::IsScrollableContainerFocusable`, shipped with
+/// KeyboardFocusableScrollers): a scroll container that has something to scroll and no focusable
+/// descendant is focusable (`scroller.focus()` works, so the arrow keys, Space and PageUp/PageDown
+/// scroll it) even with no `tabindex`. Pyro takes it for `focus()` only: a press on it does not focus
+/// it, as in Chrome, and Tab navigation does not stop at it. Not the viewport's root or body.
+fn is_keyboard_focusable_scroller(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
+    if !dom.element(el).is_ok() || !dom.is_connected(el).unwrap_or(false) || layout.is_root_container(dom, el) {
+        return false;
+    }
+    let axes = layout.style().overflow_axes(dom, el);
+    let overflows = (axes.y && layout.scroll_height(dom, el) > layout.client_height(dom, el))
+        || (axes.x && layout.scroll_width(dom, el) > layout.client_width(dom, el));
+    if !overflows || !layout.is_visible(dom, el) {
+        return false;
+    }
+    let Ok(descendants) = dom.descendants(el) else { return false };
+    !descendants.skip(1).any(|d| dom.is_focusable(d).unwrap_or(false) || dom.is_delegates_focus_host(d))
 }
 
 thread_local! {
@@ -199,7 +219,7 @@ pub fn focus_element_with_options(page: &Rc<PageDom>, el: NodeId, prevent_scroll
                 Some(d) => d,
                 None => return,
             }
-        } else if is_focusable_area(&layout, &dom, el) || page.popover.forced_focus(el) {
+        } else if is_focusable_area(&layout, &dom, el) || page.popover.forced_focus(el) || is_keyboard_focusable_scroller(&layout, &dom, el) {
             el
         } else {
             return;
@@ -407,7 +427,9 @@ pub fn run_focus_fixup(page: &Rc<PageDom>) {
         let layout = page.layout();
         let dom = page.dom.borrow();
         let Some(f) = dom.focused(page.document()).ok().flatten() else { return };
-        let focusable = dom.is_focusable(f).unwrap_or(false) && !layout.style().is_inert(&dom, f) && layout.is_visible(&dom, f);
+        let focusable = (dom.is_focusable(f).unwrap_or(false) || is_keyboard_focusable_scroller(&layout, &dom, f))
+            && !layout.style().is_inert(&dom, f)
+            && layout.is_visible(&dom, f);
         (!focusable).then_some(f)
     };
     if let Some(f) = lost {
