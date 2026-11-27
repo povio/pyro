@@ -2455,7 +2455,10 @@ impl Io {
             // stored. Without any, the session's credentials for this origin and path go out
             // before one. A hop without credentials, a request with an `Authorization` of its
             // own, and one whose body came from a stream take part in neither.
-            let url_credentials = crate::auth::take_userinfo(&mut url);
+            // Only a same-origin request answers a challenge with them: a cross-origin one (a CORS XHR to
+            // another origin whose `open()` gave user and password) goes without, as in Chrome (WPT xhr/
+            // access-control-preflight-credential-*: the 401 reaches the page).
+            let url_credentials = crate::auth::take_userinfo(&mut url).filter(|_| basic_tainting);
             let basic_hop = includes_credentials(req.hop_credentials(basic_tainting), basic_tainting)
                 && !headers.contains_key(header::AUTHORIZATION)
                 && !req.body_from_stream
