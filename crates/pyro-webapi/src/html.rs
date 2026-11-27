@@ -2119,6 +2119,22 @@ simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
             dom.set_text_content(n.id, &arg0).js()
         },
     );
+    // Trusted Types override these two (TrustedScript sinks that trust the script with the text);
+    // `HTMLElement.innerText` and `Node.textContent` called on a script set it untrusted.
+    def.accessor("innerText", crate::layout_api::inner_text, crate::layout_api::set_script_inner_text);
+    def.accessor(
+        "textContent",
+        |s, n| {
+            let dom = n.page().dom.borrow();
+            Ok(dom.text_content_ref(n.id).js()?.map_or(s.null(), |t| s.string(&t)))
+        },
+        |s, n, v| {
+            let text = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement textContent", true)?;
+            let mut dom = n.page().dom.borrow_mut();
+            dom.set_script_text(n.id, &text);
+            dom.set_text_content(n.id, &text).js()
+        },
+    );
     def.static_method("supports", 1, |s, a| {
         let t = dom_string(a.get(0))?;
         Ok(s.boolean(matches!(t.as_str(), "classic" | "module" | "importmap")))

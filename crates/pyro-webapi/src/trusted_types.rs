@@ -355,11 +355,6 @@ pub fn script_source_unverified(page: &PageDom, el: pyro_dom::NodeId, text: &str
     requires_for_script_in(page, doc) && page.dom.borrow().script_text(el) != text
 }
 
-/// Whether `el` is an HTML `<script>` (its text and `src` are Trusted Types sinks).
-pub(crate) fn is_html_script(page: &PageDom, el: pyro_dom::NodeId) -> bool {
-    page.dom.borrow().element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "script")
-}
-
 /// Trusted Types "get Trusted Types-compliant attribute value": the kind an attribute of `el`
 /// takes and its sink name (an event handler content attribute of the element: TrustedScript,
 /// "Element onclick"; `iframe srcdoc`: TrustedHTML; HTML `script src` and SVG `script href`:

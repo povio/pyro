@@ -489,13 +489,8 @@ impl JsClass for Node {
                     let text = if v.is_nullish() { String::new() } else { dom_string(v)? };
                     return collections::set_attr_value_checked(s, n, &text);
                 }
-                // A `<script>`'s text is a Trusted Types sink when the document requires them, and
-                // the script is trusted with it ([[ScriptText]]) whether or not they are.
-                if crate::trusted_types::is_html_script(n.page(), n.id) {
-                    let text = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement textContent", true)?;
-                    n.page().dom.borrow_mut().set_script_text(n.id, &text);
-                    return set(&text);
-                }
+                // (`HTMLScriptElement.textContent` is its own accessor, the Trusted Types sink: this
+                // one, reached as `Node.prototype.textContent`, sets the text untrusted.)
                 // A string (the usual value) needs no nullish test first.
                 if v.is_string() {
                     blur();

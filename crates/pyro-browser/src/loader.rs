@@ -4642,7 +4642,9 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
         if info.already_started || info.parser_inserted || !dom.is_connected(node).unwrap_or(false) {
             return None;
         }
-        if (info.src.is_none() && info.inline_text.is_empty()) || info.kind == ScriptKind::Data {
+        // (An empty inline script is dropped below, after Trusted Types' "prepare the script
+        // text": the default policy may make it non-empty.)
+        if info.kind == ScriptKind::Data {
             return None;
         }
         Some(info)
@@ -4666,6 +4668,12 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
             Some(source) => {
                 info = fresh;
                 info.inline_text = source;
+                // The policy made it empty: nothing to run. Started, so the resource event its
+                // insertion queued does not ask the policy again.
+                if info.src.is_none() && info.inline_text.is_empty() {
+                    let _ = dom.mark_script_started(node);
+                    return;
+                }
             }
             None => {
                 // Not prepared (nor started). The resource event its insertion queued finds it
@@ -4677,6 +4685,10 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
                 return;
             }
         }
+    }
+    // Prepare: no `src` and an empty source text (the default policy did not run for it).
+    if info.src.is_none() && info.inline_text.is_empty() {
+        return;
     }
     let (text, line) = {
         let Ok(mut dom) = bindings.dom.try_borrow_mut() else { return };

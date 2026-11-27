@@ -1054,17 +1054,20 @@ pub(crate) fn inner_text<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>>
     Ok(s.string(&t))
 }
 
-pub(crate) fn set_inner_text(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
-    if crate::trusted_types::is_html_script(n.page(), n.id) {
-        let text =
-            crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement innerText", true)?;
-        // Trusted Types: the script is trusted with this text ([[ScriptText]]).
-        let mut dom = n.page().dom.borrow_mut();
-        dom.set_script_text(n.id, &text);
-        return dom.set_inner_text(n.id, &text).js();
-    }
+/// `HTMLElement.innerText`'s setter: the text of a `<script>` set through it is not trusted
+/// ([`set_script_inner_text`] is `HTMLScriptElement.innerText`).
+pub(crate) fn set_inner_text(_s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
     let text = null_to_empty(v)?;
     n.page().dom.borrow_mut().set_inner_text(n.id, &text).js()
+}
+
+/// `HTMLScriptElement.innerText`'s setter, a Trusted Types sink ("HTMLScriptElement innerText"):
+/// the script is trusted with the compliant text ([[ScriptText]]).
+pub(crate) fn set_script_inner_text(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
+    let text = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Script, v, "HTMLScriptElement innerText", true)?;
+    let mut dom = n.page().dom.borrow_mut();
+    dom.set_script_text(n.id, &text);
+    dom.set_inner_text(n.id, &text).js()
 }
 
 pub(crate) fn set_outer_text(_s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
