@@ -930,6 +930,9 @@ pub struct Browser {
     /// The CSP the next document committed in this frame inherits instead of what its URL would
     /// give (a `javascript:` result: the document it replaces), taken by that commit.
     csp_inherit_next: Option<(FrameKey, pyro_webapi::csp::InheritedCsp)>,
+    /// The Document-Isolation-Policy of the document a frame's navigation is about to commit
+    /// (`Browser::commit_document` takes it).
+    isolation_next: Option<(FrameKey, u8)>,
     /// The CSP `sandbox` flags the next document committed in this frame takes besides its
     /// response's (a `javascript:` result: those of the document it replaces, whose policies it
     /// has), taken by that commit.
@@ -1243,6 +1246,7 @@ impl BrowserThread {
             ready_responses: Default::default(),
             prefetches: Default::default(),
             csp_inherit_next: None,
+            isolation_next: None,
             csp_sandbox_next: None,
             document_rules: Default::default(),
         };
@@ -1976,6 +1980,7 @@ impl Browser {
             p.popup_creator = Some(opener);
         }
         let Some(ticket) = ticket else { return };
+        let opener_isolation = self.page(opener).and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.document_isolation())).unwrap_or(0);
         let opener_state = self.page(opener).map(|p| {
             let frame = &p.main_frame;
             (Rc::downgrade(&p.frames), (frame.origin.clone(), frame.opaque_origin, frame.base_url.clone()))
@@ -2028,6 +2033,7 @@ impl Browser {
                     realm.realm.set_origin(Some(origin.0.clone()));
                 }
                 if let Some(dom) = &p.main_frame.page_dom {
+                    dom.set_document_isolation(opener_isolation);
                     dom.set_window_agent_cluster(p.frames.cluster_group.get(), frames::frame_origin_key(&p.main_frame));
                     dom.set_base_url(&origin.2);
                     let site = pyro_net::Url::parse(&origin.0).ok().and_then(|url| pyro_net::cookies::partition_key(&url));
@@ -2611,6 +2617,11 @@ impl Browser {
             }
         }
         let scripts = self.page(page.page).ok_or(JsError::ContextDestroyed)?.init_scripts.clone();
+        // The new document's Document-Isolation-Policy (a fetched one's was decided by the loader).
+        let new_isolation = match self.isolation_next.take() {
+            Some((key, policy)) if key == page => policy,
+            _ => self.creator_isolation(page).unwrap_or(0),
+        };
         let (frame_id, mut old, scripts, nav, old_dom, initial_same_origin) = {
             let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
             p.main_frame.network_idle = NetworkIdle::default();
@@ -2618,6 +2629,7 @@ impl Browser {
             // replaced by a document of its own origin.
             let blank_loaded = p.main_frame.loaded && p.main_frame.page_dom.as_ref().is_some_and(|d| d.blank_requested());
             let initial_same_origin = !blank_loaded
+                && p.main_frame.page_dom.as_ref().map_or(0, |d| d.document_isolation()) == new_isolation
                 && p.nav.is_initial_blank()
                 && previous_origin.as_deref() == Some(actual_origin.as_str())
                 && actual_origin != "null";

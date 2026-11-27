@@ -526,6 +526,7 @@ impl FrameHost {
         if let Some(creator) = self.page_dom(opener) {
             let inherited = pyro_webapi::csp::InheritedCsp::of(&creator);
             inherited.apply(&dom);
+            dom.set_document_isolation(creator.document_isolation());
             *host.creator_csp.borrow_mut() = Some(inherited);
         }
         host.set_coop(self.coop_for_popup(from.origin.clone()));
@@ -1044,6 +1045,7 @@ impl FrameHost {
                 // CSP: the initial about:blank document has its parent's policies (a page that
                 // bypasses CSP has none to give).
                 pyro_webapi::csp::InheritedCsp::of(creator).apply(&dom);
+                dom.set_document_isolation(creator.document_isolation());
             }
             // The initial empty Document is already complete, including during
             // the interval before a non-blank src commits.
@@ -1509,11 +1511,7 @@ impl Browser {
 impl FrameHost {
     pub(crate) fn same_origin(&self, a: FrameKey, b: FrameKey) -> bool {
         let (Some(a), Some(b)) = (self.frame(a), self.frame(b)) else { return false };
-        if a.origin == "null" || b.origin == "null" {
-            a.origin == b.origin && a.opaque_origin == b.opaque_origin
-        } else {
-            a.origin == b.origin
-        }
+        frames_same_origin(&a, &b)
     }
     /// The iframe a navigation `target` from `source` names, if `source` may
     /// navigate it: its own subtree first, then same-origin frames of the page
@@ -1789,11 +1787,7 @@ impl FrameHost {
             .filter(|k| k.page == opener.page && opener.frame(*k).is_some())
             .unwrap_or_else(|| FrameKey::from(opener.page));
         let (Some(mine), Some(theirs)) = (self.frame(key), opener.frame(target)) else { return Ok(s.null()) };
-        let same_origin = if mine.origin == "null" || theirs.origin == "null" {
-            mine.origin == theirs.origin && mine.opaque_origin == theirs.opaque_origin
-        } else {
-            mine.origin == theirs.origin
-        };
+        let same_origin = frames_same_origin(&mine, &theirs);
         if same_origin {
             let world = self.world_of(key, s.realm().id())?;
             let realm = opener.realm(target, world.as_deref())?;
@@ -1856,6 +1850,11 @@ impl FrameHost {
 /// realm), as frame `from` (the popup's top-level frame) sees it.
 /// Whether frames `a` and `b` (of any pages) are same origin.
 pub(crate) fn frames_same_origin(a: &Frame, b: &Frame) -> bool {
+    // Same-origin documents of different Document-Isolation-Policies are in different agent clusters:
+    // they cannot script each other synchronously, which is what this answers for.
+    if isolation_of(a) != isolation_of(b) {
+        return false;
+    }
     if a.origin == "null" || b.origin == "null" {
         a.origin == b.origin && a.opaque_origin == b.opaque_origin
     } else {
@@ -2042,6 +2041,11 @@ pub(crate) fn post_message<'s>(
     let window = (!Rc::ptr_eq(&source_host, host) || source != target)
         .then(|| message_source(host, target, &source_host, source));
     pyro_webapi::window_message::send_window_message(s, message, options, &page, &realm, incumbent_key, window, deliver)
+}
+
+/// The Document-Isolation-Policy of the document a frame shows (0 when it shows none yet).
+pub(crate) fn isolation_of(f: &Frame) -> u8 {
+    f.page_dom.as_ref().map_or(0, |dom| dom.document_isolation())
 }
 
 /// A frame's origin key (`PageDom::origin_key`'s): its tuple origin, or `opaque:<token>`.
@@ -2834,7 +2838,7 @@ impl Browser {
             speculation_rules: Vec::new(),
             no_vary_search: None,
             referrer_policy: crate::loader::parent_referrer_policy(self, key),
-            origin_agent_cluster: false, force_load_at_top: false,
+            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             embedder_reporting: Default::default(),
             coop: Vec::new(),
@@ -2918,7 +2922,7 @@ impl Browser {
                 speculation_rules: Vec::new(),
                 no_vary_search: None,
                 referrer_policy: crate::loader::parent_referrer_policy(self, key),
-                origin_agent_cluster: false, force_load_at_top: false,
+                origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
                 embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                 embedder_reporting: Default::default(),
                 coop: Vec::new(),

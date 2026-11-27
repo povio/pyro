@@ -85,7 +85,7 @@ impl ManualLoader {
             speculation_rules: Vec::new(),
             no_vary_search: None,
             referrer_policy: None,
-            origin_agent_cluster: false, force_load_at_top: false,
+            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             embedder_reporting: Default::default(),
             coop: Vec::new(),

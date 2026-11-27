@@ -765,7 +765,7 @@ impl Browser {
                     speculation_rules: Vec::new(),
                     no_vary_search: None,
                     referrer_policy: None,
-                    origin_agent_cluster: false, force_load_at_top: false,
+                    origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
                     embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                     embedder_reporting: Default::default(),
                     coop: Vec::new(),
@@ -1413,7 +1413,7 @@ impl Browser {
         if url.starts_with("blob:") || about {
             let ok = about || bindings.blob_url(&url).is_some();
             self.scheduler().post(TaskSource::Networking, move |b| {
-                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, allow_csp_from: None, refresh: None, content_language: None, last_modified: None, reporting_endpoints: None, permissions_policy: None, dictionary_links: Vec::new(), speculation_rules: Vec::new(), no_vary_search: None, referrer_policy: None, sent_referrer: None, origin_agent_cluster: false, force_load_at_top: false, embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone, embedder_reporting: Default::default(), coop: Vec::new(), timing: None, partial: None, nosniff: false, opaque: false, connection_allowlist: None, link_fetches: Vec::new(), integrity_headers: None }) } else { Err("revoked or unknown blob URL".into()) })
+                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, allow_csp_from: None, refresh: None, content_language: None, last_modified: None, reporting_endpoints: None, permissions_policy: None, dictionary_links: Vec::new(), speculation_rules: Vec::new(), no_vary_search: None, referrer_policy: None, sent_referrer: None, origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0, embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone, embedder_reporting: Default::default(), coop: Vec::new(), timing: None, partial: None, nosniff: false, opaque: false, connection_allowlist: None, link_fetches: Vec::new(), integrity_headers: None }) } else { Err("revoked or unknown blob URL".into()) })
             });
             return;
         }

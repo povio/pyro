@@ -133,6 +133,9 @@ pub struct PageDom {
     /// Schemeful site of this environment's top-level document at creation.
     cookie_partition_key: RefCell<Option<String>>,
     cookie_site_context: Cell<pyro_net::cookies::SiteContext>,
+    /// The document's `Document-Isolation-Policy` (0 none, 1 `isolate-and-require-corp`, 2
+    /// `isolate-and-credentialless`), which keys its agent cluster with its origin.
+    isolation: Cell<u8>,
     /// The anonymous partition of a credentialless iframe tree this document belongs to
     /// (`crate::credentialless`).
     pub(crate) anonymous: RefCell<Option<crate::credentialless::Anonymous>>,
@@ -1167,6 +1170,7 @@ impl PageDom {
                 pyro_net::cookies::SiteContext::CrossSite
             }),
             cookie_partition_key: RefCell::new(cookie_partition_key),
+            isolation: Cell::new(0),
             anonymous: RefCell::new(None),
             credentialless_root: std::cell::OnceCell::new(),
             storage_access_granted: Cell::new(false),
@@ -1544,6 +1548,17 @@ impl PageDom {
 
     /// Marks the document as an initial about:blank one whose Window the
     /// next same-origin document may reuse; set before its realm is made.
+    /// The document's Document-Isolation-Policy: its own response's, or for a local-scheme document
+    /// its creator's. Same-origin documents of different policies are different agent clusters:
+    /// the embedder treats them as cross-origin for scripting access and Window reuse.
+    pub fn set_document_isolation(&self, policy: u8) {
+        self.isolation.set(policy);
+    }
+
+    pub fn document_isolation(&self) -> u8 {
+        self.isolation.get()
+    }
+
     pub fn set_reusable_window(&self, reusable: bool) {
         self.reusable_window.set(reusable);
     }

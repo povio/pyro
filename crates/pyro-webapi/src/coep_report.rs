@@ -163,6 +163,18 @@ fn policy_field(
     (value, report_to_param(&joined))
 }
 
+/// The `Document-Isolation-Policy` of a response for `url`, read with the same field parser as the
+/// embedder policy ([`dip_field`]): 1 for `isolate-and-require-corp`, 2 for `isolate-and-credentialless`,
+/// 0 for none (absent, repeated, unrecognised or not from a potentially trustworthy context). Unlike
+/// the embedder policy it takes, this keys the document's agent cluster whatever its COEP is.
+pub fn obtain_isolation_policy(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Url) -> u8 {
+    match dip_field(headers, url, "document-isolation-policy").0 {
+        pyro_net::EmbedderPolicy::RequireCorp => 1,
+        pyro_net::EmbedderPolicy::Credentialless => 2,
+        pyro_net::EmbedderPolicy::UnsafeNone => 0,
+    }
+}
+
 /// The embedder policy a response gives its document or worker, and what it reports with: its
 /// `Cross-Origin-Embedder-Policy` and `-Report-Only` headers, each (when it has no value) taken from
 /// the `Document-Isolation-Policy` header that is its twin, whose reports are of type `dip`.

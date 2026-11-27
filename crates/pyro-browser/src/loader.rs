@@ -303,6 +303,10 @@ pub struct Resource {
     /// A document's response carries `Document-Policy: force-load-at-top`: no scroll to the fragment
     /// or text directive on load.
     pub force_load_at_top: bool,
+    /// A document's `Document-Isolation-Policy` (`pyro_webapi::coep_report::obtain_isolation_policy`): 0 none, 1 `isolate-and-require-corp`,
+    /// 2 `isolate-and-credentialless`. Two same-origin documents of different policies are in different
+    /// agent clusters: each sees the other as cross-origin (`frames::isolation_of`).
+    pub isolation_policy: u8,
     /// A document's `Cross-Origin-Embedder-Policy` (HTML § 7.1.4 "obtain an embedder policy"):
     /// `unsafe-none` for other kinds and for a local-scheme document, which inherits its creator's
     /// ([`pyro_webapi::csp::InheritedCsp::embedder_policy`]).
@@ -767,7 +771,7 @@ impl ResourceLoader for NetLoader {
                 speculation_rules: Vec::new(),
                 no_vary_search: None,
                 referrer_policy: None,
-                origin_agent_cluster: false, force_load_at_top: false,
+                origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
                 embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                 embedder_reporting: Default::default(),
                 coop: Vec::new(),
@@ -907,7 +911,7 @@ impl ResourceLoader for NetLoader {
                     speculation_rules: Vec::new(),
                     no_vary_search: None,
                     referrer_policy: None,
-                    origin_agent_cluster: false, force_load_at_top: false,
+                    origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
                     embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                     embedder_reporting: Default::default(),
                     coop: Vec::new(),
@@ -1048,6 +1052,7 @@ impl ResourceLoader for NetLoader {
                         ),
                         origin_agent_cluster: document && origin_agent_cluster_requested(&h.headers),
                         force_load_at_top: document && force_load_at_top_policy(&h.headers),
+                        isolation_policy: if document { pyro_webapi::coep_report::obtain_isolation_policy(&h.headers, &h.url) } else { 0 },
                         embedder_policy: if document { obtain_embedder(&h.headers, &h.url).0 } else { pyro_net::EmbedderPolicy::UnsafeNone },
                         embedder_reporting: if document { obtain_embedder(&h.headers, &h.url).1 } else { Default::default() },
                         coop: if document {
@@ -1696,7 +1701,7 @@ impl ResourceLoader for StaticLoader {
                         speculation_rules: Vec::new(),
                         no_vary_search: None,
                         referrer_policy,
-                        origin_agent_cluster: false, force_load_at_top: false,
+                        origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
                         embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                         embedder_reporting: Default::default(),
                         coop: Vec::new(),
@@ -2882,7 +2887,7 @@ impl Browser {
             speculation_rules: Vec::new(),
             no_vary_search: None,
             referrer_policy: None,
-            origin_agent_cluster: false, force_load_at_top: false,
+            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             embedder_reporting: Default::default(),
             coop: Vec::new(),
@@ -2965,6 +2970,18 @@ impl Browser {
         }
         let creator = host.creator_csp.borrow().clone();
         creator
+    }
+
+    /// The Document-Isolation-Policy of the document that creates a local-scheme document in frame `page`: its
+    /// parent's, or in a popup's top-level frame its opener's (`None`: no creator).
+    pub(crate) fn creator_isolation(&self, page: FrameKey) -> Option<u8> {
+        let host = self.page(page.page).map(|p| p.frames.clone())?;
+        if page.child.is_some() {
+            return host.page_dom(host.parent_key(page)).map(|dom| dom.document_isolation());
+        }
+        let opener = host.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade)?;
+        let creator = host.opener_frame.get().filter(|k| k.page == opener.page).unwrap_or(FrameKey { page: opener.page, child: None });
+        opener.page_dom(creator).map(|dom| dom.document_isolation())
     }
 
     /// Whether the navigation to `url` may invoke a text directive of it (URL Fragment Text
@@ -3121,6 +3138,11 @@ impl Browser {
         } else {
             None
         };
+        // The Document-Isolation-Policy of the document that is about to commit: its response's, or for a
+        // local-scheme document its creator's (`commit_document` compares it with the previous document's
+        // for Window reuse).
+        let isolation = if is_local_scheme(&resource.url) { self.creator_isolation(page).unwrap_or(0) } else { resource.isolation_policy };
+        self.isolation_next = Some((page, isolation));
         let committed = self.commit_document(page, opts, loader_id.clone(), &origin, history, unreachable);
         if let Some(nav) = &nav {
             nav.set_incoming_fetch(None);
@@ -3221,6 +3243,16 @@ impl Browser {
         };
         page_dom.set_embedder_policy(embedder_policy);
         page_dom.set_embedder_reporting(embedder_reporting);
+        // Its Document-Isolation-Policy likewise (`isolation`, decided before the commit): the response's, or
+        // the creator's for a local-scheme document. A policy keys the agent cluster with the origin.
+        page_dom.set_document_isolation(isolation);
+        if isolation != 0 {
+            if let Some(host) = self.page(page.page).map(|p| p.frames.clone()) {
+                if let Some(key) = host.with_frame(page, |f| format!("{}#isolation{isolation}", crate::frames::frame_origin_key(f))) {
+                    page_dom.set_window_agent_cluster(host.cluster_group.get(), key);
+                }
+            }
+        }
         if let Some(inherited) = inherited.filter(|_| !bypass_csp && resource.header_csp.is_none()) {
             inherited.apply(&page_dom);
         }
@@ -5709,7 +5741,7 @@ mod disposition_tests {
             speculation_rules: Vec::new(),
             no_vary_search: None,
             referrer_policy: None,
-            origin_agent_cluster: false, force_load_at_top: false,
+            origin_agent_cluster: false, force_load_at_top: false, isolation_policy: 0,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             embedder_reporting: Default::default(),
             coop: Vec::new(),
