@@ -500,7 +500,13 @@ impl UserTiming {
             }
             return Ok(t);
         }
-        let name = mark.to_string()?;
+        self.mark_timestamp(&mark.to_string()?, names)
+    }
+
+    /// "Convert a mark to a timestamp" for a DOMString (`measure(name, startMark, endMark)`'s
+    /// arguments: a number there is its string, a mark name like "1", never a time).
+    fn mark_timestamp(&self, name: &str, names: NameTimestamp<'_>) -> JsResult<f64> {
+        let name = name.to_owned();
         if let Some(t) = names(&name) {
             return t;
         }
@@ -540,7 +546,7 @@ impl UserTiming {
         }
         let duration = duration.map(|d| d.to_number()).transpose()?;
         let end_time = match (end_mark, end, start, duration) {
-            (Some(mark), ..) => self.timestamp(mark, names)?,
+            (Some(mark), ..) => self.mark_timestamp(&mark.to_string()?, names)?,
             (None, Some(end), ..) => self.timestamp(end, names)?,
             (None, None, Some(start), Some(duration)) => self.timestamp(start, names)? + duration,
             _ => now,
@@ -548,7 +554,9 @@ impl UserTiming {
         let start_time = match (start, duration, end) {
             (Some(start), ..) => self.timestamp(start, names)?,
             (None, Some(duration), Some(end)) => self.timestamp(end, names)? - duration,
-            _ if !is_options && !a.get(1).is_nullish() => self.timestamp(a.get(1), names)?,
+            // A dictionary, empty or with unknown members only, is the default options: start 0.
+            // Anything else (a string, a number) is a mark name.
+            _ if !is_options && !a.get(1).is_nullish() && options.is_none() => self.mark_timestamp(&a.get(1).to_string()?, names)?,
             _ => 0.0,
         };
         let data = PerformanceEntryData {
