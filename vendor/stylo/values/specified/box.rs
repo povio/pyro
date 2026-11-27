@@ -2734,7 +2734,7 @@ pub enum BoxCollapse {
 pub enum TextOrientation {
     Mixed,
     Upright,
-    #[cfg_attr(feature = "gecko", parse(aliases = "sideways-right"))]
+    #[parse(aliases = "sideways-right")]
     Sideways,
 }
 
