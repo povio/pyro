@@ -14,6 +14,10 @@ pub(super) struct Options {
     /// (percentages are of the container's own box), as `rootMargin` expands the root.
     pub scroll_margin: [Margin; 4],
     pub scroll_margin_text: String,
+    /// IntersectionObserver v2: `trackVisibility` makes entries report `isVisible`, and `delay` (at
+    /// least 100 ms then) is the least time between two notifications.
+    pub track_visibility: bool,
+    pub delay: f64,
 }
 impl Margin {
     fn pixels(self, width: f64) -> f64 {
@@ -90,9 +94,8 @@ pub(super) fn parse(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>) -> JsRe
     };
     let get = |name| object.map_or(Ok(s.undefined()), |o| o.get(name));
     let delay = get("delay")?;
-    if !delay.is_undefined() && delay.to_number()? != 0.0 {
-        return Err(JsError::dom("NotSupportedError", "IntersectionObserver delay is not implemented"));
-    }
+    let delay = if delay.is_undefined() { 0.0 } else { delay.to_number()? };
+    let delay = if delay.is_finite() { delay.trunc() } else { 0.0 };
     let root = get("root")?;
     let root = if root.is_null() || root.is_undefined() {
         None
@@ -120,10 +123,10 @@ pub(super) fn parse(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>) -> JsRe
         helper.as_object().unwrap().get_index(0)?.as_object().unwrap().call(None, &[threshold])?.as_object().unwrap();
     let len = array.get_atom("length")?.to_number()? as u32;
     let thresholds = (0..len).map(|i| array.get_index(i)?.to_number()).collect::<JsResult<Vec<_>>>()?;
-    if get("trackVisibility")?.to_bool() {
-        return Err(JsError::dom("NotSupportedError", "IntersectionObserver visibility tracking is not implemented"));
-    }
-    Ok(Options { root, margin, margin_text, thresholds, scroll_margin, scroll_margin_text })
+    let track_visibility = get("trackVisibility")?.to_bool();
+    // A tracking observer notifies at most every 100 ms (IntersectionObserver v2).
+    let delay = if track_visibility { delay.max(100.0) } else { delay };
+    Ok(Options { root, margin, margin_text, thresholds, scroll_margin, scroll_margin_text, track_visibility, delay })
 }
 
 /// HTML's lazy load root margin, as Chromium's (1250 px around the viewport and each
@@ -137,5 +140,7 @@ pub(super) fn lazy_load() -> Options {
         thresholds: vec![0.0],
         scroll_margin: [Margin { value: MARGIN, percent: false }; 4],
         scroll_margin_text: String::new(),
+        track_visibility: false,
+        delay: 0.0,
     }
 }

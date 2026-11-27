@@ -56,7 +56,7 @@ fn geometry(bounds: Rect, target_rect: Rect, intersection: Option<Rect>) -> Geom
     } else {
         0.0
     };
-    Geometry { bounds, target: target_rect, intersection: rect, intersecting, ratio }
+    Geometry { bounds, target: target_rect, intersection: rect, intersecting, ratio, visible: false }
 }
 
 /// The observation of `target` (of `target_page`'s document) by an observer
@@ -69,7 +69,54 @@ fn geometry(bounds: Rect, target_rect: Rect, intersection: Option<Rect>) -> Geom
 /// ancestors) on the way up, and the intersection is reported in the
 /// target document's coordinates (IntersectionObserver "compute the
 /// intersection"). A document no longer shown in a page intersects nothing.
-pub(super) fn measure(_page: &PageDom, options: &options::Options, target_page: &PageDom, target: NodeId) -> Geometry {
+pub(super) fn measure(page: &PageDom, options: &options::Options, target_page: &PageDom, target: NodeId) -> Geometry {
+    let mut geometry = measure_geometry(page, options, target_page, target);
+    geometry.visible = options.track_visibility && geometry.intersecting && is_visible(target_page, target, geometry.intersection);
+    geometry
+}
+
+/// Whether a tracked target is "visible" (IntersectionObserver v2): no opacity below 1, filter
+/// or transform other than a 2D translation on it or an ancestor, and the hit test inside its
+/// intersection finds it (or a descendant) at the centre and the quarter points. Occlusion
+/// that only paints (box-shadow, filters, 3D z-order) cannot be seen by a hit test.
+fn is_visible(page: &PageDom, target: NodeId, intersection: Rect) -> bool {
+    let dom = page.dom.borrow();
+    let layout = page.layout();
+    let mut node = Some(target);
+    while let Some(el) = node {
+        let value = |name: &str| layout.computed_style_value(&dom, el, name);
+        let opacity = value("opacity");
+        if !opacity.is_empty() && opacity.parse::<f64>().map_or(false, |o| o != 1.0) {
+            return false;
+        }
+        if ["filter", "rotate", "scale"].into_iter().any(|name| !matches!(value(name).trim(), "" | "none")) {
+            return false;
+        }
+        let transform = value("transform");
+        let transform = transform.trim();
+        if !matches!(transform, "" | "none") {
+            let numbers: Option<Vec<f64>> = transform
+                .strip_prefix("matrix(")
+                .and_then(|rest| rest.strip_suffix(')'))
+                .map(|list| list.split(',').filter_map(|n| n.trim().parse().ok()).collect());
+            // matrix(a, b, c, d, tx, ty) with the linear part the identity: a translation.
+            if !numbers.is_some_and(|n| n.len() == 6 && n[0] == 1.0 && n[1] == 0.0 && n[2] == 0.0 && n[3] == 1.0) {
+                return false;
+            }
+        }
+        node = dom.parent_element(el).ok().flatten();
+    }
+    if intersection.width <= 0.0 || intersection.height <= 0.0 {
+        return true;
+    }
+    [(0.5, 0.5), (0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)].into_iter().all(|(fx, fy)| {
+        let (x, y) = (intersection.x + intersection.width * fx, intersection.y + intersection.height * fy);
+        // A point the hit test cannot answer for (outside the viewport) does not count as covered.
+        layout.element_from_point(&dom, x, y).map_or(true, |hit| hit == target || dom.contains(target, hit).unwrap_or(false))
+    })
+}
+
+fn measure_geometry(_page: &PageDom, options: &options::Options, target_page: &PageDom, target: NodeId) -> Geometry {
     let dom = target_page.dom.borrow();
     let layout = target_page.layout();
     let connected = dom.is_connected(target).unwrap_or(false);

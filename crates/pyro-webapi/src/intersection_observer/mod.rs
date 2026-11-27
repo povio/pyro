@@ -57,7 +57,7 @@ impl Drop for NodeLease {
 }
 struct Observation {
     node: NodeLease,
-    previous: Option<(usize, bool)>,
+    previous: Option<(usize, bool, bool)>,
 }
 #[derive(Clone, Copy)]
 struct Geometry {
@@ -66,6 +66,9 @@ struct Geometry {
     intersection: Rect,
     intersecting: bool,
     ratio: f64,
+    /// `isVisible` (IntersectionObserver v2): tracked, intersecting, and not affected by an
+    /// opacity, filter or non-translation transform nor covered by another element.
+    visible: bool,
 }
 struct PendingEntry {
     target: NodeLease,
@@ -82,6 +85,10 @@ pub struct Observer {
     options: options::Options,
     targets: RefCell<Vec<Observation>>,
     records: RefCell<Vec<PendingEntry>>,
+    /// When (ms since the page origin) the last entry of a tracking observer was queued, for `delay`.
+    last_queued: Cell<Option<f64>>,
+    /// A timer re-running the observation after `delay` is pending.
+    retry: Cell<bool>,
 }
 impl Observer {
     fn page(&self) -> JsResult<Rc<PageDom>> {
@@ -139,6 +146,8 @@ impl JsClass for IntersectionObserver {
                 options,
                 targets: RefCell::new(Vec::new()),
                 records: RefCell::new(Vec::new()),
+                last_queued: Cell::new(None),
+                retry: Cell::new(false),
             });
             let wrapper = s.wrap_new::<Self>(observer.clone(), nt, Some(identity))?;
             let _root = Persistent::new(s, wrapper.value());
@@ -179,8 +188,8 @@ impl JsClass for IntersectionObserver {
             let wrapper = unsafe { pyro_js::Object::from_raw(s.ctx(), wrapper.as_raw()) };
             Ok(s.get_hidden(wrapper, THRESHOLDS)?.unwrap_or(s.undefined()))
         });
-        def.getter("delay", |s, _| Ok(s.number(0.0)));
-        def.getter("trackVisibility", |s, _| Ok(s.boolean(false)));
+        def.getter("delay", |s, o| Ok(s.number(o.options.delay)));
+        def.getter("trackVisibility", |s, o| Ok(s.boolean(o.options.track_visibility)));
         def.method("observe", 1, |s, o, args| {
             args.require(1, "IntersectionObserver.observe")?;
             let (target_page, id) = o.node(s, args.get(0))?;
@@ -233,6 +242,7 @@ impl JsClass for IntersectionObserverEntry {
         def.getter("intersectionRatio", |s, d| Ok(s.number(d.geometry.ratio)));
         def.getter("boundingClientRect", |s, d| crate::canvas::rect_value(s, &d.target.page, true, d.geometry.target));
         def.getter("intersectionRect", |s, d| crate::canvas::rect_value(s, &d.target.page, true, d.geometry.intersection));
+        def.getter("isVisible", |s, d| Ok(s.boolean(d.geometry.visible)));
         def.getter("rootBounds", |s, d| crate::canvas::rect_value(s, &d.target.page, true, d.geometry.bounds));
     }
 }
@@ -277,15 +287,37 @@ pub(crate) fn after_task(page: &PageDom) {
             if !observer.live.get() {
                 continue;
             }
+            // IntersectionObserver v2 `delay`: a tracking observer queues entries at most once per
+            // `delay`; the observation is retried when it has passed (even with no frame).
+            if observer.options.track_visibility {
+                let now = page.intersections.origin.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
+                if let Some(wait) = observer.last_queued.get().map(|last| last + observer.options.delay - now).filter(|w| *w > 0.0) {
+                    page.intersections.stamp.set(None);
+                    if !observer.retry.replace(true) {
+                        let (weak, observer) = (Rc::downgrade(&owner), observer.clone());
+                        page.post_delayed_task(
+                            std::time::Duration::from_secs_f64(wait / 1000.0),
+                            Box::new(move || {
+                                observer.retry.set(false);
+                                if let Some(page) = weak.upgrade() {
+                                    after_task(&page);
+                                }
+                            }),
+                        );
+                    }
+                    continue;
+                }
+            }
             for target in observer.targets.borrow_mut().iter_mut() {
                 let Some(target_page) = target.node.page.upgrade() else { continue };
                 let geometry = geometry::measure(page, &observer.options, &target_page, target.node.id);
                 let index = observer.options.thresholds.partition_point(|threshold| *threshold <= geometry.ratio);
-                let state = (index, geometry.intersecting);
+                let state = (index, geometry.intersecting, geometry.visible);
                 if target.previous.replace(state) != Some(state) {
                     if let Ok(node) = NodeLease::new(&target_page, target.node.id) {
                         let time = page.intersections.origin.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0);
                         observer.records.borrow_mut().push(PendingEntry { target: node, geometry, time });
+                        observer.last_queued.set(Some(time));
                     }
                 }
             }
