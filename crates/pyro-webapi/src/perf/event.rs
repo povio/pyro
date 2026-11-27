@@ -157,8 +157,12 @@ const BUFFER_MS: f64 = 104.0;
 /// `interactionId` and is no first input (a held button: Chrome flushes such entries too, the
 /// delay is a choice).
 const HOLD_MS: f64 = 1000.0;
-/// Records kept for the next frame (a document that renders no frames: render-blocked).
+/// Records kept for the next frame (a document that renders no frames: render-blocked) while an entry can be
+/// seen: an observer of `event` or `first-input`, or a first input still to come.
 const MAX_PENDING: usize = 512;
+/// Records kept while nobody can see an entry. Their entries are only ever buffered (a long one, for a
+/// `buffered` observer that comes later), so a page that renders no frame keeps just the latest few.
+const MAX_UNSEEN_PENDING: usize = 32;
 
 fn round8(ms: f64) -> f64 {
     ((ms.max(0.0) / 8.0).round()) * 8.0
@@ -346,10 +350,19 @@ struct Raw<'a> {
     code: Option<&'a str>,
 }
 
+/// Whether an entry made now can be seen: an observer of `event` or `first-input` takes it, or the
+/// first-input entry (always buffered) is still to be made. Otherwise the entry is at most buffered, and
+/// nothing is worth a rendering update of its own.
+fn entries_visible(page: &PageDom) -> bool {
+    let timeline = page.timeline();
+    timeline.is_observed("event") || timeline.is_observed("first-input") || !timeline.event.inner.borrow().first_input_done
+}
+
 fn record(page: &PageDom, raw: Raw<'_>) {
     if super::loaf::ENABLED {
         super::loaf::note_ui_event(page, raw.start);
     }
+    let wanted = entries_visible(page);
     {
         let mut guard = page.timeline().event.inner.borrow_mut();
         let inner = &mut *guard;
@@ -357,7 +370,9 @@ fn record(page: &PageDom, raw: Raw<'_>) {
         let seq = inner.next_seq;
         inner.next_seq += 1;
         let (interaction_id, held) = inner.interaction(raw.ty, raw.pointer, raw.code, seq);
-        if inner.pending.len() >= MAX_PENDING {
+        // A record nobody can see is dropped past a few (a page that renders no frame has no use for more).
+        let cap = if wanted { MAX_PENDING } else { MAX_UNSEEN_PENDING };
+        while inner.pending.len() >= cap {
             inner.pending.remove(0);
         }
         inner.pending.push(Pending {
@@ -375,12 +390,8 @@ fn record(page: &PageDom, raw: Raw<'_>) {
         });
     }
     // The entry's duration ends at the next presentation. Ask for one only when somebody can see the
-    // entry (an observer, or the first-input entry that is always buffered); otherwise the next
-    // frame the page renders anyway closes it, and an idle page is not made to render per input.
-    let wanted = {
-        let timeline = page.timeline();
-        timeline.is_observed("event") || timeline.is_observed("first-input") || !timeline.event.inner.borrow().first_input_done
-    };
+    // entry (`entries_visible`); otherwise the next frame the page renders anyway closes it, and an idle
+    // page is not made to render per input.
     if wanted {
         timeline::request_rendering(page);
     }
@@ -614,8 +625,10 @@ pub fn on_frame(page: &Rc<PageDom>, frame: &FrameInfo) {
     for (p, first) in ready {
         expose(page, &p, first);
     }
-    // Held `pointerdown`s still wait: look again (until their `pointerup` or the hold ends).
-    if more {
+    // Held `pointerdown`s still wait: look again (until their `pointerup` or the hold ends), but only
+    // when an entry of theirs can be seen: else a long press with nobody looking would run a frame per
+    // rendering opportunity for the whole hold. Another frame closes them, as it does any other record.
+    if more && entries_visible(page) {
         timeline::request_rendering(page);
     }
 }
