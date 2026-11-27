@@ -2914,8 +2914,20 @@ impl Names<'_> {
                         .children(id)
                         .into_iter()
                         .flatten()
-                        .find(|c| dom.element(*c).ok().is_some_and(|e| &*e.name.local == "title"))?;
-                    return Some(text_of(dom, title));
+                        .find(|c| dom.element(*c).ok().is_some_and(|e| &*e.name.local == "title"));
+                    if let Some(title) = title {
+                        return Some(text_of(dom, title));
+                    }
+                    // Chromium: an `xlink:title` (a `title` attribute in the XLink namespace) on a link names it.
+                    if self.chrome {
+                        let xlink_title = dom.element(id).ok().and_then(|e| {
+                            e.attrs.iter().find(|a| &*a.name.local == "title" && !a.value.trim().is_empty()).map(|a| (*a.value).to_owned())
+                        });
+                        if xlink_title.is_some() {
+                            return xlink_title;
+                        }
+                    }
+                    return None;
                 }
                 None
             }

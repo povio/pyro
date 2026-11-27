@@ -365,6 +365,7 @@ fn role_tokens_fall_back_and_html_aam_context_roles() {
 <p id="plain-none" role="none">x</p>
 <ul role="none"><li id="inherited" aria-describedby="conflict">x</li></ul>
 <table><tbody id="tbody" aria-label="rows"><tr><td>x</td></tr></tbody></table>
+<svg><a id="svg-a" href="#" aria-label="l">x</a><a id="svg-xlink" xlink:href="#" xlink:title="t"><circle r="1"/></a><g id="svg-g" aria-label="l"><circle r="1"/></g><circle id="svg-circle" r="1"><title>circle label</title></circle></svg>
 <map name="m"><area id="area" shape="rect" coords="0,0,1,1" href="#" alt="x"></map><img usemap="#m" alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==">
 </body>"##,
     );
@@ -387,6 +388,10 @@ fn role_tokens_fall_back_and_html_aam_context_roles() {
         ("#inherited", "none"),
         ("#tbody", "rowgroup"),
         ("#area", "link"),
+        ("#svg-a", "link"),
+        ("#svg-xlink", "link"),
+        ("#svg-g", "group"),
+        ("#svg-circle", "graphics-symbol"),
     ] {
         assert_eq!(own_role(&mut h, selector), role, "{selector}");
     }
@@ -412,6 +417,7 @@ fn names_keep_no_break_spaces_and_follow_chromium_sources() {
 <input id="number" type="number" aria-placeholder="ap">
 <img id="empty-alt" alt="" title="tip">
 <figure id="figure" title="figure title">x</figure>
+<svg><a id="svg-xlink" xlink:href="#" xlink:title="t"><circle r="1"/></a><circle id="svg-circle" r="1"><title>circle label</title></circle></svg>
 <div id="host">slotted</div><button id="slotted" aria-labelledby="host"></button>
 </body>"##,
     );
@@ -426,6 +432,8 @@ fn names_keep_no_break_spaces_and_follow_chromium_sources() {
         ("#empty-alt", ""),
         ("#figure", "figure title"),
         ("#slotted", "foo slotted bar"),
+        ("#svg-xlink", "t"),
+        ("#svg-circle", "circle label"),
     ] {
         assert_eq!(own_name(&mut h, selector), name, "{selector}");
     }

@@ -568,7 +568,28 @@ impl<'a> Builder<'a> {
         let area_in_map = tag == Some("area")
             && std::iter::successors(dom.parent_element(el).ok().flatten(), |a| dom.parent_element(*a).ok().flatten())
                 .any(|a| local(dom, a) == Some("map"));
-        let skipped = matches!(
+        // SVG elements that are never rendered: their text (a `<title>`) is not content of the tree.
+        let svg_unrendered = self.is_svg_element(el)
+            && dom.element(el).is_ok_and(|e| {
+                matches!(
+                    &*e.name.local,
+                    "title"
+                        | "desc"
+                        | "metadata"
+                        | "defs"
+                        | "style"
+                        | "script"
+                        | "clipPath"
+                        | "mask"
+                        | "marker"
+                        | "pattern"
+                        | "linearGradient"
+                        | "radialGradient"
+                        | "filter"
+                        | "symbol"
+                )
+            });
+        let skipped = svg_unrendered || matches!(
             tag,
             Some(
                 "script"
@@ -662,7 +683,7 @@ impl<'a> Builder<'a> {
                     | "object"
                     | "embed"
             )
-        ) || self.is_svg_root(el);
+        );
         if leaf {
             return;
         }
@@ -728,6 +749,10 @@ impl<'a> Builder<'a> {
             // A list item or table part of a presentational list or table has no role of its own.
             return Class::Flatten;
         }
+        // SVG content below the root: Chromium exposes links, images, and named groups and shapes.
+        if !self.is_svg_root(el) && self.is_svg_element(el) {
+            return self.svg_class(el);
+        }
         match tag {
             Some("html" | "body") => return ignored(Ignored::Uninteresting),
             Some("label") => {
@@ -770,6 +795,28 @@ impl<'a> Builder<'a> {
             Some("document") => ignored(Ignored::Uninteresting),
             Some(role) => from_role(role),
             None => self.generic(el),
+        }
+    }
+
+    fn is_svg_element(&self, el: NodeId) -> bool {
+        self.dom.element(el).ok().is_some_and(|e| e.namespace() == "http://www.w3.org/2000/svg")
+    }
+
+    /// What an SVG element below the `<svg>` root contributes (SVG-AAM): `a` with `href` or `xlink:href` a link,
+    /// `image` an image, and a `g` or shape that has a name (`aria-label`, `aria-labelledby` or a `<title>` child) a
+    /// group or a graphics symbol; the rest is not in the tree and its children attach to the parent.
+    fn svg_class(&self, el: NodeId) -> Class {
+        let dom = self.dom;
+        let Ok(e) = dom.element(el) else { return Class::Flatten };
+        let name: &str = &e.name.local;
+        let titled = dom.children(el).into_iter().flatten().any(|c| dom.element(c).is_ok_and(|c| &*c.name.local == "title"));
+        let named = has_aria_name(dom, el) || titled;
+        match name {
+            "a" if e.attrs.iter().any(|a| &*a.name.local == "href") => node("link"),
+            "image" => node("image"),
+            "g" if named => node("group"),
+            "circle" | "ellipse" | "line" | "path" | "polygon" | "polyline" | "rect" if named => node("graphics-symbol"),
+            _ => Class::Flatten,
         }
     }
 
