@@ -3666,10 +3666,11 @@ impl Browser {
                     l.inline_module_seq
                 };
                 let url = self.inline_module_identity(page, &script_base, &seq.to_string());
+                let text = at_start_line(&info.inline_text, info.start_line);
                 if info.async_ {
-                    self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
+                    self.execute_module(page, &text, &url, false, Some(element), false);
                 } else {
-                    let ps = PendingScript { element, ty, url, source: Some(Ok(info.inline_text)), external: false };
+                    let ps = PendingScript { element, ty, url, source: Some(Ok(text)), external: false };
                     self.load_mut(page).expect("load").deferred.push_back(Rc::new(RefCell::new(ps)));
                 }
             }
@@ -4368,7 +4369,7 @@ impl Browser {
             (ScriptType::Module, None) => {
                 let script_base = node_base_url(&element.dom.borrow(), node).unwrap_or(base);
                 let url = self.dynamic_inline_module_identity(page, &script_base);
-                self.execute_module(page, &info.inline_text, &url, false, Some(element), false);
+                self.execute_module(page, &at_start_line(&info.inline_text, info.start_line), &url, false, Some(element), false);
                 self.drain_dom_resources(page);
             }
         }
@@ -4941,7 +4942,7 @@ impl Browser {
                 let url = self.dynamic_inline_module_identity(page, &script_base);
                 let element =
                     dom.borrow_mut().add_ref(node).ok().map(|_| Rc::new(ResourceNode { dom: dom.clone(), node }));
-                self.execute_module(page, &info.inline_text, &url, false, element, false);
+                self.execute_module(page, &at_start_line(&info.inline_text, info.start_line), &url, false, element, false);
             }
             return;
         };
@@ -5535,6 +5536,17 @@ fn suggested_filename(attribute: &str, url: &str) -> String {
 }
 
 /// Whether a Content-Disposition value has the `attachment` type.
+/// An inline module script's source text placed at its document line: the engine numbers a module's
+/// lines from 1, so the lines before the script's own are blank ones (columns are kept; WPT
+/// html/semantics/scripting-1/the-script-element/module/evaluation-error-5 reports the document line).
+fn at_start_line(text: &str, start_line: u32) -> String {
+    let before = start_line.saturating_sub(1).min(1_000_000) as usize;
+    let mut out = String::with_capacity(before + text.len());
+    out.extend(std::iter::repeat('\n').take(before));
+    out.push_str(text);
+    out
+}
+
 fn is_attachment(value: &str) -> bool {
     value.split(';').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("attachment"))
 }
