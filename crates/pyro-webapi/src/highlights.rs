@@ -220,6 +220,29 @@ struct SearchStyle {
     known: bool,
 }
 
+/// Whether `id` is not rendered only as hidden for find-in-page: a `hidden=until-found` element, or the
+/// content of a closed `<details>` (any child but its first `<summary>`). Chrome searches their text; a
+/// match opens them ([`crate::layout_api::reveal_ancestors`]).
+fn found_in_page_hidden(dom: &Dom, id: NodeId) -> bool {
+    let Ok(el) = dom.element(id) else { return false };
+    if !el.is_html() {
+        return false;
+    }
+    if el.attr("hidden").is_some_and(|v| v.eq_ignore_ascii_case("until-found")) {
+        return true;
+    }
+    let Some(parent) = dom.parent(id).ok().flatten() else { return false };
+    let Ok(p) = dom.element(parent) else { return false };
+    if !p.is_html() || &*p.name.local != "details" || p.attr("open").is_some() {
+        return false;
+    }
+    let first_summary = dom
+        .children(parent)
+        .ok()
+        .and_then(|mut c| c.find(|&c| dom.element(c).is_ok_and(|e| e.is_html() && &*e.name.local == "summary")));
+    first_summary != Some(id)
+}
+
 fn haystack(dom: &Dom, document: NodeId, style_of: &dyn Fn(NodeId) -> SearchStyle) -> Haystack {
     let mut hay = Haystack { chars: Vec::new(), at: Vec::new() };
     fn walk(dom: &Dom, node: NodeId, hay: &mut Haystack, style_of: &dyn Fn(NodeId) -> SearchStyle, hidden: bool) {
@@ -425,7 +448,7 @@ pub fn apply_fragment_directive(page: &Rc<PageDom>, directives: &str) -> Option<
         let style = layout.style();
         let style_of = |id: NodeId| match style.computed_display(&dom, id) {
             Some(display) => SearchStyle {
-                none: display == "none",
+                none: display == "none" && !found_in_page_hidden(&dom, id),
                 inline: display.starts_with("inline"),
                 contents: display == "contents",
                 hidden: style.computed_value(&dom, id, "visibility").is_some_and(|v| v == "hidden" || v == "collapse"),
