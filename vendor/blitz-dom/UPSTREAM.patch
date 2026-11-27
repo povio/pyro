@@ -703,7 +703,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1322,15 @@
+@@ -886,9 +1322,10 @@
      display: none;
  }
  
@@ -716,13 +716,42 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  iframe:fullscreen {
-     /* iframes in full-screen mode don't show a border. */
--    border: none !important;
-+    border: none;
+@@ -897,6 +1334,34 @@
      padding: unset !important;
  }
  
-@@ -922,6 +1359,11 @@
++/* Fullscreen § 6 "User-agent level style sheet defaults": an element in fullscreen fills the
++ * viewport, in the top layer (`overlay`, -servo-top-layer: pyro-dom enters it into its top layer
++ * with the fullscreen flag), its `display: contents` and inline `display` computed to block as any
++ * top-layer element's are. The root element is not moved. `object-fit` is the one that is not
++ * !important, so an author can override it. */
++:not(:root):fullscreen {
++    -servo-top-layer: auto !important;
++    position: fixed !important;
++    inset: 0 !important;
++    margin: 0 !important;
++    box-sizing: border-box !important;
++    min-width: 0 !important;
++    max-width: none !important;
++    min-height: 0 !important;
++    max-height: none !important;
++    width: 100% !important;
++    height: 100% !important;
++    transform: none !important;
++    object-fit: contain;
++    overlay: auto;
++}
++
++:fullscreen::backdrop {
++    position: fixed;
++    inset: 0;
++    background: black;
++}
++
+ /* Details and summary
+  * https://html.spec.whatwg.org/#the-details-and-summary-elements
+  *
+@@ -922,6 +1387,11 @@
      display: none !important;
  }
  
@@ -734,7 +763,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -992,12 +1434,23 @@
+@@ -992,12 +1462,23 @@
      height: -moz-fit-content;
  }
  
@@ -759,7 +788,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      position: fixed;
      overflow: auto;
      visibility: visible;
-@@ -1017,6 +1470,8 @@
+@@ -1017,6 +1498,8 @@
      display: inline-block;
      vertical-align: text-bottom;
      text-align: start;
@@ -768,7 +797,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  marquee:is([direction="up"], [direction="down"]) {
-@@ -1082,9 +1537,9 @@
+@@ -1082,9 +1565,9 @@
      font-size: unset;
  }
  
@@ -780,7 +809,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  rtc {
      unicode-bidi: isolate;
  }
-@@ -1128,37 +1583,124 @@
+@@ -1128,37 +1611,124 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -19076,7 +19105,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              output.oof_candidates.translate(location);
                              oof_candidates.append(&mut output.oof_candidates);
                          }
-@@ -1297,20 +2804,126 @@
+@@ -1297,20 +2804,131 @@
          // println!("known_dimensions: w: {:?} h: {:?}", inputs.known_dimensions.width, inputs.known_dimensions.height);
          // println!("\n");
  
@@ -19154,7 +19183,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                    } else {
 +                        central
 +                    };
-+                    central / scale + line_box_top
++                    // pyro: Blink's central baseline is a whole number of pixels, the half of an odd
++                    // ascent + descent rounded up (measured against Chrome for font sizes 8..40, both
++                    // `vertical-lr` and `-rl`: WPT css-flexbox `flex-align-baseline-001`); a fractional one
++                    // put the item on a half pixel. (The small allowance keeps float noise from
++                    // rounding a whole value up.)
++                    (central / scale + line_box_top - 0.001).ceil()
 +                };
 +                (
 +                    inline_layout.layout.lines().next().map(dominant),
@@ -19206,7 +19240,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Put layout back
-@@ -1320,12 +2933,7 @@
+@@ -1320,12 +2938,7 @@
              .unwrap()
              .inline_layout_data = Some(inline_layout);
  
@@ -19220,7 +19254,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          LayoutOutput {
              size: final_size,
-@@ -1360,14 +2968,19 @@
+@@ -1360,14 +2973,19 @@
                  )
              },
              baselines: taffy::Baselines {
@@ -19243,7 +19277,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              oof_candidates,
              oof_positioning_area: Some(OofPositioningArea {
                  size: final_size - oof_position_inset.sum_axes(),
-@@ -1384,3 +2997,306 @@
+@@ -1384,3 +3002,306 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }

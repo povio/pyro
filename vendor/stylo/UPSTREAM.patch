@@ -2325,13 +2325,11 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-23 06:58:46
-@@ -246,6 +246,21 @@
- 
- def to_phys(name, logical, physical):
++++ b/properties/data.py	2026-11-27 21:31:57
+@@ -248,6 +248,21 @@
      return name.replace(logical, physical).replace("inset-", "")
-+
-+
+ 
+ 
 +PAGE_BOX_PROPERTIES = set('''
 +    direction unicode-bidi background background-color background-image background-repeat
 +    background-attachment background-position background-position-x background-position-y
@@ -2345,9 +2343,11 @@ diff -ruN a/properties/data.py b/properties/data.py
 +    text-align text-decoration text-indent text-transform white-space word-spacing visibility
 +    width min-width max-width
 +'''.split())
- 
- 
++
++
  class Property(object):
+     def __init__(
+         self,
 @@ -271,6 +286,8 @@
          self.gecko_pref = gecko_pref
          self.idl_method = idl_method(name, self.camel_case)
@@ -2430,7 +2430,15 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "FlexDirection",
                  "ListStylePosition",
                  "TextWrapStyle",
-@@ -600,16 +658,27 @@
+@@ -591,6 +649,7 @@
+                 "TextRendering",
+                 "TextCombineUpright",
+                 "RubyAlign",
++                "RubyOverhang",
+                 "TextSizeAdjust",
+                 "Hyphens",
+                 "EmptyCells",
+@@ -600,16 +659,27 @@
                  "ShapeRendering",
                  "TextAnchor",
                  "ImageOrientation",
@@ -2458,7 +2466,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TopLayer",
                  "FloatEdge",
                  "ImageLayerAttachment",
-@@ -670,6 +739,7 @@
+@@ -670,6 +740,7 @@
                  "OverscrollBehavior",
                  "PageOrientation",
                  "PointerEvents",
@@ -2466,7 +2474,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "PositionTryOrder",
                  "PositionVisibility",
                  "PrintColorAdjust",
-@@ -681,11 +751,18 @@
+@@ -681,11 +752,18 @@
                  "ScrollSnapAlign",
                  "ScrollSnapAxis",
                  "ScrollSnapStop",
@@ -2485,7 +2493,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TextBoxEdge",
                  "TextBoxTrim",
                  "TextDecorationLine",
-@@ -1323,8 +1400,17 @@
+@@ -1323,8 +1401,17 @@
                  "cursor",
                  "direction",
                  "hyphens",
@@ -2878,7 +2886,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                  self.${shorthand.sub_properties[i].ident},
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-27 21:18:39
++++ b/properties/longhands.toml	2026-11-27 21:31:57
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -2947,8 +2955,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
  animation_type = "discrete"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -2956,8 +2964,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
 +animation_type = "normal"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -2970,7 +2978,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [caption-side]
  type = "table::CaptionSide"
  initial = "computed::table::CaptionSide::Top"
-@@ -509,8 +526,20 @@
+@@ -509,11 +526,23 @@
  type = "color::CaretColor"
  initial = "generics::color::CaretColor::auto()"
  struct = "inherited_ui"
@@ -2978,9 +2986,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +boxed = true
  spec = "https://drafts.csswg.org/css-ui/#caret-color"
  ignored_when_colors_disabled = true
-+servo_restyle_damage = "repaint"
-+affects = "paint"
-+
+ servo_restyle_damage = "repaint"
+ affects = "paint"
+ 
 +# pyro: CSS UI 4 caret-shape (the caret is painted in blitz-paint).
 +[caret-shape]
 +type = "CaretShape"
@@ -2988,9 +2996,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +struct = "inherited_ui"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-ui/#caret-shape"
- servo_restyle_damage = "repaint"
- affects = "paint"
- 
++servo_restyle_damage = "repaint"
++affects = "paint"
++
+ [clear]
+ type = "Clear"
+ initial = "computed::Clear::None"
 @@ -545,7 +574,6 @@
  type = "FillRule"
  initial = "Default::default()"
@@ -3098,7 +3109,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial_specified_value = "specified::BorderSideWidth::medium().into()"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
  affects = "layout"
-+
+ 
 +[column-rule-break]
 +type = "column::RuleBreak"
 +initial = "computed::column::RuleBreak::Normal"
@@ -3152,7 +3163,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +ignored_when_colors_disabled = true
 +spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-color"
 +affects = "paint"
- 
++
 +[row-rule-style]
 +type = "column::RuleStyle"
 +initial = "computed::BorderStyle::None.into()"
@@ -3228,10 +3239,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-contain/#content-visibility"
  affects = "layout"
  
-@@ -759,6 +913,15 @@
+@@ -758,6 +912,15 @@
+ spec = "https://drafts.csswg.org/css-display/#propdef-display"
  servo_restyle_damage = "rebuild_box"
  affects = "layout"
- 
++
 +[dynamic-range-limit]
 +type = "color::DynamicRangeLimit"
 +initial = "computed::color::DynamicRangeLimit::no_limit()"
@@ -3240,10 +3252,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.csswg.org/css-color-hdr/#the-dynamic-range-limit-property"
 +affects = "paint"
 +servo_restyle_damage = "repaint"
-+
+ 
  [fill]
  type = "SVGPaint"
- initial = "crate::values::computed::SVGPaint::BLACK"
 @@ -844,7 +1007,6 @@
  type = "Color"
  initial = "computed::Color::BLACK"
@@ -3358,11 +3369,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  flags = "CAN_ANIMATE_ON_COMPOSITOR SCROLL_LINKED_EFFECTIVE"
  spec = "https://drafts.fxtf.org/motion-1/#offset-rotate-property"
  servo_restyle_damage = "rebuild_box"
-@@ -1487,6 +1650,23 @@
- spec = "https://drafts.csswg.org/css-color/#transparency"
+@@ -1488,6 +1651,23 @@
  servo_restyle_damage = "repaint"
  affects = "paint"
-+
+ 
 +[reading-flow]
 +type = "ReadingFlow"
 +engine = "servo"
@@ -3379,9 +3389,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +struct = "position"
 +spec = "https://drafts.csswg.org/css-display-4/#propdef-reading-order"
 +affects = ""
- 
++
  [order]
  type = "Integer"
+ initial = "0"
 @@ -1498,8 +1678,9 @@
  affects = "layout"
  
@@ -3495,7 +3506,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollMarkerGroup::NONE"
 +struct = "box"
 +engine = "servo"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "rebuild_box"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-marker-group-property"
 +affects = "layout"
@@ -3505,7 +3516,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
  affects = "paint"
@@ -3582,18 +3593,20 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2152,6 +2349,22 @@
+@@ -2150,8 +2347,24 @@
+ vector = { need_index = true }
+ animation_type = "none"
  spec = "https://drafts.csswg.org/css-transitions-2/#transition-behavior-property"
- affects = ""
- 
++affects = ""
++
 +[interest-delay-start]
 +type = "InterestDelay"
 +initial = "computed::InterestDelay::normal()"
 +struct = "ui"
 +animation_type = "discrete"
 +spec = "https://open-ui.org/components/interest-invokers.explainer/"
-+affects = ""
-+
+ affects = ""
+ 
 +[interest-delay-end]
 +type = "InterestDelay"
 +initial = "computed::InterestDelay::normal()"
@@ -3665,10 +3678,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-name"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2337,6 +2550,16 @@
+@@ -2335,6 +2548,16 @@
+ servo_pref = "layout.css.view-transitions.enabled"
+ animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-view-transitions-2/#view-transition-class-prop"
- affects = ""
- 
++affects = ""
++
 +[view-transition-scope]
 +type = "ViewTransitionScope"
 +initial = "computed::ViewTransitionScope::None"
@@ -3677,11 +3692,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_pref = "layout.css.view-transitions.enabled"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-view-transitions-2/#view-transition-scope-prop"
-+affects = ""
-+
+ affects = ""
+ 
  [view-transition-name]
- type = "ViewTransitionName"
- initial = "computed::ViewTransitionName::none()"
 @@ -2350,7 +2573,6 @@
  type = "VectorEffect"
  initial = "computed::VectorEffect::none()"
@@ -3706,10 +3719,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-width"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2588,6 +2808,56 @@
+@@ -2586,8 +2806,58 @@
+ struct = "inherited_text"
+ spec = "https://drafts.csswg.org/css-text-3/#tab-size-property"
  extra_gecko_aliases = ["-moz-tab-size"]
- affects = "layout"
- 
++affects = "layout"
++
 +[hanging-punctuation]
 +type = "HangingPunctuation"
 +initial = "computed::text::HangingPunctuation::NONE"
@@ -3738,8 +3753,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-text-4/#wrap-inside"
 +servo_restyle_damage = "rebuild_box"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[white-space-trim]
 +type = "WhiteSpaceTrim"
 +initial = "computed::text::WhiteSpaceTrim::NONE"
@@ -3763,12 +3778,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-autospace]
  type = "TextAutospace"
  initial = "computed::text::TextAutospace::NO_AUTOSPACE"
-@@ -2597,6 +2867,28 @@
- gecko_pref = "layout.css.text-autospace.enabled"
- has_effect_on_gecko_scrollbars = false
+@@ -2599,6 +2869,28 @@
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +# pyro: CSS Text 4 `text-spacing-trim` (fullwidth punctuation trimming), for Servo: blitz-dom
 +# passes it to parley's shaping and line breaking.
 +[text-spacing-trim]
@@ -3789,9 +3802,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-text-5/#text-fit-property"
- affects = "layout"
- 
++affects = "layout"
++
  [text-autospace-size]
+ type = "Number"
+ initial = "0.125"
 @@ -2635,7 +2927,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
@@ -3808,21 +3823,21 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3171,6 +3463,14 @@
- boxed = true
- logical_group = "border-radius"
+@@ -3173,6 +3465,14 @@
  logical = true
-+affects = "paint"
-+
+ affects = "paint"
+ 
 +[border-shape]
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
 +struct = "border"
 +boxed = true
 +spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
- affects = "paint"
- 
++affects = "paint"
++
  [corner-top-left-shape]
+ type = "CornerShape"
+ initial = "computed::CornerShape::round()"
 @@ -3383,9 +3683,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
@@ -3970,10 +3985,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3730,6 +4015,27 @@
- type = "TopLayer"
- initial = "computed::TopLayer::None"
- 
+@@ -3726,10 +4011,31 @@
+ spec = "Internal (not web-exposed)"
+ animation_type = "none"
+ enabled_in = "ua"
++affects = "layout"
++type = "TopLayer"
++initial = "computed::TopLayer::None"
++
 +# pyro: css-position-4 `overlay`, for Servo: whether an element in the top layer is rendered there
 +# (`auto`). The UA sheet sets it on top-layer elements; a discrete transition keeps it, and the element in
 +# the top layer, past their removal (pyro-dom, blitz-paint).
@@ -3982,10 +4001,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-position-4/#overlay"
 +animation_type = "discrete"
-+affects = "layout"
-+type = "TopLayer"
-+initial = "computed::TopLayer::None"
-+
+ affects = "layout"
+ type = "TopLayer"
+ initial = "computed::TopLayer::None"
+ 
 +[scroll-axis-lock]
 +struct = "box"
 +engine = "servo"
@@ -4040,10 +4059,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://w3c.github.io/mathml-core/#the-math-shift"
  animation_type = "discrete"
  affects = "layout"
-@@ -3865,6 +4189,15 @@
+@@ -3864,6 +4188,15 @@
+ has_effect_on_gecko_scrollbars = false
  type = "FontSmoothing"
  initial = "computed::FontSmoothing::Auto"
- 
++
 +[speak]
 +struct = "inherited_box"
 +engine = "servo"
@@ -4052,15 +4072,13 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +affects = ""
 +type = "Speak"
 +initial = "computed::Speak::Auto"
-+
+ 
  [visibility]
  struct = "inherited_box"
- spec = "https://drafts.csswg.org/css-box/#propdef-visibility"
-@@ -3872,6 +4205,15 @@
- gecko_ffi_name = "mVisible"
+@@ -3873,6 +4206,15 @@
  type = "Visibility"
  initial = "computed::Visibility::Visible"
-+
+ 
 +[interpolate-size]
 +struct = "inherited_box"
 +engine = "servo"
@@ -4069,9 +4087,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +affects = "layout"
 +type = "InterpolateSize"
 +initial = "computed::InterpolateSize::NumericOnly"
- 
++
  [direction]
  struct = "inherited_box"
+ spec = "https://drafts.csswg.org/css-writing-modes/#propdef-direction"
 @@ -3901,9 +4243,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
@@ -4132,10 +4151,28 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [ruby-align]
  struct = "inherited_text"
  servo_pref = "layout.css.ruby.enabled"
-@@ -4093,6 +4441,17 @@
+@@ -4010,6 +4358,16 @@
+ type = "RubyAlign"
+ initial = "computed::RubyAlign::SpaceAround"
+ 
++# pyro: css-ruby-1 `ruby-overhang` (parsed and computed; ruby layout does not read it).
++[ruby-overhang]
++struct = "inherited_text"
++servo_pref = "layout.css.ruby.enabled"
++spec = "https://drafts.csswg.org/css-ruby-1/#propdef-ruby-overhang"
++animation_type = "discrete"
++affects = "layout"
++type = "RubyOverhang"
++initial = "computed::RubyOverhang::Auto"
++
+ [text-combine-upright]
+ struct = "inherited_text"
+ servo_pref = "layout.css.text-combine-upright.enabled"
+@@ -4092,6 +4450,17 @@
+ servo_restyle_damage = "rebuild_box"
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
- 
++
 +# pyro: css-sizing-4 `frame-sizing` (responsive iframes), for Servo: blitz-dom gives an iframe the size of
 +# its embedded document's content (`data-pyro-frame-content-size`, from pyro) on the axis its value names.
 +[frame-sizing]
@@ -4146,11 +4183,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +affects = "layout"
 +type = "FrameSizing"
 +initial = "computed::FrameSizing::Auto"
-+
+ 
  [object-fit]
  struct = "position"
- spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4109,7 +4468,62 @@
+@@ -4109,7 +4478,62 @@
  affects = "paint"
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
@@ -4213,7 +4249,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [mask-mode]
  struct = "svg"
  servo_pref = "layout.css.masking.enabled"
-@@ -4249,7 +4663,7 @@
+@@ -4249,7 +4673,7 @@
  
  [field-sizing]
  struct = "ui"
@@ -4222,11 +4258,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4289,7 +4703,62 @@
- aliases = ["-webkit-box-orient"]
+@@ -4290,6 +4714,61 @@
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
-+
+ 
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -4251,7 +4286,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_restyle_damage = "rebuild_box"
 +type = "BoxAlign"
 +initial = "computed::BoxAlign::Stretch"
- 
++
 +[-webkit-box-pack]
 +struct = "box"
 +engine = "servo"
@@ -4285,7 +4320,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [-moz-box-pack]
  struct = "xul"
  engine = "gecko"
-@@ -4344,8 +4813,8 @@
+@@ -4344,8 +4823,8 @@
  type = "ScopedName"
  initial = "computed::ScopedName::none()"
  struct = "ui"
@@ -4318,8 +4353,8 @@ diff -ruN a/properties/mod.rs b/properties/mod.rs
  }
 diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 --- a/properties/properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/properties.mako.rs	2026-11-23 14:12:20
-@@ -401,6 +401,13 @@
++++ b/properties/properties.mako.rs	2026-11-27 21:31:57
+@@ -401,6 +401,18 @@
      /// Returns whether a given rule allows a given property.
      #[inline]
      pub(super) fn allowed_in_rule(self, rule_types: CssRuleTypes) -> bool {
@@ -4330,10 +4365,15 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +        if rule_types == CssRuleTypes::from(CssRuleType::Margin) {
 +            return true;
 +        }
++        // pyro: an `@page` rule keeps every property too, whether or not it applies to a page box
++        // (`column-count`, `display`, ...), as Chrome's CSSOM does (WPT css-page cssom/margin-001).
++        if rule_types == CssRuleTypes::from(CssRuleType::Page) {
++            return true;
++        }
          let allowed_types = rule_types.intersection(CssRuleTypes::DECLARATION_ALLOWED_TYPES);
          debug_assert!(
              !allowed_types.is_empty(),
-@@ -809,6 +816,11 @@
+@@ -809,6 +821,11 @@
  }
  
  impl LonghandId {
@@ -4345,7 +4385,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      /// Returns an iterator over all the shorthands that include this longhand.
      pub fn shorthands(self) -> NonCustomPropertyIterator<ShorthandId> {
          // first generate longhand to shorthands lookup map
-@@ -1557,7 +1569,8 @@
+@@ -1557,7 +1574,8 @@
              /// Whether this is a multicol style.
              #[cfg(feature = "servo")]
              pub fn is_multicol(&self) -> bool {
@@ -4355,7 +4395,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              }
          % endif
      }
-@@ -1621,6 +1634,12 @@
+@@ -1621,6 +1639,12 @@
      /// relevant link for this element. A element's "relevant link" is the
      /// element being matched if it is a link or the nearest ancestor link.
      visited_style: Option<Arc<ComputedValues>>,
@@ -4368,16 +4408,16 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  }
  
  /// The struct that Servo uses to represent computed values.
-@@ -1642,20 +1661,59 @@
+@@ -1642,20 +1666,59 @@
      inner: ComputedValuesInner,
  
      /// The pseudo-element that we're using.
 -    pseudo: Option<PseudoElement>,
 +    pseudo: Option<Box<PseudoElement>>,
-+}
-+
+ }
+ 
 +#[cfg(feature = "servo")]
-+impl ComputedValues {
+ impl ComputedValues {
 +    /// pyro: whether every inherited style struct and every other inherited
 +    /// input (flags, zoom, writing mode) of `self` equals `other`'s: what a
 +    /// child inherits but custom properties.
@@ -4413,9 +4453,9 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +    pub fn has_visited_or_attr_references(&self) -> bool {
 +        self.inner.visited_style.is_some() || self.inner.attribute_references.is_some()
 +    }
- }
- 
- impl ComputedValues {
++}
++
++impl ComputedValues {
      /// Returns the pseudo-element that this style represents.
      #[cfg(feature = "servo")]
      pub fn pseudo(&self) -> Option<PseudoElement> {
@@ -4431,7 +4471,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      }
  
      /// Returns whether this style's display value is equal to contents.
-@@ -1883,16 +1941,30 @@
+@@ -1883,14 +1946,28 @@
                  writing_mode,
                  rules,
                  visited_style,
@@ -4445,8 +4485,8 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 -            pseudo: pseudo.cloned(),
 +            pseudo: pseudo.cloned().map(Box::new),
          })
-     }
- 
++    }
++
 +    /// pyro: this style as `getComputedStyle` reports it: for a visited link and its contents,
 +    /// the visited-dependent properties unvisited (`pyro_unvisited`); `None` for any other.
 +    pub fn pyro_unvisited_view(&self) -> Option<ComputedValues> {
@@ -4458,12 +4498,10 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +        % endif
 +        % endfor
 +        Some(view)
-+    }
-+
+     }
+ 
      /// Get the initial computed values.
-     pub fn initial_values_with_font_override(default_font: super::style_structs::Font) -> Arc<Self> {
-         use crate::computed_value_flags::ComputedValueFlags;
-@@ -1923,6 +1995,7 @@
+@@ -1923,6 +2000,7 @@
                  writing_mode: WritingMode::empty(),
                  rules: None,
                  visited_style: None,
@@ -4471,7 +4509,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
                  effective_zoom: crate::values::computed::Zoom::ONE,
                  flags: ComputedValueFlags::empty(),
              },
-@@ -2013,13 +2086,14 @@
+@@ -2013,13 +2091,14 @@
                  writing_mode: self.writing_mode.clone(),
                  rules: self.rules.clone(),
                  visited_style: self.visited_style.clone(),
@@ -4487,7 +4525,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
          })
      }
  
-@@ -2028,6 +2102,7 @@
+@@ -2028,6 +2107,7 @@
          self.visited_style.as_deref()
      }
  
@@ -4495,7 +4533,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      % for style_struct in data.active_style_structs():
          /// Clone the ${style_struct.name} struct.
          #[inline]
-@@ -2234,6 +2309,8 @@
+@@ -2234,6 +2314,8 @@
      /// for this element.  A element's "relevant link" is the element being
      /// matched if it is a link or the nearest ancestor link.
      pub visited_style: Option<Arc<ComputedValues>>,
@@ -4504,7 +4542,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      % for style_struct in data.active_style_structs():
          ${style_struct.ident}: StyleStructRef<'a, style_structs::${style_struct.name}>,
      % endfor
-@@ -2271,6 +2348,7 @@
+@@ -2271,6 +2353,7 @@
              color_scheme: inherited_style.get_inherited_ui().color_scheme_bits(),
              flags: Cell::new(flags),
              visited_style: None,
@@ -4512,7 +4550,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              % for style_struct in data.active_style_structs():
              % if style_struct.inherited:
              ${style_struct.ident}: StyleStructRef::Borrowed(inherited_style.get_${style_struct.name_lower}()),
-@@ -2317,12 +2395,57 @@
+@@ -2317,12 +2400,57 @@
              color_scheme: style_to_derive_from.get_inherited_ui().color_scheme_bits(),
              flags: Cell::new(style_to_derive_from.flags),
              visited_style: None,
@@ -4550,7 +4588,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +            % else:
 +            unvisited.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(mine);
 +            % endif
-+        }
+         }
 +        % endif
 +        % endfor
 +        self.pyro_unvisited = Some(Arc::new(unvisited));
@@ -4564,13 +4602,13 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +                % endif
 +                self.${property.style_struct.ident}.mutate().copy_${property.ident}_from(v);
 +            }
-         }
++        }
 +        % endif
 +        % endfor
      }
  
      /// Copy the reset properties from `style`.
-@@ -2550,7 +2673,8 @@
+@@ -2550,7 +2678,8 @@
  
      /// Turns this `StyleBuilder` into a proper `ComputedValues` instance.
      pub fn build(self) -> Arc<ComputedValues> {
@@ -4580,7 +4618,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              self.pseudo,
              self.substitution_functions.custom_properties,
              self.attribute_references,
-@@ -2562,7 +2686,13 @@
+@@ -2562,7 +2691,13 @@
              % for style_struct in data.active_style_structs():
              self.${style_struct.ident}.build(),
              % endfor
@@ -4595,7 +4633,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      }
  
      /// Get the substitution function maps if necessary.
-@@ -2769,7 +2899,8 @@
+@@ -2769,7 +2904,8 @@
  #[cfg(feature = "gecko")]
  size_of_test!(ComputedValues, 248);
  #[cfg(feature = "servo")]
@@ -4607,14 +4645,11 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  size_of_test!(Option<Arc<ComputedValues>>, 8);
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-23 06:58:46
-@@ -265,6 +265,152 @@
-                 self.corner_bottom_left_shape,
-             )
-             .to_css(dest)
-+        }
-+    }
-+}
++++ b/properties/shorthands.rs	2026-11-27 21:31:57
+@@ -268,7 +268,153 @@
+         }
+     }
+ }
 +
 +/// pyro: `mask-border` (css-masking-1 §8.6): `border-image`'s grammar plus `<'mask-border-mode'>`.
 +pub mod mask_border {
@@ -4625,7 +4660,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +        mask_border_mode, mask_border_outset, mask_border_repeat, mask_border_slice,
 +        mask_border_source, mask_border_width,
 +    };
-+
+ 
 +    pub fn parse_value(
 +        context: &ParserContext,
 +        input: &mut Parser,
@@ -4758,9 +4793,13 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +                self.mask_border_mode.to_css(dest)?;
 +            }
 +            Ok(())
-         }
-     }
- }
++        }
++    }
++}
++
+ pub mod border_image {
+     pub use crate::properties::generated::shorthands::border_image::*;
+ 
 @@ -542,7 +688,6 @@
      }
  }
@@ -4820,11 +4859,11 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  
      use super::*;
 -    use crate::properties::longhands::{column_count, column_width};
-+    use crate::properties::longhands::{column_count, column_height, column_width};
++    use crate::properties::longhands::{column_count, column_height, column_width, column_wrap};
  
      pub fn parse_value(
          context: &ParserContext,
-@@ -783,13 +936,19 @@
+@@ -783,13 +936,21 @@
  
          let values = autos + column_count.iter().len() + column_width.iter().len();
          if values == 0 || values > 2 {
@@ -4846,19 +4885,26 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +            column_count: unwrap_or_initial!(column_count),
 +            column_width: unwrap_or_initial!(column_width),
 +            column_height: unwrap_or_initial!(column_height),
++            // pyro: css-multicol-2: `columns` also resets `column-wrap`, to its initial `auto`.
++            column_wrap: column_wrap::get_initial_specified_value(),
 +        })
      }
  
      impl<'a> ToCss for LonghandsToSerialize<'a> {
-@@ -798,53 +957,61 @@
+@@ -797,52 +958,64 @@
+         where
              W: fmt::Write,
          {
-             if self.column_width.is_auto() {
+-            if self.column_width.is_auto() {
 -                return self.column_count.to_css(dest);
--            }
++            // pyro: a `column-wrap` other than `auto` cannot be expressed by `columns`.
++            if *self.column_wrap != column_wrap::get_initial_specified_value() {
++                return Ok(());
+             }
 -            self.column_width.to_css(dest)?;
 -            if !self.column_count.is_auto() {
 -                dest.write_char(' ')?;
++            if self.column_width.is_auto() {
                  self.column_count.to_css(dest)?;
 +            } else {
 +                self.column_width.to_css(dest)?;
@@ -4922,8 +4968,8 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
 +        serialize_directional_border(dest, &self.0, &self.1, &self.2)
      }
- }
- 
++}
++
 +pub fn parse_gap_rules(context: &ParserContext, input: &mut Parser) -> Result<(RuleWidth, RuleStyle, RuleColor), ParseError> {
 +    let rules = RuleList::<GapRule, specified::Integer>::parse(context, input)?;
 +    Ok((rules.map(|rule| rule.0.clone()), rules.map(|rule| rule.1), rules.map(|rule| rule.2.clone())))
@@ -4942,12 +4988,10 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +        });
 +    }
 +    RuleList(rules.into_boxed_slice()).to_css(dest)
-+}
-+
- pub mod text_wrap {
-     pub use crate::properties::generated::shorthands::text_wrap::*;
+ }
  
-@@ -1000,7 +1167,7 @@
+ pub mod text_wrap {
+@@ -1000,7 +1173,7 @@
      }
  }
  
@@ -4956,7 +5000,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod _webkit_text_stroke {
      pub use crate::properties::generated::shorthands::_webkit_text_stroke::*;
  
-@@ -1178,7 +1345,42 @@
+@@ -1178,7 +1351,42 @@
      }
  }
  
@@ -5000,7 +5044,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod marker {
      pub use crate::properties::generated::shorthands::marker::*;
  
-@@ -1653,7 +1855,7 @@
+@@ -1653,7 +1861,7 @@
      }
  }
  
@@ -5009,7 +5053,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod scroll_timeline {
      pub use crate::properties::generated::shorthands::scroll_timeline::*;
  
-@@ -1710,7 +1912,7 @@
+@@ -1710,7 +1918,7 @@
      }
  }
  
@@ -5018,7 +5062,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod view_timeline {
      pub use crate::properties::generated::shorthands::view_timeline::*;
  
-@@ -1797,7 +1999,7 @@
+@@ -1797,7 +2005,7 @@
      }
  }
  
@@ -5027,7 +5071,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod animation_range {
      pub use crate::properties::generated::shorthands::animation_range::*;
  
-@@ -2092,7 +2294,13 @@
+@@ -2092,7 +2300,13 @@
              return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
          }
          Ok(expanded! {
@@ -5042,7 +5086,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              outline_style: unwrap_or_initial!(outline_style, style),
              outline_width: unwrap_or_initial!(outline_width, width),
          })
-@@ -2103,15 +2311,17 @@
+@@ -2103,15 +2317,17 @@
          where
              W: fmt::Write,
          {
@@ -5064,7 +5108,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              }
              if !writer.has_written() {
                  self.outline_style.to_css(dest)?;
-@@ -2455,7 +2665,7 @@
+@@ -2455,7 +2671,7 @@
          let mut variant_caps = None;
          let mut weight = None;
          let mut width = None;
@@ -5073,7 +5117,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              return Ok(Longhands {
                  font_family: font_family::SpecifiedValue::system_font(sys),
                  font_size: font_size::SpecifiedValue::system_font(sys),
-@@ -2555,12 +2765,6 @@
+@@ -2555,12 +2771,6 @@
          where
              W: fmt::Write,
          {
@@ -5086,7 +5130,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              #[cfg(feature = "gecko")]
              if self.font_optical_sizing != &font_optical_sizing::get_initial_specified_value() {
                  return Ok(());
-@@ -2635,6 +2839,12 @@
+@@ -2635,6 +2845,12 @@
                  return Ok(());
              }
  
@@ -5099,7 +5143,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              let font_width = match self.font_width {
                  FontWidth::Keyword(kw) => *kw,
                  FontWidth::Width(percentage) => {
-@@ -2700,7 +2910,7 @@
+@@ -2700,7 +2916,7 @@
                  ($v:expr) => {
                      match $v.get_system() {
                          Some(s) => {
@@ -5108,7 +5152,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                              sys = Some(s);
                          },
                          None => {
-@@ -3399,8 +3609,9 @@
+@@ -3399,8 +3615,9 @@
                      dest.write_str(", ")?;
                  }
  
@@ -5120,7 +5164,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  let has_timing_function = !self.animation_timing_function.0[i].is_ease();
                  let has_delay = !self.animation_delay.0[i].is_zero();
                  let has_iteration_count = !self.animation_iteration_count.0[i].is_one();
-@@ -3455,6 +3666,10 @@
+@@ -3455,6 +3672,10 @@
      pub use crate::properties::generated::shorthands::mask::*;
  
      use super::*;
@@ -5131,7 +5175,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
      use crate::parser::Parse;
      use crate::properties::longhands::{
          mask_clip, mask_composite, mask_mode, mask_origin, mask_position_x, mask_position_y,
-@@ -3581,6 +3796,12 @@
+@@ -3581,6 +3802,12 @@
             mask_origin: mask_origin::SpecifiedValue(mask_origin.into()),
             mask_clip: mask_clip::SpecifiedValue(mask_clip.into()),
             mask_composite: mask_composite::SpecifiedValue(mask_composite.into()),
@@ -5144,7 +5188,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
          })
      }
  
-@@ -3594,6 +3815,15 @@
+@@ -3594,6 +3821,15 @@
              use style_traits::values::SequenceWriter;
  
              let len = self.mask_image.0.len();
@@ -5160,7 +5204,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              if len == 0 {
                  return Ok(());
              }
-@@ -3682,18 +3912,8 @@
+@@ -3682,18 +3918,8 @@
                      writer.item(repeat)?;
                  }
  
@@ -5183,7 +5227,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
-+++ b/properties/shorthands.toml	2026-11-23 06:58:46
++++ b/properties/shorthands.toml	2026-11-27 21:31:57
 @@ -1,3 +1,78 @@
 +[column-rule-inset]
 +sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end", "column-rule-inset-junction-start", "column-rule-inset-junction-end"]
@@ -5418,7 +5462,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  [columns]
 -sub_properties = ["column-width", "column-count"]
 +# pyro: css-multicol-2 `[ / <column-height> ]`.
-+sub_properties = ["column-width", "column-count", "column-height"]
++sub_properties = ["column-width", "column-count", "column-height", "column-wrap"]
  spec = "https://drafts.csswg.org/css-multicol/#propdef-columns"
  servo_pref = "layout.css.columns.enabled"
  
@@ -11984,7 +12028,7 @@ diff -ruN a/values/computed/border.rs b/values/computed/border.rs
  impl BorderSpacing {
 diff -ruN a/values/computed/box.rs b/values/computed/box.rs
 --- a/values/computed/box.rs	2026-11-11 19:55:57
-+++ b/values/computed/box.rs	2026-11-23 06:58:46
++++ b/values/computed/box.rs	2026-11-27 21:31:57
 @@ -21,9 +21,9 @@
      AlignmentBaseline, Appearance, BackfaceVisibility, BaselineSource, BoxAlign, BoxCollapse,
      BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain, ContainerName,
@@ -12007,6 +12051,60 @@ diff -ruN a/values/computed/box.rs b/values/computed/box.rs
  
  /// A computed value for the `-moz-scrollbar-inset-block` / `-inline` properties.
  pub type ScrollbarInset = GenericScrollbarInset<NonNegativeLength>;
+@@ -79,37 +79,20 @@
+     Both,
+     Horizontal,
+     Vertical,
++    // pyro: the logical values stay logical in the computed value (Chromium and css-logical-1
++    // "resize": the resolved value is `block`/`inline`); nothing in layout reads `resize`.
++    Inline,
++    Block,
+ }
+ 
+ impl ToComputedValue for specified::Resize {
+     type ComputedValue = Resize;
+ 
+     #[inline]
+-    fn to_computed_value(&self, context: &Context) -> Resize {
+-        let is_vertical = context.style().writing_mode.is_vertical();
++    fn to_computed_value(&self, _context: &Context) -> Resize {
+         match self {
+-            specified::Resize::Inline => {
+-                context
+-                    .rule_cache_conditions
+-                    .borrow_mut()
+-                    .set_writing_mode_dependency(context.builder.writing_mode);
+-                if is_vertical {
+-                    Resize::Vertical
+-                } else {
+-                    Resize::Horizontal
+-                }
+-            },
+-            specified::Resize::Block => {
+-                context
+-                    .rule_cache_conditions
+-                    .borrow_mut()
+-                    .set_writing_mode_dependency(context.builder.writing_mode);
+-                if is_vertical {
+-                    Resize::Horizontal
+-                } else {
+-                    Resize::Vertical
+-                }
+-            },
++            specified::Resize::Inline => Resize::Inline,
++            specified::Resize::Block => Resize::Block,
+             specified::Resize::None => Resize::None,
+             specified::Resize::Both => Resize::Both,
+             specified::Resize::Horizontal => Resize::Horizontal,
+@@ -124,6 +107,8 @@
+             Resize::Both => specified::Resize::Both,
+             Resize::Horizontal => specified::Resize::Horizontal,
+             Resize::Vertical => specified::Resize::Vertical,
++            Resize::Inline => specified::Resize::Inline,
++            Resize::Block => specified::Resize::Block,
+         }
+     }
+ }
 diff -ruN a/values/computed/calc.rs b/values/computed/calc.rs
 --- a/values/computed/calc.rs	2026-11-11 19:55:57
 +++ b/values/computed/calc.rs	2026-11-23 06:58:46
@@ -12769,7 +12867,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
 +}
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-23 06:58:46
++++ b/values/computed/mod.rs	2026-11-27 21:31:57
 @@ -51,7 +51,8 @@
  pub use self::animation::{
      AnimationComposition, AnimationDirection, AnimationDuration, AnimationFillMode,
@@ -12821,9 +12919,12 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
      FlexWrap, GridAutoFlow, GridTemplateAreas, Inset, ObjectFit, Position, PositionAnchor,
      PositionOrAuto, PositionTryFallbacks, PositionTryOrder, PositionVisibility, ScopedName, ZIndex,
  };
-@@ -129,7 +133,7 @@
+@@ -127,9 +131,9 @@
+     UnicodeBidi, WhiteSpaceCollapse,
+ };
  pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextIndent};
- pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
+-pub use self::text::{OverflowWrap, RubyPosition, TextOverflow, WordBreak, WordSpacing};
++pub use self::text::{OverflowWrap, RubyOverhang, RubyPosition, TextOverflow, WordBreak, WordSpacing};
  pub use self::text::{TextAlign, TextAlignLast, TextEmphasisPosition, TextEmphasisStyle};
 -pub use self::text::{TextAutospace, TextUnderlinePosition};
 +pub use self::text::{TextAutospace, TextFit, WhiteSpaceTrim, WordSpaceTransform, WrapInside, HangingPunctuation, TextGroupAlign, TextSpacingTrim, TextUnderlinePosition};
@@ -12907,18 +13008,18 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
      /// Queries font metrics.
      pub fn query_font_metrics(
          &self,
-@@ -526,6 +549,11 @@
-             .add_flags(ComputedValueFlags::USES_SIBLING_INDEX);
-         self.rule_cache_conditions.borrow_mut().set_uncacheable();
+@@ -528,6 +551,11 @@
          self.resolve_tree_counting_result().sibling_index
-+    }
-+
+     }
+ 
 +    pub(crate) fn lookup_function(&self, stylist: &Stylist, name: &crate::Atom, scope_skip: usize)
 +        -> Option<(Arc<crate::stylesheets::FunctionRule>, usize)> {
 +        self.element_context.lookup_function(stylist, self.current_scope(), name, scope_skip)
-     }
- 
++    }
++
      /// Returns the random base value for the given random cache key. This constructs a
+     /// PRNG seed by hashing the components of the key's specified random cache name,
+     /// and then generating a random value from the seed. This ensures that the same
 @@ -546,6 +574,7 @@
                  .add_flags(ComputedValueFlags::USES_ELEMENT_SCOPED_RANDOM);
              self.rule_cache_conditions.borrow_mut().set_uncacheable();
@@ -12927,10 +13028,12 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
          }
  
          // Returns a float in the range [0, 1).
-@@ -902,6 +931,18 @@
-             specified::AngleOrPercentage::Angle(angle) => {
-                 AngleOrPercentage::Angle(angle.to_computed_value(context))
+@@ -900,6 +929,18 @@
+                 AngleOrPercentage::Percentage(percentage.to_computed_value(context))
              },
+             specified::AngleOrPercentage::Angle(angle) => {
++                AngleOrPercentage::Angle(angle.to_computed_value(context))
++            },
 +            specified::AngleOrPercentage::Calc(calc) => {
 +                use specified::calc::{CalcNode, Leaf};
 +                let node = calc.node.map_leaves(|leaf| match leaf {
@@ -12941,11 +13044,9 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 +                    node,
 +                    clamping_mode: calc.clamping_mode,
 +                }));
-+                AngleOrPercentage::Angle(angle.to_computed_value(context))
-+            },
+                 AngleOrPercentage::Angle(angle.to_computed_value(context))
+             },
          }
-     }
-     #[inline]
 diff -ruN a/values/computed/position.rs b/values/computed/position.rs
 --- a/values/computed/position.rs	2026-11-11 19:55:57
 +++ b/values/computed/position.rs	2026-11-23 06:58:46
@@ -13009,13 +13110,13 @@ diff -ruN a/values/computed/position.rs b/values/computed/position.rs
      //
 diff -ruN a/values/computed/text.rs b/values/computed/text.rs
 --- a/values/computed/text.rs	2026-11-11 19:55:57
-+++ b/values/computed/text.rs	2026-11-19 18:38:15
++++ b/values/computed/text.rs	2026-11-27 21:31:57
 @@ -26,7 +26,7 @@
  
  pub use crate::values::specified::text::{
      HyphenateCharacter, Hyphens, LineBreak, MozControlCharacterVisibility, OverflowWrap, RubyAlign,
 -    RubyPosition, TextAlignLast, TextAutospace, TextBoxEdge, TextBoxTrim, TextCombineUpright,
-+    RubyPosition, TextAlignLast, TextAutospace, WhiteSpaceTrim, WordSpaceTransform, WrapInside, HangingPunctuation, TextGroupAlign, TextSpacingTrim, TextBoxEdge, TextBoxTrim, TextCombineUpright,
++    RubyOverhang, RubyPosition, TextAlignLast, TextAutospace, WhiteSpaceTrim, WordSpaceTransform, WrapInside, HangingPunctuation, TextGroupAlign, TextSpacingTrim, TextBoxEdge, TextBoxTrim, TextCombineUpright,
      TextDecorationLine, TextDecorationSkipInk, TextDecorationStyle, TextEmphasisPosition,
      TextJustify, TextOverflow, TextRendering, TextSecurity, TextSizeAdjust, TextTransform,
      TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, WhiteSpaceCollapse, WordBreak,
@@ -15303,7 +15404,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-27 21:10:43
++++ b/values/specified/box.rs	2026-11-27 21:31:57
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -15629,7 +15730,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToShmem,
      ToComputedValue,
      ToResolvedValue,
-@@ -801,31 +916,98 @@
+@@ -801,29 +916,96 @@
      /// Use the text-under baseline.
      TextBottom,
      /// Use the alphabetic baseline.
@@ -15677,8 +15778,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    #[cfg(feature = "servo")]
 +    #[css(skip)]
 +    VerticalAlignTextTop,
- }
- 
++}
++
 +#[cfg(feature = "servo")]
 +impl AlignmentBaseline {
 +    /// pyro: the value `vertical-align` sets for a keyword of this longhand (see
@@ -15728,11 +15829,9 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +            Self::VerticalAlignTextBottom | Self::VerticalAlignMiddle | Self::VerticalAlignTextTop => unreachable!(),
 +        })
 +    }
-+}
-+
+ }
+ 
  /// A specified value for the `baseline-source` property.
- /// https://drafts.csswg.org/css-inline-3/#baseline-source
- #[derive(
 @@ -1093,6 +1275,35 @@
  pub enum ScrollSnapStop {
      Normal,
@@ -15833,7 +15932,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      overlapping_bits
  ))]
  #[repr(C)]
-@@ -1407,6 +1638,25 @@
+@@ -1407,7 +1638,26 @@
          const CONTENT = 1 << 6 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits();
          /// `strict` variant, turns on all types of containment
          const STRICT = 1 << 7 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits() | Contain::SIZE.bits();
@@ -15852,13 +15951,14 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        } else {
 +            *self
 +        }
-+    }
+     }
 +
 +    fn from_computed_value(value: &Self) -> Self {
 +        *value
-     }
++    }
  }
  
+ impl Parse for ContainIntrinsicSize {
 @@ -1593,7 +1843,7 @@
  )]
  #[css(bitflags(
@@ -15910,12 +16010,10 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2291,6 +2549,15 @@
- pub enum ScrollBehavior {
-     Auto,
+@@ -2293,6 +2551,15 @@
      Smooth,
-+}
-+
+ }
+ 
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq,
 +         Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -15923,9 +16021,11 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum ScrollAxisLock {
 +    Auto,
 +    None,
- }
- 
++}
++
  /// https://drafts.fxtf.org/compositing/#isolation
+ #[allow(missing_docs)]
+ #[derive(
 @@ -2320,6 +2587,16 @@
      Isolate,
  }
@@ -15943,10 +16043,21 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
  #[allow(missing_docs)]
  #[derive(
-@@ -2488,6 +2765,39 @@
-     None,
+@@ -2457,7 +2734,7 @@
+ pub enum TextOrientation {
+     Mixed,
+     Upright,
+-    #[cfg_attr(feature = "gecko", parse(aliases = "sideways-right"))]
++    #[parse(aliases = "sideways-right")]
+     Sideways,
  }
  
+@@ -2486,8 +2763,41 @@
+ pub enum ImageOrientation {
+     FromImage,
+     None,
++}
++
 +/// CSS Display 4 reading-flow keyword selected on a container.
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -15959,8 +16070,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    GridRows,
 +    GridColumns,
 +    GridOrder,
-+}
-+
+ }
+ 
 +/// Whether the element's text is rendered aurally (CSS Speech Level 1).
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -15983,10 +16094,11 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)
  #[allow(missing_docs)]
  #[derive(
-@@ -2629,3 +2939,131 @@
+@@ -2628,4 +2938,132 @@
+ pub enum DirectionProperty {
      Ltr,
      Rtl,
- }
++}
 +
 +/// pyro: the `scroll-marker-group` property (CSS Overflow 5): whether a scroll container
 +/// generates a `::scroll-marker-group` box, and on which side of its own box it goes.
@@ -16027,7 +16139,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        /// The markers are tabs (the focus model).
 +        const TABS = 1 << 3;
 +    }
-+}
+ }
 +
 +impl Parse for ScrollMarkerGroup {
 +    fn parse(_: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
@@ -17411,7 +17523,7 @@ diff -ruN a/values/specified/list.rs b/values/specified/list.rs
              .try_parse(|input| input.expect_ident_matching("none"))
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-23 06:58:46
++++ b/values/specified/mod.rs	2026-11-27 21:31:57
 @@ -30,7 +30,8 @@
  pub use self::animation::{
      AnimationComposition, AnimationDirection, AnimationDuration, AnimationFillMode,
@@ -17464,7 +17576,15 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
      GridAutoFlow, GridTemplateAreas, Inset, ObjectFit, Position, PositionAnchor,
      PositionAnchorKeyword, PositionArea, PositionAreaKeyword, PositionComponent, PositionOrAuto,
      PositionTryFallbacks, PositionTryOrder, PositionVisibility, ScopedName, ZIndex,
-@@ -121,7 +125,7 @@
+@@ -114,14 +118,14 @@
+ pub use self::svg_path::SVGPathData;
+ pub use self::table::{BorderCollapse, EmptyCells, TableLayout};
+ pub use self::text::{
+-    HyphenateCharacter, HyphenateLimitChars, Hyphens, RubyAlign, RubyPosition, TextCombineUpright,
++    HyphenateCharacter, HyphenateLimitChars, Hyphens, RubyAlign, RubyOverhang, RubyPosition, TextCombineUpright,
+     TextDecorationStyle, TextRendering, TextSecurity, TextSizeAdjust, TextWrapMode, TextWrapStyle,
+     UnicodeBidi, WhiteSpaceCollapse,
+ };
  pub use self::text::{InitialLetter, LetterSpacing, LineBreak, TextAlign, TextIndent};
  pub use self::text::{OverflowWrap, TextEmphasisPosition, TextEmphasisStyle, WordBreak};
  pub use self::text::{TextAlignKeyword, TextDecorationLine, TextOverflow, WordSpacing};
@@ -17767,7 +17887,7 @@ diff -ruN a/values/specified/random.rs b/values/specified/random.rs
  }
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-23 06:58:46
++++ b/values/specified/text.rs	2026-11-27 21:31:57
 @@ -25,6 +25,23 @@
  use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
  use style_traits::{KeywordsCollectFn, SpecifiedValueInfo};
@@ -17792,10 +17912,11 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  /// A specified type for the `initial-letter` property.
  pub type InitialLetter = GenericInitialLetter<Number, Integer>;
  
-@@ -152,11 +169,26 @@
+@@ -151,12 +168,27 @@
+             .is_ok()
          {
              return Ok(Self::normal());
-         }
++        }
 +        // pyro: `<number> && [ drop | raise ]?` besides `<number> <integer>?` (CSS Inline 3 § 7.2).
 +        use crate::values::generics::text::InitialLetterKeyword;
 +        let keyword = |i: &mut Parser<'_>| -> Result<InitialLetterKeyword, ParseError> {
@@ -17807,7 +17928,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +        if let Ok(keyword) = input.try_parse(keyword) {
 +            let size = Number::parse_at_least_one(context, input)?;
 +            return Ok(Self { size, sink: crate::Zero::zero(), keyword });
-+        }
+         }
          let size = Number::parse_at_least_one(context, input)?;
 +        if let Ok(keyword) = input.try_parse(keyword) {
 +            return Ok(Self { size, sink: crate::Zero::zero(), keyword });
@@ -17860,17 +17981,17 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
      #[parse(aliases = "-webkit-center")]
      MozCenter,
      #[parse(aliases = "-webkit-left")]
-@@ -826,6 +884,10 @@
+@@ -824,6 +882,10 @@
+         self.remove(Self::RIGHT); // Right is the default
+         true
      }
- }
- 
-+fn word_break_manual_enabled(_: &ParserContext) -> bool {
-+    cfg!(feature = "servo")
 +}
 +
- fn word_break_break_word_enabled(_: &ParserContext) -> bool {
-     crate::pref!("layout.css.word-break.break-word.enabled", gecko = true)
++fn word_break_manual_enabled(_: &ParserContext) -> bool {
++    cfg!(feature = "servo")
  }
+ 
+ fn word_break_break_word_enabled(_: &ParserContext) -> bool {
 @@ -858,6 +920,14 @@
      /// `anywhere`, and `word-break` behave like `normal`.
      #[parse(condition = "word_break_break_word_enabled")]
@@ -17886,13 +18007,10 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  /// Values for the `text-justify` CSS property.
-@@ -1330,7 +1400,226 @@
-         /// Auto-spacing may replace an existing U+0020 space with custom space.
-         const REPLACE = 1 << 6;
-         */
-+    }
-+}
-+
+@@ -1333,6 +1403,225 @@
+     }
+ }
+ 
 +/// pyro: the `white-space-trim` property: which collapsible white space at a box's edges is
 +/// discarded.
 +///
@@ -18013,7 +18131,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +        const ALLOW_END = 1 << 2;
 +        /// Closing punctuation at the end of an element's last line hangs.
 +        const LAST = 1 << 3;
-     }
++    }
 +}
 +
 +impl HangingPunctuation {
@@ -18110,23 +18228,54 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +    TrimBoth,
 +    TrimAll,
 +    Auto,
++}
++
+ /* Bug 1980111: Uncomment the following to support 'replace' value.
+ impl TextAutospace {
+     fn validate_mixed_flags(&self) -> bool {
+@@ -1643,7 +1932,8 @@
+     SpaceBetween,
  }
  
- /* Bug 1980111: Uncomment the following to support 'replace' value.
-@@ -1654,12 +1943,9 @@
-     FromPrimitive,
-     Hash,
-     MallocSizeOf,
--    Parse,
-     PartialEq,
-     Serialize,
--    SpecifiedValueInfo,
+-/// https://drafts.csswg.org/css-writing-modes-3/#text-combine-upright
++/// https://drafts.csswg.org/css-ruby-1/#propdef-ruby-overhang
++/// pyro: `none` is a legacy alias of `spaces`.
+ #[allow(missing_docs)]
+ #[derive(
+     Clone,
+@@ -1660,6 +1950,31 @@
+     SpecifiedValueInfo,
      ToComputedValue,
--    ToCss,
+     ToCss,
++    ToResolvedValue,
++    ToShmem,
++    ToTyped,
++)]
++#[repr(u8)]
++pub enum RubyOverhang {
++    Auto,
++    #[parse(aliases = "none")]
++    Spaces,
++}
++
++/// https://drafts.csswg.org/css-writing-modes-3/#text-combine-upright
++#[allow(missing_docs)]
++#[derive(
++    Clone,
++    Copy,
++    Debug,
++    Deserialize,
++    Eq,
++    FromPrimitive,
++    Hash,
++    MallocSizeOf,
++    PartialEq,
++    Serialize,
++    ToComputedValue,
      ToResolvedValue,
      ToShmem,
      ToTyped,
-@@ -1668,8 +1954,60 @@
+@@ -1668,8 +1983,60 @@
  pub enum TextCombineUpright {
      None,
      All,
@@ -18134,8 +18283,8 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +    Digits2,
 +    Digits3,
 +    Digits4,
- }
- 
++}
++
 +impl TextCombineUpright {
 +    /// pyro: the most ASCII digits a run of `digits N` combines (`None` for other values).
 +    pub fn digits(self) -> Option<usize> {
@@ -18146,8 +18295,8 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +            _ => None,
 +        }
 +    }
-+}
-+
+ }
+ 
 +impl Parse for TextCombineUpright {
 +    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
 +        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
