@@ -128,6 +128,36 @@ pub struct ReportedResponse {
     pub encoded: u64,
     pub decoded: u64,
     pub server_timing: Vec<crate::server_timing::Metric>,
+    /// `contentEncoding` as Resource Timing exposes it (TAO-checked, see [`content_encoding`]).
+    pub content_encoding: &'static str,
+}
+
+/// Resource Timing's `contentEncoding` of a response's `Content-Encoding` header lines: the
+/// lowercase token when it is one Chromium knows ("gzip", "deflate", "br", "zstd", "dcb",
+/// "dcz"), "multiple" for a list of several, "@unknown" for any other single value, and ""
+/// when there is none (an empty value counts as none).
+pub fn content_encoding(headers: &pyro_net::http::HeaderMap) -> &'static str {
+    let tokens: Vec<String> = headers
+        .get_all(pyro_net::http::header::CONTENT_ENCODING)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|line| line.split(','))
+        .map(|t| t.trim().to_ascii_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    match tokens.as_slice() {
+        [] => "",
+        [one] => match one.as_str() {
+            "gzip" | "x-gzip" => "gzip",
+            "deflate" => "deflate",
+            "br" => "br",
+            "zstd" => "zstd",
+            "dcb" => "dcb",
+            "dcz" => "dcz",
+            _ => "@unknown",
+        },
+        _ => "multiple",
+    }
 }
 
 impl ReportedResponse {
@@ -153,6 +183,7 @@ impl ReportedResponse {
             encoded: 0,
             decoded: 0,
             server_timing: if allow_metrics { crate::server_timing::parse(&head.headers) } else { Vec::new() },
+            content_encoding: if allow_metrics && !opaque { content_encoding(&head.headers) } else { "" },
         }
     }
 }
@@ -184,6 +215,7 @@ pub struct ResourceEntry {
     pub redirect_count: u16,
     pub next_hop_protocol: &'static str,
     pub content_type: String,
+    pub content_encoding: &'static str,
     pub render_blocking: bool,
     pub delivery_type: &'static str,
     pub server_timing: Vec<crate::server_timing::Metric>,
@@ -252,6 +284,7 @@ fn entry_with_clock(report: &FetchReport, ms: impl Fn(Instant) -> f64) -> Resour
         return e;
     }
     e.server_timing.clone_from(&r.server_timing);
+    e.content_encoding = r.content_encoding;
     let fetch_start = e.fetch_start;
     match t.connection {
         Some(c) => {
@@ -574,6 +607,7 @@ fn timed_sink_with(
                     }) {
                         response.opaque = true;
                         response.mime.clear();
+                        response.content_encoding = "";
                     }
                     report.response = Some(response);
                 }

@@ -131,6 +131,7 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
         o.set("nextHopProtocol", s.string(f.map_or("", |f| f.next_hop_protocol)))?;
         o.set("renderBlockingStatus", s.string(render_blocking_status(e)))?;
         o.set("contentType", s.string(f.map_or("", |f| &f.content_type)))?;
+        o.set("contentEncoding", s.string(f.map_or("", |f| f.content_encoding)))?;
         for (key, value) in RESOURCE_TIMES.iter().chain(&RESOURCE_SIZES) {
             o.set(key, s.number(f.map_or(0.0, value)))?;
         }
@@ -278,6 +279,7 @@ impl JsClass for PerformanceResourceTiming {
         def.getter("deliveryType", |s, e| Ok(s.string(e.fetch().map_or("", |f| f.delivery_type))));
         def.getter("renderBlockingStatus", |s, e| Ok(s.string(render_blocking_status(e))));
         def.getter("contentType", |s, e| Ok(s.string(e.fetch().map_or("", |f| &f.content_type))));
+        def.getter("contentEncoding", |s, e| Ok(s.string(e.fetch().map_or("", |f| f.content_encoding))));
         def.getter("serverTiming", server_metrics);
         def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
     }
