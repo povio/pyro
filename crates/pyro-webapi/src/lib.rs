@@ -182,6 +182,7 @@ pub use scheduler::with_idle_scheduling_state;
 pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
+pub use webauthn::WebAuthnError;
 pub use page::{AgentClusterGroup, AvailableImage, FrameContainer,
     BodyPart, DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource,
     ResponsiveFramesSource,

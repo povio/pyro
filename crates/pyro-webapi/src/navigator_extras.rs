@@ -224,6 +224,8 @@ pub struct ContextServices {
     /// The `Report-To` groups the context's responses delivered, by origin
     /// (`crate::reporting_store`).
     pub(crate) report_to: RefCell<crate::reporting_store::ReportToStore>,
+    /// The context's WebAuthn virtual authenticators (`crate::webauthn`).
+    pub(crate) webauthn: RefCell<crate::webauthn::State>,
 }
 
 /// A position `navigator.geolocation` reports. CDP's optional coordinates are
@@ -334,6 +336,11 @@ impl ContextServices {
     /// unavailable, `None` clears the override.
     pub fn set_geolocation(&self, fix: Option<Option<GeolocationFix>>) {
         *self.geolocation.borrow_mut() = fix;
+    }
+
+    /// A CDP `WebAuthn.<method>` command on the context's virtual authenticators.
+    pub fn webauthn_command(&self, method: &str, params: &serde_json::Value) -> Result<serde_json::Value, crate::webauthn::WebAuthnError> {
+        self.webauthn.borrow_mut().run(method, params)
     }
 
     /// The clipboard's `text/plain` entry (CDP-side inspection and tests).

@@ -34,6 +34,7 @@ mod screencast;
 #[cfg(feature = "render")]
 mod screenshot;
 mod virtual_time;
+mod webauthn;
 mod worker;
 #[cfg(not(feature = "render"))]
 mod screenshot {
@@ -1040,6 +1041,7 @@ impl EngineHost {
             "Fetch" => self.fetch_domain(action, cmd),
             "Input" => self.input_domain(action, cmd),
             "Security" => self.security_domain(action, cmd),
+            "WebAuthn" => self.webauthn_domain(action, cmd),
             "Accessibility" => self.accessibility_domain(action, cmd),
             "Profiler" => self.profiler_domain(action, cmd),
             "Debugger" => self.debugger_domain(action, cmd),

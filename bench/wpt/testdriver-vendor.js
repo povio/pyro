@@ -6,7 +6,7 @@
 // Implemented: click, send_keys, action_sequence (pointer, key, wheel and none sources), and with them bless, and
 // set_permission, get_computed_role, get_computed_label and delete_all_cookies; get_named_cookie and get_all_cookies;
 // bidi.log.entry_added, bidi.permissions.set_permission and the bidi.emulation overrides the browser really has
-// (geolocation, locale, touch, prefers-color-scheme/reduced-motion). The rest keeps testdriver.js's own "not
+// (geolocation, locale, touch, prefers-color-scheme/reduced-motion), and WebDriver's virtual authenticators. The rest keeps testdriver.js's own "not
 // implemented" rejections. A command group is added with one `def` line below (td/index.mjs says how).
 (function () {
   'use strict';
@@ -115,6 +115,8 @@
   def('create_virtual_pressure_source');
   def('update_virtual_pressure_source');
   def('remove_virtual_pressure_source');
+  // WebDriver's Virtual Authenticators (td/webauthn.mjs).
+  for (const name of ['add_virtual_authenticator', 'remove_virtual_authenticator', 'add_credential', 'get_credentials', 'remove_credential', 'remove_all_credentials', 'set_user_verified', 'set_credential_properties']) def(name);
 
   // WebDriver BiDi (td/bidi.mjs). `subscribe` returns the function that removes the subscription.
   const bidiError = (m) => new Error(`invalid argument: ${m}`);
