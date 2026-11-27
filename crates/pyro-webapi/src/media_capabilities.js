@@ -5,7 +5,7 @@
 // MediaSource byte stream formats). There is no encoder behind a `record` or `webrtc` target (no
 // MediaRecorder, no WebRTC), no key system and no hardware decoder: encodingInfo() is unsupported,
 // a keySystemConfiguration makes decodingInfo() unsupported (keySystemAccess null), powerEfficient
-// is false (software decoding) and `smooth` follows a pixel rate a software decoder keeps up with.
+// is false (software decoding) and `smooth` is true exactly when the configuration is supported (frames are never dropped).
 (function (native) {
   'use strict';
   const token = Symbol('pyro');
@@ -140,8 +140,6 @@
     checked.keys = name;
   };
 
-  // A software decoder's reach: pixels per second it presents without dropping.
-  const SMOOTH_PIXELS_PER_SECOND = 1920 * 1080 * 60;
   const MAX_DIMENSION = 8192;
   const decoding = (checked) => {
     if (checked.keys !== null) return false;
@@ -184,13 +182,10 @@
         const checked = validate(configuration, DECODING, what);
         keySystem(configuration, checked, what);
         const supported = decoding(checked);
-        let smooth = false;
-        if (supported && checked.video) {
-          const { width, height, framerate } = checked.video;
-          smooth = width * height * framerate <= SMOOTH_PIXELS_PER_SECOND;
-        } else if (supported) {
-          smooth = true;
-        }
+        // Pyro decodes in software and presents every decoded frame (it has no real-time deadline to drop frames
+        // against), so a supported configuration is smooth by design: no invented pixel-rate threshold. Software
+        // decoding is also why powerEfficient is false: no hardware decoder is ever used.
+        const smooth = supported;
         return PromiseC.resolve({ supported, smooth, powerEfficient: false, keySystemAccess: null, configuration: copy(configuration) });
       } catch (e) {
         return PromiseC.reject(e);
