@@ -684,6 +684,21 @@ impl BaseDocument {
                 // Used value: the margin resolved by layout (percentages and
                 // `auto` margins resolved to lengths)
                 let layout = node.final_layout();
+                // An `auto` margin of an anchor-positioned box (position-area, anchor-center, valid
+                // anchor) behaves as 0 on that axis.
+                let margins = styles.get_margin();
+                let specified = match property_name {
+                    "margin-top" => &margins.margin_top,
+                    "margin-right" => &margins.margin_right,
+                    "margin-bottom" => &margins.margin_bottom,
+                    _ => &margins.margin_left,
+                };
+                if matches!(specified, style::values::computed::length::Margin::Auto)
+                    && node.is_out_of_flow()
+                    && self.anchor_zeroes_auto(node, matches!(property_name, "margin-left" | "margin-right"))
+                {
+                    return format_px(0.0);
+                }
                 let margin = match property_name {
                     "margin-top" => layout.margin.top,
                     "margin-right" => layout.margin.right,
@@ -811,7 +826,16 @@ impl BaseDocument {
                             let cb_width = pl.size.width - pl.border.left - pl.border.right;
                             let cb_height = pl.size.height - pl.border.top - pl.border.bottom;
 
-                            let pos_styles = styles.get_position();
+                            // The rendered `position-try-fallbacks` option replaces the box's own
+                            // declarations (css-anchor-position-1 § 5: getComputedStyle reports the
+                            // fallback style in use).
+                            let try_style = self.anchor_rendered_options.get(&node_id).and_then(|&index| {
+                                let list = &styles.get_position().position_try_fallbacks;
+                                let item = list.value.0.get(index)?;
+                                let guard = self.guard.read();
+                                self.stylist.resolve_position_try(styles, &style::shared_lock::StylesheetGuards::same(&guard), list.scope, node, item)
+                            });
+                            let pos_styles = try_style.as_deref().unwrap_or(styles).get_position();
                             let (inset, basis) = match property_name {
                                 "top" => (&pos_styles.top, cb_height),
                                 "bottom" => (&pos_styles.bottom, cb_height),
@@ -821,6 +845,12 @@ impl BaseDocument {
                             };
                             if let Some(value) = resolve_inset(inset, basis) {
                                 return format_used_px(value);
+                            }
+                            // `auto` with position-area / anchor-center and a valid anchor: 0.
+                            if matches!(inset, GenericInset::Auto)
+                                && self.anchor_zeroes_auto(node, matches!(property_name, "left" | "right"))
+                            {
+                                return format_px(0.0);
                             }
 
                             let layout = node.final_layout();
@@ -832,11 +862,17 @@ impl BaseDocument {
                                 layout.margin.left + layout.size.width + layout.margin.right;
                             let margin_box_height =
                                 layout.margin.top + layout.size.height + layout.margin.bottom;
+                            // An `anchor()` inset of a box with a position-area measures from the
+                            // area's edges, not the containing block's.
+                            let [area_left, area_top, area_right, area_bottom] = self
+                                .anchor_area_rect(node)
+                                .filter(|_| !matches!(inset, GenericInset::Auto))
+                                .unwrap_or([0.0, 0.0, cb_width, cb_height]);
                             let used = match property_name {
-                                "top" => margin_box_top,
-                                "bottom" => cb_height - margin_box_top - margin_box_height,
-                                "left" => margin_box_left,
-                                "right" => cb_width - margin_box_left - margin_box_width,
+                                "top" => margin_box_top - area_top,
+                                "bottom" => area_bottom - margin_box_top - margin_box_height,
+                                "left" => margin_box_left - area_left,
+                                "right" => area_right - margin_box_left - margin_box_width,
                                 _ => unreachable!(),
                             };
                             return format_used_px(used);

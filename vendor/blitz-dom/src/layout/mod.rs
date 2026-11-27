@@ -3051,22 +3051,8 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let mut offset = wm.logical_point(offset);
         let mirror = if reverse { self.anchor_physical_size(container).width } else { 0.0 };
         if reverse { offset.x = mirror - offset.x - size.width; }
-        fn axis(track: PositionAreaTrack, start: f32, end: f32, low: f32, high: f32) -> (f32, f32, taffy::AlignSelf) {
-            use taffy::AlignSelf as Align;
-            // css-anchor-position-1 §3.1.1: the position-area grid's outer tracks reach the
-            // containing block's edges, and extend to the anchor when it lies (partly) outside.
-            let (low, high) = (low.min(start), high.max(end));
-            match track {
-                PositionAreaTrack::Start => (low, start, Align::END),
-                PositionAreaTrack::End => (end, high, Align::START),
-                PositionAreaTrack::Center => (start, end, Align::CENTER),
-                PositionAreaTrack::SpanStart => (low, end, Align::END),
-                PositionAreaTrack::SpanEnd => (start, high, Align::START),
-                PositionAreaTrack::SpanAll => (low, high, Align::CENTER),
-            }
-        }
-        let (left,right,horizontal) = axis(area.first.track()?, point.x, point.x + extent.width, offset.x, offset.x + size.width);
-        let (top,bottom,vertical) = axis(area.second.track()?, point.y, point.y + extent.height, offset.y, offset.y + size.height);
+        let (left,right,horizontal) = anchor::area_axis(area.first.track()?, point.x, point.x + extent.width, offset.x, offset.x + size.width);
+        let (top,bottom,vertical) = anchor::area_axis(area.second.track()?, point.y, point.y + extent.height, offset.y, offset.y + size.height);
         let horizontal = if reverse { match horizontal { taffy::AlignSelf::START => taffy::AlignSelf::END, taffy::AlignSelf::END => taffy::AlignSelf::START, other => other } } else { horizontal };
         let dx = if !trial && axes.0 { shift.x } else { 0.0 };
         let dy = if !trial && axes.1 { shift.y } else { 0.0 };

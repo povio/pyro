@@ -5793,7 +5793,15 @@ impl Layout {
                 // A unitless line-height stays a number in Typed OM.
                 return self.style.used_value(dom, el, name);
             }
-            let css = self.style.computed_value(dom, el, name)?;
+            let mut css = self.style.computed_value(dom, el, name)?;
+            // `anchor()` / `anchor-size()` compute to pixels (css-anchor-position-1 § anchor-pos): the
+            // used value of the layout engine, as getComputedStyle reports it.
+            if css.contains("anchor(") || css.contains("anchor-size(") || (matches!(name, "top" | "left" | "right" | "bottom") && self.has_position_try_fallbacks(dom, el)) {
+                let used = self.computed_style_value(dom, el, name);
+                if used.ends_with("px") && !used.contains("anchor") {
+                    css = used;
+                }
+            }
             if css.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.') {
                 if let Some(value) = self.style.stylo_style(dom, el)
                     .and_then(|style| crate::stylo::precise_typed_numeric(&style, name, &css)) {
@@ -5963,6 +5971,18 @@ impl Layout {
                     return format!("{}px", crate::computed::fmt_num(f64::from(size)));
                 }
             }
+            // A non-replaced inline box has no used width or height: the computed value stands (CSSOM
+            // resolved value: the property does not apply; WPT cssom `getComputedStyle-resolved-min-max-clamping`).
+            if self.style.computed_display(dom, el).as_deref() == Some("inline") {
+                let atomic = dom.element(el).ok().is_some_and(|e| {
+                    !e.is_html() || !matches!(&*e.name.local, "span" | "a" | "b" | "i" | "em" | "strong" | "code" | "small" | "label" | "font" | "u" | "s" | "sub" | "sup" | "abbr" | "cite" | "q" | "mark" | "bdi" | "bdo" | "kbd" | "samp" | "var" | "time" | "data" | "dfn" | "ins" | "del" | "wbr" | "slot")
+                });
+                if !atomic {
+                    if let Some(declared) = declared.clone() {
+                        return declared;
+                    }
+                }
+            }
             // A declared absolute length is the used size the renderless layout cannot derive,
             // unless the box is flexed or a `min-*`/`max-*` of the axis may override it (a
             // fieldset's `min-inline-size: min-content`): the renderer's used size then.
@@ -5995,6 +6015,15 @@ impl Layout {
         // reports the used margin then; WPT css-flexbox `auto-margins-001`)
         if let (Some(side), Some(value)) = (margin_side(name), declared.as_deref()) {
             if value == "auto" || value.contains('%') || value.contains('(') {
+                // An `auto` margin of a position-area / anchor-center box with a valid anchor is 0.
+                if value == "auto" && matches!(self.position_of(dom, el), Position::Absolute | Position::Fixed) {
+                    let zero = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|used| used == "0px");
+                    if let Some(zero) = zero {
+                        return zero;
+                    }
+                }
                 if let Some(q) = self.box_quads(dom, el) {
                     return format!("{}px", crate::computed::fmt_num(q.margin[side]));
                 }
@@ -6119,7 +6148,7 @@ impl Layout {
                 }
                 (!item || out_of_flow || unrendered).then(|| "0px".into())
             }
-            "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') || value.contains("anchor(") || value.contains("anchor-size(") => {
+            "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') || value.contains("anchor(") || value.contains("anchor-size(") || self.has_position_try_fallbacks(dom, el) => {
                 self.resolved_inset(dom, el, name, value, position()).or_else(|| clamp_layout_units(value))
             }
             "top" | "bottom" | "left" | "right"
@@ -6128,6 +6157,11 @@ impl Layout {
             }
             _ => clamp_layout_units(value),
         }
+    }
+
+    /// Whether `el` has a `position-try-fallbacks` list (its insets may come from a fallback option).
+    fn has_position_try_fallbacks(&self, dom: &Dom, el: NodeId) -> bool {
+        self.style.stylo_style(dom, el).is_some_and(|s| !s.get_position().position_try_fallbacks.value.0.is_empty())
     }
 
     /// The resolved value of an inset property that is `auto` or has a
@@ -6230,6 +6264,16 @@ impl Layout {
                         Rect { x: 0.0, y: 0.0, width: self.inner_width() as f64, height: self.inner_height() as f64 }
                     }
                 };
+                // A box with `position-try-fallbacks` may be laid out with a fallback option's insets in
+                // place of its own: the layout engine reports the ones in use.
+                if self.has_position_try_fallbacks(dom, el) {
+                    let used = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|used| used.ends_with("px"));
+                    if used.is_some() {
+                        return used;
+                    }
+                }
                 // A specified inset (percentage or calc()) is the computed value
                 // absolutized against the containing block, also when the box is
                 // over-constrained; only `auto` reports the box's used position.
@@ -6238,6 +6282,24 @@ impl Layout {
                     let (len, percent) =
                         crate::computed::resolve_len(value, &crate::computed::LengthContext::fonts(16.0, 16.0))?;
                     return px(len + percent / 100.0 * basis);
+                }
+                // An `auto` inset of a box placed by position-area / anchor-center (valid anchor) is
+                // 0px: the layout engine says so (css-anchor-position-1 § position-area).
+                if value == "auto" {
+                    let zero = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|used| used == "0px");
+                    if zero.is_some() {
+                        return zero;
+                    }
+                } else if value.contains("anchor(") && style.stylo_style(dom, el).is_some_and(|s| !s.get_position().position_area.is_none()) {
+                    // An `anchor()` inset of a box placed by a position-area measures from the area.
+                    let used = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|used| used.ends_with("px"));
+                    if used.is_some() {
+                        return used;
+                    }
                 }
                 let r = self.bounding_client_rect(dom, el);
                 px(match name {

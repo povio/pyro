@@ -87,7 +87,60 @@ impl Node {
     }
 }
 
+/// One axis of the position-area grid as `(start edge, end edge, alignment)`: the outer tracks reach
+/// the containing block's edges (`low`, `high`), extended to the anchor (`start`, `end`) when it lies
+/// (partly) outside (css-anchor-position-1 position-area).
+pub(super) fn area_axis(track: style::values::specified::position::PositionAreaTrack, start: f32, end: f32, low: f32, high: f32) -> (f32, f32, taffy::AlignSelf) {
+    use style::values::specified::position::PositionAreaTrack as Track;
+    use taffy::AlignSelf as Align;
+    let (low, high) = (low.min(start), high.max(end));
+    match track {
+        Track::Start => (low, start, Align::END),
+        Track::End => (end, high, Align::START),
+        Track::Center => (start, end, Align::CENTER),
+        Track::SpanStart => (low, end, Align::END),
+        Track::SpanEnd => (start, high, Align::START),
+        Track::SpanAll => (low, high, Align::CENTER),
+    }
+}
+
 impl BaseDocument {
+    /// pyro: the position-area rectangle `[left, top, right, bottom]` of an out-of-flow box in the
+    /// padding box of its containing block (the inset-modified containing block its `anchor()` insets
+    /// measure from; getComputedStyle). `None` without a position-area or a valid anchor, and for a
+    /// containing block with a vertical writing mode.
+    pub(crate) fn anchor_area_rect(&self, node: &Node) -> Option<[f32; 4]> {
+        let style = node.primary_styles()?;
+        let pos = style.get_position();
+        if pos.position_area.is_none() { return None; }
+        let container = self.nodes.get(node.containing_block()?)?;
+        let wm = container.primary_styles()?.writing_mode;
+        if wm.swaps_axes() { return None; }
+        let (_, point, extent) = self.default_anchor_rect(node, container, &style)?;
+        let area = pos.position_area.to_physical(wm, style.writing_mode);
+        let layout = container.final_layout();
+        let (width, height) = (layout.size.width - layout.border.left - layout.border.right, layout.size.height - layout.border.top - layout.border.bottom);
+        let (left, right, _) = area_axis(area.first.track()?, point.x, point.x + extent.width, 0.0, width);
+        let (top, bottom, _) = area_axis(area.second.track()?, point.y, point.y + extent.height, 0.0, height);
+        Some([left, top, right, bottom])
+    }
+
+    /// pyro: an out-of-flow box with a valid default anchor whose `position-area` is set, or whose
+    /// self-alignment on the physical axis is `anchor-center`: its `auto` insets and margins on that
+    /// axis resolve to 0 (css-anchor-position-1 § 3.1 position-area, § 4.1 anchor-center; WPT
+    /// `auto-inset-margin-getComputedStyle`).
+    pub(crate) fn anchor_zeroes_auto(&self, node: &Node, horizontal: bool) -> bool {
+        use style::values::specified::align::AlignFlags;
+        let Some(style) = node.primary_styles() else { return false };
+        let Some(container) = node.containing_block().and_then(|id| self.nodes.get(id)) else { return false };
+        let Some(container_style) = container.primary_styles() else { return false };
+        let pos = style.get_position();
+        let (inline, block) = (pos.justify_self.0.value(), pos.align_self.0.value());
+        let (x, y) = if container_style.writing_mode.is_vertical() { (block, inline) } else { (inline, block) };
+        let centered = (if horizontal { x } else { y }) == AlignFlags::ANCHOR_CENTER;
+        (!pos.position_area.is_none() || centered) && self.default_anchor_rect(node, container, &style).is_some()
+    }
+
     /// pyro: the nearest ancestor of `id` that skips its contents (`content-visibility: hidden`,
     /// or `auto` while not relevant to the user): `id` is in its skipped contents.
     pub(crate) fn skipping_ancestor(&self, id: crate::NodeId) -> Option<crate::NodeId> {
