@@ -902,7 +902,7 @@ impl JsClass for BroadcastChannel {
                 name: name.clone(),
                 origin,
                 context: page.context_services().web_locks.identity(),
-                partition: page.cookie_partition_key(),
+                partition: page.storage_partition_key(),
                 closed: std::sync::atomic::AtomicBool::new(false),
                 poster: page.remote_poster(),
             });

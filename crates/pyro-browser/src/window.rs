@@ -348,6 +348,8 @@ impl JsClass for Window {
         });
         // No COOP/COEP isolation here.
         def.getter("crossOriginIsolated", |s, _w| Ok(s.boolean(false)));
+        // HTML "credentialless": the document is in a credentialless iframe tree.
+        def.getter("credentialless", |s, w| Ok(s.boolean(w.target.page.is_credentialless())));
         def.method("queueMicrotask", 1, |s, _w, a| {
             let cb = a.get(0).as_object().filter(|f| f.is_function()).ok_or_else(|| {
                 JsError::Type(

@@ -133,6 +133,11 @@ pub struct PageDom {
     /// Schemeful site of this environment's top-level document at creation.
     cookie_partition_key: RefCell<Option<String>>,
     cookie_site_context: Cell<pyro_net::cookies::SiteContext>,
+    /// The anonymous partition of a credentialless iframe tree this document belongs to
+    /// (`crate::credentialless`).
+    pub(crate) anonymous: RefCell<Option<crate::credentialless::Anonymous>>,
+    /// For a top-level document: the partition its credentialless frames share, made on first use.
+    pub(crate) credentialless_root: std::cell::OnceCell<Rc<crate::credentialless::CredentiallessPartition>>,
     /// The document has storage access (Storage Access API): `requestStorageAccess()` was granted
     /// to it, or a same-origin navigation of its own frame kept the previous document's. Its
     /// unpartitioned cookies are then not blocked (`crate::storage_access`).
@@ -1162,6 +1167,8 @@ impl PageDom {
                 pyro_net::cookies::SiteContext::CrossSite
             }),
             cookie_partition_key: RefCell::new(cookie_partition_key),
+            anonymous: RefCell::new(None),
+            credentialless_root: std::cell::OnceCell::new(),
             storage_access_granted: Cell::new(false),
             agent_cluster: RefCell::new(AgentCluster { group: AgentClusterGroup::default(), origin: "".into() }),
             sticky_activation: Cell::new(false),

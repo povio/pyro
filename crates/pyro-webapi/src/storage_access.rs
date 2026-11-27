@@ -113,7 +113,8 @@ fn third_party(page: &PageDom) -> bool {
 
 /// "has storage access": the document is allowed to use its unpartitioned cookies.
 fn has_access(s: &Scope<'_>, page: &PageDom) -> bool {
-    if page.has_opaque_origin() || !crate::secure_context::secure(s, page) || !crate::permissions_policy::feature_allowed(page, "storage-access") {
+    // A credentialless document is in an ephemeral partition: it has no unpartitioned storage to access.
+    if page.is_credentialless() || page.has_opaque_origin() || !crate::secure_context::secure(s, page) || !crate::permissions_policy::feature_allowed(page, "storage-access") {
         return false;
     }
     !page.cookies_blocked()
@@ -199,6 +200,9 @@ pub(crate) fn request<'s>(s: &Scope<'s>, page: &Rc<PageDom>, document: NodeId, t
 
 /// The checks of "request storage access" and the grant they lead to.
 fn grant(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
+    if page.is_credentialless() {
+        return not_allowed("requestStorageAccess() is not allowed in a credentialless iframe.");
+    }
     if page.has_opaque_origin() {
         return not_allowed("requestStorageAccess() is not allowed in a document with an opaque origin.");
     }

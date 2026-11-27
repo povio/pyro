@@ -2654,7 +2654,8 @@ impl Browser {
         // realm, event target and what script put on it, as browsers keep
         // the Window object.
         let reused = match &old_dom {
-            Some(dom) if initial_same_origin && dom.reusable_window() => {
+            // (A frame whose `credentialless` changed gets a new Window: another storage partition's.)
+            Some(dom) if initial_same_origin && dom.reusable_window() && dom.is_credentialless() == page_dom.is_credentialless() => {
                 let at = old.iter().position(|r| {
                     r.world.is_none() && !r.realm.is_deferred() && !r.realm.is_disposed() && !r.realm.is_lingering()
                 });

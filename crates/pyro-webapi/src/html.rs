@@ -3602,6 +3602,8 @@ simple_class!(HtmlIFrameElement, "HTMLIFrameElement", HtmlElement, |def| {
     reflect_enum!(def, "loading", "loading", LOADING);
     reflect_enum!(def, "referrerPolicy", "referrerpolicy", REFERRER_POLICY);
     reflect_bool!(def, "allowFullscreen", "allowfullscreen");
+    // HTML "anonymous iframe": a credentialless frame (`crate::credentialless`).
+    reflect_bool!(def, "credentialless", "credentialless");
     reflect_tokens!(def, "sandbox", "sandbox");
     reflect_str!(def, "align", "align");
     reflect_str!(def, "scrolling", "scrolling");
@@ -5409,7 +5411,7 @@ pub(crate) fn document_cookie(page: &PageDom, doc: NodeId) -> String {
     if page.cookie_blocking().is_some_and(|b| b.blocks(&url)) {
         return String::new();
     }
-    let jar = net.cookies().clone();
+    let jar = page.cookie_jar(&net);
     let mut jar = jar.lock().unwrap();
     jar.document_cookie_in(&url, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
 }
@@ -5420,7 +5422,7 @@ pub(crate) fn set_document_cookie(page: &PageDom, doc: NodeId, value: &str) {
     if !matches!(url.scheme(), "http" | "https") || page.cookie_blocking().is_some_and(|b| b.blocks(&url)) {
         return;
     }
-    let jar = net.cookies().clone();
+    let jar = page.cookie_jar(&net);
     let mut jar = jar.lock().unwrap();
     jar.set_from_header_in(&url, value, pyro_net::cookies::Access::Script, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context());
 }

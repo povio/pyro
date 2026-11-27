@@ -561,6 +561,14 @@ impl ResourceLoader for NetLoader {
                     // Its cross-origin embedder policy: a no-cors subresource's response check, and
                     // for a nested navigation the embedding document's (HTML § 7.1.4).
                     d.apply_embedder_defaults(&mut req.defaults);
+                    // A credentialless document's requests (and its frames' navigations) use the
+                    // cookie jar of its anonymous partition, never the normal one.
+                    req.defaults.ephemeral_cookies = anonymous_cookies(browser, &request, d);
+                    // A credentialless frame's navigation response needs no `Cross-Origin-Resource-Policy`
+                    // of its own under the embedder's `require-corp` (`embedder_policy_blocks`).
+                    if request.kind == ResourceKind::Iframe && req.defaults.ephemeral_cookies.is_some() {
+                        req.defaults.embedder_policy = pyro_net::EmbedderPolicy::UnsafeNone;
+                    }
                     // Storage Access API: the embedding document's third-party cookie decision (none
                     // unless its context has a blocking rule), and for a frame's navigation that keeps
                     // the frame's storage access its grant.
@@ -1433,6 +1441,26 @@ fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<p
         _ => key,
     };
     frames.page_dom(key)
+}
+
+/// The cookie jar of the credentialless partition `request`, made by document `d`, belongs to: `d`'s own
+/// when it is credentialless (its tree is), and for the navigation of a child frame of `d` whose
+/// container has the `credentialless` attribute the partition of `d`'s top-level document (taken as
+/// the navigation began). `None`: the browser context's jar.
+fn anonymous_cookies(browser: &Browser, request: &FetchRequest, d: &Rc<pyro_webapi::PageDom>) -> Option<pyro_net::cookies::EphemeralCookies> {
+    if let Some(anonymous) = d.anonymous() {
+        return Some(anonymous.cookies);
+    }
+    if request.kind != ResourceKind::Iframe {
+        return None;
+    }
+    let frames = browser.page(request.page)?.frames.clone();
+    let key = frames.key_of(request.frame_id.as_deref()?)?;
+    if !browser.doc(key)?.main_frame.fullscreen_container.credentialless {
+        return None;
+    }
+    let root = frames.page_dom(crate::frames::FrameKey { page: request.page, child: None })?;
+    Some(root.credentialless_partition().anonymous().cookies)
 }
 
 /// Storage Access API: whether the navigation of a child frame that `request` is keeps the storage
@@ -2696,8 +2724,18 @@ impl Browser {
             return false;
         }
         let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return false };
+        // A credentialless frame (its container's attribute, or an ancestor's) may embed a document
+        // without a COEP under a `require-corp` or `credentialless` parent: its storage and
+        // credentials are ephemeral already.
+        if self.doc(page).is_some_and(|doc| doc.main_frame.fullscreen_container.credentialless) {
+            return false;
+        }
         let parent = host.parent_key(page);
         let Some(dom) = host.page_dom(parent) else { return false };
+        // A credentialless embedder's frames need no policy of their own.
+        if dom.is_credentialless() {
+            return false;
+        }
         // The embedding document reports the mismatch: what its report-only policy would refuse
         // (`reporting`) and, when its enforced policy refuses it, that too (`enforce`).
         use pyro_webapi::coep_report::queue_violation;

@@ -84,7 +84,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 fn manager_key(s: &Scope<'_>, page: &PageDom) -> Option<StorageKey> {
     Some(StorageKey {
         origin: crate::storage::tuple_origin(s, page)?,
-        top_level_site: page.cookie_partition_key(),
+        top_level_site: page.storage_partition_key(),
         cross_site_ancestor: page.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite,
         local_thread: CLIENTS.with(|clients| {
             let remote = clients.borrow().get(&page.id()).map(|c| c.route.poster.is_some())

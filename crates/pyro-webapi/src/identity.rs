@@ -29,6 +29,7 @@ impl UserAgentOverride {
             embedder_origin: None,
             cookie_blocking: None,
             corp_report: None,
+            ephemeral_cookies: None,
         })
     }
 }
@@ -179,6 +180,7 @@ impl PageDom {
         let identity = self.identity.borrow();
         request.defaults = RequestDefaults {
             cookie_blocking,
+            ephemeral_cookies: self.anonymous().map(|a| a.cookies),
             extra_headers: identity.extra_headers.clone(),
             cache_disabled: identity.cache_disabled,
             insecure: self.insecure_policy(),

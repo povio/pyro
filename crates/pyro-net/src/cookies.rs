@@ -216,6 +216,19 @@ impl CookieAccessRule {
     }
 }
 
+/// The cookie jar of a credentialless iframe tree (HTML "anonymous iframe": its requests carry no
+/// credentials of the normal partition and what they store never reaches it). One jar belongs to
+/// one top-level document, so it is empty when the tree begins and gone with it; a request that
+/// holds one reads and writes this jar instead of the client's. Clones share the jar.
+#[derive(Clone, Default)]
+pub struct EphemeralCookies(pub Arc<std::sync::Mutex<CookieJar>>);
+
+impl std::fmt::Debug for EphemeralCookies {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EphemeralCookies")
+    }
+}
+
 /// A document's third-party cookie decision, made when a request or a script access starts. It
 /// exists only while the browser context has storage access rules, so a context without them
 /// pays nothing: a first-party or same-site request has no `CookieBlocking` to ask.

@@ -97,8 +97,10 @@ fn cookie_task<'s>(
     Ok(promise)
 }
 
-fn network(page: &PageDom) -> JsResult<pyro_net::NetClient> {
-    page.net.borrow().clone().ok_or_else(|| JsError::Type("Cookie storage is unavailable.".into()))
+/// The cookie jar of the document: its credentialless partition's, else the network client's.
+fn network(page: &PageDom) -> JsResult<std::sync::Arc<std::sync::Mutex<pyro_net::cookies::CookieJar>>> {
+    let net = page.net.borrow().clone().ok_or_else(|| JsError::Type("Cookie storage is unavailable.".into()))?;
+    Ok(page.cookie_jar(&net))
 }
 
 struct Write {
@@ -129,8 +131,7 @@ fn write<'s>(s: &Scope<'s>, data: Write) -> JsResult<Value<'s>> {
             path: &data.path,
             same_site: data.same_site,
         };
-        net.cookies()
-            .lock()
+        net.lock()
             .unwrap_or_else(|e| e.into_inner())
             .store_script_in(&url, cookie, now_secs(), partition.as_deref(), site)
             .map_err(|msg| JsError::Type(msg.into()))?;
@@ -158,7 +159,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             let net = network(&page)?;
             cookie_task(s, &page, move |home| {
                 let items: Vec<_> = {
-                    let mut jar = net.cookies().lock().unwrap_or_else(|e| e.into_inner());
+                    let mut jar = net.lock().unwrap_or_else(|e| e.into_inner());
                     jar.matching_for(&url, Access::Script, site, now_secs(), partition.as_deref())
                         .into_iter()
                         .filter(|cookie| name.as_ref().is_none_or(|n| cookie.name == *n))

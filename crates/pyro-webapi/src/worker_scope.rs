@@ -105,6 +105,9 @@ pub(crate) struct WorkerStart {
     pub(crate) embedder_reporting: pyro_net::EmbedderReporting,
     cookie_partition_key: Option<String>,
     cookie_site_context: pyro_net::cookies::SiteContext,
+    /// The creator's credentialless partition (`crate::credentialless`): the worker's cookies and
+    /// storage keys are the partition's.
+    anonymous: Option<crate::credentialless::Anonymous>,
     user_agent: Option<UserAgentOverride>,
     extra_headers: HeaderMap,
     cache_disabled: bool,
@@ -177,6 +180,7 @@ impl WorkerStart {
             creator_cluster: Some(page.agent_cluster()),
             cookie_partition_key: page.cookie_partition_key(),
             cookie_site_context: page.cookie_site_context(),
+            anonymous: page.anonymous(),
             insecure: page.insecure_policy(),
             embedder_policy: page.embedder_policy(),
             owner_embedder,
@@ -234,6 +238,7 @@ impl WorkerStart {
             creator_cluster: None,
             cookie_partition_key: service.partition_key.clone(),
             cookie_site_context: service.cookie_site_context,
+            anonymous: None,
             creator_secure: true,
             insecure: page.insecure_policy(),
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
@@ -748,6 +753,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     }
     let cookie_site = if start.url.scheme() == "data" { pyro_net::cookies::SiteContext::CrossSite } else { start.cookie_site_context };
     page.set_cookie_context(start.cookie_partition_key.clone(), cookie_site);
+    page.set_anonymous(start.anonymous.clone());
     page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(
         start.permissions.clone(), start.web_locks.clone(), start.pressure.clone(),
     )));

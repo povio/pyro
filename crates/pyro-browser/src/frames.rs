@@ -1338,6 +1338,9 @@ pub(crate) struct FullscreenContainer {
     /// `allow-same-origin`; the container document's origin with `srcdoc` or without `src`; else the
     /// origin of the `src` URL, resolved against the container document.
     pub declared_origin: Option<String>,
+    /// The `credentialless` attribute (HTML "anonymous iframe"): the frame's documents are in the
+    /// anonymous partition of the top-level document (`pyro_webapi::credentialless`).
+    pub credentialless: bool,
 }
 
 /// `parent_origin`: the container document's origin as its frame has it (an about:blank or
@@ -1367,6 +1370,7 @@ pub(crate) fn fullscreen_container(dom: &pyro_dom::Dom, owner: NodeId, parent_or
         sandboxed,
         sandbox_src_origin,
         declared_origin,
+        credentialless: attr("credentialless").is_some(),
     }
 }
 

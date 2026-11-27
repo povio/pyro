@@ -1506,7 +1506,21 @@ pub(crate) fn create(
     }));
     let (is_popup, left, top) = settings.window_chrome;
     bindings.set_window_chrome(is_popup, left, top);
-    bindings.set_storage_namespaces(settings.local, settings.session);
+    // HTML "credentialless": a frame whose container has the attribute, and every frame below a
+    // credentialless one, is in the anonymous partition of its top-level document: its own cookies
+    // and storage areas, shared by the credentialless frames of that document alone.
+    let partition = (page.child.is_some()
+        && (frame.fullscreen_container.credentialless
+            || host.page_dom(host.parent_key(page)).is_some_and(|parent| parent.is_credentialless())))
+    .then(|| host.page_dom(FrameKey { page: page.page, child: None }))
+    .flatten()
+    .map(|root| root.credentialless_partition());
+    let (local, session) = match &partition {
+        Some(partition) => (partition.local(), partition.session()),
+        None => (settings.local, settings.session),
+    };
+    bindings.set_storage_namespaces(local, session);
+    bindings.set_anonymous(partition.as_ref().map(|partition| partition.anonymous()));
     let mut viewport = settings.viewport;
     // Only the main frame lays out as a phone; frames take their iframe's box.
     viewport.mobile &= page.child.is_none();

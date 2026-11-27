@@ -346,7 +346,7 @@ impl JsClass for SharedWorker {
             let key = WorkerKey {
                 network_context,
                 cross_site_ancestor: page.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite,
-                top_level_site: page.cookie_partition_key().unwrap_or_else(|| format!("opaque-page:{}", page.id())),
+                top_level_site: page.storage_partition_key().unwrap_or_else(|| format!("opaque-page:{}", page.id())),
                 origin,
                 url: resolved,
                 name: name.clone(),

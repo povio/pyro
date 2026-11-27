@@ -111,7 +111,7 @@ pub(crate) fn install_window(s: &Scope<'_>, page: &Rc<PageDom>) {
         return;
     }
     let Ok(url) = super::environment(s, page) else { return };
-    let Some(jar) = page.net.borrow().as_ref().map(|n| n.cookies().clone()) else { return };
+    let Some(jar) = page.net.borrow().as_ref().map(|n| page.cookie_jar(n)) else { return };
     let inbox: Inbox = Arc::default();
     let queue = inbox.clone();
     let page_id = page.id();

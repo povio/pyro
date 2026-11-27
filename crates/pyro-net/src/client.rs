@@ -632,7 +632,7 @@ impl Shared {
                 site_context(origin_url, &req.url, top, safe)
             };
             let cookie = {
-                let mut jar = cookies.lock().unwrap();
+                let mut jar = jar_of(req, cookies).lock().unwrap();
                 if jar.is_empty() {
                     None
                 } else {
@@ -687,6 +687,12 @@ fn request_cookie_partition<'a>(request: &'a Request, url: &Url) -> Option<Cow<'
     } else {
         request.top_level_site.as_deref().map(Cow::Borrowed)
     }
+}
+
+/// The jar a request reads its cookies from and stores them in: the ephemeral one of a credentialless
+/// context (`RequestDefaults::ephemeral_cookies`), else the client's.
+fn jar_of<'a>(req: &'a Request, client: &'a Mutex<CookieJar>) -> &'a Mutex<CookieJar> {
+    req.defaults.ephemeral_cookies.as_ref().map_or(client, |ephemeral| &*ephemeral.0)
 }
 
 /// The requesting document's storage access rules refuse `url` its unpartitioned cookies (a third
@@ -2172,7 +2178,7 @@ impl Io {
             return;
         }
         let now = crate::cookies::now_secs();
-        let mut jar = self.cookies.lock().unwrap();
+        let mut jar = jar_of(request, &self.cookies).lock().unwrap();
         for v in headers.get_all(header::SET_COOKIE) {
             // HeaderValue::to_str only accepts visible ASCII. Cookie Store
             // names/values can contain UTF-8, including a leading BOM.

@@ -237,6 +237,9 @@ pub struct RequestDefaults {
     /// Where the Cross-Origin Resource Policy check reports its violations, and the report-only
     /// policy it checks. `None` for a context with neither a policy nor a report-only policy.
     pub corp_report: Option<CorpReport>,
+    /// The requesting context is credentialless (an anonymous iframe tree): cookies are read from
+    /// and stored in this jar instead of the client's.
+    pub ephemeral_cookies: Option<crate::cookies::EphemeralCookies>,
 }
 
 #[derive(Clone, Debug)]
