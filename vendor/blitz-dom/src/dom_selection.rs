@@ -134,7 +134,7 @@ impl BaseDocument {
         let matches = |pe: &style::selector_parser::PseudoElement| *pe == wanted || *pe == key;
         let read_guard = self.guard.read();
         let guards = StylesheetGuards::same(&read_guard);
-        self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
+        let style = self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
             &guards,
             node,
             &key,
@@ -142,7 +142,8 @@ impl BaseDocument {
             &primary,
             true,
             Some(&matches),
-        )
+        );
+        crate::node::UnvisitedPaint::probe(style)
     }
 
     /// pyro: the `::selection` style of `node_id` computed now (its eager one resolved container
@@ -158,7 +159,9 @@ impl BaseDocument {
         let read_guard = self.guard.read();
         let guards = StylesheetGuards::same(&read_guard);
         // pyro: a visited link's style matches `:link` as not (`LINKS_AS_VISITED`).
-        let visited = self.is_visited_link(node_id);
+        // pyro: not for the privacy paint (`UnvisitedPaint`): the link is unvisited there, and
+        // the style read through its unvisited view.
+        let visited = self.is_visited_link(node_id) && !crate::node::UnvisitedPaint::active();
         let outer = LINKS_AS_VISITED.replace(visited);
         let style = self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(
             &guards,
@@ -170,7 +173,7 @@ impl BaseDocument {
             None,
         );
         LINKS_AS_VISITED.set(outer);
-        style
+        crate::node::UnvisitedPaint::probe(style)
     }
 
     /// pyro: whether `node_id` is a visited link (`ElementData::flush_link_visited`).

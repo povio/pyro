@@ -727,7 +727,7 @@ pub struct ElementImage {
     pub pixel_height: u32,
     pub rgba: Vec<u8>,
     /// The paint may hold content a page must not read back (an image of unknown origin, a
-    /// nested document, a visited link).
+    /// nested document).
     pub taints: bool,
 }
 

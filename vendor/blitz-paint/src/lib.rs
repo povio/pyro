@@ -162,7 +162,7 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
     let mut scene = Scene::new();
     painter.render_element(&mut scene, id, parent, kurbo::Rect::new(-1e7, -1e7, 1e7, 1e7));
     let privacy = painter.privacy.take().unwrap_or_default();
-    let taints = privacy.unclassified.get() || subtree_may_taint(doc, id, &scene, &privacy.allowed.borrow());
+    let taints = privacy.unclassified.get() || subtree_may_taint(&scene, &privacy.allowed.borrow());
     Some((scene, kurbo::Size::new(size.width as f64 * scale, size.height as f64 * scale), taints))
 }
 
@@ -171,11 +171,10 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
 /// of other origins, frames of other origins, filter, mask and clip documents of other origins,
 /// the images of opaque responses in an inline `<svg>` and in the filters it and the page
 /// reference, what an `<svg>` or its filters take from outside the subtree, and visited link
-/// colours): any image drawn that is not among the `allowed` ones (a nested canvas, one whose
-/// origin was not told), or a visited link's eager pseudo-elements, whose styles (`::first-line`,
-/// `::first-letter`, `::marker`, `::selection`) are read where `UnvisitedPaint` does not reach.
+/// colours, which are painted as unvisited, eager pseudo-element styles included): any image
+/// drawn that is not among the `allowed` ones (a nested canvas, one whose origin was not told).
 /// The canvas drawn into is then no longer origin-clean.
-fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u64]) -> bool {
+fn subtree_may_taint(scene: &Scene, allowed: &[u64]) -> bool {
     use anyrender::Paint;
     use anyrender::recording::RenderCommand;
     let image = |paint: &Paint| match paint {
@@ -192,38 +191,12 @@ fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u
         RenderCommand::GlyphRun(run) => image(&run.brush),
         _ => false,
     });
-    if in_scene {
-        return true;
-    }
     // (A frame of another origin, an `<embed>`'s, `<object>`'s or `<video>`'s image, a border,
     // mask or list-style image and a filter, mask or clip document from an opaque response
-    // are left out by the paint, `render::Privacy`.)
-    visited_pseudos(doc, id)
-}
-
-/// pyro: HTML-in-Canvas privacy: whether the subtree of `id` has a visited link (or is in one) and
-/// an element with eager pseudo-element styles. A visited link is painted as unvisited
-/// (`UnvisitedPaint`) by the styles of its elements, and an inline `<svg>` is built again from
-/// them (`inline_svg_for_privacy`); the styles of eager pseudo-elements are not all read so.
-pub(crate) fn visited_pseudos(doc: &BaseDocument, id: NodeId) -> bool {
-    let mut visited = false;
-    let mut pseudos = false;
-    let mut ancestor = doc.get_node(id).and_then(|node| node.parent);
-    while let Some(a) = ancestor {
-        visited |= doc.is_visited_link(a);
-        ancestor = doc.get_node(a).and_then(|node| node.parent);
-    }
-    let mut stack = vec![id];
-    while let Some(n) = stack.pop() {
-        let Some(node) = doc.get_node(n) else { continue };
-        visited |= doc.is_visited_link(n);
-        pseudos |= node.try_stylo_element_data().and_then(|data| data.get()).is_some_and(|data| !data.styles.pseudos.is_empty());
-        stack.extend(node.children.iter().copied());
-        if let Some(children) = node.layout_children.borrow().as_ref() {
-            stack.extend(children.iter().copied());
-        }
-    }
-    visited && pseudos
+    // are left out by the paint, `render::Privacy`. A visited link is painted as unvisited, its
+    // eager pseudo-elements too (`UnvisitedPaint`): no visited state decides the pixels or this
+    // answer.)
+    in_scene
 }
 
 /// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded

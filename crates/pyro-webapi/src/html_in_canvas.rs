@@ -347,7 +347,7 @@ pub(crate) struct ElementImage {
     /// The pixels (`None`: nothing to paint, an empty box).
     pub pixels: Option<(u32, u32, Vec<u8>)>,
     /// The paint may hold content the page must not read back (an image of unknown origin, a
-    /// nested document, a visited link): drawing it makes the canvas not origin-clean.
+    /// nested document): drawing it makes the canvas not origin-clean.
     pub taints: bool,
 }
 

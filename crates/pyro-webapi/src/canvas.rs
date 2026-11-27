@@ -1892,7 +1892,7 @@ fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResu
     c.sync_size();
     let state = c.state.borrow().clone();
     // Privacy: what the page must not read back (an image of unknown origin, a nested
-    // document, a visited link) leaves the canvas not origin-clean, as a cross-origin drawImage;
+    // document) leaves the canvas not origin-clean, as a cross-origin drawImage;
     // so does a filter that taints (as drawImage's `filter_taints`).
     if image.taints || state.filter_taints {
         c.clean.set(false);

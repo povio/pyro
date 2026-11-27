@@ -3624,7 +3624,14 @@ impl ElementCx<'_, '_> {
         // pyro: the first line's content is in the `::first-line` box (blitz-dom
         // `TextLayout::first_line`), outside the elements on it, which have their styles there.
         let first_line = text_layout.first_line.filter(|&id| dom.get_node(id).is_some());
+        // pyro: the layout's styles took the visited rules of their elements; the privacy paint
+        // (`UnvisitedPaint`) reads them unvisited.
         let mut first_line_styles = text_layout.first_line_styles.clone();
+        if blitz_dom::node::UnvisitedPaint::active() {
+            for (_, style) in first_line_styles.iter_mut() {
+                *style = blitz_dom::node::UnvisitedPaint::view(style.clone());
+            }
+        }
         let mut item_index = 0usize;
         // pyro: a pass that draws this root's layout in some areas only (an inline element's effect
         // pass, `RunFilter`) needs the fragments of the lines that reach them: the band of the areas,
@@ -8100,13 +8107,6 @@ impl ElementCx<'_, '_> {
             if let (Some(outer), Some(inner)) = (&self.context.privacy, painter.privacy.take()) {
                 outer.allowed.borrow_mut().extend(inner.allowed.into_inner());
                 if inner.unclassified.get() {
-                    outer.unclassified.set(true);
-                }
-                // (A visited link in the frame's document with eager pseudo-element styles: as
-                // for the element's own subtree, `subtree_may_taint`.)
-                if let Some(root) = sub_doc.try_root_element()
-                    && crate::visited_pseudos(&sub_doc, root.id)
-                {
                     outer.unclassified.set(true);
                 }
             }

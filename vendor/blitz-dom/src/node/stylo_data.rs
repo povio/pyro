@@ -281,6 +281,34 @@ impl UnvisitedPaint {
     pub fn active() -> bool {
         UNVISITED_PAINT.get()
     }
+
+    /// `style` as the privacy paint reads it: while a guard lives, a style that took visited
+    /// values (a visited link's, its contents', and the eager pseudo-element styles of either:
+    /// `::first-line`, `::selection`, highlights) with its visited-dependent properties unvisited,
+    /// as `primary_styles` gives them; any other style, and every style when no guard lives,
+    /// unchanged. Styles cascaded again at paint (`first_line_style`, the highlight and selection
+    /// probes) go through it, as they take the visited rules of their parent's style again.
+    pub fn view(style: Arc<style::properties::ComputedValues>) -> Arc<style::properties::ComputedValues> {
+        if !UNVISITED_PAINT.get() {
+            return style;
+        }
+        match style.pyro_unvisited_view() {
+            Some(view) => Arc::new(view),
+            None => style,
+        }
+    }
+
+    /// [`Self::view`] of the style a probe (`lazily_compute_pseudo_element_style` with
+    /// `is_probe`) gave: the probe also gives one when only `:visited` rules matched the pseudo
+    /// (`a:visited::selection`); a paint that takes every link as unvisited has none then, as it
+    /// has for a page whose link was not visited.
+    pub fn probe(style: Option<Arc<style::properties::ComputedValues>>) -> Option<Arc<style::properties::ComputedValues>> {
+        let style = style?;
+        if UNVISITED_PAINT.get() && style.rules().parent().is_none() {
+            return None;
+        }
+        Some(Self::view(style))
+    }
 }
 
 impl Drop for UnvisitedPaint {
