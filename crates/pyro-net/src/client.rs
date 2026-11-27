@@ -874,6 +874,18 @@ impl NetClient {
         let partition = crate::cookies::partition_key(url);
         jar.header_for_context(url, SiteContext::SameSite, crate::cookies::now_secs(), partition.as_deref(), false).is_some()
     }
+    /// Stores the cookies a cross-site prefetch's responses carried (`Request::deferred_cookies`),
+    /// as the responses' own hops would have: a navigation uses the prefetch.
+    pub fn apply_deferred_cookies(&self, cookies: &[crate::DeferredCookie]) {
+        if cookies.is_empty() {
+            return;
+        }
+        let now = crate::cookies::now_secs();
+        let mut jar = self.inner.cookies.lock().unwrap();
+        for c in cookies {
+            jar.set_from_header_in(&c.url, &c.header, crate::cookies::Access::Http, now, c.partition.as_deref(), c.site);
+        }
+    }
     pub fn config(&self) -> &NetConfig {
         &self.inner.shared.config
     }
@@ -2125,10 +2137,22 @@ impl Io {
         if !allowed || !headers.contains_key(header::SET_COOKIE) {
             return;
         }
-        let now = crate::cookies::now_secs();
-        let mut jar = self.cookies.lock().unwrap();
         let partition = request_cookie_partition(request, url);
         let site = response_cookie_site(request, url);
+        // A cross-site speculation prefetch runs in an isolated context in Chrome: its cookies
+        // are kept with the prefetch and applied when a navigation uses it, never stored here.
+        if request.cross_site_prefetch {
+            if let Some(sink) = &request.deferred_cookies {
+                for v in headers.get_all(header::SET_COOKIE) {
+                    if let Ok(s) = std::str::from_utf8(v.as_bytes()) {
+                        sink.push(crate::DeferredCookie { url: url.clone(), header: s.to_owned(), partition: partition.as_deref().map(str::to_owned), site });
+                    }
+                }
+            }
+            return;
+        }
+        let now = crate::cookies::now_secs();
+        let mut jar = self.cookies.lock().unwrap();
         for v in headers.get_all(header::SET_COOKIE) {
             // HeaderValue::to_str only accepts visible ASCII. Cookie Store
             // names/values can contain UTF-8, including a leading BOM.

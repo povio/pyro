@@ -231,12 +231,58 @@ pub struct Request {
     pub csp: Option<std::sync::Arc<crate::csp::RequestCsp>>,
     /// A speculation-rules prefetch of another site than its initiator (nav-speculation
     /// "prefetch"; Chrome fetches it in an isolated context): it sends no cookies and no
-    /// non-default client hints. The cookies its response sets are still stored.
+    /// non-default client hints, and the cookies its response sets are not stored: they are
+    /// handed to `deferred_cookies` (without one, dropped).
     pub cross_site_prefetch: bool,
+    /// Where a `cross_site_prefetch` request's `Set-Cookie` headers go instead of the jar: the
+    /// prefetch's owner applies them (`NetClient::apply_deferred_cookies`) when a navigation uses
+    /// the response, as Chrome copies its isolated context's cookies on activation.
+    pub deferred_cookies: Option<std::sync::Arc<DeferredCookies>>,
     /// A speculation-rules prefetch whose redirects may not enter a service worker's scope: the
     /// prefetch fails (as a network error) at a redirect to such a URL, as a service worker
     /// cannot see the hops of a prefetch (Chrome fails these prefetches too).
     pub prefetch_redirect_stop: Option<std::sync::Arc<PrefetchRedirectStop>>,
+}
+
+/// One `Set-Cookie` header a cross-site prefetch's response carried, with what storing it needs.
+#[derive(Clone, Debug)]
+pub struct DeferredCookie {
+    pub url: Url,
+    pub header: String,
+    pub partition: Option<String>,
+    pub site: crate::cookies::SiteContext,
+}
+
+/// The `Set-Cookie` headers of a cross-site prefetch's responses (every hop), in order. Equal and
+/// hashed by identity: it is a shared sink, not a value.
+#[derive(Debug, Default)]
+pub struct DeferredCookies {
+    items: std::sync::Mutex<Vec<DeferredCookie>>,
+}
+
+impl DeferredCookies {
+    pub(crate) fn push(&self, cookie: DeferredCookie) {
+        self.items.lock().unwrap_or_else(|e| e.into_inner()).push(cookie);
+    }
+
+    /// Everything kept so far (the sink is left empty).
+    pub fn take(&self) -> Vec<DeferredCookie> {
+        std::mem::take(&mut *self.items.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+impl PartialEq for DeferredCookies {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl Eq for DeferredCookies {}
+
+impl std::hash::Hash for DeferredCookies {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::ptr::hash(self, state);
+    }
 }
 
 /// The service worker scopes (with the cookie partition key their registrations have) a
@@ -324,6 +370,7 @@ impl Request {
             body_from_stream: false,
             csp: None,
             cross_site_prefetch: false,
+            deferred_cookies: None,
             prefetch_redirect_stop: None,
         }
     }

@@ -47,7 +47,9 @@
 //! the same site has them. A CROSS-SITE prefetch sends no cookies and no non-default client hints,
 //! and is not made at all when the jar holds a cookie a navigation to the URL would send (Chrome:
 //! its credential-less response must not stand in for a logged-in page); a claim checks again, as
-//! cookies may have appeared since, and drops the entry.
+//! cookies may have appeared since, and drops the entry. The cookies its response sets are not
+//! stored: the entry keeps them (`pyro_net::DeferredCookies`), a navigation that uses the response
+//! applies them to the jar, and a dropped entry takes them with it.
 //! It goes through the context's HTTP cache like any navigation (a fresh cached response answers
 //! it, and its response is stored) but its result is kept in this cache, not in the HTTP cache's
 //! hands: a response that is not 2xx is dropped, never served.
@@ -68,10 +70,11 @@
 //! drops the origin's entries, in flight ones included. At most [`MAX_ENTRIES`] live.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pyro_net::nvs::NoVarySearch;
-use pyro_net::ReferrerPolicy;
+use pyro_net::{DeferredCookies, ReferrerPolicy};
 use url::Url;
 
 use crate::frames::FrameKey;
@@ -113,6 +116,9 @@ struct Entry {
     /// The URL is of another site than the initiator: the request carried no cookies, so the
     /// response may only stand in for a navigation of a user who has none for it.
     cross_site: bool,
+    /// The `Set-Cookie` headers of a cross-site response, kept out of the jar until a navigation
+    /// claims the entry (then applied to its context's jar) and dropped with it otherwise.
+    cookies: Arc<DeferredCookies>,
     set: RuleSetId,
     /// The requested URL without fragment: the only one a navigation matches, up to `nvs`.
     url: Url,
@@ -315,6 +321,7 @@ impl Browser {
             return;
         }
         self.prefetches.make_room();
+        let cookies = Arc::new(DeferredCookies::default());
         let id = self.prefetches.next_id;
         self.prefetches.next_id += 1;
         let nvs = candidate.expects_no_vary_search.as_deref().map(NoVarySearch::parse).unwrap_or_default();
@@ -325,6 +332,7 @@ impl Browser {
             initiator_loader: frame.loader_id.0.clone(),
             initiator,
             cross_site,
+            cookies: cookies.clone(),
             set: candidate.set,
             url: url.clone(),
             nvs,
@@ -335,7 +343,7 @@ impl Browser {
             accept_signature: None,
             csp: None,
             required_csp: None,
-            purpose: Some(Purpose::Prefetch { cross_site, tags }),
+            purpose: Some(Purpose::Prefetch { cross_site, tags, cookies }),
             parser_priority: false,
             credentials: None,
             post: None,
@@ -413,6 +421,15 @@ impl Browser {
         urls.iter().any(|u| net.has_cookies_for(u))
     }
 
+    /// A navigation uses `entry`'s response: the cookies its cross-site fetch received go into the
+    /// jar now (Chrome copies the isolated context's cookies on activation).
+    fn apply_prefetch_cookies(&self, entry: &Entry) {
+        let cookies = entry.cookies.take();
+        if let Some(net) = self.context_net(entry.context) {
+            net.apply_deferred_cookies(&cookies);
+        }
+    }
+
     /// The prefetch `id` got its result.
     fn prefetch_finished(&mut self, id: u64, result: Result<Resource, String>) {
         let Some(at) = self.prefetches.find(id) else { return };
@@ -435,7 +452,11 @@ impl Browser {
         match (waiter, resource) {
             (Some((target, waiter)), resource) => {
                 // The navigation joined under the hint: the response may not allow its URL.
-                waiter(self, resource.filter(|_| nvs.equivalent(&entry.url, &target)));
+                let resource = resource.filter(|_| nvs.equivalent(&entry.url, &target));
+                if resource.is_some() {
+                    self.apply_prefetch_cookies(&entry);
+                }
+                waiter(self, resource);
             }
             (None, Some(resource)) => {
                 entry.nvs = nvs;
@@ -506,7 +527,9 @@ impl Browser {
         if let State::Pending { .. } = entry.state {
             return Some(Claim::Pending(entry.id, started));
         }
-        let State::Ready(mut resource) = self.prefetches.entries.remove(at).state else { return None };
+        let entry = self.prefetches.entries.remove(at);
+        self.apply_prefetch_cookies(&entry);
+        let State::Ready(mut resource) = entry.state else { return None };
         rebase_timing(&mut resource, started);
         Some(Claim::Ready(resource))
     }
@@ -558,6 +581,7 @@ mod tests {
                 initiator_loader: String::new(),
                 initiator: Url::parse("https://a.test/").unwrap(),
                 cross_site: false,
+                cookies: Default::default(),
                 set: RuleSetId(0),
                 url: Url::parse("https://a.test/x").unwrap(),
                 nvs: NoVarySearch::default(),

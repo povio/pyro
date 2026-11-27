@@ -116,7 +116,10 @@ pub enum Purpose {
     /// to the initiator document's prefetch cache (`crate::prefetch`), never to a frame. `tags`:
     /// the `Sec-Speculation-Tags` value (`crate::speculation_tags::tag_header`) the net client
     /// sends on each hop to the initiator's site.
-    Prefetch { cross_site: bool, tags: Option<String> },
+    /// `cookies`: where the `Set-Cookie` headers of a cross-site prefetch's responses go instead
+    /// of the jar (`pyro_net::Request::deferred_cookies`): the cache entry applies them when a
+    /// navigation uses the response and drops them with the entry.
+    Prefetch { cross_site: bool, tags: Option<String>, cookies: std::sync::Arc<pyro_net::DeferredCookies> },
 }
 
 #[derive(Debug, Clone)]
@@ -567,9 +570,10 @@ impl ResourceLoader for NetLoader {
         req.referrer_policy = referrer.policy;
         // A speculation-rules prefetch says so on every hop (the client keeps a request's headers
         // across redirects); it is not a user's navigation, and cross-site it is credential-less.
-        if let Some(Purpose::Prefetch { cross_site, tags }) = &request.purpose {
+        if let Some(Purpose::Prefetch { cross_site, tags, cookies }) = &request.purpose {
             req.headers.insert(pyro_net::http::HeaderName::from_static("sec-purpose"), pyro_net::http::HeaderValue::from_static("prefetch"));
             req.cross_site_prefetch = *cross_site;
+            req.deferred_cookies = cross_site.then(|| cookies.clone());
             if let Some(value) = tags.as_deref().and_then(|t| pyro_net::http::HeaderValue::from_str(t).ok()) {
                 req.headers.insert(pyro_net::http::HeaderName::from_static("sec-speculation-tags"), value);
             }
