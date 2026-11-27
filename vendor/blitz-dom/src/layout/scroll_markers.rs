@@ -337,6 +337,29 @@ fn generates(style: &ComputedValues) -> bool {
 }
 
 impl BaseDocument {
+    /// pyro: the style of the generated box of `pseudo` (`::scroll-marker-group`, `::scroll-marker`
+    /// or a `::scroll-button()`) of the element `node_id`, as the box has it (`:hover`,
+    /// `:target-current`, `:disabled` state included): what `getComputedStyle(element, pseudo)`
+    /// returns. `None` when the element has no such box (the caller falls back to the cascade).
+    pub fn scroll_pseudo_box_style(&self, node_id: NodeId, pseudo: &PseudoElement) -> Option<Arc<ComputedValues>> {
+        let node = self.nodes.get(node_id)?;
+        let pseudos = node.scroll_pseudos()?;
+        let target = (if pseudo.is_scroll_button() {
+            let wm = node.primary_styles()?.writing_mode;
+            (0..4u8)
+                .filter(|&direction| scroll_button_matches(pseudo, direction, wm))
+                .find_map(|direction| pseudos.buttons[direction as usize])
+        } else if *pseudo == PseudoElement::ScrollMarkerGroup {
+            pseudos.group
+        } else if *pseudo == PseudoElement::ScrollMarker {
+            pseudos.marker
+        } else {
+            None
+        })?;
+        let style = self.nodes.get(target)?.primary_styles()?;
+        Some(Arc::clone(&*style))
+    }
+
     /// Whether any author or user rule styles a scroll pseudo-element.
     fn scroll_pseudo_rules(&self, pseudo: PseudoElement) -> bool {
         [Origin::Author, Origin::User]

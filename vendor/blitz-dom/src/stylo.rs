@@ -526,6 +526,12 @@ impl crate::document::BaseDocument {
             }
             return stored.and_then(|(_, eager)| eager);
         }
+        // pyro: a scroll pseudo-element with a generated box answers with the box's own style.
+        if pseudo.is_scroll_button() || matches!(*pseudo, PseudoElement::ScrollMarker | PseudoElement::ScrollMarkerGroup) {
+            if let Some(style) = self.scroll_pseudo_box_style(node_id, pseudo) {
+                return Some(style);
+            }
+        }
         let (primary, eager) = match stored {
             Some(styles) => styles,
             None => {

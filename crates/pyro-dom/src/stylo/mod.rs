@@ -389,6 +389,36 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         return style::selector_parser::highlight_selector(&mut cssparser::Parser::new(inner))
             .map(PseudoArg::Pseudo).unwrap_or(PseudoArg::Invalid);
     }
+    // `::scroll-button(<direction> | *)` (CSS Overflow 5 § 3.2); keywords are ASCII case-insensitive.
+    if let Some(inner) = text
+        .get(..16)
+        .filter(|head| head.eq_ignore_ascii_case("::scroll-button("))
+        .and_then(|_| text[16..].strip_suffix(')'))
+    {
+        let mut parser = cssparser::Parser::new(inner);
+        let pseudo = (|| {
+            use PseudoElement::*;
+            if parser.try_parse(|input| input.expect_delim('*')).is_ok() {
+                return parser.is_exhausted().then_some(ScrollButtonAll);
+            }
+            let ident = parser.expect_ident_cloned().ok()?;
+            if !parser.is_exhausted() {
+                return None;
+            }
+            Some(match ident.to_ascii_lowercase().as_str() {
+                "block-start" => ScrollButtonBlockStart,
+                "inline-start" => ScrollButtonInlineStart,
+                "inline-end" => ScrollButtonInlineEnd,
+                "block-end" => ScrollButtonBlockEnd,
+                "up" => ScrollButtonUp,
+                "down" => ScrollButtonDown,
+                "left" => ScrollButtonLeft,
+                "right" => ScrollButtonRight,
+                _ => return None,
+            })
+        })();
+        return pseudo.map(PseudoArg::Pseudo).unwrap_or(PseudoArg::Invalid);
+    }
     let mut parser = cssparser::Parser::new(text);
     let mut next = || parser.next_including_whitespace_and_comments().ok().cloned();
     let _ = next(); // the leading colon
@@ -414,6 +444,12 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         "search-text" if double => PseudoElement::SearchText,
         "checkmark" if double => PseudoElement::Checkmark,
         "marker" if double => PseudoElement::Marker,
+        "scroll-marker" if double => PseudoElement::ScrollMarker,
+        "scroll-marker-group" if double => PseudoElement::ScrollMarkerGroup,
+        "column" if double => PseudoElement::Column,
+        "details-content" if double => PseudoElement::DetailsContent,
+        "picker-icon" if double => PseudoElement::PickerIcon,
+        "color-swatch" if double => PseudoElement::ColorSwatch,
         "placeholder" if double => PseudoElement::Placeholder,
         "backdrop" if double => PseudoElement::Backdrop,
         "file-selector-button" if double => PseudoElement::FileSelectorButton,
