@@ -858,6 +858,7 @@ impl Browser {
         // The store is shared with the pages of this page's DOM-store group (its popups, its opener):
         // the queue holds their documents' events too, which go to their frames, not dropped.
         let peers = host.dom_group();
+        let mut deferred: Vec<pyro_dom::script::ResourceEvent> = Vec::new();
         for event in events {
             let document = host.dom.borrow().owner_document(event.node).ok().flatten();
             let find = |h: &crate::frames::FrameHost| {
@@ -874,6 +875,13 @@ impl Browser {
                 }
                 continue;
             };
+            // A popup's initial about:blank document exists before the embedder registers its page
+            // (`Browser::create_page_with`): an `<img>` the opener inserted into it meanwhile has no
+            // document state to load for yet. The event waits in the queue for the drain after that.
+            if event.kind == pyro_dom::script::ResourceKind::Img && self.doc(target).is_none() {
+                deferred.push(event);
+                continue;
+            }
             self.apply_same_document_url(target);
             let Some(bindings) = frame_host.page_dom(target) else {
                 if event.kind == pyro_dom::script::ResourceKind::Script {
@@ -942,6 +950,9 @@ impl Browser {
                     }
                 }
             }
+        }
+        if !deferred.is_empty() {
+            host.dom.borrow_mut().requeue_resource_events(&deferred);
         }
     }
 }

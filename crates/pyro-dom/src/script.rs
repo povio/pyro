@@ -254,6 +254,20 @@ impl Dom {
         events
     }
 
+    /// Puts back events [`Dom::take_resource_events`] returned that their loader could not handle yet
+    /// (the page of their document is not registered with the embedder), in order, ahead of what was queued
+    /// since: they are taken again by the next drain.
+    pub fn requeue_resource_events(&mut self, events: &[ResourceEvent]) {
+        let mut kept: Vec<ResourceEvent> = Vec::with_capacity(events.len());
+        for ev in events {
+            if self.add_ref(ev.node).is_ok() {
+                kept.push(*ev);
+            }
+        }
+        kept.append(&mut self.resources.events);
+        self.resources.events = kept;
+    }
+
     pub(crate) fn resource_kind(&self, idx: u32) -> Option<ResourceKind> {
         let e = self.n(idx).element()?;
         if e.name.ns == ns!(svg) && e.name.local == local_name!("script") {
