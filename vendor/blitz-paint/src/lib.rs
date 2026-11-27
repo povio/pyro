@@ -182,9 +182,17 @@ fn subtree_may_taint(scene: &Scene, allowed: &[u64]) -> bool {
         Paint::Image(brush) => !allowed.contains(&brush.image.data.id()),
         _ => true,
     };
-    // (A filter's own images, `FilterEffect::Image`, are not scanned: its `feImage`s are of the
-    // document's own or CORS-approved responses, or the filter was not applied: `filters::reference_graph`,
-    // blitz-dom `svg_images_for_paint`; the rest of them are its generated sources.)
+    // (Layer filters and `FilterEffect::Image` are not scanned, which holds because: (1) a layer's
+    // filter is built only from CSS filter functions (no image in blur, colour, drop-shadow, ...,
+    // `filters::filter_steps`) or from `url()` references, which `filters::reference_graph` does
+    // not apply for a canvas when the filter document or a `feImage` in it came from an opaque
+    // response (`Privacy::opaque`, blitz-dom `filter_has_opaque_image`); (2) the only
+    // `FilterEffect::Image`s built (anyrender_svg `filter.rs`, anyrender_vello_cpu `graph.rs`) carry
+    // the marker ids `CROP_IMAGE`, `IMAGE_SOURCE`, `BLUR_XY`, `MORPHOLOGY` and `TURBULENCE`, generated
+    // sources and no page image; (3) what an `feImage` shows is drawn into the scene itself
+    // (`FilterGraph::push_layer`, through `render_group`), as `Fill` commands with image brushes,
+    // which `in_scene` below scans: an image not among the `allowed` ones taints, even a same-origin
+    // one in an `feImage`.)
     let in_scene = scene.commands.iter().any(|command| match command {
         RenderCommand::Fill(fill) => image(&fill.brush),
         RenderCommand::Stroke(stroke) => image(&stroke.brush),
