@@ -35,6 +35,12 @@ pub(crate) fn resolve<'s>(s: &Scope<'s>, page: &Rc<PageDom>, value: Value<'s>, s
     MODULE.helper(s, page, "resolve", &[value, s.boolean(safe)])
 }
 
+/// A new `Sanitizer` object holding a copy of `config` (a canonical dictionary [`resolve`] made, or
+/// the string `"default"`): the `sanitizer` member of a Trusted Types policy callback's input.
+pub(crate) fn instance<'s>(s: &Scope<'s>, page: &Rc<PageDom>, config: Value<'s>) -> JsResult<Value<'s>> {
+    MODULE.helper(s, page, "instance", &[config])
+}
+
 fn names_json<'a>(names: impl Iterator<Item = &'a (pyro_dom::Namespace, pyro_dom::LocalName)>) -> Json {
     let mut list: Vec<(Option<String>, String)> =
         names.map(|(ns, local)| ((!ns.is_empty()).then(|| ns.to_string()), local.to_string())).collect();

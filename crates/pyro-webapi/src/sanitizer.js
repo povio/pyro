@@ -15,6 +15,7 @@
   const MATHML = 'http://www.w3.org/1998/Math/MathML';
   const defineProperty = Object.defineProperty;
   const apply = Reflect.apply;
+  const objectCreate = Object.create;
 
   // The configuration of each Sanitizer ([[configuration]]).
   const slots = new WeakMap();
@@ -518,6 +519,14 @@
       const seen = { any: false };
       const config = resolveValue(value, !safe, true, seen);
       return bare({ config, nonempty: seen.any });
+    },
+    // A new Sanitizer holding a copy of a canonical configuration (`resolve`'s `config`) or of
+    // the built-in default one (`'default'`): what a Trusted Types policy callback is given
+    // for the `sanitizer` member of its input, so that it cannot change the caller's.
+    instance(config) {
+      const sanitizer = objectCreate(Sanitizer.prototype);
+      slots.set(sanitizer, config === 'default' ? clone(defaults()) : clone(config));
+      return sanitizer;
     },
   };
 })

@@ -106,7 +106,16 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let invalid_receiver = || JsError::Type("Expected a TrustedTypePolicy receiver".into());
         let policy = a.get(0).as_object().ok_or_else(invalid_receiver)?;
         let callback = s.get_hidden(policy, POLICY_CALLBACK)?.and_then(|v| v.as_object()).ok_or_else(invalid_receiver)?;
-        let result = callback.call(None, &[a.get(1), a.get(2)])?;
+        // The policy callback's input: the options as a `TrustedHTMLParserOptions` dictionary,
+        // `runScripts` and, when given, `sanitizer` as a new Sanitizer (the caller's stays untouched).
+        let (given, sanitizer) = ParserOptions::convert_full(s, a.get(1), ParseMode::Unsafe)?;
+        let input = s.object();
+        input.set_atom("runScripts", s.boolean(given.run_scripts))?;
+        if let Some(config) = sanitizer {
+            let page = crate::target::page_of(s)?;
+            input.set_atom("sanitizer", crate::sanitizer::instance(s, &page, config)?)?;
+        }
+        let result = callback.call(None, &[input.value(), a.get(2)])?;
         let options = ParserOptions::convert(s, result)?;
         let proto = s.get_hidden(policy, OPTIONS_PROTOTYPE)?.ok_or_else(invalid_receiver)?;
         if let Some(realm) = s.object_realm(policy).filter(|r| r.id() != s.realm_id() && !r.is_disposed()) {
@@ -504,12 +513,17 @@ pub(crate) fn parser_options_with(
             return Ok((snapshot.clone(), true));
         }
     }
-    let options = ParserOptions::convert_with(s, value, mode)?;
+    let (options, sanitizer) = ParserOptions::convert_full(s, value, mode)?;
     if requires_for_script(page) {
         let module = MODULE.module(s, page)?;
         let callback = module.get("defaultParserOptions")?.as_object()
             .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
-        let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), s.boolean(options.has_sanitizer)])?;
+        // The callback's input holds the sanitizer as a new Sanitizer (a copy it may change).
+        let sanitizer = match sanitizer {
+            Some(config) => crate::sanitizer::instance(s, page, config)?,
+            None => s.undefined(),
+        };
+        let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), sanitizer])?;
         if !result.is_null() && !result.is_undefined() {
             return Ok((ParserOptions::convert_with(s, result, mode)?, true));
         }

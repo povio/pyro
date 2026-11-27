@@ -60,14 +60,6 @@
   }
   defineProperty(TrustedHTMLParserOptions.prototype, Symbol.toStringTag, { value: 'TrustedHTMLParserOptions', configurable: true });
 
-  function parserDictionary(options) {
-    if (options === null || options === undefined) return { runScripts: false };
-    if (typeof options !== 'object' && typeof options !== 'function') throw new TypeError('Expected HTML parser options');
-    const runScripts = !!options.runScripts;
-    if (options.sanitizer !== undefined) throw new TypeError('HTML sanitizer options are unsupported');
-    return { runScripts };
-  }
-
   // Each policy: its name and options.
   const policies = new WeakMap();
   const TrustedTypePolicy = class TrustedTypePolicy {
@@ -144,8 +136,9 @@
         throw new TypeError('Failed to execute \'createPolicy\' on \'TrustedTypePolicyFactory\': Policy "default" already exists.');
       }
       const callback = callbacks.createParserOptions;
-      const createOptions = (options, args) => {
-        const input = parserDictionary(options);
+      // `input` is the converted options dictionary (native.createParserOptions): `runScripts` and
+      // a `sanitizer` Sanitizer when the caller gave one.
+      const createOptions = (input, args) => {
         if (callback === undefined) throw new TypeError('This policy does not define createParserOptions');
         const result = callback(input, ...args);
         if (result === null || result === undefined) throw new TypeError('Expected parser options from policy');
@@ -314,11 +307,12 @@
       for (const key of Object.keys(init)) full[key] = init[key];
       at.dispatchEvent(new SecurityPolicyViolationEvent('securitypolicyviolation', full));
     },
-    defaultParserOptions(runScripts, sink, hasSanitizer) {
+    defaultParserOptions(runScripts, sink, sanitizer) {
       const callback = defaultParserCallback;
       if (callback === undefined) return undefined;
-      if (hasSanitizer) throw new TypeError('Sanitizer objects for policy callback input are unsupported');
-      const result = callback({ runScripts }, 'TrustedHTMLParserOptions', sink);
+      const input = { runScripts };
+      if (sanitizer !== undefined) input.sanitizer = sanitizer;
+      const result = callback(input, 'TrustedHTMLParserOptions', sink);
       if (result === null || result === undefined) return null;
       return result;
     },

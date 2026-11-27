@@ -44,18 +44,26 @@ impl ParserOptions {
     /// the filter is never `None` (the `"default"` preset stands for a missing `sanitizer`) and
     /// always includes the built-in safe baseline.
     pub fn convert_with(s: &Scope<'_>, value: Value<'_>, mode: ParseMode) -> JsResult<Self> {
+        Ok(Self::convert_full(s, value, mode)?.0)
+    }
+
+    /// [`Self::convert_with`], and the canonical configuration the `sanitizer` member stood for (a
+    /// plain dictionary, or the string `"default"` for the preset; none without a member): what a
+    /// Trusted Types policy callback gets, as a new `Sanitizer`, in its input.
+    pub fn convert_full<'s>(s: &Scope<'s>, value: Value<'s>, mode: ParseMode) -> JsResult<(Self, Option<Value<'s>>)> {
         let safe = mode == ParseMode::Safe;
         if value.is_nullish() {
-            return Ok(Self::without_sanitizer(false, safe));
+            return Ok((Self::without_sanitizer(false, safe), None));
         }
         let obj = value.as_object().ok_or_else(|| JsError::Type("Expected HTML parser options".into()))?;
         let run_scripts = mode == ParseMode::Unsafe && obj.get_atom("runScripts")?.to_bool();
         let sanitizer = obj.get_atom("sanitizer")?;
         if sanitizer.is_undefined() {
-            return Ok(Self::without_sanitizer(run_scripts, safe));
+            return Ok((Self::without_sanitizer(run_scripts, safe), None));
         }
         if sanitizer.is_string() && dom_string(sanitizer)? == "default" {
-            return Ok(Self { run_scripts, filter: Some(Rc::new(safe_default())), needs_vetting: true, has_sanitizer: true });
+            let options = Self { run_scripts, filter: Some(Rc::new(safe_default())), needs_vetting: true, has_sanitizer: true };
+            return Ok((options, Some(s.string("default"))));
         }
         let page = crate::target::page_of(s)?;
         let resolved = crate::sanitizer::resolve(s, &page, s.rehome(sanitizer), safe)?
@@ -67,7 +75,8 @@ impl ParserOptions {
         if safe {
             apply_baseline(&mut filter);
         }
-        Ok(Self { run_scripts, filter: Some(Rc::new(filter)), needs_vetting: run_scripts || nonempty, has_sanitizer: true })
+        let options = Self { run_scripts, filter: Some(Rc::new(filter)), needs_vetting: run_scripts || nonempty, has_sanitizer: true };
+        Ok((options, Some(config.value())))
     }
 
     /// No `sanitizer` member: an unsafe method does not filter; a safe one applies the default configuration.
