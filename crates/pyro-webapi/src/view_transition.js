@@ -2,7 +2,7 @@
 // `Element.startViewTransition`): per-scope lifecycle and native capture.
 (function (native) {
   'use strict';
-  const {captureValid, transitionAnimations, callbackGone, scopeState} = native;
+  const {captureValid, transitionAnimations, callbackGone, scopeState, sizeChanged} = native;
   const global = globalThis;
   const rafFn = global.requestAnimationFrame, setTimeoutFn = global.setTimeout;
   const clearTimeoutFn = global.clearTimeout;
@@ -226,6 +226,8 @@
       later(function checkAnimations() {
         if (st.phase !== 'animating') return;
         const entries = transitionAnimations(st.root, true);
+        // The window was resized since the old state was captured: the transition is skipped.
+        if (sizeChanged(st.root, st.scope)) { skip(st, new DOMException('The snapshot containing block size changed', 'InvalidStateError')); return; }
         if (entries === null || ++frames > 4096) { skip(st, abortError('Transition animation limit reached'), true); return; }
         st.runs.sync(entries);
         if (!native.sample(st.root, st.runs.sample())) { skip(st, abortError('Cannot sample transition boxes'), true); return; }

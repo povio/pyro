@@ -86,6 +86,8 @@ pub(crate) struct Capture {
     new: Boxes,
     samples: Arc<[(usize, usize, f64)]>,
     tree: Option<(std::rc::Weak<dyn pyro_dom::geometry::GeometrySource>, u64)>,
+    /// The document's snapshot containing block (its layout viewport) when the old state was captured.
+    size: Option<(u32, u32)>,
 }
 
 impl Drop for Capture {
@@ -119,7 +121,7 @@ fn admit(page: Rc<PageDom>, local_slots: usize) -> Option<Capture> {
     if used.slots >= 16 || (child && (used.slots >= 12 || local_slots >= 4)) { return None; }
     used.slots += 1;
     drop(used);
-    Some(Capture { reservation: Arc::new(Reservation { scope:true, child, quota, pixels: 0, work: 0 }), old: Default::default(), new: Default::default(), samples: Default::default(), tree: None })
+    Some(Capture { reservation: Arc::new(Reservation { scope:true, child, quota, pixels: 0, work: 0 }), old: Default::default(), new: Default::default(), samples: Default::default(), tree: None, size: None })
 }
 
 pub(crate) static MODULE: crate::lazy_module::LazyModule = crate::lazy_module::LazyModule {
@@ -157,6 +159,12 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
             Default::default()
         };
         let Some(record) = captures.as_mut().and_then(|map| map.get_mut(&scope_key)) else { return Ok(s.boolean(false)); };
+        // A document's transition runs in the snapshot containing block of its old state: a window resized
+        // before the new state is captured skips it (css-view-transitions-1 "capture the new state").
+        if scope.id != root.id {
+            let size = page.layout().viewport_metrics().layout;
+            if old { record.size = Some(size); } else if record.size.is_some_and(|before| before != size) { return Ok(s.boolean(false)); }
+        }
         let Some(reservation) = Arc::get_mut(&mut record.reservation) else { return Ok(s.boolean(false)); };
         let prep = u64::from(page.dom.borrow().slot_count()) + 1;
         let Some(mut attempt) = reservation.attempt(prep, old) else { return Ok(s.boolean(false)); };
@@ -192,6 +200,17 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         attempt.work = work;
         Ok(s.boolean(true))
     })?;
+    // Whether a document's window was resized since its old state was captured (its running
+    // transition is then skipped).
+    let resized = s.function("sizeChanged", |s, _, args| {
+        let (Some(root), Some(scope)) = (s.unwrap::<crate::node::Node>(args.get(0)), s.unwrap::<crate::node::Node>(args.get(1))) else { return Ok(s.boolean(false)); };
+        if scope.id == root.id { return Ok(s.boolean(false)); }
+        let page = root.page();
+        let size = page.layout().viewport_metrics().layout;
+        let captures = page.transition_captures.borrow();
+        let scope_key = pyro_dom::snapshot::render_key(scope.id);
+        Ok(s.boolean(captures.as_ref().and_then(|map| map.get(&scope_key)).and_then(|record| record.size).is_some_and(|before| before != size)))
+    })?;
     let animations = s.function("transitionAnimations", |s, _, args| {
         let Some(root) = s.unwrap::<crate::node::Node>(args.get(0)) else { return Ok(s.null()); };
         let page = root.page();
@@ -213,6 +232,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     })?;
     let out = s.object();
     out.set_atom("captureValid", capture.value())?;
+    out.set_atom("sizeChanged", resized.value())?;
     out.set_atom("transitionAnimations", animations.value())?;
     let sample = s.function("sample",|s,_,args| {
         let Some(root) = s.unwrap::<crate::node::Node>(args.get(0)) else { return Ok(s.boolean(false)); };
