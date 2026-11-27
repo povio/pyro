@@ -1463,6 +1463,7 @@ impl Stylist {
             MatchingForInvalidation::No,
         );
         matching_context.extra_data.originating_element_style = Some(originating_element_style);
+        matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || pseudo == PseudoElement::ScrollMarkerGroup;
         self.push_applicable_declarations(
             element,
             None,
@@ -1732,6 +1733,7 @@ impl Stylist {
 
         matching_context.pseudo_element_matching_fn = matching_fn;
         matching_context.extra_data.originating_element_style = Some(originating_element_style);
+        matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || *pseudo == PseudoElement::ScrollMarkerGroup;
 
         self.push_applicable_declarations(
             element,
@@ -1765,6 +1767,7 @@ impl Stylist {
             );
             matching_context.pseudo_element_matching_fn = matching_fn;
             matching_context.extra_data.originating_element_style = Some(originating_element_style);
+            matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || *pseudo == PseudoElement::ScrollMarkerGroup;
 
             self.push_applicable_declarations(
                 element,
@@ -4072,12 +4075,27 @@ impl CascadeData {
             if condition_ref.conditions.is_empty() {
                 return true;
             }
+            // pyro: a scroll pseudo-element's size container is found from the ancestors of its
+            // originating element, which is itself no candidate (Conditional 5 § 3.3).
+            let (start, originating_element_style) = match context.extra_data.originating_element_style {
+                Some(style) if context.extra_data.skip_originating_container => {
+                    // (The box of the pseudo-element is matched as itself: look from its originating element.)
+                    let origin = if element.implemented_pseudo_element().is_some() {
+                        selectors::Element::pseudo_element_originating_element(&element).unwrap_or(element)
+                    } else {
+                        element
+                    };
+                    // The root element has no ancestors: it is the container, as for its own children.
+                    if origin.traversal_parent().is_some() { (origin, None) } else { (origin, Some(style)) }
+                },
+                other => (element, other),
+            };
             let matches = condition_ref.conditions.iter().any(|condition| {
                 condition
                     .matches(
                         stylist,
-                        element,
-                        context.extra_data.originating_element_style,
+                        start,
+                        originating_element_style,
                         &mut context.extra_data.cascade_input_flags,
                     )
                     .to_bool(/* unknown = */ false)
