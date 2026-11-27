@@ -458,6 +458,12 @@ impl HtmlInput {
         sink: &str,
         mode: ParseMode,
     ) -> JsResult<(String, ParserOptions)> {
+        // The safe methods are not Trusted Types sinks: the sanitizer makes their markup safe, so
+        // neither the default policy's `createHTML` nor its `createParserOptions` is consulted.
+        if mode == ParseMode::Safe {
+            let options = ParserOptions::convert_with(s, options, mode)?;
+            return Ok((match self { Self::Trusted(html) | Self::String(html) => html }, options));
+        }
         let (options, vetted) = parser_options_with(s, page, options, sink, false, mode)?;
         if vetted {
             return Ok((match self { Self::Trusted(html) | Self::String(html) => html }, options));
@@ -489,9 +495,13 @@ pub(crate) fn parser_options(
 pub(crate) fn parser_options_with(
     s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, sink: &str, streaming: bool, mode: ParseMode,
 ) -> JsResult<(ParserOptions, bool)> {
+    if mode == ParseMode::Safe {
+        // Not a Trusted Types sink (see `for_html_insertion_as`): a plain `SetHTMLOptions` conversion.
+        return Ok((ParserOptions::convert_with(s, value, mode)?, false));
+    }
     if let Some(wrapper) = s.unwrap::<TrustedValue>(value) {
         if let Some(snapshot) = wrapper.as_ref() {
-            return Ok((if mode == ParseMode::Safe { snapshot.for_safe_method() } else { snapshot.clone() }, true));
+            return Ok((snapshot.clone(), true));
         }
     }
     let options = ParserOptions::convert_with(s, value, mode)?;

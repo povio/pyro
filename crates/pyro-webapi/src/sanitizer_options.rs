@@ -75,20 +75,6 @@ impl ParserOptions {
         Self { run_scripts, filter: safe.then(|| Rc::new(safe_default())), needs_vetting: run_scripts, has_sanitizer: false }
     }
 
-    /// These options (a `TrustedHTMLParserOptions` snapshot, made with the unsafe methods' conversion)
-    /// as a safe method uses them: `runScripts` is ignored and the built-in safe baseline applies
-    /// (a snapshot without a sanitizer stands for the default configuration).
-    pub fn for_safe_method(&self) -> Self {
-        let filter = match &self.filter {
-            None => safe_default(),
-            Some(filter) => {
-                let mut filter = (**filter).clone();
-                apply_baseline(&mut filter);
-                filter
-            }
-        };
-        Self { run_scripts: false, filter: Some(Rc::new(filter)), needs_vetting: self.needs_vetting, has_sanitizer: self.has_sanitizer }
-    }
 }
 
 /// "Remove unsafe": the built-in safe baseline configuration merged into `filter`.
