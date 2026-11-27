@@ -667,21 +667,6 @@ impl PageNav {
                 entry.redirect_start = 0.0;
                 entry.redirect_end = 0.0;
                 entry.redirect_count = 0;
-            } else if entry.redirect_count > 0 {
-                // The time origin is the navigation's start and the first request goes out after it:
-                // startTime < redirectStart < redirectEnd <= fetchStart, by at least the clock's tick
-                // (the resolution `entry_of` floors to) where both fell in the same tick.
-                const TICK: f64 = 0.1;
-                entry.redirect_start = entry.redirect_start.max(TICK);
-                entry.redirect_end = entry.redirect_end.max(entry.redirect_start + TICK);
-                entry.fetch_start = entry.fetch_start.max(entry.redirect_end);
-                entry.domain_lookup_start = entry.domain_lookup_start.max(entry.fetch_start);
-                entry.domain_lookup_end = entry.domain_lookup_end.max(entry.domain_lookup_start);
-                entry.connect_start = entry.connect_start.max(entry.domain_lookup_end);
-                entry.connect_end = entry.connect_end.max(entry.connect_start);
-                entry.request_start = entry.request_start.max(entry.connect_end);
-                entry.response_start = entry.response_start.max(entry.request_start);
-                entry.response_end = entry.response_end.max(entry.response_start);
             }
             Rc::new(entry)
         });
@@ -690,7 +675,7 @@ impl PageNav {
         let hidden = self.fetch_timing.borrow().as_ref().is_none() || cross_origin_redirect;
         self.unload_times.set(match self.pending_unload.take() {
             Some((start, end)) if !hidden => {
-                let ms = |t: Instant| ((t.saturating_duration_since(origin).as_micros() / 100) as f64 / 10.0).max(0.1);
+                let ms = |t: Instant| (t.saturating_duration_since(origin).as_micros() / 100) as f64 / 10.0;
                 (ms(start), ms(end).max(ms(start)))
             }
             _ => (0.0, 0.0),
