@@ -3757,7 +3757,9 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
         "width",
         |s, n| Ok(s.number(int_attr(n, "width", 0, 300)?)),
         |s, n, v| {
-            set_ulong(n, "width", to_u32(v)?, 300)?;
+            let value = to_u32(v)?;
+            crate::canvas::ensure_not_placeholder(n.page(), n.id, "width")?;
+            set_ulong(n, "width", value, 300)?;
             crate::canvas::canvas_resized(s, n.page(), n.id)
         },
     );
@@ -3765,7 +3767,9 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
         "height",
         |s, n| Ok(s.number(int_attr(n, "height", 0, 150)?)),
         |s, n, v| {
-            set_ulong(n, "height", to_u32(v)?, 150)?;
+            let value = to_u32(v)?;
+            crate::canvas::ensure_not_placeholder(n.page(), n.id, "height")?;
+            set_ulong(n, "height", value, 150)?;
             crate::canvas::canvas_resized(s, n.page(), n.id)
         },
     );

@@ -2887,6 +2887,8 @@ pub(crate) struct FrameCommit {
 pub(crate) fn commit_frames(page: &PageDom) {
     let Ok(commits) = page.canvas_commits.try_borrow() else { return };
     if commits.is_empty() {
+        drop(commits);
+        sync_placeholder_sizes(page);
         return;
     }
     let mut gone = false;
@@ -2907,6 +2909,48 @@ pub(crate) fn commit_frames(page: &PageDom) {
     if gone {
         page.canvas_commits.borrow_mut().retain(|c| c.surface.strong_count() > 0);
     }
+    sync_placeholder_sizes(page);
+}
+
+/// HTML "update the placeholder canvas" of an OffscreenCanvas resize: the committed frame's size
+/// becomes the placeholder `<canvas>`'s `width` and `height` attributes, a task after the resize
+/// (WPT offscreencanvas.resize). Free without a placeholder.
+fn sync_placeholder_sizes(page: &PageDom) {
+    let resized: Vec<(NodeId, u32, u32)> = {
+        let Ok(list) = page.canvas_placeholders.try_borrow() else { return };
+        list.iter()
+            .filter_map(|(canvas, placeholder)| {
+                let (w, h) = {
+                    let frame = placeholder.frame();
+                    (frame.width, frame.height)
+                };
+                (canvas_size(page, *canvas) != (w, h)).then_some((*canvas, w, h))
+            })
+            .collect()
+    };
+    for (canvas, w, h) in resized {
+        let (cw, ch) = canvas_size(page, canvas);
+        let mut dom = page.dom.borrow_mut();
+        if cw != w {
+            let _ = dom.set_attribute(canvas, "width", &w.to_string());
+        }
+        if ch != h {
+            let _ = dom.set_attribute(canvas, "height", &h.to_string());
+        }
+    }
+}
+
+/// The `width` / `height` setters of an `HTMLCanvasElement` whose control was transferred to an
+/// OffscreenCanvas throw InvalidStateError, even for the value it has (HTML: the IDL setters
+/// check "placeholder canvas element"; the content attributes are not guarded).
+pub(crate) fn ensure_not_placeholder(page: &PageDom, canvas: NodeId, attribute: &str) -> JsResult<()> {
+    if placeholder_frame(page, canvas).is_some() {
+        return Err(JsError::dom(
+            "InvalidStateError",
+            format!("Cannot resize canvas after call to transferControlToOffscreen(): the {attribute} cannot be set."),
+        ));
+    }
+    Ok(())
 }
 
 /// The frame shown on `canvas` if its control was transferred.
