@@ -1463,7 +1463,7 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
     if k.text == "\r" || k.text == "\n" {
         enter_key(page, target);
-    } else if !select_typeahead(page, target, &k.text) && !(k.key == " " && keyboard_scroll(page, k)) {
+    } else if !select_typeahead(page, target, &k.text) && !(k.key == " " && space_scrolls(page, target) && keyboard_scroll(page, k)) {
         // (Space that activates nothing and is no text scrolls by a page: Chrome's
         // `DefaultSpaceEventHandler`, a keypress default action.)
         insert_text_at(page, target, &k.text);
@@ -1589,6 +1589,12 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         }
         _ => {}
     }
+}
+
+/// Whether Space on key target `target` may scroll: not when the target takes it as text (a text
+/// control, editable content, `designMode`). (The DOM borrow ends before the scroll runs.)
+fn space_scrolls(page: &PageDom, target: NodeId) -> bool {
+    !is_directional_input_handler(&page.dom.borrow(), target)
 }
 
 /// How far a keyboard scroll goes (Chrome's scroll granularities).
