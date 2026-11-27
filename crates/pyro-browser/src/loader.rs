@@ -635,6 +635,17 @@ impl ResourceLoader for NetLoader {
             None => None,
         };
         let part = request.part;
+        // HTML "sandboxed downloads browsing context flag": a navigation of a frame sandboxed
+        // without `allow-downloads` that turns out to be a download (`Content-Disposition:
+        // attachment`) is dropped at its response head, the transfer cancelled: the server never
+        // sees the body through (WPT the-iframe-element/iframe_sandbox_*_download_block_downloads).
+        let downloads_blocked = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe)
+            && request
+                .frame_id
+                .as_deref()
+                .and_then(|id| browser.page(request.page)?.frames.key_of(id))
+                .and_then(|key| browser.doc(key))
+                .is_some_and(|d| d.main_frame.sandbox.downloads_blocked);
         if let Some(start) = part.map(|p| p.start).filter(|&s| s > 0) {
             if let Ok(value) = pyro_net::http::HeaderValue::from_str(&format!("bytes={start}-")) {
                 req.headers.insert(pyro_net::http::header::RANGE, value);
@@ -812,6 +823,46 @@ impl ResourceLoader for NetLoader {
                 }
             }
             pyro_net::ResponseEvent::Response(h) => {
+                let attachment = downloads_blocked
+                    && h.status.is_success()
+                    && h.headers.get(http::header::CONTENT_DISPOSITION).and_then(|v| v.to_str().ok()).filter(|v| is_attachment(v)).map(str::to_owned);
+                if let Some(disposition) = attachment {
+                    cut = true;
+                    let resource = Resource {
+                        url: h.url.to_string(),
+                        status: h.status.as_u16(),
+                        mime: h.mime,
+                        charset: h.charset,
+                        body: Vec::new().into(),
+                        immutable_local: false,
+                        content_disposition: Some(disposition),
+                        header_csp: None,
+                        allow_csp_from: None,
+                        refresh: None,
+                        content_language: None,
+                        last_modified: None,
+                        reporting_endpoints: None, permissions_policy: None,
+                        connection_allowlist: None,
+                        link_fetches: Vec::new(),
+                        integrity_headers: None,
+                        dictionary_links: Vec::new(),
+                        speculation_rules: Vec::new(),
+                        no_vary_search: None,
+                        referrer_policy: None,
+                        origin_agent_cluster: false, force_load_at_top: false,
+                        embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
+                        coop: Vec::new(),
+                        sent_referrer: None,
+                        timing: None,
+                        partial: None,
+                        nosniff: false,
+                        opaque: h.kind == pyro_net::ResponseKind::Opaque,
+                    };
+                    let priority = priority.clone();
+                    let _ = handle.post(move |b: &mut Browser| b.fetch_ready(priority, id, Ok(resource)));
+                    net.cancel(native_id);
+                    return;
+                }
                 if part.is_some() && !h.headers.contains_key(http::header::CONTENT_ENCODING) {
                     total =
                         h.headers.get(http::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()?.trim().parse().ok());
