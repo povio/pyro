@@ -2825,6 +2825,12 @@ impl Browser {
                 };
                 let required_csp = requirement.map(|r| r.policy);
                 match res {
+                    Ok(resource) if matches!(resource.status, 204 | 205) => {
+                        // HTML "process a navigate response": a 204 or 205 response is not a navigation, whatever its `Content-Disposition` (Chrome starts no download). The
+                        // frame keeps the document it shows (an iframe its initial about:blank one, Window
+                        // object included), as Chrome does, which reports net::ERR_ABORTED to Page.navigate.
+                        b.navigation_failed(page, &opts, loader_id, "net::ERR_ABORTED".into());
+                    }
                     Ok(resource)
                         if (200..300).contains(&resource.status)
                             && resource.content_disposition.as_deref().is_some_and(is_attachment) =>
@@ -2856,12 +2862,6 @@ impl Browser {
                                 },
                             );
                         }
-                    }
-                    Ok(resource) if matches!(resource.status, 204 | 205) => {
-                        // HTML "process a navigate response": a 204 or 205 response is not a navigation. The
-                        // frame keeps the document it shows (an iframe its initial about:blank one, Window
-                        // object included), as Chrome does, which reports net::ERR_ABORTED to Page.navigate.
-                        b.navigation_failed(page, &opts, loader_id, "net::ERR_ABORTED".into());
                     }
                     Ok(resource) if b.coop_sandbox_blocks(page, &resource) => {
                         // HTML "enforce a response's cross-origin opener policy": a sandboxed
