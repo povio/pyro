@@ -294,6 +294,8 @@ fn the_required_policy_is_snapshot_when_the_navigation_starts() {
             content_language: None,
             last_modified: None,
             reporting_endpoints: None,
+            connection_allowlist: None,
+            link_fetches: Vec::new(),
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,

@@ -54,9 +54,9 @@ pub(crate) struct Preloads {
 /// A fetch started once the document has loaded.
 type DeferredFetch = Box<dyn FnOnce(&mut Browser)>;
 
-/// The resolved URLs of a document response's `Link` header values with the
-/// `compression-dictionary` relation (RFC 8288 link-values; others are skipped).
-pub(crate) fn compression_dictionary_links<'a>(values: impl Iterator<Item = &'a str>, base: &url::Url) -> Vec<String> {
+/// The link-values (RFC 8288) of the `Link` header `values`: each target as written, with the
+/// text of its parameters (`; rel=preload; as=script`).
+fn link_values<'a>(values: impl Iterator<Item = &'a str>) -> Vec<(&'a str, &'a str)> {
     let mut out = Vec::new();
     for value in values {
         let mut rest = value;
@@ -79,21 +79,72 @@ pub(crate) fn compression_dictionary_links<'a>(values: impl Iterator<Item = &'a 
                 None => (rest, ""),
             };
             rest = next;
-            let dictionary = params.split(';').any(|p| {
-                let Some((name, value)) = p.split_once('=') else { return false };
-                name.trim().eq_ignore_ascii_case("rel")
-                    && value
-                        .trim()
-                        .trim_matches('"')
-                        .split_ascii_whitespace()
-                        .any(|r| r.eq_ignore_ascii_case("compression-dictionary"))
-            });
-            if dictionary {
-                if let Ok(url) = base.join(target.trim()) {
-                    out.push(url.to_string());
-                }
+            out.push((target, params));
+        }
+    }
+    out
+}
+
+/// The value of parameter `name` among a link's `params` (unquoted), the first one.
+fn link_param<'a>(params: &'a str, name: &str) -> Option<&'a str> {
+    params.split(';').find_map(|p| {
+        let (n, v) = p.split_once('=')?;
+        n.trim().eq_ignore_ascii_case(name).then(|| v.trim().trim_matches('"'))
+    })
+}
+
+/// The resolved URLs of a document response's `Link` header values with the
+/// `compression-dictionary` relation (RFC 8288 link-values; others are skipped).
+pub(crate) fn compression_dictionary_links<'a>(values: impl Iterator<Item = &'a str>, base: &url::Url) -> Vec<String> {
+    let mut out = Vec::new();
+    for (target, params) in link_values(values) {
+        let dictionary = link_param(params, "rel")
+            .is_some_and(|rel| rel.split_ascii_whitespace().any(|r| r.eq_ignore_ascii_case("compression-dictionary")));
+        if dictionary {
+            if let Ok(url) = base.join(target.trim()) {
+                out.push(url.to_string());
             }
         }
+    }
+    out
+}
+
+/// A `Link` response header's `preload`, `modulepreload` or `prefetch` link: the fetch the
+/// document starts before it parses anything.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkFetch {
+    pub url: String,
+    pub kind: ResourceKind,
+    pub crossorigin: Option<String>,
+}
+
+/// The fetches the `Link` header `values` of a document response (from `base`) ask for, in order
+/// (`as=` picks a preload's destination as it does on a `<link>`). A link of several relations
+/// is fetched once, as a module preload before a preload before a prefetch.
+pub(crate) fn link_header_fetches<'a>(values: impl Iterator<Item = &'a str>, base: &url::Url) -> Vec<LinkFetch> {
+    let mut out = Vec::new();
+    for (target, params) in link_values(values) {
+        let rel = link_param(params, "rel").unwrap_or_default();
+        let has = |name: &str| rel.split_ascii_whitespace().any(|r| r.eq_ignore_ascii_case(name));
+        let kind = if has("modulepreload") {
+            ResourceKind::ModuleScript
+        } else if has("preload") {
+            match link_param(params, "as").map(str::to_ascii_lowercase).as_deref() {
+                Some("script") => ResourceKind::Script,
+                Some("style") => ResourceKind::Stylesheet,
+                Some("font") => ResourceKind::Font,
+                Some("track") => ResourceKind::Track,
+                Some("fetch") => ResourceKind::Fetch,
+                _ => ResourceKind::Image,
+            }
+        } else if has("prefetch") {
+            ResourceKind::Prefetch
+        } else {
+            continue;
+        };
+        let Ok(url) = base.join(target.trim()) else { continue };
+        let crossorigin = link_param(params, "crossorigin").map(str::to_owned);
+        out.push(LinkFetch { url: url.to_string(), kind, crossorigin });
     }
     out
 }
@@ -592,6 +643,38 @@ impl Browser {
                 cancel.disarm();
             }
         });
+    }
+
+    /// The document's `Link` headers with `rel=preload`, `modulepreload` or `prefetch`
+    /// ([`link_header_fetches`]): each is fetched at once, as its `<link>` would be, under the
+    /// document's CSP and `Connection-Allowlist` (checked by the loader as it is for any request
+    /// the document makes that no element checked).
+    pub(crate) fn link_headers(&mut self, page: FrameKey, links: Vec<LinkFetch>) {
+        let Some(frame) = self.doc(page).map(|d| d.main_frame.clone()) else { return };
+        let Some(resource_loader) = self.loader_for(page) else { return };
+        for link in links.into_iter().take(MAX_PRELOADS) {
+            let request = FetchRequest {
+                csp: None,
+                required_csp: None,
+                parser_priority: false,
+                credentials: None,
+                post: None,
+                url: link.url,
+                kind: link.kind,
+                page: page.page,
+                referrer: frame.navigation_referrer(),
+                referrer_policy: None,
+                frame_id: Some(frame.id.0.clone()),
+                loader_id: Some(frame.loader_id.0.clone()),
+                crossorigin: link.crossorigin,
+                initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
+                module: None,
+                part: None,
+            };
+            if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, Box::new(|_, _| {})) {
+                cancel.disarm();
+            }
+        }
     }
 
     /// The document's `Link` headers with `rel=compression-dictionary`: each is fetched once the

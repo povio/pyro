@@ -1195,6 +1195,8 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: pyro_
     request.referrer_policy = page.referrer_policy();
     request.frame_id = page.request_context().frame_id;
     request.max_body = Some(MAX_SCRIPT_BYTES);
+    // The creator's `Connection-Allowlist` governs the script's fetch, as a navigation's.
+    request.csp = crate::csp::allowlist_guard(page, &script_url);
     // A redirect would take the body from a URL the max scope was not computed for.
     request.redirect = pyro_net::RedirectMode::Error;
     request.cache =
@@ -1391,7 +1393,19 @@ fn fetched_script(
             return;
         }
     }
-    start_version(page, registration, script_url, body, settle);
+    // The worker's own `Connection-Allowlist` is its script response's.
+    let allowlist = {
+        let header = |name: &str| {
+            let values: Vec<&str> = head.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
+            (!values.is_empty()).then(|| values.join(", "))
+        };
+        pyro_net::connection_allowlist::ConnectionPolicy::from_headers(
+            header("connection-allowlist").as_deref(),
+            header("connection-allowlist-report-only").as_deref(),
+            &head.url,
+        )
+    };
+    start_version(page, registration, script_url, body, allowlist, settle);
 }
 
 fn start_version(
@@ -1399,6 +1413,7 @@ fn start_version(
     registration: &Rc<Registration>,
     script_url: pyro_net::Url,
     script: Bytes,
+    allowlist: Option<Arc<pyro_net::connection_allowlist::ConnectionPolicy>>,
     settle: Settle,
 ) {
     if VERSIONS.with(|v| v.borrow().len()) >= MAX_VERSIONS {
@@ -1428,11 +1443,12 @@ fn start_version(
         service,
         registration.module.get(),
     );
-    let Some(start) = start else {
+    let Some(mut start) = start else {
         settle.done(reply_error("InvalidStateError", "The page cannot start workers."));
         end_update(registration);
         return;
     };
+    start.csp.inherited_allowlist = allowlist;
     let version = Rc::new(Version {
         id,
         script_url: script_url.to_string(),

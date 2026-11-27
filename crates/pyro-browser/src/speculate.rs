@@ -448,6 +448,8 @@ impl Browser {
             .and_then(|bindings| pyro_webapi::csp::policy_list(&bindings));
         let requests: Vec<FetchRequest> = match list {
             None => requests,
+            // A `Connection-Allowlist` governs every request: its element's own check decides.
+            Some(list) if list.has_allowlist() => return,
             Some(list) => requests
                 .into_iter()
                 .filter(|request| {

@@ -6,6 +6,7 @@ mod cache;
 mod client_hints;
 mod dictionary;
 pub mod client;
+pub mod connection_allowlist;
 pub mod cookies;
 pub mod cors;
 pub mod csp;

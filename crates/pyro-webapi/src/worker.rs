@@ -529,7 +529,13 @@ pub(crate) fn csp_check(
     let Some(list) = crate::csp::policy_list(page) else { return Ok(WorkerCsp { dest, ..WorkerCsp::default() }) };
     let request = pyro_net::csp::CspRequest::new(url.clone(), dest);
     let guard = crate::csp::check_request_with(page, list.clone(), request, None)?;
-    Ok(WorkerCsp { owner: Some(list), guard, dest, inherited: crate::csp::inherited_policies(page) })
+    Ok(WorkerCsp {
+        owner: Some(list),
+        guard,
+        dest,
+        inherited: crate::csp::inherited_policies(page),
+        inherited_allowlist: page.connection_allowlist(),
+    })
 }
 
 /// What a worker's thread checks against its owner's CSP: its script's redirects (`guard`) and
@@ -541,11 +547,19 @@ pub(crate) struct WorkerCsp {
     pub(crate) guard: Option<Arc<pyro_net::csp::RequestCsp>>,
     pub(crate) dest: pyro_net::csp::RequestDest,
     pub(crate) inherited: Vec<pyro_dom::CspPolicy>,
+    /// The owner's `Connection-Allowlist`, which a `data:` or `blob:` worker inherits too.
+    pub(crate) inherited_allowlist: Option<Arc<pyro_net::connection_allowlist::ConnectionPolicy>>,
 }
 
 impl Default for WorkerCsp {
     fn default() -> WorkerCsp {
-        WorkerCsp { owner: None, guard: None, dest: pyro_net::csp::RequestDest::Worker, inherited: Default::default() }
+        WorkerCsp {
+            owner: None,
+            guard: None,
+            dest: pyro_net::csp::RequestDest::Worker,
+            inherited: Default::default(),
+            inherited_allowlist: None,
+        }
     }
 }
 

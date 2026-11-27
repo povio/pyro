@@ -125,6 +125,9 @@ pub struct PageDom {
     /// The origin a sandboxed (opaque-origin) document would have without the sandbox (its
     /// "precursor origin"): what CSP's `'self'` matches in it, as Chrome.
     csp_precursor_origin: RefCell<Option<String>>,
+    /// The `Connection-Allowlist` headers of the document shown, with the document they belong
+    /// to (another document has none: [`PageDom::connection_allowlist`]).
+    connection_allowlist: RefCell<Option<(NodeId, std::sync::Arc<pyro_net::connection_allowlist::ConnectionPolicy>)>>,
     /// Schemeful site of this environment's top-level document at creation.
     cookie_partition_key: RefCell<Option<String>>,
     cookie_site_context: Cell<pyro_net::cookies::SiteContext>,
@@ -1099,6 +1102,7 @@ impl PageDom {
             forms_sandboxed: Cell::new(false),
             opaque_origin: Cell::new(false),
             csp_precursor_origin: RefCell::new(None),
+            connection_allowlist: RefCell::new(None),
             cookie_site_context: Cell::new(if cookie_partition_key.is_some() {
                 pyro_net::cookies::SiteContext::SameSite
             } else {
@@ -1652,6 +1656,18 @@ impl PageDom {
     }
     pub(crate) fn csp_precursor_origin(&self) -> Option<String> {
         self.csp_precursor_origin.borrow().clone()
+    }
+    /// The document shown has these `Connection-Allowlist` headers (`None`: none): its own
+    /// response's, or a local-scheme document's inherited from its creator. Every request the
+    /// document, and a worker that inherits them, makes is checked against them.
+    pub fn set_connection_allowlist(&self, policy: Option<std::sync::Arc<pyro_net::connection_allowlist::ConnectionPolicy>>) {
+        *self.connection_allowlist.borrow_mut() = policy.map(|p| (self.document(), p));
+    }
+    /// The `Connection-Allowlist` of the document shown, if it has one.
+    pub fn connection_allowlist(&self) -> Option<std::sync::Arc<pyro_net::connection_allowlist::ConnectionPolicy>> {
+        let held = self.connection_allowlist.borrow();
+        let (doc, policy) = held.as_ref()?;
+        (*doc == self.document()).then(|| policy.clone())
     }
     pub fn set_cookie_context(&self, key: Option<String>, site: pyro_net::cookies::SiteContext) {
         *self.cookie_partition_key.borrow_mut() = key;

@@ -690,6 +690,11 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         let _ = dom.borrow_mut().inherit_csp_policies(document, &start.csp.inherited);
     }
     let page = PageDom::new(dom, document);
+    // The same for the owner's `Connection-Allowlist`; a fetched script's own is its response's
+    // (`fetch_script`; a service worker's, which its registration fetched, comes in `inherited_allowlist`).
+    if matches!(start.url.scheme(), "data" | "blob") || start.service.is_some() {
+        page.set_connection_allowlist(start.csp.inherited_allowlist.clone());
+    }
     // Dedicated workers, including data/blob workers and nested workers, use
     // their creator's cluster. Shared and service workers own a distinct cluster.
     if !start.shared_worker {
@@ -1365,6 +1370,19 @@ fn fetch_script(
                         (joined("content-security-policy"), joined("content-security-policy-report-only"));
                     if !enforce.is_empty() || !report_only.is_empty() {
                         let _ = page.dom.borrow_mut().set_trusted_types_policies(page.document(), &enforce, &report_only);
+                    }
+                    // ... and its `Connection-Allowlist`, which governs the worker's own requests.
+                    let header = |name: &str| {
+                        let values: Vec<&str> = head.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
+                        (!values.is_empty()).then(|| values.join(", "))
+                    };
+                    let (allow, allow_report_only) = (header("connection-allowlist"), header("connection-allowlist-report-only"));
+                    if allow.is_some() || allow_report_only.is_some() {
+                        page.set_connection_allowlist(pyro_net::connection_allowlist::ConnectionPolicy::from_headers(
+                            allow.as_deref(),
+                            allow_report_only.as_deref(),
+                            &head.url,
+                        ));
                     }
                 }
             }

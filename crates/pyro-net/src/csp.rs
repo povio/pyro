@@ -149,6 +149,9 @@ pub struct PolicyList {
     pub policies: Vec<Policy>,
     /// `None`: an opaque origin, which `'self'` never matches.
     pub self_origin: Option<SelfOrigin>,
+    /// The context's `Connection-Allowlist` headers, checked with every request alongside the
+    /// policies ([`crate::connection_allowlist`]).
+    pub allowlist: Option<Arc<crate::connection_allowlist::ConnectionPolicy>>,
 }
 
 /// A request's destination as CSP sees it (Fetch "destination", plus the initiator cases that
@@ -424,16 +427,22 @@ impl InlineKind {
 impl PolicyList {
     /// An empty list for a context of `self_url`'s origin.
     pub fn new(self_url: Option<&Url>) -> PolicyList {
-        PolicyList { policies: Vec::new(), self_origin: self_url.and_then(SelfOrigin::of) }
+        PolicyList { policies: Vec::new(), self_origin: self_url.and_then(SelfOrigin::of), allowlist: None }
     }
 
     /// An empty list whose `'self'` is `origin` (serialized; `"null"` or `None`: opaque).
     pub fn for_origin(origin: Option<&str>) -> PolicyList {
-        PolicyList { policies: Vec::new(), self_origin: origin.and_then(SelfOrigin::parse) }
+        PolicyList { policies: Vec::new(), self_origin: origin.and_then(SelfOrigin::parse), allowlist: None }
     }
 
+    /// Whether the list has no policy (a connection allowlist is not one: [`PolicyList::has_allowlist`]).
     pub fn is_empty(&self) -> bool {
         self.policies.is_empty()
+    }
+
+    /// Whether the list carries a `Connection-Allowlist`.
+    pub fn has_allowlist(&self) -> bool {
+        self.allowlist.is_some()
     }
 
     /// Adds the policies of a header value: a comma-separated list of serialized policies
@@ -488,7 +497,18 @@ impl PolicyList {
     /// CSP3 §4.1.2 "Should request be blocked by Content Security Policy?" (the pre-request
     /// check of each policy's directive for the request's destination).
     pub fn pre_request(&self, request: &CspRequest) -> CheckOutcome {
-        self.check_url(request, &request.url)
+        // The connection allowlist first: a request it refuses is not matched against the policies.
+        let mut outcome = match &self.allowlist {
+            Some(allowlist) => allowlist.check(&request.url, &request.original_url, request.redirected),
+            None => CheckOutcome::default(),
+        };
+        if outcome.blocked {
+            return outcome;
+        }
+        let csp = self.check_url(request, &request.url);
+        outcome.blocked = csp.blocked;
+        outcome.violations.extend(csp.violations);
+        outcome
     }
 
     /// CSP3 §4.1.3 "Should response to request be blocked?": the post-request check, against

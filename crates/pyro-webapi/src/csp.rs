@@ -99,7 +99,10 @@ pub fn self_origin(page: &PageDom) -> Option<String> {
 
 /// `page`'s CSP list (its document's), `None` when it has no policy.
 pub fn policy_list(page: &PageDom) -> Option<Arc<PolicyList>> {
-    if page.dom.borrow().csp_policies(page.document()).is_empty() {
+    // A document with a `Connection-Allowlist` has a list for it alone: every initiator that
+    // checks CSP checks the allowlist too, and one without it pays for one empty-slot test.
+    let allowlist = page.connection_allowlist();
+    if page.dom.borrow().csp_policies(page.document()).is_empty() && allowlist.is_none() {
         return None;
     }
     let origin = self_origin(page);
@@ -109,7 +112,8 @@ pub fn policy_list(page: &PageDom) -> Option<Arc<PolicyList>> {
         let source = if policy.meta { PolicySource::Meta } else { PolicySource::Header };
         list.add(&policy.text, source, disposition);
     }
-    (!list.is_empty()).then(|| Arc::new(list))
+    list.allowlist = allowlist;
+    (!list.is_empty() || list.has_allowlist()).then(|| Arc::new(list))
 }
 
 /// Whether an enforced (not report-only) policy of `page`'s document has the
@@ -144,12 +148,21 @@ pub struct InheritedCsp {
     /// The cross-origin embedder policy of the same policy container (HTML § 7.1.4 "embedder policy"
     /// is inherited with the CSP list by local-scheme documents).
     pub embedder_policy: pyro_net::EmbedderPolicy,
+    /// The creator's `Connection-Allowlist` (its policy container's, so an `about:blank`, `srcdoc`
+    /// or `blob:` document, or a popup's first document, cannot connect where its creator
+    /// could not).
+    pub connection_allowlist: Option<Arc<pyro_net::connection_allowlist::ConnectionPolicy>>,
 }
 
 impl InheritedCsp {
     /// `page`'s, now.
     pub fn of(page: &PageDom) -> InheritedCsp {
-        InheritedCsp { policies: inherited_policies(page), self_origin: self_origin(page), embedder_policy: page.embedder_policy() }
+        InheritedCsp {
+            policies: inherited_policies(page),
+            self_origin: self_origin(page),
+            embedder_policy: page.embedder_policy(),
+            connection_allowlist: page.connection_allowlist(),
+        }
     }
 
     /// Gives `page`'s document, new and its parser not started, these policies. When its own
@@ -157,6 +170,9 @@ impl InheritedCsp {
     /// `'self'` keeps meaning the creator's origin (as Chrome).
     pub fn apply(&self, page: &PageDom) {
         page.set_embedder_policy(self.embedder_policy);
+        if self.connection_allowlist.is_some() {
+            page.set_connection_allowlist(self.connection_allowlist.clone());
+        }
         if !self.policies.is_empty() {
             let _ = page.dom.borrow_mut().inherit_csp_policies(page.document(), &self.policies);
         }
@@ -204,6 +220,19 @@ pub fn guard_request(page: &Rc<PageDom>, request: CspRequest, target: Option<Nod
     let list = policy_list(page)?;
     let outcome = list.pre_request(&request);
     report(page, outcome.violations, target);
+    Some(if outcome.blocked { RequestCsp::blocked(list, request) } else { RequestCsp::new(list, request) })
+}
+
+/// The guard of a connection to `url` that `page`'s document makes and no CSP directive governs (a
+/// navigation a script, a link or a form started, a service worker's script), when the document has a
+/// `Connection-Allowlist`; `None` without one, so any other document's is not looked at. The pre-request check ran
+/// (violations reported); a guard that blocks the request when the allowlist refused it, which
+/// the client then fails unsent and which checks each redirect hop.
+pub fn allowlist_guard(page: &Rc<PageDom>, url: &url::Url) -> Option<Arc<RequestCsp>> {
+    let list = policy_list(page).filter(|list| list.has_allowlist())?;
+    let request = CspRequest::new(url.clone(), RequestDest::Other);
+    let outcome = list.pre_request(&request);
+    report(page, outcome.violations, None);
     Some(if outcome.blocked { RequestCsp::blocked(list, request) } else { RequestCsp::new(list, request) })
 }
 
@@ -587,6 +616,11 @@ pub fn report(page: &Rc<PageDom>, violations: Vec<Violation>, target: Option<Nod
         let weak = Rc::downgrade(page);
         page.post_task(Box::new(move || {
             let Some(page) = weak.upgrade().filter(|p| !p.is_disposed()) else { return };
+            // A `Connection-Allowlist` violation fires no event: it is a Reporting API report only.
+            if violation.effective_directive == pyro_net::connection_allowlist::DIRECTIVE {
+                report_connection_allowlist(&page, &violation);
+                return;
+            }
             let Some(realm) = page.main_world_realm() else { return };
             let Ok(s) = realm.scope() else { return };
             if let Err(e) = dispatch(&s, &page, &violation, target) {
@@ -602,6 +636,24 @@ pub fn report(page: &Rc<PageDom>, violations: Vec<Violation>, target: Option<Nod
             crate::reporting::queue_csp_violation(&s, &page, &report);
         }));
     }
+}
+
+/// The `connection-allowlist` report of `violation` (`{connection, disposition}`): to the
+/// document's `ReportingObserver`s and, when the header named a `report-to` group, to its
+/// endpoint. A worker's own violations are not reported (as CSP's).
+fn report_connection_allowlist(page: &Rc<PageDom>, violation: &Violation) {
+    let mut body = serde_json::Map::new();
+    body.insert("connection".into(), violation.blocked_url.clone().into());
+    body.insert("disposition".into(), violation.disposition.as_str().into());
+    crate::reporting_store::queue_report_for_document(
+        page,
+        crate::reporting_store::ReportInput {
+            report_type: "connection-allowlist",
+            url: crate::csp_report::strip_url_for_report(&page.document_url()),
+            body,
+            destination: violation.report_to.clone(),
+        },
+    );
 }
 
 /// Sends the reports of `violations` found in the navigation response `response_url` (status

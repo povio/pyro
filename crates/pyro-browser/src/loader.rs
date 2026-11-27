@@ -225,6 +225,12 @@ pub struct Resource {
     /// after a newline (`pyro_webapi::csp_report::pack_reporting_headers`; the endpoints its
     /// reports go to, `PageDom::set_reporting_endpoints`).
     pub reporting_endpoints: Option<String>,
+    /// A document's `Connection-Allowlist` and `Connection-Allowlist-Report-Only` response
+    /// headers, parsed against its response URL (`response-origin`); `None` without a valid one.
+    pub connection_allowlist: Option<std::sync::Arc<pyro_net::connection_allowlist::ConnectionPolicy>>,
+    /// A document's `Link` header relations that fetch (`preload`, `modulepreload`, `prefetch`),
+    /// started when it commits.
+    pub link_fetches: Vec<crate::preload::LinkFetch>,
     /// A document's `Link: <url>; rel="compression-dictionary"` headers, resolved: fetched after
     /// its `load` event.
     pub dictionary_links: Vec<String>,
@@ -636,6 +642,8 @@ impl ResourceLoader for NetLoader {
                 content_language: None,
                 last_modified: None,
                 reporting_endpoints: None,
+                connection_allowlist: None,
+                link_fetches: Vec::new(),
                 dictionary_links: Vec::new(),
                 speculation_rules: Vec::new(),
                 no_vary_search: None,
@@ -731,6 +739,8 @@ impl ResourceLoader for NetLoader {
                     content_language: None,
                     last_modified: None,
                     reporting_endpoints: None,
+                    connection_allowlist: None,
+                    link_fetches: Vec::new(),
                     dictionary_links: Vec::new(),
                     speculation_rules: Vec::new(),
                     no_vary_search: None,
@@ -817,6 +827,28 @@ impl ResourceLoader for NetLoader {
                                 pyro_webapi::csp_report::pack_reporting_headers(joined("reporting-endpoints"), joined("report-to"))
                             })
                             .flatten(),
+                        connection_allowlist: document
+                            .then(|| {
+                                let joined = |name: &str| {
+                                    let values: Vec<&str> =
+                                        h.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect();
+                                    (!values.is_empty()).then(|| values.join(", "))
+                                };
+                                let (enforce, report_only) = (joined("connection-allowlist"), joined("connection-allowlist-report-only"));
+                                if enforce.is_none() && report_only.is_none() {
+                                    return None;
+                                }
+                                pyro_net::connection_allowlist::ConnectionPolicy::from_headers(enforce.as_deref(), report_only.as_deref(), &h.url)
+                            })
+                            .flatten(),
+                        link_fetches: if document {
+                            crate::preload::link_header_fetches(
+                                h.headers.get_all(http::header::LINK).iter().filter_map(|v| v.to_str().ok()),
+                                &h.url,
+                            )
+                        } else {
+                            Vec::new()
+                        },
                         dictionary_links: if document {
                             crate::preload::compression_dictionary_links(
                                 h.headers.get_all(http::header::LINK).iter().filter_map(|v| v.to_str().ok()),
@@ -1448,6 +1480,8 @@ impl ResourceLoader for StaticLoader {
                         content_language: None,
                         last_modified: None,
                         reporting_endpoints: None,
+                        connection_allowlist: None,
+                        link_fetches: Vec::new(),
                         dictionary_links: Vec::new(),
                         speculation_rules: Vec::new(),
                         no_vary_search: None,
@@ -2146,8 +2180,20 @@ impl Browser {
         // sends it; the response is judged against it at commit (whatever loader answered), and
         // the committed document keeps it to bound its own frames' requirements.
         let requirement = crate::csp_embedded::requirement(self, page, &opts.url);
+        // Connection-Allowlist: a top-level navigation a script, a link or a form started is a
+        // connection of the document that started it (the frame's current one). It carries the
+        // guard, which fails it unsent when the allowlist refuses it and checks its redirects;
+        // a child frame's navigation is checked against its parent's list by `csp_precheck`.
+        let nav_guard = (script && page.child.is_none())
+            .then(|| self.doc(page).and_then(|p| p.main_frame.page_dom.clone()))
+            .flatten()
+            .and_then(|dom| {
+                let url = url::Url::parse(&opts.url).ok()?;
+                let guard = pyro_webapi::csp::allowlist_guard(&dom, &url)?;
+                Some((dom, guard))
+            });
         let req = FetchRequest {
-            csp: None,
+            csp: nav_guard.as_ref().map(|(_, guard)| guard.clone()),
             required_csp: requirement.as_ref().map(|r| r.policy.clone()),
             purpose: None,
             parser_priority: false,
@@ -2184,6 +2230,9 @@ impl Browser {
         let claim = self.claim_prefetch(page, &opts);
         let claim_url = opts.url.clone();
         let done: FetchDone = Box::new(move |b, res| {
+                if let Some((dom, guard)) = &nav_guard {
+                    pyro_webapi::csp::report_guard(dom, Some(guard), None);
+                }
                 let current = b.doc(page).and_then(|p| p.pending_loader.clone());
                 if current.as_ref() != Some(&loader_id) {
                     return; // superseded by another navigation
@@ -2472,6 +2521,8 @@ impl Browser {
             content_language: None,
             last_modified: None,
             reporting_endpoints: None,
+            connection_allowlist: None,
+            link_fetches: Vec::new(),
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,
@@ -2791,6 +2842,11 @@ impl Browser {
         if let Some(inherited) = inherited.filter(|_| !bypass_csp && resource.header_csp.is_none()) {
             inherited.apply(&page_dom);
         }
+        // The document's own `Connection-Allowlist` (a local-scheme document's, inherited just above,
+        // stands: its resource carries none).
+        if resource.connection_allowlist.is_some() {
+            page_dom.set_connection_allowlist(resource.connection_allowlist.clone());
+        }
         if let Some(csp) = resource.header_csp.as_deref().filter(|_| !bypass_csp) {
             let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));
             if !enforce.is_empty() {
@@ -2836,6 +2892,9 @@ impl Browser {
         }
         if !resource.dictionary_links.is_empty() {
             self.dictionary_headers(page, resource.dictionary_links.clone());
+        }
+        if !resource.link_fetches.is_empty() {
+            self.link_headers(page, resource.link_fetches.clone());
         }
         // Speculation rules are fetched for top-level documents only.
         if crate::speculation_rules::SUPPORTED && !resource.speculation_rules.is_empty() && page.child.is_none() {
@@ -5177,6 +5236,8 @@ mod disposition_tests {
             content_language: None,
             last_modified: None,
             reporting_endpoints: None,
+            connection_allowlist: None,
+            link_fetches: Vec::new(),
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,
