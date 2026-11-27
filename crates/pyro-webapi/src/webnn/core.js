@@ -702,7 +702,11 @@
         if (node.kind !== 'op') {
           if (seenLeaves.has(node)) continue;
           seenLeaves.add(node);
-          if (node.kind === 'input') inputs.set(node.name, node);
+          if (node.kind === 'input') {
+            // Input names must be unique among the inputs the graph uses (checked at build, as in Chrome).
+            if (inputs.has(node.name)) throw new TE(`The input name '${node.name}' is used more than once`);
+            inputs.set(node.name, node);
+          }
           else constants.push(node);
           continue;
         }
@@ -946,7 +950,7 @@
       const cs = isObject(context) ? contexts.get(context) : undefined;
       if (!cs) throw new TE("The provided value is not of type 'MLContext'");
       if (cs.destroyed) throw domError('InvalidStateError', 'The context is destroyed');
-      builders.set(this, { context: cs, contextObject: context, hasBuilt: false, inputNames: new Set() });
+      builders.set(this, { context: cs, contextObject: context, hasBuilt: false });
     }
     input(name, descriptor) {
       const bs = isObject(this) ? builders.get(this) : undefined;
@@ -957,11 +961,9 @@
       if (bs.hasBuilt) throw domError('InvalidStateError', 'The graph builder has already built a graph');
       if (bs.context.destroyed) throw domError('InvalidStateError', 'The context is destroyed');
       if (n === '') throw new TE('The input name must not be empty');
-      if (bs.inputNames.has(n)) throw new TE(`The input name '${n}' is used already`);
       checkDescriptor(plainFail, 'input', desc, GLOBAL_LIMITS.input);
       const node = new Node(bs, 'input', desc.dataType, freezeShape(desc.shape));
       node.name = n;
-      bs.inputNames.add(n);
       return operandOf(node);
     }
     constant(a, b = undefined) {
