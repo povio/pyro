@@ -671,7 +671,11 @@ impl<'a, 'i> NestedRuleParser<'a, 'i> {
                 let bounds = ScopeBounds::parse(&self.context, input, self.parse_relative())?;
                 AtRulePrelude::Scope(bounds)
             },
-            AtRuleType::StartingStyle => AtRulePrelude::StartingStyle,
+            AtRuleType::StartingStyle => {
+                // pyro: `@starting-style` takes no prelude (`@starting-style div {}` is invalid).
+                input.expect_exhausted()?;
+                AtRulePrelude::StartingStyle
+            },
             AtRuleType::AppearanceBase => {
                 // We allow parsing this in chrome sheets mostly just so that
                 // browser_parsable_css.js checks UA sheets properly.

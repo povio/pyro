@@ -702,6 +702,11 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
         text.push('}');
         return Some(ParsedRule::Other { rule_type: 0, text });
     }
+    // `@starting-style` takes no prelude (css-transitions-2: `@starting-style { <rule-list> }`).
+    if lower == "starting-style" {
+        let mut text = cssparser::ParserInput::new(&prelude);
+        if !cssparser::Parser::new(&mut text).is_exhausted() { return None; }
+    }
     let rule_type = match lower.as_str() {
         "import" => 3,
         "font-face" => 5,
@@ -744,6 +749,8 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
         {
             format!("{head} {{ }}")
         }
+        // An empty grouping block serializes as `{\n}` (as `CSSStartingStyleRule.cssText` does in Chrome).
+        Some(block) if block.trim().is_empty() && lower == "starting-style" => format!("{head} {{\n}}"),
         Some(block) => format!("{head} {{{block}}}"),
         None => format!("{head};"),
     };
