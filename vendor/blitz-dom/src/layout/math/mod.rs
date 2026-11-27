@@ -279,11 +279,14 @@ fn valid_multiscripts(children: &[&Node]) -> bool {
     }
 }
 
-/// Whether `element` is an atomic inline when inline-level (`replaced::is_inline_box`): the `math`
-/// root and an `mfrac`. (One that is not built as a box, `construct` returning `false`, holds its
-/// children's inline layout, as an inline-block would.)
+/// Whether `element` is an atomic inline when inline-level (`replaced::is_inline_box`): every
+/// MathML element (Chromium lays them out as `display: math`, a block-level box that is atomic
+/// inside a line; so `width`, `height`, `contain: size` and floats' containment apply to the
+/// tokens and the elements without a layout class of their own as to a row). One that is not
+/// built as a box, `construct` returning `false`, holds its children's inline layout, as an
+/// inline-block would.
 pub(crate) fn is_atomic_inline(element: &ElementData) -> bool {
-    element.name.ns == ns!(mathml) && matches!(&*element.name.local, "math" | "mfrac")
+    element.name.ns == ns!(mathml)
 }
 
 /// Construction of the box of a MathML element (`construct::collect_layout_children_with_wrap`):
