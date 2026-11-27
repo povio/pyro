@@ -4290,7 +4290,7 @@ impl Layout {
             let (x, y) = match scroller {
                 Some(el) => {
                     let Some(&offset) = self.element_scroll.get(&el) else { continue };
-                    if !dom.is_connected(el).unwrap_or(false) {
+                    if !dom.is_connected(el).unwrap_or(false) || self.contents_skipped(dom, el) {
                         continue;
                     }
                     offset
@@ -4570,7 +4570,7 @@ impl Layout {
             self.element_scroll.iter().filter(|(_, &o)| o != (0, 0)).map(|(&k, &v)| (k, v)).collect();
         scrolled.sort_by_key(|(k, _)| (k.idx, k.gen));
         for (el, (x, y)) in scrolled {
-            if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) {
+            if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) || self.contents_skipped(dom, el) {
                 continue;
             }
             let limit = |layout: &Self, axis: Axis, v: i32| {
@@ -5181,6 +5181,17 @@ impl Layout {
     /// (CSS Contain 2 § 4.1; WPT css-contain `content-visibility-056`, `-083`, `-084`).
     /// (Read from the engine's styles up the flat tree, deriving nothing: an action's reveal
     /// asks it at every click.)
+    /// Whether `el`'s contents are skipped by `content-visibility: hidden` on it or on an
+    /// ancestor: it has no scrollable overflow then, though it keeps the scroll offset it had
+    /// (CSS Contain 2 § 4.1; WPT css-contain `content-visibility-081`).
+    fn contents_skipped(&self, dom: &Dom, el: NodeId) -> bool {
+        use style::values::specified::box_::ContentVisibility;
+        self.style
+            .stylo_style(dom, el)
+            .is_some_and(|s| s.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden)
+            || self.in_hidden_contents(dom, el)
+    }
+
     fn in_hidden_contents(&self, dom: &Dom, el: NodeId) -> bool {
         use style::values::specified::box_::ContentVisibility;
         let mut cur = flat_parent_element(dom, el);
