@@ -1059,6 +1059,16 @@ fn node_or_null<'s>(s: &Scope<'s>, page: &Rc<PageDom>, n: Option<NodeId>) -> JsR
     }
 }
 
+/// The legacy anchor/focus endpoints "shadow-adjusted" against the document tree (Chrome's
+/// `DOMSelection`): a boundary inside a shadow tree is reported as the position of its outermost
+/// host in the host's parent, so the API never leaks nodes of a shadow tree.
+fn adjusted_endpoints(page: &Rc<PageDom>) -> JsResult<Option<(Point, Point)>> {
+    let Some((a, f)) = crate::editing::legacy_endpoints(page) else { return Ok(None) };
+    let dom = page.dom.borrow();
+    let backward = composed_order(&dom, a, f)? > 0;
+    Ok(Some((rescope_point(&dom, a, backward, &[])?, rescope_point(&dom, f, !backward, &[])?)))
+}
+
 pub struct Selection;
 impl JsClass for Selection {
     const NAME: &'static str = "Selection";
@@ -1077,10 +1087,10 @@ impl JsClass for Selection {
             }))
         });
         def.getter("isCollapsed", |s, sel| Ok(s.boolean(editing::legacy_endpoints(&sel.page).is_none_or(|(a, f)| a == f))));
-        def.getter("anchorNode", |s, sel| node_or_null(s, &sel.page, editing::legacy_endpoints(&sel.page).map(|(a, _)| a.0)));
-        def.getter("anchorOffset", |s, sel| Ok(s.number(editing::legacy_endpoints(&sel.page).map_or(0, |(a, _)| a.1) as f64)));
-        def.getter("focusNode", |s, sel| node_or_null(s, &sel.page, editing::legacy_endpoints(&sel.page).map(|(_, f)| f.0)));
-        def.getter("focusOffset", |s, sel| Ok(s.number(editing::legacy_endpoints(&sel.page).map_or(0, |(_, f)| f.1) as f64)));
+        def.getter("anchorNode", |s, sel| node_or_null(s, &sel.page, adjusted_endpoints(&sel.page)?.map(|(a, _)| a.0)));
+        def.getter("anchorOffset", |s, sel| Ok(s.number(adjusted_endpoints(&sel.page)?.map_or(0, |(a, _)| a.1) as f64)));
+        def.getter("focusNode", |s, sel| node_or_null(s, &sel.page, adjusted_endpoints(&sel.page)?.map(|(_, f)| f.0)));
+        def.getter("focusOffset", |s, sel| Ok(s.number(adjusted_endpoints(&sel.page)?.map_or(0, |(_, f)| f.1) as f64)));
         def.getter("direction", |s, sel| {
             Ok(s.string(match editing::selection(&sel.page) {
                 None => "none",
@@ -1099,6 +1109,7 @@ impl JsClass for Selection {
         });
         def.method("getComposedRanges", 0, |s, sel, args| composed_ranges(s, &sel.page, args.get(0)));
         def.method("getRangeAt", 1, |s, sel, a| {
+            a.require(1, "Selection.getRangeAt")?;
             if editing::selection(&sel.page).is_none() || to_u32(a.get(0)).ok() != Some(0) {
                 return Err(JsError::dom("IndexSizeError", "The index provided is not a valid range index."));
             }
@@ -1147,6 +1158,7 @@ impl JsClass for Selection {
             Ok(s.undefined())
         });
         def.method("collapse", 1, |s, sel, a| {
+            a.require(1, "Selection.collapse")?;
             if a.get(0).is_null() || a.get(0).is_undefined() {
                 editing::clear_selection(&sel.page);
                 return Ok(s.undefined());
@@ -1158,6 +1170,7 @@ impl JsClass for Selection {
             Ok(s.undefined())
         });
         def.method("setPosition", 1, |s, sel, a| {
+            a.require(1, "Selection.setPosition")?;
             if a.get(0).is_null() || a.get(0).is_undefined() {
                 editing::clear_selection(&sel.page);
                 return Ok(s.undefined());

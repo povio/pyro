@@ -1266,6 +1266,8 @@ impl JsClass for ShadowRoot {
     fn define(def: &mut ClassDef<Self>) {
         def.getter("customElementRegistry", |s, n| crate::custom::node_registry(s, n.page(), n.id));
         crate::positional_html::define_parent_methods(def);
+        // Chrome's non-standard `ShadowRoot.getSelection()`: the document's Selection object.
+        def.method("getSelection", 0, |s, n, _a| crate::range::get_selection(s, n.page()));
         // Fullscreen API: the document's fullscreen element, retargeted against this shadow root.
         def.accessor("fullscreenElement", |s, n| crate::fullscreen::element_for(s, n.page(), n.id), |_s, _n, _v| Ok(()));
         def.getter("host", |s, n| {
@@ -2434,7 +2436,11 @@ impl JsClass for Document {
             let root = node_value(s, n.page(), root)?;
             crate::view_transition::start(s, n.page(), doc, root, a.get(0))
         });
-        def.method("getSelection", 0, |s, _n, _a| {
+        def.method("getSelection", 0, |s, n, _a| {
+            // A document without a browsing context (createHTMLDocument, DOMParser) has a null defaultView and so no selection.
+            if n.page().document() != n.id {
+                return Ok(s.null());
+            }
             s.global().get_atom("getSelection")?.as_object().map_or(Ok(s.null()), |f| f.call(None, &[]))
         });
         def.method("execCommand", 1, |s, n, a| {
