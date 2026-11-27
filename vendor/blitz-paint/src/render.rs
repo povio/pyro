@@ -7636,10 +7636,18 @@ impl ElementCx<'_, '_> {
                     // the document's own: usvg read only `data:` URLs and the resources
                     // `inline_svg_for_privacy` left it (no opaque response's, nothing outside the
                     // subtree), so every image and image-like paint (a pattern, a mask, a filter's
-                    // image) in it is of the subtree's content.
+                    // image) in it is of the subtree's content. What a `<foreignObject>`'s HTML
+                    // painted through this painter is not the svg rebuild's: it classifies its
+                    // images itself (`Privacy`), so the commands it recorded (`foreign`, their
+                    // index ranges) are not noted here.
                     let mut recording = anyrender::recording::Scene::new();
+                    let mut foreign: Vec<std::ops::Range<usize>> = Vec::new();
                     let mut handler = |scene: &mut anyrender::recording::Scene, node: &anyrender_svg::usvg::Node| match anyrender_svg::foreign_object() {
-                        Some(fo) => self.draw_foreign_object(scene, fo),
+                        Some(fo) => {
+                            let start = scene.commands.len();
+                            self.draw_foreign_object(scene, fo);
+                            foreign.push(start..scene.commands.len());
+                        }
                         None => anyrender_svg::draw_error_box(scene, node),
                     };
                     match crate::filters::svg_filter_notes(self.context.dom, self.node, &svg.tree) {
@@ -7654,7 +7662,10 @@ impl ElementCx<'_, '_> {
                                 allowed.push(brush.image.data.id());
                             }
                         };
-                        for command in &recording.commands {
+                        for (index, command) in recording.commands.iter().enumerate() {
+                            if foreign.iter().any(|range| range.contains(&index)) {
+                                continue;
+                            }
                             match command {
                                 RenderCommand::Fill(fill) => note(&fill.brush),
                                 RenderCommand::Stroke(stroke) => note(&stroke.brush),
