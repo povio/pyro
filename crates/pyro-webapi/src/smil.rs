@@ -18,6 +18,11 @@
 //! SVG time containers of a document. `<set>` is an animation of its `to`
 //! value, with an indefinite simple duration unless `dur` is given.
 //!
+//! `<animateMotion>` ([`Motion`]) is not an attribute animation: [`geometry`] gives `getBBox()`,
+//! `getCTM()` and `getScreenCTM()` the supplemental transform each target has at the current time
+//! (translation to the position on its `path`, `<mpath>`, `values` or `from`/`to`/`by`, turned by
+//! `rotate`), applied after the target's `transform`.
+//!
 //! Timing (SMIL Animation 3.6, "Interval timing"): every animation element
 //! (`<animateMotion>` too) has a [`Timed`] reading of `begin`, `end`, `dur`,
 //! `repeatCount`, `repeatDur`, `min`, `max` and `restart`. Its `begin` and `end`
@@ -106,31 +111,44 @@ pub(crate) struct Animate {
 impl Animate {
     /// (simple-duration fraction, iteration index) at the end of an active duration of `length` ms.
     fn end_state(&self, length: f64) -> (f64, f64) {
-        if !self.dur_ms.is_finite() || length <= 0.0 {
-            return (0.0, 0.0);
-        }
-        let iterations = length / self.dur_ms;
-        let fraction = iterations.fract();
-        if fraction == 0.0 {
-            (1.0, iterations - 1.0)
-        } else {
-            (fraction, iterations.floor())
-        }
+        end_state(self.dur_ms, length)
     }
 
     /// (simple-duration fraction, iteration index, begin of the interval) at document time `time`
     /// (ms), while the animation is active or frozen: in the latest of its `intervals` that began.
     fn simple_state(&self, time: f64, intervals: &[Interval]) -> Option<(f64, f64, f64)> {
-        let interval = intervals.iter().rev().find(|i| i.begin <= time)?;
-        let active = time - interval.begin;
-        if time < interval.end {
-            Some(((active % self.dur_ms) / self.dur_ms, (active / self.dur_ms).floor(), interval.begin))
-        } else if self.freeze {
-            let (progress, iteration) = self.end_state(interval.end - interval.begin);
-            Some((progress, iteration, interval.begin))
-        } else {
-            None
-        }
+        simple_state(self.dur_ms, self.freeze, time, intervals)
+    }
+}
+
+/// (simple-duration fraction, iteration index) at the end of an active duration of `length` ms of an
+/// animation of simple duration `dur_ms`.
+fn end_state(dur_ms: f64, length: f64) -> (f64, f64) {
+    if !dur_ms.is_finite() || length <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let iterations = length / dur_ms;
+    let fraction = iterations.fract();
+    if fraction == 0.0 {
+        (1.0, iterations - 1.0)
+    } else {
+        (fraction, iterations.floor())
+    }
+}
+
+/// (simple-duration fraction, iteration index, begin of the interval) at document time `time` (ms),
+/// while an animation of simple duration `dur_ms` is active or (`freeze`) frozen: in the latest of its
+/// `intervals` that began.
+fn simple_state(dur_ms: f64, freeze: bool, time: f64, intervals: &[Interval]) -> Option<(f64, f64, f64)> {
+    let interval = intervals.iter().rev().find(|i| i.begin <= time)?;
+    let active = time - interval.begin;
+    if time < interval.end {
+        Some(((active % dur_ms) / dur_ms, (active / dur_ms).floor(), interval.begin))
+    } else if freeze {
+        let (progress, iteration) = end_state(dur_ms, interval.end - interval.begin);
+        Some((progress, iteration, interval.begin))
+    } else {
+        None
     }
 }
 
@@ -206,6 +224,8 @@ pub(crate) struct Read {
     /// The DOM version it was read at.
     version: u64,
     animates: Vec<Animate>,
+    /// The `<animateMotion>`s (their timing is `timed[motion.timed]` too).
+    motions: Vec<Motion>,
     timed: Vec<Timed>,
     /// `id` of an animation element: its index in `timed` (the first of an id).
     ids: HashMap<String, usize>,
@@ -425,7 +445,7 @@ fn read_animations(dom: &Dom, doc: NodeId, version: u64) -> Read {
             "animate" => Some(Kind::Animate),
             "animateTransform" => Some(Kind::Transform),
             "set" => Some(Kind::Set),
-            // (Timed, not animated here.)
+            // (Timed like the others; its motion is read by `read_motion`.)
             "animateMotion" => None,
             _ => continue,
         };
@@ -440,6 +460,12 @@ fn read_animations(dom: &Dom, doc: NodeId, version: u64) -> Read {
         if let Some(mut animate) = kind.and_then(|kind| read_animate(dom, doc, id, kind)) {
             animate.timed = index;
             read.animates.push(animate);
+        }
+        if kind.is_none() {
+            if let Some(mut motion) = read_motion(dom, doc, id) {
+                motion.timed = index;
+                read.motions.push(motion);
+            }
         }
     }
     read
@@ -883,6 +909,342 @@ fn read_animate(dom: &Dom, doc: NodeId, id: NodeId, kind: Kind) -> Option<Animat
         transform_type: attr("type").map_or("translate", str::trim).to_owned(),
         valid,
     })
+}
+
+/// How `<animateMotion rotate>` turns the element.
+#[derive(Clone, Copy, PartialEq)]
+enum Rotate {
+    /// The element's x axis follows the path's direction.
+    Auto,
+    /// As `Auto`, turned half way round.
+    AutoReverse,
+    /// A fixed angle in degrees (the default, 0).
+    Angle(f64),
+}
+
+/// Where an `<animateMotion>` moves its target along.
+enum Track {
+    /// `path` or `<mpath>`: a position is a distance along it.
+    Path(pyro_dom::svg_geometry::MotionPath),
+    /// `values`, `from`/`to`/`by`: the positions to move between.
+    Points(Vec<(f64, f64)>),
+}
+
+/// One `<animateMotion>` element as its attributes describe it (SVG 2, "animateMotion"): the
+/// supplemental transform it gives its target at the current SMIL time is a translation to the
+/// position on its track, turned by `rotate`.
+pub(crate) struct Motion {
+    target: NodeId,
+    /// The element's timing, an index into [`Read::timed`].
+    timed: usize,
+    dur_ms: f64,
+    freeze: bool,
+    calc: CalcMode,
+    /// `additive="sum"`, or `by` alone: the motion adds to the one below it.
+    additive: bool,
+    accumulate: bool,
+    rotate: Rotate,
+    track: Track,
+    /// A path animation: each key time's distance along the path, as a fraction of its length.
+    key_points: Option<Vec<f64>>,
+    /// Each position's time (a fraction of the simple duration).
+    key_times: Option<Vec<f64>>,
+    key_splines: Option<Vec<[f64; 4]>>,
+}
+
+/// A point `x,y` (SVG's `animateMotion` `from`, `to`, `by` and `values` items): two numbers and
+/// nothing after them.
+fn parse_point(text: &str) -> Option<(f64, f64)> {
+    let numbers: Vec<f64> = text
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.parse::<f64>().ok().filter(|v| v.is_finite()))
+        .collect::<Option<_>>()?;
+    match numbers[..] {
+        [x, y] => Some((x, y)),
+        _ => None,
+    }
+}
+
+/// `animateMotion` element `id`; `None` where its attributes make it have no effect (a motion path
+/// that does not parse or an `<mpath>` that names nothing, a `keyTimes`, `keyPoints` or `keySplines`
+/// that does not fit, a value that is not a point).
+fn read_motion(dom: &Dom, doc: NodeId, id: NodeId) -> Option<Motion> {
+    let attr = |name: &str| dom.get_attribute(id, name).ok().flatten();
+    let target = target_of(dom, doc, id)?;
+    let dur_ms = match attr("dur").map(str::trim) {
+        Some(text) => clock_ms(text).filter(|d| *d > 0.0).unwrap_or(f64::INFINITY),
+        None => f64::INFINITY,
+    };
+    // (An invalid `repeatCount` disables the animation's values; its timing is the element's.)
+    active_duration(dom, id, dur_ms)?;
+    let freeze = attr("fill").map(str::trim) == Some("freeze");
+    // The default of `animateMotion` is `paced`; along a path that is the path's length, as `linear`.
+    let calc = match attr("calcMode").map(str::trim) {
+        Some("discrete") => CalcMode::Discrete,
+        Some("linear") => CalcMode::Linear,
+        Some("spline") => CalcMode::Spline,
+        _ => CalcMode::Paced,
+    };
+    let rotate = match attr("rotate").map(str::trim) {
+        Some("auto") => Rotate::Auto,
+        Some("auto-reverse") => Rotate::AutoReverse,
+        Some(angle) => Rotate::Angle(angle.parse::<f64>().ok().filter(|a| a.is_finite()).unwrap_or(0.0)),
+        None => Rotate::Angle(0.0),
+    };
+    // The path of an `<mpath>` child wins over `path`, which wins over the values.
+    let mpath = dom.element_children(id).ok()?.find(|c| dom.element(*c).is_ok_and(|e| e.name.ns == ns!(svg) && &*e.name.local == "mpath"));
+    let mut by_only = false;
+    let track = if let Some(mpath) = mpath {
+        let href = dom.get_attribute(mpath, "href").ok().flatten().or_else(|| dom.get_attribute(mpath, "xlink:href").ok().flatten());
+        let referenced = href.and_then(|h| dom.get_element_by_id(doc, h.trim().strip_prefix('#')?).ok().flatten())?;
+        Track::Path(pyro_dom::svg_geometry::MotionPath::of_element(dom, referenced)?)
+    } else if let Some(data) = attr("path") {
+        Track::Path(pyro_dom::svg_geometry::MotionPath::parse(data)?)
+    } else if let Some(list) = attr("values") {
+        let mut parts: Vec<&str> = list.split(';').map(str::trim).collect();
+        if parts.last().is_some_and(|p| p.is_empty()) {
+            parts.pop();
+        }
+        let points: Vec<(f64, f64)> = parts.into_iter().map(parse_point).collect::<Option<_>>()?;
+        if points.is_empty() {
+            return None;
+        }
+        Track::Points(points)
+    } else {
+        // (The motion path's own start is the origin: a `to` or `by` animation starts there.)
+        Track::Points(match (attr("from"), attr("to"), attr("by")) {
+            (Some(from), Some(to), _) => vec![parse_point(from)?, parse_point(to)?],
+            (Some(from), None, Some(by)) => {
+                let (from, by) = (parse_point(from)?, parse_point(by)?);
+                vec![from, (from.0 + by.0, from.1 + by.1)]
+            }
+            (None, Some(to), _) => vec![(0.0, 0.0), parse_point(to)?],
+            (None, None, Some(by)) => {
+                by_only = true;
+                vec![(0.0, 0.0), parse_point(by)?]
+            }
+            _ => return None,
+        })
+    };
+    let discrete = calc == CalcMode::Discrete;
+    // `keyPoints` (a path's, one trailing `;` allowed) say how far along the path each key time is.
+    let key_points = match (&track, attr("keyPoints")) {
+        (Track::Path(_), Some(list)) => {
+            let points = parse_number_list(list)?;
+            if points.is_empty() || !points.iter().all(|p| (0.0..=1.0).contains(p)) {
+                return None;
+            }
+            Some(points)
+        }
+        _ => None,
+    };
+    // The positions the key times are for: a path's key points (without them its end points when
+    // discrete, else the whole path: from 0 to 1), the values.
+    let count = match (&track, &key_points) {
+        (_, Some(points)) => points.len(),
+        (Track::Path(path), None) if discrete => path.points().len(),
+        (Track::Path(_), None) => 2,
+        (Track::Points(points), None) => points.len(),
+    };
+    let key_times = match attr("keyTimes") {
+        // (A path without key points and not discrete is the whole path: no key times to fit.)
+        Some(_) if matches!(track, Track::Path(_)) && key_points.is_none() && !discrete => None,
+        Some(list) => {
+            let times = parse_number_list(list)?;
+            let ordered = times.windows(2).all(|w| w[0] <= w[1]) && times.iter().all(|t| (0.0..=1.0).contains(t));
+            // The first is 0 and, unless discrete, the last 1 (SMIL 3.2.3; WPT `animateMotion-spline-invalid-keyTimes`).
+            let ends = times.first() == Some(&0.0) && (discrete || times.last() == Some(&1.0));
+            if times.len() != count || !ordered || !ends {
+                return None;
+            }
+            Some(times)
+        }
+        None => None,
+    };
+    // `keyPoints` need `keyTimes` for as many.
+    if key_points.is_some() && key_times.is_none() {
+        return None;
+    }
+    let key_splines = match (calc, attr("keySplines")) {
+        (CalcMode::Spline, Some(list)) => {
+            let splines = parse_key_splines(list)?;
+            if splines.len() + 1 != count {
+                return None;
+            }
+            Some(splines)
+        }
+        (CalcMode::Spline, None) => return None,
+        _ => None,
+    };
+    Some(Motion {
+        target,
+        timed: 0,
+        dur_ms,
+        freeze,
+        calc,
+        additive: by_only || attr("additive").map(str::trim) == Some("sum"),
+        accumulate: attr("accumulate").map(str::trim) == Some("sum"),
+        rotate,
+        track,
+        key_points,
+        key_times,
+        key_splines,
+    })
+}
+
+/// The interval of `times` that `progress` is in, and how far through it (eased by the interval's
+/// `splines` entry).
+fn motion_interval(times: &[f64], splines: Option<&[[f64; 4]]>, progress: f64) -> (usize, f64) {
+    let i = times.iter().rposition(|t| *t <= progress).unwrap_or(0).min(times.len().saturating_sub(2));
+    let span = times.get(i + 1).map_or(0.0, |next| next - times[i]);
+    let local = if span > 0.0 { ((progress - times[i]) / span).clamp(0.0, 1.0) } else { 1.0 };
+    match splines.and_then(|s| s.get(i)) {
+        Some(p) => (i, spline(p, local)),
+        None => (i, local),
+    }
+}
+
+impl Motion {
+    /// The position on the track at `progress` of the simple duration, and the direction (degrees) of
+    /// the motion there.
+    fn position(&self, progress: f64) -> (f64, f64, f64) {
+        let discrete = self.calc == CalcMode::Discrete;
+        let splines = self.key_splines.as_deref();
+        match &self.track {
+            Track::Path(path) => {
+                if discrete {
+                    // The value whose time came last: one of the key points, else of the path's end points.
+                    let count = self.key_points.as_ref().map_or_else(|| path.points().len(), Vec::len);
+                    let i = match &self.key_times {
+                        Some(times) => times.iter().rposition(|t| *t <= progress).unwrap_or(0),
+                        None => ((progress * count as f64).floor() as usize).min(count.saturating_sub(1)),
+                    };
+                    return match &self.key_points {
+                        Some(points) => path.at(points[i.min(points.len() - 1)]),
+                        None => {
+                            let (x, y) = path.points()[i.min(count - 1)];
+                            (x, y, 0.0)
+                        }
+                    };
+                }
+                match (&self.key_points, &self.key_times) {
+                    (Some(points), Some(times)) => {
+                        let (i, local) = motion_interval(times, splines, progress);
+                        let (from, to) = (points[i], points.get(i + 1).copied().unwrap_or(points[i]));
+                        path.at(from + (to - from) * local)
+                    }
+                    // (The whole path, from its start to its end, over the simple duration.)
+                    _ => path.at(match splines {
+                        Some(_) => motion_interval(&[0.0, 1.0], splines, progress).1,
+                        None => progress,
+                    }),
+                }
+            }
+            Track::Points(points) => {
+                let n = points.len();
+                if n == 1 {
+                    return (points[0].0, points[0].1, 0.0);
+                }
+                if discrete {
+                    let i = match &self.key_times {
+                        Some(times) => times.iter().rposition(|t| *t <= progress).unwrap_or(0),
+                        None => ((progress * n as f64).floor() as usize).min(n - 1),
+                    };
+                    return (points[i].0, points[i].1, 0.0);
+                }
+                let times: Vec<f64> = match &self.key_times {
+                    Some(times) => times.clone(),
+                    None if self.calc == CalcMode::Paced => {
+                        let distances: Vec<f64> = points.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).collect();
+                        let total: f64 = distances.iter().sum();
+                        if total > 0.0 {
+                            let mut at = 0.0;
+                            let mut times = vec![0.0];
+                            for step in distances {
+                                at += step;
+                                times.push(at / total);
+                            }
+                            times
+                        } else {
+                            (0..n).map(|i| i as f64 / (n - 1) as f64).collect()
+                        }
+                    }
+                    None => (0..n).map(|i| i as f64 / (n - 1) as f64).collect(),
+                };
+                let (i, local) = motion_interval(&times, splines, progress);
+                let (a, b) = (points[i], points[(i + 1).min(n - 1)]);
+                let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+                let direction = if dx.hypot(dy) < 1e-9 { 0.0 } else { dy.atan2(dx).to_degrees() };
+                (a.0 + dx * local, a.1 + dy * local, direction)
+            }
+        }
+    }
+
+    /// The supplemental transform at `progress` of iteration `iteration` (0-based): the translation
+    /// to the position (plus, with `accumulate="sum"`, the end position once per earlier repeat)
+    /// times the rotation.
+    fn matrix(&self, progress: f64, iteration: f64) -> [f64; 6] {
+        let (mut x, mut y, direction) = self.position(progress);
+        if self.accumulate && iteration > 0.0 {
+            let (end_x, end_y, _) = self.position(1.0);
+            x += end_x * iteration;
+            y += end_y * iteration;
+        }
+        let angle = match self.rotate {
+            Rotate::Auto => direction,
+            Rotate::AutoReverse => direction + 180.0,
+            Rotate::Angle(angle) => angle,
+        };
+        if angle == 0.0 {
+            return [1.0, 0.0, 0.0, 1.0, x, y];
+        }
+        let (sin, cos) = angle.to_radians().sin_cos();
+        [cos, sin, -sin, cos, x, y]
+    }
+}
+
+/// What SMIL animation changes in the geometry of the document's elements at its current time, for
+/// `getBBox()`, `getCTM()` and `getScreenCTM()` ([`pyro_dom::svg_geometry::Animated`]).
+#[derive(Default)]
+pub(crate) struct Geometry {
+    /// The supplemental motion transform of each element an `<animateMotion>` moves.
+    motion: HashMap<NodeId, [f64; 6]>,
+}
+
+impl pyro_dom::svg_geometry::Animated for Geometry {
+    fn motion(&self, el: NodeId) -> Option<[f64; 6]> {
+        self.motion.get(&el).copied()
+    }
+}
+
+/// The animated geometry of the document at its current SMIL time. Takes no borrow of the DOM or the
+/// layout that outlives it: call it before borrowing them.
+pub(crate) fn geometry(page: &PageDom) -> Geometry {
+    let mut geometry = Geometry::default();
+    let Ok(dom) = page.dom.try_borrow() else { return geometry };
+    let cache = &page.animation_events.smil;
+    let Some(animations) = cache.animations(&dom, page.document()) else { return geometry };
+    let Some(time) = document_time(page, page.timeline_now_ms()) else { return geometry };
+    let intervals = cache.intervals(&animations);
+    // The sandwich: the motions begun later lie on top of the earlier ones (a stable sort keeps the
+    // document order of those that began together).
+    let mut found: Vec<(f64, NodeId, [f64; 6], bool)> = Vec::new();
+    for m in animations.motions.iter() {
+        let Some((progress, iteration, begin)) = simple_state(m.dur_ms, m.freeze, time, &intervals[m.timed]) else { continue };
+        if dom.is_alive(m.target) {
+            found.push((begin, m.target, m.matrix(progress, iteration), m.additive));
+        }
+    }
+    found.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_, target, matrix, additive) in found {
+        let next = match geometry.motion.get(&target) {
+            Some(under) if additive => pyro_dom::svg_geometry::multiply(*under, matrix),
+            _ => matrix,
+        };
+        geometry.motion.insert(target, next);
+    }
+    geometry
 }
 
 /// `10px` as `(10, "px")`: a number and its unit (`None` for any other text).
@@ -1640,8 +2002,8 @@ pub(crate) fn version(page: &PageDom) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        clock_ms, events_for, number_unit, parse_key_splines, parse_number_list, parse_spec, resolve_all, Dynamic, Fired,
-        Interval, Read, Restart, Spec, Timed,
+        clock_ms, events_for, number_unit, parse_key_splines, parse_number_list, parse_point, parse_spec, resolve_all, Dynamic,
+        Fired, Interval, Read, Restart, Spec, Timed,
     };
     use pyro_dom::Dom;
     use std::collections::HashMap;
@@ -1751,6 +2113,17 @@ mod tests {
         // x of a control point stays in 0..1, y may leave it.
         assert_eq!(parse_key_splines("0.5 -1 0.5 2;"), Some(vec![[0.5, -1.0, 0.5, 2.0]]));
         assert_eq!(parse_key_splines("1.5 0 0.5 1"), None);
+    }
+
+    #[test]
+    fn motion_points() {
+        assert_eq!(parse_point("0,0"), Some((0.0, 0.0)));
+        assert_eq!(parse_point(" 200 , 100 "), Some((200.0, 100.0)));
+        assert_eq!(parse_point("-300,50"), Some((-300.0, 50.0)));
+        // Anything after the second number makes it no point.
+        assert_eq!(parse_point("200,100 junk"), None);
+        assert_eq!(parse_point("1 2 3"), None);
+        assert_eq!(parse_point("1"), None);
     }
 
     #[test]
