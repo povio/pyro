@@ -52,7 +52,7 @@ macro_rules! global_events {
             "progress", "ratechange", "reset", "resize", "scroll", "scrollend", "scrollsnapchange", "scrollsnapchanging",
             "securitypolicyviolation", "seeked",
             "seeking", "select", "selectionchange", "selectstart", "slotchange", "stalled", "submit", "suspend",
-            "timeupdate", "toggle", "volumechange", "waiting", "wheel", "pointerdown", "pointerup", "pointermove",
+            "timeupdate", "toggle", "volumechange", "waiting", "wheel", "pointerdown", "pointerup", "pointermove", "pointerrawupdate",
             "pointerover", "pointerout", "pointerenter", "pointerleave", "pointercancel", "gotpointercapture",
             "lostpointercapture", "animationstart", "animationend", "animationiteration", "animationcancel",
             "transitionstart", "transitionend", "transitionrun", "transitioncancel", "webkitanimationstart",

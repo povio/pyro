@@ -151,6 +151,9 @@ pub struct EventFields {
     /// `coalescedEvents` / `predictedEvents` of the init dictionary.
     pub coalesced_events: Vec<Persistent>,
     pub predicted_events: Vec<Persistent>,
+    /// A trusted `pointermove`/`pointerrawupdate`'s coalesced list was made (it holds the event
+    /// the input layer delivered), or this event is such a list's entry: no list of its own.
+    pub(crate) coalesced_made: bool,
     /// `MouseEvent.movementX/Y`: set for trusted moves, or by the init dictionary.
     pub movement_x: f64,
     pub movement_y: f64,
@@ -1527,7 +1530,24 @@ impl JsClass for PointerEvent {
         def.getter("persistentDeviceId", |s, e| Ok(s.number(e.fields.borrow().persistent_device_id)));
         def.getter("pointerType", |s, e| Ok(s.string(&e.fields.borrow().pointer_type)));
         def.getter("isPrimary", |s, e| Ok(s.boolean(e.fields.borrow().is_primary)));
-        def.pure_method("getCoalescedEvents", 0, |s, e, _a| {
+        // Pointer Events "coalesced events": a trusted pointermove/pointerrawupdate carries the
+        // input events that make it up. The input layer delivers one event per move here, so the
+        // list is that one event (as it was dispatched: not bubbling, not cancelable, the same
+        // target), made when first asked for so a later redispatch keeps it.
+        def.method("getCoalescedEvents", 0, |s, e, _a| {
+            if matches!(&*e.state.borrow().ty, "pointermove" | "pointerrawupdate") {
+                let own = {
+                    let (st, f) = (e.state.borrow(), e.fields.borrow());
+                    st.is_trusted && !f.coalesced_made && f.coalesced_events.is_empty()
+                };
+                if own {
+                    let entry = coalesced_entry(e);
+                    let wrapped = wrap_event(s, &entry)?;
+                    let mut f = e.fields.borrow_mut();
+                    f.coalesced_made = true;
+                    f.coalesced_events.push(Persistent::new(s, wrapped.value()));
+                }
+            }
             let events: Vec<Value<'_>> = e.fields.borrow().coalesced_events.iter().map(|p| p.get(s)).collect();
             Ok(s.array(&events)?.value())
         });
@@ -1536,6 +1556,52 @@ impl JsClass for PointerEvent {
             Ok(s.array(&events)?.value())
         });
     }
+}
+
+/// The entry of a trusted pointer event's coalesced list: a copy of the event as the input layer
+/// delivered it, with no list of its own.
+fn coalesced_entry(e: &EventData) -> EventData {
+    let (ty, time_stamp, target) = {
+        let st = e.state.borrow();
+        (st.ty.to_string(), st.time_stamp, st.target)
+    };
+    let entry = EventCore::trusted(&e.page, EventInterface::PointerEvent, &ty, false, false);
+    {
+        let mut st = entry.state.borrow_mut();
+        st.time_stamp = time_stamp;
+        st.target = target;
+        st.composed = e.state.borrow().composed;
+    }
+    {
+        let (mut f, o) = (entry.fields.borrow_mut(), e.fields.borrow());
+        f.detail = o.detail;
+        f.screen_x = o.screen_x;
+        f.screen_y = o.screen_y;
+        f.client_x = o.client_x;
+        f.client_y = o.client_y;
+        (f.ctrl_key, f.shift_key, f.alt_key, f.meta_key) = (o.ctrl_key, o.shift_key, o.alt_key, o.meta_key);
+        f.extra_modifiers = o.extra_modifiers;
+        f.button = o.button;
+        f.buttons = o.buttons;
+        f.related_target = o.related_target;
+        f.pointer_id = o.pointer_id;
+        f.pointer_type = o.pointer_type.clone();
+        f.is_primary = o.is_primary;
+        f.width = o.width;
+        f.height = o.height;
+        f.pressure = o.pressure;
+        f.tangential_pressure = o.tangential_pressure;
+        f.tilt_x = o.tilt_x;
+        f.tilt_y = o.tilt_y;
+        f.twist = o.twist;
+        f.altitude_angle = o.altitude_angle;
+        f.azimuth_angle = o.azimuth_angle;
+        f.persistent_device_id = o.persistent_device_id;
+        f.movement_x = o.movement_x;
+        f.movement_y = o.movement_y;
+        f.coalesced_made = true;
+    }
+    entry
 }
 
 pub struct WheelEvent;

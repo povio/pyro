@@ -52,6 +52,17 @@ pub(crate) fn secure(s: &Scope<'_>, page: &PageDom) -> bool {
         || page.dom.borrow().document_data(page.document()).ok().is_some_and(|d| trustworthy(&d.url.to_string()))
 }
 
+/// [`secure`] for code that has no realm at hand (the input layer): the embedder's answer, else
+/// whether the document's URL is potentially trustworthy.
+pub(crate) fn secure_page(page: &PageDom) -> bool {
+    if let Some(secure) = page.hooks_secure_context() {
+        return secure;
+    }
+    page.dom.borrow().document_data(page.document()).ok().is_some_and(|d| {
+        pyro_net::Url::parse(&d.url.to_string()).is_ok_and(|u| pyro_net::is_potentially_trustworthy_url(&u))
+    })
+}
+
 /// Removes the `[SecureContext]` members above from a window that is not a secure context. Run
 /// when the realm is set up.
 pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
@@ -67,6 +78,21 @@ pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
     if let Some(window) = global.get_atom("Window")?.as_object() {
         if let Some(proto) = window.get_atom("prototype")?.as_object() {
             proto.delete("caches")?;
+        }
+    }
+    // `PointerEvent.getCoalescedEvents()` and `onpointerrawupdate` are `[SecureContext]` too.
+    for (interface, members) in [
+        ("PointerEvent", &["getCoalescedEvents"][..]),
+        ("Window", &["onpointerrawupdate"][..]),
+        ("Document", &["onpointerrawupdate"][..]),
+        ("HTMLElement", &["onpointerrawupdate"][..]),
+        ("SVGElement", &["onpointerrawupdate"][..]),
+        ("MathMLElement", &["onpointerrawupdate"][..]),
+    ] {
+        if let Some(proto) = global.get_atom(interface)?.as_object().map(|o| o.get_atom("prototype")).transpose()?.and_then(|p| p.as_object()) {
+            for name in members {
+                proto.delete(name)?;
+            }
         }
     }
     if let Some(navigator) = global.get_atom("Navigator")?.as_object() {

@@ -2843,12 +2843,12 @@ pub(crate) fn mouse_event(
         // A physical mouse move or a boundary crossing changes no button.
         // MouseEvent uses 0 here; PointerEvent reserves -1 for this case.
         f.button = match ty {
-            "pointermove" | "pointerover" | "pointerout" | "pointerenter" | "pointerleave" => -1,
+            "pointermove" | "pointerrawupdate" | "pointerover" | "pointerout" | "pointerenter" | "pointerleave" => -1,
             "mousemove" | "mouseover" | "mouseout" | "mouseenter" | "mouseleave" | "dragover" => 0,
             _ => m.button.dom_button(),
         };
         f.buttons = m.buttons;
-        if matches!(ty, "pointermove" | "mousemove") {
+        if matches!(ty, "pointermove" | "pointerrawupdate" | "mousemove") {
             (f.movement_x, f.movement_y) = m.movement;
         }
         f.detail = m.click_count as f64;
@@ -2901,18 +2901,22 @@ fn fire_pointer_move(
     button: Option<i16>,
     hit: Option<pyro_dom::geometry::GeneratedHit>,
 ) {
-    if crate::target::unheard(page, "pointermove") {
-        return;
-    }
-    let ev = mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true);
-    {
-        let mut f = ev.fields.borrow_mut();
-        if let Some(b) = button {
-            f.button = b;
+    // `pointerrawupdate` (secure contexts only) comes first, unfiltered and not cancelable, and
+    // is not held back by what the pointermove's listeners do.
+    for (ty, cancelable) in [("pointerrawupdate", false), ("pointermove", true)] {
+        if (ty == "pointerrawupdate" && !crate::secure_context::secure_page(page)) || crate::target::unheard(page, ty) {
+            continue;
         }
-        f.pseudo_hit = hit.map(|hit| (target, hit));
+        let ev = mouse_event(page, EventInterface::PointerEvent, ty, m, cancelable);
+        {
+            let mut f = ev.fields.borrow_mut();
+            if let Some(b) = button {
+                f.button = b;
+            }
+            f.pseudo_hit = hit.map(|hit| (target, hit));
+        }
+        fire(page, target, &ev);
     }
-    fire(page, target, &ev);
 }
 
 /// Whether `node` is a disabled form control or inside one (a button, input, select or
@@ -3883,7 +3887,7 @@ fn touch_pointer_event(
     related: Option<TargetKey>,
 ) -> EventData {
     let boundary = matches!(ty, "pointerenter" | "pointerleave");
-    let cancelable = !boundary && !matches!(ty, "pointercancel" | "gotpointercapture" | "lostpointercapture");
+    let cancelable = !boundary && !matches!(ty, "pointercancel" | "pointerrawupdate" | "gotpointercapture" | "lostpointercapture");
     let ev = EventCore::trusted(page, EventInterface::PointerEvent, ty, !boundary, cancelable);
     {
         let mut f = ev.fields.borrow_mut();
@@ -3903,7 +3907,7 @@ fn touch_pointer_event(
         f.width = p.width;
         f.height = p.height;
         f.pressure = p.pressure;
-        if ty == "pointermove" {
+        if matches!(ty, "pointermove" | "pointerrawupdate") {
             (f.movement_x, f.movement_y) = p.movement;
         }
         f.related_target = related;
@@ -4294,6 +4298,9 @@ pub fn dispatch_touch(
             }
             let state = PointerState::moved(&t.input, movement);
             capture(page, t, &state, modifiers);
+            if crate::secure_context::secure_page(page) && !crate::target::unheard(page, "pointerrawupdate") {
+                fire_touch_pointer_routed(page, "pointerrawupdate", t, &state, modifiers);
+            }
             fire_touch_pointer_routed(page, "pointermove", t, &state, modifiers);
         }
         // A single touch within the slop region is still a tap: no
