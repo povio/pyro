@@ -3754,10 +3754,14 @@ fn dispatch_mouse_inner(
         }
     }
     // A boundary listener may have removed the target (WPT mousemove_after_mouseover_target_removed).
+    let target_removed = !page.dom.borrow().is_connected(target).unwrap_or(false);
     let (target, tkey) = live_target(page, target, tkey);
     match kind {
         MouseKind::Moved => {
-            if touch.is_none() {
+            // The `pointermove` of a move whose boundary events took its target out of the document is
+            // not fired (Chrome 134; WPT pointerevents/pointermove_after_pointerover_target_removed);
+            // its compatibility `mousemove` goes to the nearest connected ancestor.
+            if touch.is_none() && !target_removed {
                 fire_pointer_move(page, tkey, m, None, pseudo);
             }
             // A listener may have removed the target: the compatibility event goes to its
