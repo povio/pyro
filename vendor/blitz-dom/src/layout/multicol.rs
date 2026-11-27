@@ -393,8 +393,10 @@ struct Breaks {
     /// them and the container) and their tops.
     nested: Vec<(crate::NodeId, f32)>,
     /// pyro: the baselines of the strip's lines (its inline formatting contexts', not nested
-    /// containers'), in tree order: the container's first baseline is the highest a column shows.
-    baselines: Vec<f32>,
+    /// containers'), in tree order: the container's first baseline is the highest a column shows, its last the
+    /// lowest one the last row's columns show. Each is with the middle of its line box, which says the column
+    /// the line is in (a baseline on a column's bottom edge, as of a line of `line-height: 0`, is that column's).
+    baselines: Vec<(f32, f32)>,
     /// pyro: the boxes of `box-decoration-break: clone` (their border boxes' block ranges and
     /// block-start border and padding): a column that starts inside one shows its block-start
     /// border and padding again first, so its content is that much lower.
@@ -2089,9 +2091,14 @@ impl LayoutPassState<'_> {
         }
 
         if columns.fragments.len() > 1 && !vertical {
-            let shown = |y: Option<f32>| y.map(|y| y + columns.shift_at(y).1);
-            baselines.first = shown(baselines.first);
-            baselines.last = shown(baselines.last);
+            // pyro: a baseline is shown in the column its line box is in (by the line's middle: one on a column's
+            // bottom edge belongs to that column, not the next), WPT css-flexbox `flex-align-baseline-multicol-001`.
+            let line_of = |y: f32, last: bool| {
+                let mut lines = breaks.baselines.iter().filter(|&&(baseline, _)| (baseline - y).abs() <= EPSILON);
+                (if last { lines.last() } else { lines.next() }).map_or(y, |&(_, middle)| middle)
+            };
+            baselines.first = baselines.first.map(|y| y + columns.shift_at(line_of(y, false)).1);
+            baselines.last = baselines.last.map(|y| y + columns.shift_at(line_of(y, true)).1);
             // pyro: the first baseline is the highest of those the first row's columns show, not
             // the strip's first (Chromium; WPT css-multicol `baseline-002`).
             let first_top = columns.fragments[0].top;
@@ -2101,9 +2108,19 @@ impl LayoutPassState<'_> {
                 .take_while(|f| f.top == first_top)
                 .map(|f| f.end)
                 .fold(f32::NEG_INFINITY, f32::max);
-            for &y in breaks.baselines.iter().filter(|&&y| y < row_end) {
-                let y = y + columns.shift_at(y).1;
+            for &(y, middle) in breaks.baselines.iter().filter(|&&(_, middle)| middle < row_end) {
+                let y = y + columns.shift_at(middle).1;
                 baselines.first = Some(baselines.first.map_or(y, |first| first.min(y)));
+            }
+            // pyro: and the last is the lowest of those the last row's columns show (Chromium; the same tests:
+            // `flex-align-baseline-multicol-001` `last baseline`), unless the last row is a spanner's.
+            if let Some(last_top) = columns.fragments.last().filter(|f| !f.spanner).map(|f| f.top) {
+                for &(y, middle) in &breaks.baselines {
+                    if let Some(fragment) = columns.fragment_at(middle).filter(|f| !f.spanner && f.top == last_top) {
+                        let y = y + fragment.offset.y;
+                        baselines.last = Some(baselines.last.map_or(y, |last| last.max(y)));
+                    }
+                }
             }
         }
         if inputs.run_mode == RunMode::PerformLayout {
@@ -3034,7 +3051,7 @@ impl BaseDocument {
                 .filter(|line| !line.text_range().is_empty() || line.items().next().is_some())
                 .map(|line| {
                     let m = line.metrics();
-                    found.baselines.push(origin + m.baseline / scale);
+                    found.baselines.push((origin + m.baseline / scale, origin + (m.block_min_coord + m.block_max_coord) / 2.0 / scale));
                     (origin + m.block_min_coord / scale, origin + m.block_max_coord / scale)
                 })
                 .collect();
@@ -3476,7 +3493,7 @@ struct Found {
     /// The floats' block ranges.
     floats: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::baselines`].
-    baselines: Vec<f32>,
+    baselines: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::clones`].
     clones: Vec<(f32, f32, f32)>,
     /// The furthest bottom of a box or line.
