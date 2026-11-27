@@ -339,9 +339,16 @@ pub(crate) fn construct_math(doc: &mut BaseDocument, node_id: NodeId, children: 
 /// own content: a token is no box of this kind), a child of `display: contents` (it takes no
 /// part in layout, its children would), or an inline child holding a block.
 pub(crate) fn build_children(doc: &BaseDocument, node_id: NodeId, children: &mut thin_vec::ThinVec<NodeId>) -> bool {
+    build_children_in(doc, node_id, children, false)
+}
+
+/// [`build_children`]; with `cell` an element whose `display` is a table cell (an `mtd`'s, by the user
+/// agent sheet) is a box of this kind too: its children are laid out as an inferred `mrow`.
+pub(crate) fn build_children_in(doc: &BaseDocument, node_id: NodeId, children: &mut thin_vec::ThinVec<NodeId>, cell: bool) -> bool {
     let node = &doc.nodes[node_id];
     let Some(display) = node.display_style() else { return false };
-    if display.inside() != DisplayInside::Flow || !matches!(display.outside(), DisplayOutside::Inline | DisplayOutside::Block) {
+    let flow = display.inside() == DisplayInside::Flow && matches!(display.outside(), DisplayOutside::Inline | DisplayOutside::Block);
+    if !flow && !(cell && display.inside() == DisplayInside::TableCell) {
         return false;
     }
     if node.before().is_some() || node.after().is_some() {

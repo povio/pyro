@@ -25,7 +25,7 @@ use crate::{BaseDocument, NodeId};
 /// are built as they were (`false`).
 pub(crate) fn construct(doc: &mut BaseDocument, node_id: NodeId, kind: MathKind, children: &mut ThinVec<NodeId>) -> bool {
     match kind {
-        MathKind::Table(super::TableKind::Cell) => super::row::construct(doc, node_id, kind, children),
+        MathKind::Table(super::TableKind::Cell) => super::build_children_in(doc, node_id, children, true),
         _ => false,
     }
 }
