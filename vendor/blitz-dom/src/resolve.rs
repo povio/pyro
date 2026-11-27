@@ -1210,8 +1210,11 @@ impl BaseDocument {
             let (mut offset, min, max) = self.scroll_state(crate::scrolling::ScrollTarget::Node(id), false);
             // The page's scroll offsets as its embedder last told them (a geometry document does
             // not have them on its nodes; one it does not list is at the origin there).
-            if let Some((offsets, _)) = &self.timeline_scroll {
-                if let Some(&(x, y)) = offsets.get(&id) {
+            if let Some((offsets, viewport)) = &self.timeline_scroll {
+                // (The root element's scroll is the viewport's.)
+                if self.try_root_element().is_some_and(|root| root.id == id) {
+                    offset = crate::Point { x: viewport.0, y: viewport.1 };
+                } else if let Some(&(x, y)) = offsets.get(&id) {
                     offset = crate::Point { x, y };
                 }
             }
