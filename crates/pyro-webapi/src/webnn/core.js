@@ -1056,6 +1056,7 @@
         const opts = convertDictionary(options, CONTEXT_OPTIONS);
         void opts;
         if (!native.active()) throw domError('InvalidStateError', 'The document is not fully active');
+        if (!native.policy()) throw domError('SecurityError', 'Access to the WebNN API is disallowed by permissions policy');
         const context = new MLContext(token);
         let resolveLost;
         const lost = new PromiseC((r) => {

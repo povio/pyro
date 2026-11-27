@@ -51,6 +51,12 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let native = s.object();
     let active = s.function("active", |s, _, _| Ok(s.boolean(crate::target::page_of(s)?.is_fully_active())))?;
     native.set_atom("active", active.value())?;
+    // policy(): whether the document's permissions policy allows `webnn` (a refusal is reported).
+    let policy = s.function("policy", |s, _, _| {
+        let page = crate::target::page_of(s)?;
+        Ok(s.boolean(crate::permissions_policy::check_feature(s, &page, "webnn")))
+    })?;
+    native.set_atom("policy", policy.value())?;
     Ok(native)
 }
 
