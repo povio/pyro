@@ -805,7 +805,7 @@ job instead (a few wptserve and testdriver pages on lp-m1).
 - `click` (and with it `bless`): a mouse click at the element's in-view center, after scrolling it into view.
 - `send_keys`: focus, then the keys typed one by one (WebDriver's Private Use Area codes as key names, modifiers held
   until pressed again or the end).
-- `action_sequence` (`new test_driver.Actions()`): tick by tick, pointer (mouse; touch and pen as mouse), key, wheel
+- `action_sequence` (`new test_driver.Actions()`): tick by tick, pointer (mouse and pen as mouse; touch as touch: `Input.dispatchTouchEvent`, one id per source, all active touches in each message), key, wheel
   and pause sources; element origins become the element's center.
 - Elements in frames: the frame's content-box offset in the page is added.
 

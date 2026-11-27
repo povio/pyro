@@ -49,24 +49,60 @@ async function sendKeys(page, keys) {
 }
 
 // Perform Actions: tick by tick across the sources, each tick as long as its longest pause or move.
-async function actions(page, off, sources) {
+//
+// A pointer source with `parameters.pointerType: 'touch'` plays as touch through Input.dispatchTouchEvent (`touch`: the
+// page's CDP session): its own position, one stable touch id, and every active touch in each message, so several touch
+// sources are one multi-touch gesture. Moves of down touches in one tick are interpolated together, in real time (the
+// engine's gesture velocity reads the event times). Mouse and pen sources play as mouse.
+async function actions(page, off, sources, touch, touchState) {
   const ticks = Math.max(0, ...sources.map((s) => s.actions.length));
   const pos = { x: 0, y: 0 };
   const pressed = new Set(), buttons = new Set();
   // Click count, as Chrome's WebDriver counts it: a press of the same button at the same spot within 500 ms of the
   // last one counts one more (a double click's second press carries detail 2).
   let last = null, clicks = 1;
+  // Touch state outlives the call (a gesture may continue in the next one): per source id, one stable touch id.
+  const touches = new Map();
+  for (const s of sources) {
+    if (s.type !== 'pointer' || s.parameters?.pointerType !== 'touch') continue;
+    if (!touchState.has(s.id)) touchState.set(s.id, { id: touchState.size, x: 0, y: 0, down: false });
+    touches.set(s, touchState.get(s.id));
+  }
+  const points = () => [...touchState.values()].filter((t) => t.down).map((t) => ({ x: t.x, y: t.y, id: t.id }));
   for (let i = 0; i < ticks; i++) {
     let wait = 0;
+    const moves = [];
     for (const s of sources) {
       const a = s.actions[i];
       if (!a) continue;
+      const tp = touches.get(s);
       const target = () => {
         const x = a.x ?? 0, y = a.y ?? 0;
-        if (a.origin === 'pointer') return { x: pos.x + x, y: pos.y + y };
+        if (a.origin === 'pointer') return tp ? { x: tp.x + x, y: tp.y + y } : { x: pos.x + x, y: pos.y + y };
         if (a.origin === 'element') return { x: off.x + a.at.x + x, y: off.y + a.at.y + y };
         return { x: off.x + x, y: off.y + y };
       };
+      if (tp && (a.type === 'pointerMove' || a.type === 'pointerDown' || a.type === 'pointerUp' || a.type === 'pointerCancel')) {
+        if (a.type === 'pointerMove') {
+          const t = target(), d = a.duration ?? 0;
+          if (tp.down) moves.push({ tp, from: { x: tp.x, y: tp.y }, to: t, d });
+          else { tp.x = t.x; tp.y = t.y; }
+          wait = Math.max(wait, d);
+        } else if (a.type === 'pointerDown') {
+          if (!tp.down) { tp.down = true; await touch('touchStart', points()); }
+        } else if (a.type === 'pointerUp') {
+          if (tp.down) {
+            // The released touch alone; none at all when it was the last one.
+            const rest = points().filter((p) => p.id !== tp.id);
+            await touch('touchEnd', rest.length ? [{ x: tp.x, y: tp.y, id: tp.id }] : []);
+            tp.down = false;
+          }
+        } else if (points().length) {
+          await touch('touchCancel', []);
+          for (const t of touchState.values()) t.down = false;
+        }
+        continue;
+      }
       switch (a.type) {
         case 'pause': wait = Math.max(wait, a.duration ?? 0); break;
         case 'pointerMove': {
@@ -99,12 +135,26 @@ async function actions(page, off, sources) {
         default: throw new Error(`testdriver: action ${a.type} is not supported`);
       }
     }
+    if (moves.length) {
+      const d = Math.max(...moves.map((m) => m.d));
+      const steps = Math.max(1, Math.round(d / 16));
+      for (let k = 1; k <= steps; k++) {
+        for (const m of moves) {
+          const f = m.d ? Math.min(1, (k * d) / steps / m.d) : 1;
+          m.tp.x = m.from.x + (m.to.x - m.from.x) * f;
+          m.tp.y = m.from.y + (m.to.y - m.from.y) * f;
+        }
+        await touch('touchMove', points());
+        if (k < steps) await sleep(d / steps);
+      }
+      wait = Math.max(0, wait - (d - d / steps));
+    }
     if (wait) await sleep(wait);
   }
 }
 
 export async function installTestdriver(context) {
-  const sessions = new WeakMap();
+  const sessions = new WeakMap(), touchStates = new WeakMap();
   await context.exposeBinding('__pyroTestdriver', async ({ page, frame }, json) => {
     try {
       const c = JSON.parse(json);
@@ -114,7 +164,10 @@ export async function installTestdriver(context) {
       } else if (c.cmd === 'send_keys') {
         await sendKeys(page, c.keys);
       } else if (c.cmd === 'actions') {
-        await actions(page, off, c.sources);
+        const session = async () => sessions.get(page) ?? sessions.set(page, await context.newCDPSession(page)).get(page);
+        const touch = async (type, touchPoints) => (await session()).send('Input.dispatchTouchEvent', { type, touchPoints });
+        if (!touchStates.has(page)) touchStates.set(page, new Map());
+        await actions(page, off, c.sources, touch, touchStates.get(page));
       } else if (c.cmd === 'aria') {
         // The snapshot's first line is the element's own node: `- role "name" [...]` (or `- role: text`).
         const snap = await frame.locator(`[data-pyro-testdriver="${c.id}"]`).ariaSnapshot({ timeout: 5000 });
