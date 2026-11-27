@@ -12,7 +12,7 @@
 // it only runs its clock and ends its sources on time.
 (natives => {
   'use strict';
-  const { decode, activated, timer, clearTimer: clearClock, audioWorklet: makeAudioWorklet, secureContext, mediaBlocked } = natives;
+  const { decode, activated, timer, clearTimer: clearClock, audioWorklet: makeAudioWorklet, secureContext, mediaBlocked, fullyActive, foreignOutputTimestamp } = natives;
   const apply = Reflect.apply;
   const ET = EventTarget;
   const dispatch = ET.prototype.dispatchEvent;
@@ -2398,6 +2398,20 @@
     if (!c) throw invocation();
     return c;
   }
+  // HTML "fully active": a context of a document that was replaced or whose frame was removed is
+  // closed, its constructors throw and its promise methods reject, all InvalidStateError.
+  function requireActive(iface) {
+    if (!fullyActive()) throw new DE(`Failed to construct '${iface}': The document is not fully active.`, 'InvalidStateError');
+  }
+  function rejectInactive(method, iface) {
+    return fullyActive() ? null : PromiseC.reject(new DE(`Failed to execute '${method}' on '${iface}': The document is not fully active.`, 'InvalidStateError'));
+  }
+  function closeIfDetached(c) {
+    if (c.state === 'closed' || fullyActive()) return;
+    if (c.timer !== undefined) { clearClock(c.timer); c.timer = undefined; }
+    if (c.pumpTimer !== undefined) { clearClock(c.pumpTimer); c.pumpTimer = undefined; }
+    c.state = 'closed';
+  }
   function renderQuantum(hint) {
     if (typeof hint === 'number') return ulong(hint);
     if (hint !== undefined && !['default', 'hardware'].includes(`${hint}`)) throw new TypeErrorC('Invalid AudioContextRenderSizeCategory.');
@@ -2438,7 +2452,7 @@
       return c.audioWorklet;
     }
     get listener() { return contextListener(this); }
-    get state() { return ctxOf(this).state; }
+    get state() { const c = ctxOf(this); closeIfDetached(c); return c.state; }
     createBuffer(numberOfChannels, length, sampleRate) {
       ctxOf(this);
       if (arguments.length < 3) throw new TypeErrorC(`Failed to execute 'createBuffer' on 'BaseAudioContext': 3 arguments required, but only ${arguments.length} present.`);
@@ -2484,6 +2498,8 @@
     }
     decodeAudioData(audioData, successCallback, errorCallback) {
       const c = ctxOf(this);
+      const detached = rejectInactive('decodeAudioData', 'BaseAudioContext');
+      if (detached !== null) return detached;
       if (arguments.length < 1) {
         return PromiseC.reject(new TypeErrorC("Failed to execute 'decodeAudioData' on 'BaseAudioContext': 1 argument required, but only 0 present."));
       }
@@ -2585,6 +2601,7 @@
   // A real-time context: no output device, a clock while running.
   class AudioContext extends BaseAudioContext {
     constructor(options) {
+      requireActive('AudioContext');
       const o = contextOptions(options, 'AudioContext');
       const latency = o.latencyHint;
       if (typeof latency === 'string' && !['interactive', 'balanced', 'playback'].includes(latency)) {
@@ -2693,11 +2710,20 @@
       return c.playbackStats ??= new AudioPlaybackStats(secret, c);
     }
     getOutputTimestamp() {
-      const c = ctxOf(this);
-      return { contextTime: c.time(), performanceTime: c.state === 'running' ? now() : 0 };
+      // A method of another realm's AudioContext works on a context of this one.
+      if (!contexts.has(this)) {
+        const foreign = foreignOutputTimestamp === undefined ? undefined : foreignOutputTimestamp(this);
+        if (foreign === undefined) throw invocation();
+        return { contextTime: foreign.contextTime, performanceTime: foreign.performanceTime };
+      }
+      const stamp = localOutputTimestamp(this);
+      if (stamp === undefined) throw invocation();
+      return stamp;
     }
     resume() {
       const c = ctxOf(this);
+      const detached = rejectInactive('resume', 'AudioContext');
+      if (detached !== null) return detached;
       if (c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'resume' on 'AudioContext': Cannot resume a context that has been closed.", 'InvalidStateError'));
       // iframe-media-pausing: not rendered under a policy that disables it, the context is
       // interrupted and the promise rejects.
@@ -2721,16 +2747,25 @@
     }
     suspend() {
       const c = ctxOf(this);
+      const detached = rejectInactive('suspend', 'AudioContext');
+      if (detached !== null) return detached;
       if (c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'suspend' on 'AudioContext': Cannot suspend a context that has been closed.", 'InvalidStateError'));
       return new PromiseC((resolve) => setTimer(() => { if (c.state !== 'closed') c.halt('suspended'); resolve(); }, 0));
     }
     close() {
       const c = ctxOf(this);
+      const detached = rejectInactive('close', 'AudioContext');
+      if (detached !== null) return detached;
       if (c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'close' on 'AudioContext': Cannot close a context that is being closed or has already been closed.", 'InvalidStateError'));
       return new PromiseC((resolve) => setTimer(() => { c.halt('closed'); resolve(); }, 0));
     }
   }
   webidl(AudioContext, 'AudioContext');
+  function localOutputTimestamp(self) {
+    const c = contexts.get(self);
+    if (c === undefined || c.offline) return undefined;
+    return { contextTime: c.time(), performanceTime: c.state === 'running' ? now() : 0 };
+  }
   // The real-time contexts of this realm (weakly), for `frameRendered`.
   const realtime = new Set();
   // The frame became not rendered (false) or rendered (true) while the document's policy
@@ -2764,6 +2799,7 @@
   // An offline context renders its graph into a buffer.
   class OfflineAudioContext extends BaseAudioContext {
     constructor(numberOfChannels, length, sampleRate) {
+      requireActive('OfflineAudioContext');
       let channels, frames, rate, quantum = DEFAULT_QUANTUM;
       if (arguments.length === 1 && numberOfChannels !== null && typeof numberOfChannels === 'object') {
         const o = numberOfChannels;
@@ -2794,6 +2830,8 @@
     get length() { return ctxOf(this).length; }
     startRendering(chunkSize = null) {
       const c = ctxOf(this);
+      const detached = rejectInactive('startRendering', 'OfflineAudioContext');
+      if (detached !== null) return detached;
       return new PromiseC((resolve, reject) => {
         const size = chunkSize === null ? null : ulong(chunkSize);
         if (c.closing || c.state === 'closed' || c.committed === c.length) throw new DE('No further frames can be rendered.', 'InvalidStateError');
@@ -2813,6 +2851,8 @@
     }
     close() {
       const c = ctxOf(this);
+      const detached = rejectInactive('close', 'OfflineAudioContext');
+      if (detached !== null) return detached;
       if (c.closing || c.state === 'closed') return PromiseC.reject(new DE('Context is already closed.', 'InvalidStateError'));
       c.closing = true;
       return new PromiseC(resolve => {
@@ -2831,6 +2871,8 @@
     }
     resume() {
       const c = ctxOf(this);
+      const detached = rejectInactive('resume', 'OfflineAudioContext');
+      if (detached !== null) return detached;
       if (c.closing || c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'resume' on 'OfflineAudioContext': Cannot resume a context that has been closed.", 'InvalidStateError'));
       if (!c.rendering) return PromiseC.reject(new DE("Failed to execute 'resume' on 'OfflineAudioContext': Cannot resume a context that has not started.", 'InvalidStateError'));
       if (c.state === 'suspended') {
@@ -2842,6 +2884,8 @@
     }
     suspend(suspendTime) {
       const c = ctxOf(this);
+      const detached = rejectInactive('suspend', 'OfflineAudioContext');
+      if (detached !== null) return detached;
       if (arguments.length < 1) return PromiseC.reject(new TypeErrorC("Failed to execute 'suspend' on 'OfflineAudioContext': 1 argument required, but only 0 present."));
       const t = +suspendTime;
       if (!(t >= 0)) return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': negative suspend time (${t}) is not allowed`, 'InvalidStateError'));
@@ -2957,7 +3001,7 @@
   webidl(OfflineAudioCompletionEvent, 'OfflineAudioCompletionEvent');
 
   return {
-    localImpulseInfo, frameRendered, BaseAudioContext, AudioContext, AudioPlaybackStats, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
+    localImpulseInfo, localOutputTimestamp, frameRendered, BaseAudioContext, AudioContext, AudioPlaybackStats, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode, PeriodicWave,
     ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, DynamicsCompressorNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
     AudioParamMap, AudioWorkletNode, AudioProcessingEvent, ScriptProcessorNode,

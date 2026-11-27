@@ -107,6 +107,34 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         })?
         .value(),
     )?;
+    // `getOutputTimestamp` of another realm's AudioContext (an iframe's method called on this
+    // realm's context): the owner module's `localOutputTimestamp`, its result handed over.
+    natives.set_atom(
+        "foreignOutputTimestamp",
+        s.function("foreignOutputTimestamp", |s, _, a| {
+            let value = a.get(0);
+            let Some(owner) = value.as_object().and_then(|o| s.object_realm(o)) else { return Ok(s.undefined()) };
+            if owner.id() == s.realm_id() || owner.is_disposed() {
+                return Ok(s.undefined());
+            }
+            let scope = owner.scope()?;
+            let page = crate::target::page_of(&scope)?;
+            let Some(module) = MODULE.existing(&scope, &page)? else { return Ok(s.undefined()) };
+            let stamp = module
+                .get_atom("localOutputTimestamp")?
+                .as_object()
+                .expect("private Web Audio module")
+                .call(None, &[value])?;
+            Ok(Persistent::new(&scope, stamp).get(s))
+        })?
+        .value(),
+    )?;
+    // HTML "fully active": false once the document was replaced or its frame removed (its contexts
+    // are closed, their constructors throw and their promises reject).
+    natives.set_atom(
+        "fullyActive",
+        s.function("fullyActive", |s, _, _| Ok(s.boolean(crate::target::page_of(s)?.is_fully_active())))?.value(),
+    )?;
     natives.set_atom("makeConvolver", s.function("makeConvolver", make_convolver)?.value())?;
     let decode = s.function("decode", |s, _this, a| {
         let page = crate::target::page_of(s)?;
