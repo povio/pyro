@@ -820,6 +820,9 @@
       return N.publicOf(asymKind(name), algorithm.namedCurve || '', k.material, material =>
         makeKey('public', true, algorithm, usages, view(material)));
     },
+    // The four (en|de)capsulate methods are kept although Pyro implements no KEM algorithm (no ML-KEM): Chrome 158
+    // stable exposes them on SubtleCrypto (and runs ML-KEM-768 through them), so scripts feature-detect on the method.
+    // They validate their arguments like Chrome and reject NotSupportedError for the algorithm: nothing is pretended.
     encapsulateKey(args) {
       required(args, 5, 'encapsulateKey');
       keyArg(args[1], 'parameter 2');
