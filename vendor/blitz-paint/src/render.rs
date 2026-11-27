@@ -1964,6 +1964,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     }
                     cx.draw_math_fraction_bar(scene);
                     cx.draw_math_radical(scene);
+                    cx.draw_math_stretch(scene);
                     #[cfg(feature = "custom-widget")]
                     cx.draw_custom_widget(scene);
                     if !skipped {
@@ -4225,6 +4226,11 @@ impl ElementCx<'_, '_> {
         // pyro: HTML-in-Canvas: a canvas with content=drawable lays its content out without
         // painting it in place (on every path: plain, phased, multicol).
         if self.element.is_drawable_canvas() {
+            return;
+        }
+        // pyro: a stretched or large MathML operator is drawn as its variant glyph or glyph
+        // assembly (`draw_math_stretch`) in place of its text.
+        if self.element.math_stretch.is_some() {
             return;
         }
         // (Where a positioned inline box left for its paint-tree entry is painted from: `draw_inline_pass`.)
@@ -7804,6 +7810,35 @@ impl ElementCx<'_, '_> {
                 &anyrender::Paint::from(color),
                 1.0,
                 self.transform * Affine::translate((origin_x, sign.baseline as f64 * scale)),
+                None,
+                glyphs,
+            );
+        }
+    }
+
+    /// pyro: a stretched or large MathML operator's glyphs (`blitz_dom::layout::math::operator`):
+    /// the size variant of its character or the parts of its glyph assembly, in the element's
+    /// `color`, in place of its text (Chromium's `MathMLPainter::PaintStretchyOrLargeOperator`).
+    fn draw_math_stretch(&self, scene: &mut impl PaintScene) {
+        let Some(stretch) = self.element.math_stretch.as_ref() else { return };
+        if self.style.get_inherited_box().visibility != StyloVisibility::Visible {
+            return;
+        }
+        let content = self.frame.content_box;
+        let color = self.style.clone_color().as_srgb_color();
+        let scale = self.scale;
+        for glyph in &stretch.glyphs {
+            let glyphs = std::iter::once(anyrender::Glyph { id: glyph.glyph as _, x: 0.0, y: 0.0 });
+            scene.draw_glyphs(
+                &stretch.font,
+                stretch.size * scale as f32,
+                false,
+                &[],
+                kurbo::Vec2::default(),
+                Fill::NonZero,
+                &anyrender::Paint::from(color),
+                1.0,
+                self.transform * Affine::translate((content.x0 + glyph.x as f64 * scale, glyph.baseline as f64 * scale)),
                 None,
                 glyphs,
             );

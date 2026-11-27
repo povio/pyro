@@ -68,6 +68,27 @@ pub struct MathRadical {
     pub sign: Option<MathRadicalSign>,
 }
 
+/// pyro: the glyphs of a stretched or large MathML operator: a size variant of its character or the
+/// parts of a glyph assembly, painted in place of its text (`layout::math::operator`, drawn by
+/// blitz-paint). Lengths are CSS px.
+#[derive(Clone)]
+pub struct MathStretch {
+    pub font: linebender_resource_handle::FontData,
+    /// The font size.
+    pub size: f32,
+    /// Each glyph, its id, the offset of its origin from the content box's start edge, and the
+    /// offset of its baseline from the border box's top.
+    pub glyphs: Vec<MathStretchGlyph>,
+}
+
+/// A glyph of a [`MathStretch`].
+#[derive(Clone, Copy)]
+pub struct MathStretchGlyph {
+    pub glyph: u16,
+    pub x: f32,
+    pub baseline: f32,
+}
+
 /// The glyph of a [`MathRadical`]'s sign.
 #[derive(Clone)]
 pub struct MathRadicalSign {
@@ -147,6 +168,9 @@ pub struct ElementData {
     pub math_fraction_bar: Option<[f32; 2]>,
     /// pyro: a MathML radical's bar and sign, as its last layout placed them (`layout::math::radical`).
     pub math_radical: Option<MathRadical>,
+    /// pyro: the glyphs a stretched or large MathML operator paints in place of its text, as its
+    /// last layout placed them (`layout::math::operator`). `None` for a text operator.
+    pub math_stretch: Option<MathStretch>,
     /// pyro: the class of a MathML box built with a layout of its own (`layout::math`, set with
     /// `NodeFlags::IS_MATH_BOX` by its construction); `None` for any other element.
     pub(crate) math_kind: Option<crate::layout::math::MathKind>,
@@ -506,6 +530,7 @@ impl Clone for ElementData {
             content_gradient: self.content_gradient,
             math_fraction_bar: None,
             math_radical: None,
+            math_stretch: None,
             math_kind: None,
             math_italic_correction: 0.0,
             reference_images: self.reference_images.clone(),
@@ -651,6 +676,7 @@ impl ElementData {
             content_gradient: false,
             math_fraction_bar: None,
             math_radical: None,
+            math_stretch: None,
             math_kind: None,
             math_italic_correction: 0.0,
             reference_images: ThinVec::new(),

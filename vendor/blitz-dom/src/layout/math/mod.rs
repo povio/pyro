@@ -306,6 +306,7 @@ pub(crate) fn construct_math(doc: &mut BaseDocument, node_id: NodeId, children: 
         }
         // A box built again has no bar, no kind and no italic correction until it is laid out.
         element.math_fraction_bar = None;
+        element.math_stretch = None;
         element.math_kind = None;
         element.math_italic_correction = 0.0;
     }
@@ -419,7 +420,7 @@ impl LayoutPassState<'_> {
         let ascent = margin.top + baseline;
         let descent = output.size.height + margin.top + margin.bottom - ascent;
         let element = self.nodes[child].element_data();
-        ChildMetrics {
+        let metrics = ChildMetrics {
             id: child,
             margin,
             size: output.size,
@@ -428,7 +429,10 @@ impl LayoutPassState<'_> {
             descent,
             italic_correction: element.map_or(0.0, |element| element.math_italic_correction),
             kind: element.and_then(|element| element.math_kind),
-        }
+        };
+        // An operator stretched along the block axis or large is as `operator` makes it (one
+        // measured at a known size, stretched along the inline axis by its parent, is not).
+        if known.width.is_none() && known.height.is_none() { operator::stretch(self, metrics) } else { metrics }
     }
 
     /// What the layout classes are told about the box `dom_id` (`parent_width`: what its
@@ -471,7 +475,12 @@ impl LayoutPassState<'_> {
         let listed: Vec<NodeId> = self.nodes[dom_id].layout_children.borrow().as_ref().map(|c| c.to_vec()).unwrap_or_default();
         let Some(ctx) = self.math_context(dom_id, kind, inputs.parent_size.width) else { return LayoutOutput::HIDDEN };
         let (flow, out_of_flow): (Vec<NodeId>, Vec<NodeId>) = listed.into_iter().partition(|&child| !self.nodes[child].is_out_of_flow());
-        let metrics: Vec<ChildMetrics> = flow.iter().map(|&child| self.measure_math_child(child, Size::NONE)).collect();
+        let mut metrics: Vec<ChildMetrics> = flow.iter().map(|&child| self.measure_math_child(child, Size::NONE)).collect();
+        // The operators of a row stretch to the row's children (Core § 3.2.4.2): an `msqrt`, an
+        // `mpadded` and a cell lay their children out as a row.
+        if matches!(kind, MathKind::Row | MathKind::Sqrt | MathKind::Padded | MathKind::Table(TableKind::Cell)) {
+            operator::stretch_children(self, &mut metrics);
+        }
 
         let layout = match kind {
             MathKind::Under | MathKind::Over | MathKind::UnderOver => underover::layout(self, dom_id, kind, &ctx, &metrics),

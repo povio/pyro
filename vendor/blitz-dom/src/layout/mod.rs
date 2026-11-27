@@ -170,6 +170,8 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the floats the running inline layout placed, with the top of each margin box
     /// (content-box relative, CSS px): `text-box-trim` moves them with its lines.
     pub(crate) inline_placed_floats: Vec<(crate::NodeId, f32)>,
+    /// pyro: the block stretch target an embellished operator is measured again with (`layout::math::operator`).
+    pub(crate) math_stretch: Option<math::operator::StretchTarget>,
     /// This rounding pass's nodes reached and subtrees skipped (see `layout::writing_mode`).
     #[cfg(feature = "writing-mode")]
     pub(crate) round_counts: (u64, u64),
@@ -264,6 +266,7 @@ impl<'doc> LayoutPassState<'doc> {
             #[cfg(feature = "writing-mode")]
             orthogonal_percent_basis: None,
             inline_placed_floats: Vec::new(),
+            math_stretch: None,
             #[cfg(feature = "writing-mode")]
             round_counts: (0, 0),
             column_spanners: None,

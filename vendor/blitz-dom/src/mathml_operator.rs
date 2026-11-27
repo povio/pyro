@@ -290,6 +290,28 @@ fn row_form(parent: &Node, parent_elem: &ElementData, id: NodeId) -> Form {
     }
 }
 
+/// The form of the `<mo>` `node` for the dictionary: its `form` attribute, else the position of its
+/// embellished operator in the row that holds it (as `spacing`), else infix (the operator's
+/// parent does not lay out a row). Read by the operator layout (`layout::math::operator`) for its
+/// stretchy, symmetric and large-operator properties.
+pub(crate) fn operator_form(node: &Node) -> Form {
+    let Some(elem) = mathml(node) else { return Form::Infix };
+    if let Some(form) = explicit_form(elem) {
+        return form;
+    }
+    let mut current = node;
+    for _ in 0..MAX_DEPTH {
+        let Some(parent) = current.parent.map(|id| node.with(id)) else { break };
+        let Some(parent_elem) = mathml(parent) else { break };
+        if can_embellish(parent) && continues_embellishment(parent, current) {
+            current = parent;
+            continue;
+        }
+        return if lays_out_row(kind(parent, parent_elem)) { row_form(parent, parent_elem, current.id) } else { Form::Infix };
+    }
+    Form::Infix
+}
+
 /// A `<length>` without a sign or a percentage: the values Chrome honours (anything else falls
 /// back to the dictionary).
 fn valid_space(value: &str) -> bool {
