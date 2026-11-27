@@ -10,8 +10,10 @@
 // (a-rate) or per quantum (k-rate). An OfflineAudioContext renders when
 // startRendering() runs; a real-time AudioContext has no output device, so
 // it runs its clock, ends its sources on time and computes the quanta the
-// clock passed only while a worklet node, script processor or analyser
-// observes the graph (its destination result is dropped).
+// clock passed only for a worklet node or script processor (on a timer) and,
+// for an analyser, when it is read (the graph is caught up to the clock then;
+// nothing runs while it is not read). Falling more than a bound behind the
+// clock skips ahead. The destination result is dropped.
 (natives => {
   'use strict';
   const { decode, activated, timer, clearTimer: clearClock, audioWorklet: makeAudioWorklet, secureContext, mediaBlocked, fullyActive, foreignOutputTimestamp } = natives;
@@ -966,6 +968,10 @@
   }
   function readAnalyser(self, array, frequency, bytes) {
     const state = analyserOf(self);
+    // A real-time context computes nothing for an analyser nobody reads: the graph is caught up to the
+    // clock now, only as far back as the history holds.
+    const c = state.ctx;
+    if (c.catchUp && c.pumpOn) c.catchUp(c.currentFrames(), 600, state.history.length + c.quantum);
     const type = bytes ? 'Uint8Array' : 'Float32Array';
     if (apply(arrayKind, array, []) !== type) throw new TypeErrorC(`Expected a ${type}`);
     const buffer = apply(arrayBufferOf, array, []);
@@ -986,7 +992,7 @@
       const { fftSize = 2048, maxDecibels = -30, minDecibels = -100, smoothingTimeConstant = 0.8 } = opts;
       const high = finite(maxDecibels, 'construct', 'AnalyserNode', 'double'), low = finite(minDecibels, 'construct', 'AnalyserNode', 'double');
       if (low >= high) throw new DE('Invalid decibel range.', 'IndexSizeError');
-      const state = { history: new F32(32768), cursor: 0, low, high };
+      const state = { history: new F32(32768), cursor: 0, low, high, ctx: ctxOf(context) };
       analysers.set(this, state);
       this.fftSize = fftSize;
       this.smoothingTimeConstant = smoothingTimeConstant;
@@ -2629,13 +2635,16 @@
         return c.frames + floor(elapsed / quantum) * quantum;
       };
       // There is no output device: the graph is computed (so that script processors, worklets and
-      // analysers see real samples) for the quanta the clock has passed, but only while one of those
-      // nodes exists (`c.pulled`, `c.analyserNodes`); the destination's result is dropped.
+      // analysers see real samples) for the quanta the clock has passed: on a timer while a worklet
+      // node or script processor exists (`c.pulled`), and up to the clock when an analyser is read
+      // (`readAnalyser`); the destination's result is dropped.
       c.rendered = 0; // next frame to compute
       c.pumpOn = false;
       c.pumpTimer = undefined;
-      c.wantsPump = () => !!(c.pulled?.size || c.analyserNodes?.size);
-      c.catchUp = (target, limit) => {
+      // Behind the clock by more than `bound` frames: skip ahead instead of computing them all.
+      c.catchUp = (target, limit, bound) => {
+        const floorFrame = floor((target - bound) / quantum) * quantum;
+        if (c.rendered < floorFrame) c.rendered = floorFrame;
         c.graphEpoch = (c.graphEpoch ?? 0) + 1;
         for (let done = 0; c.rendered <= target && done < limit; done++) {
           renderBlock(c, c.rendered);
@@ -2644,17 +2653,20 @@
         flushEnded(c);
       };
       c.syncPump = () => {
-        if (c.state !== 'running' || !c.wantsPump()) {
+        const observed = c.state === 'running' && !!(c.pulled?.size || c.analyserNodes?.size);
+        // The graph computes from now on (sources end where they really stop, in the render).
+        if (observed && !c.pumpOn) { c.pumpOn = true; c.rendered = max(c.rendered, c.currentFrames()); }
+        // Only a node that runs for its side effects needs the timer; an analyser is caught up on a read.
+        if (!observed || !c.pulled?.size) {
           if (c.pumpTimer !== undefined) { clearClock(c.pumpTimer); c.pumpTimer = undefined; }
           return;
         }
-        if (!c.pumpOn) { c.pumpOn = true; c.rendered = max(c.rendered, c.currentFrames()); }
         if (c.pumpTimer === undefined) {
           c.pumpTimer = timer(max(1, quantum * 1000 / rate), () => {
             c.pumpTimer = undefined;
             if (c.state !== 'running') return;
             // A node that throws does not stop the clock of the others.
-            try { c.catchUp(c.currentFrames(), 64); } finally { c.syncPump(); }
+            try { c.catchUp(c.currentFrames(), 64, 2 * rate); } finally { c.syncPump(); }
           });
         }
       };
@@ -2669,7 +2681,7 @@
         if (!c.statsLocked) refreshDuration(c);
         if (c.state === 'running') {
           // What the clock has passed is computed before it stops.
-          if (c.pumpOn) c.catchUp(c.currentFrames(), 2048);
+          if (c.pumpOn) c.catchUp(c.currentFrames(), 2048, 2 * c.rate);
           c.frames = c.currentFrames();
         }
         if (c.timer !== undefined) { clearClock(c.timer); c.timer = undefined; }
