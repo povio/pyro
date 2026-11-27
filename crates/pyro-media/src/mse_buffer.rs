@@ -3,7 +3,7 @@
 use std::mem::size_of;
 use std::rc::Rc;
 
-use crate::mse::{Error, Event, Mp4Parser, Sample, Track};
+use crate::mse::{Encrypted, Error, Event, Mp4Parser, Sample, Track};
 
 const BUFFER_LIMIT: usize = 64 << 20;
 const TIME_EPSILON: f64 = 1e-9;
@@ -223,6 +223,8 @@ pub struct CodedBuffer {
     configs: Vec<Rc<Track>>,
     pending_init: bool,
     first_init_duration: Option<f64>,
+    /// Initialization data of the init segments appended, not yet reported (EME `encrypted`).
+    encrypted: Vec<Encrypted>,
 }
 
 impl CodedBuffer {
@@ -239,6 +241,7 @@ impl CodedBuffer {
             configs: Vec::new(),
             pending_init: false,
             first_init_duration: None,
+            encrypted: Vec::new(),
         }
     }
 
@@ -256,6 +259,10 @@ impl CodedBuffer {
     }
     pub fn partial_segment(&self) -> bool {
         self.parser.partial_segment()
+    }
+    /// The protection initialization data found in appended init segments since the last call.
+    pub fn take_encrypted(&mut self) -> Vec<Encrypted> {
+        std::mem::take(&mut self.encrypted)
     }
     pub fn highest_end(&self) -> f64 {
         self.tracks.iter().map(|t| t.end).fold(0., f64::max)
@@ -315,6 +322,7 @@ impl CodedBuffer {
     }
     fn process(&mut self, data: &[u8]) -> Result<bool, BufferError> {
         let events = self.parser.append(data)?;
+        self.encrypted.extend(self.parser.take_encrypted());
         let mut initialized = false;
         for event in events {
             match event {
@@ -505,12 +513,13 @@ mod tests {
             height: 48,
             sample_rate: 0,
             channels: 0,
+            protection: None,
         }));
         b
     }
 
     fn sample(time: f64, key: bool, marker: u8) -> Sample {
-        Sample { track_id: 1, dts: time, pts: time, duration: 1., key, data: Bytes::from(vec![marker]) }
+        Sample { track_id: 1, dts: time, pts: time, duration: 1., key, data: Bytes::from(vec![marker]), enc: None }
     }
 
     #[test]
