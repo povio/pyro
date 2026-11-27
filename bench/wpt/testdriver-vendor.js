@@ -30,8 +30,11 @@
   internal.click = (el) => call({ cmd: 'click', at: center(el) });
 
   internal.send_keys = (el, keys) => {
-    // WebDriver's Element Send Keys focuses the element (it does not click it), then types.
-    center(el);
+    // WebDriver's Element Send Keys focuses the element (it does not click it), then types. It scrolls nothing
+    // itself: scrolling `<body>` into view (as `center` does) moved the viewport to the end of a tall page before
+    // the key was sent, so a keyboard scroll test saw the document scroll first (css-overflow/keyboard-scroll.html).
+    if (!(el instanceof Element)) throw new Error('testdriver: not an element');
+    if (!el.isConnected) throw new Error('testdriver: element is not attached');
     if (document.activeElement !== el) el.focus();
     return call({ cmd: 'send_keys', keys: String(keys) });
   };
