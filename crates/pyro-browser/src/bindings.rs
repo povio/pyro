@@ -1202,6 +1202,11 @@ fn run_navigation(b: &mut Browser, task: NavigationTask, stops: Option<u64>, mut
                     referrer_policy: request.referrer_policy.or_else(|| b.doc(page)?.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
                 },
             );
+            // HTML "rules for choosing a navigable" (`_blank`): creating the new navigable
+            // consumes the opener's transient user activation.
+            if let Some(dom) = b.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
+                dom.consume_transient_activation();
+            }
             if let Some((realm, source)) = popup_script {
                 if let Ok(scope) = realm.scope() {
                     let _ = crate::frames::javascript_url_result(&scope, &source);

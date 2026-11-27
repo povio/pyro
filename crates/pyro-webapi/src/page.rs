@@ -1704,7 +1704,7 @@ impl PageDom {
     /// HTML "consume user activation": the transient activation ends (sticky activation stays), in
     /// every document of the top-level frame tree ([`PageHooks::frame_tree`]), so that another
     /// frame cannot spend the same activation again.
-    pub(crate) fn consume_transient_activation(&self) {
+    pub fn consume_transient_activation(&self) {
         self.input_activation.set(None);
         for other in self.hooks().map(|h| h.frame_tree()).unwrap_or_default() {
             other.input_activation.set(None);
