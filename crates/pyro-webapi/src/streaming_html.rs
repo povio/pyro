@@ -1,5 +1,9 @@
-//! Private integration build of the unsafe streaming methods. Safe methods
-//! require the Sanitizer API and are installed independently.
+//! The streaming parsing methods (`streamHTML` and friends and their `Unsafe` twins): a
+//! `WritableStream` feeding the incremental fragment parser. The safe ones are not Trusted Types
+//! sinks and always filter with the default sanitizer and the built-in safe baseline (the
+//! `SetHTMLOptions` conversion: `runScripts` is neither read nor honoured); on a `script` element
+//! all of them throw `NotSupportedError` (the non-streaming safe methods do nothing there), before
+//! the options are looked at.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -23,17 +27,45 @@ enum Position {
 }
 
 pub(crate) fn parents<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    def.method("streamHTMLUnsafe", 0, |s, n, a| open(s, n, a, Position::ReplaceChildren, "streamHTMLUnsafe"));
-    def.method("streamAppendHTMLUnsafe", 0, |s, n, a| open(s, n, a, Position::Append, "streamAppendHTMLUnsafe"));
-    def.method("streamPrependHTMLUnsafe", 0, |s, n, a| open(s, n, a, Position::Prepend, "streamPrependHTMLUnsafe"));
+    def.method("streamHTMLUnsafe", 0, |s, n, a| open(s, n, a, Position::ReplaceChildren, "streamHTMLUnsafe", false));
+    def.method("streamAppendHTMLUnsafe", 0, |s, n, a| open(s, n, a, Position::Append, "streamAppendHTMLUnsafe", false));
+    def.method("streamPrependHTMLUnsafe", 0, |s, n, a| open(s, n, a, Position::Prepend, "streamPrependHTMLUnsafe", false));
+    def.method("streamHTML", 0, |s, n, a| open(s, n, a, Position::ReplaceChildren, "streamHTML", true));
+    def.method("streamAppendHTML", 0, |s, n, a| open(s, n, a, Position::Append, "streamAppendHTML", true));
+    def.method("streamPrependHTML", 0, |s, n, a| open(s, n, a, Position::Prepend, "streamPrependHTML", true));
 }
 
 pub(crate) fn siblings<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
-    def.method("streamBeforeHTMLUnsafe", 0, |s, n, a| open(s, n, a, Position::Before, "streamBeforeHTMLUnsafe"));
-    def.method("streamAfterHTMLUnsafe", 0, |s, n, a| open(s, n, a, Position::After, "streamAfterHTMLUnsafe"));
+    def.method("streamBeforeHTMLUnsafe", 0, |s, n, a| open(s, n, a, Position::Before, "streamBeforeHTMLUnsafe", false));
+    def.method("streamAfterHTMLUnsafe", 0, |s, n, a| open(s, n, a, Position::After, "streamAfterHTMLUnsafe", false));
     def.method("streamReplaceWithHTMLUnsafe", 0, |s, n, a| {
-        open(s, n, a, Position::Replace, "streamReplaceWithHTMLUnsafe")
+        open(s, n, a, Position::Replace, "streamReplaceWithHTMLUnsafe", false)
     });
+    def.method("streamBeforeHTML", 0, |s, n, a| open(s, n, a, Position::Before, "streamBeforeHTML", true));
+    def.method("streamAfterHTML", 0, |s, n, a| open(s, n, a, Position::After, "streamAfterHTML", true));
+    def.method("streamReplaceWithHTML", 0, |s, n, a| open(s, n, a, Position::Replace, "streamReplaceWithHTML", true));
+}
+
+/// Whether the parsing context of a stream into / next to `id` is an HTML or SVG `script` element
+/// (an unresolvable target is not: that is `open`'s HierarchyRequestError, after the options).
+fn targets_script(d: &pyro_dom::Dom, id: pyro_dom::NodeId, sibling: bool) -> bool {
+    let target = if sibling {
+        match d.parent(id) {
+            Ok(Some(parent)) => parent,
+            _ => return false,
+        }
+    } else {
+        d.template_contents(id).ok().flatten().unwrap_or(id)
+    };
+    let context = if d.node_type(target).ok() == Some(NodeType::Element) {
+        target
+    } else {
+        match d.fragment_host(target) {
+            Ok(Some(host)) => host,
+            _ => return false,
+        }
+    };
+    crate::positional_html::is_script_element(d, context)
 }
 
 struct State {
@@ -220,9 +252,12 @@ impl State {
     }
 }
 
-fn open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, position: Position, name: &str) -> JsResult<Value<'s>> {
+fn open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, position: Position, name: &str, safe: bool) -> JsResult<Value<'s>> {
     let page = n.page();
     let sibling = matches!(position, Position::Before | Position::After | Position::Replace);
+    if targets_script(&page.dom.borrow(), n.id, sibling) {
+        return Err(JsError::dom("NotSupportedError", "Cannot stream HTML into a script element"));
+    }
     let receiver = if sibling {
         "Node"
     } else if page.dom.borrow().is_shadow_root(n.id).js()? {
@@ -235,7 +270,9 @@ fn open<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, position: Position, name: 
     let owner = crate::custom::document_page(page, doc);
     let policy_page = owner.as_ref().unwrap_or(page);
     let options = a.get(0);
-    let options = if !Rc::ptr_eq(policy_page, page) {
+    let options = if safe {
+        crate::sanitizer_options::ParserOptions::convert_with(s, options, crate::sanitizer_options::ParseMode::Safe)?
+    } else if !Rc::ptr_eq(policy_page, page) {
         let realm = policy_page
             .main_world_realm()
             .ok_or_else(|| JsError::Type("The target document realm is unavailable".into()))?;
