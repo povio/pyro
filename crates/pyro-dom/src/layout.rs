@@ -312,6 +312,9 @@ pub struct Layout {
     scroll_pushed_at: std::cell::Cell<f64>,
     /// The snapped elements last told to the geometry source ([`Self::snapped_keys`]).
     snapped_pushed: std::cell::RefCell<Vec<(u64, (bool, bool))>>,
+    /// Counts the changes of `snapped`; `snapped_pushed_at` is the count `snapped_pushed` was built at.
+    snapped_generation: u64,
+    snapped_pushed_at: std::cell::Cell<Option<u64>>,
     /// Each scrolled element's `scrollLeft` and `scrollTop`: negative on an axis whose scroll
     /// origin is at its end (right-to-left, `row-reverse`, `column-reverse`, ...), as CSSOM View
     /// and Blitz's scroll offsets have them.
@@ -652,6 +655,8 @@ impl Layout {
             scroll_anchors: FxHashMap::default(),
             scroll_anchor_carry: FxHashMap::default(),
             snapped: FxHashMap::default(),
+            snapped_generation: 0,
+            snapped_pushed_at: std::cell::Cell::new(None),
             smooth_targets: Default::default(),
             reported_snaps: FxHashMap::default(),
             unsnapped_checked: None,
@@ -3339,7 +3344,12 @@ impl Layout {
     /// `true`: told.
     pub fn push_scroll(&self) -> bool {
         // (A snap target changes without a scroll when layout does: `scroll-state(snapped)`.)
+        // (Nothing changed since the last push: the keys are not even built.)
+        if self.scroll_pushed.get() == Some(self.scroll_generation as u64) && self.snapped_pushed_at.get() == Some(self.snapped_generation) {
+            return false;
+        }
         let snapped = self.snapped_keys();
+        self.snapped_pushed_at.set(Some(self.snapped_generation));
         if self.scroll_pushed.get() == Some(self.scroll_generation as u64) && *self.snapped_pushed.borrow() == snapped {
             return false;
         }
@@ -3376,6 +3386,18 @@ impl Layout {
             axes.into_iter().map(|(el, axes)| (crate::snapshot::render_key(el), axes)).collect();
         out.sort_unstable();
         out
+    }
+
+    /// Sets (`Some`) or clears the snap targets of `scroller`, counting the change
+    /// (`snapped_generation`: [`Self::push_scroll`] rebuilds [`Self::snapped_keys`] only after one).
+    fn store_snap(&mut self, scroller: Option<NodeId>, chosen: Option<[Option<SnapBox>; 2]>) {
+        let changed = match chosen {
+            Some(chosen) => self.snapped.insert(scroller, chosen) != Some(chosen),
+            None => self.snapped.remove(&scroller).is_some(),
+        };
+        if changed {
+            self.snapped_generation += 1;
+        }
     }
 
     /// Records that `target` (`None`: the viewport) scrolled from `from` to `to`: the direction
@@ -3623,11 +3645,7 @@ impl Layout {
                 }
             }
         }
-        if chosen.iter().any(Option::is_some) {
-            self.snapped.insert(scroller, chosen);
-        } else {
-            self.snapped.remove(&scroller);
-        }
+        self.store_snap(scroller, chosen.iter().any(Option::is_some).then_some(chosen));
         (x, y)
     }
 
@@ -3949,7 +3967,7 @@ impl Layout {
             }
             if let Some(el) = scroller {
                 if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) {
-                    self.snapped.remove(&scroller);
+                    self.store_snap(scroller, None);
                     continue;
                 }
             }
@@ -3965,10 +3983,10 @@ impl Layout {
                 (x, y, chosen) = self.snap_positions(dom, scroller, current, tx, ty, None, None);
             }
             if chosen.iter().all(Option::is_none) {
-                self.snapped.remove(&scroller);
+                self.store_snap(scroller, None);
                 continue;
             }
-            self.snapped.insert(scroller, chosen);
+            self.store_snap(scroller, Some(chosen));
             let (x, y) = (x.unwrap_or(current.0 as i64), y.unwrap_or(current.1 as i64));
             match scroller {
                 Some(el) => {
