@@ -382,10 +382,16 @@
   // `navigateerror`: unless `focusReset: "manual"`, or the page moved the focus itself since the
   // navigation began, the focused element is blurred (focus goes back to the document). The
   // document's autofocus candidates are not processed.
+  // "Focus changed during ongoing navigation" is set by any focus update, so a page that moved the
+  // focus away and back still counts as having moved it: `focusEpoch` counts the focus changes.
+  let focusEpoch = 0;
+  const countFocus = () => { focusEpoch++; };
+  addListener.call(window, 'focusin', countFocus, true);
+  addListener.call(window, 'focusout', countFocus, true);
   const resetFocus = (o) => {
     if (o.handlers.length === 0 || o.event.focusReset === 'manual' || !native.active()) return;
     const active = document.activeElement;
-    if (active !== o.focused || active === null || active === document.body || active === document.documentElement) return;
+    if (focusEpoch !== o.focusEpoch || active !== o.focused || active === null || active === document.body || active === document.documentElement) return;
     try {
       HTMLElementC.prototype.blur.call(active);
     } catch (e) {
@@ -571,7 +577,7 @@
     const d = eventData.get(event);
     d.trusted = true;
     const o = {
-      type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state, event: d, href: location.href, focused: document.activeElement,
+      type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state, event: d, href: location.href, focused: document.activeElement, focusEpoch,
       // A navigation with precommit handlers: not committed while `pending`; `url`, `type` and `commitState` can be redirected.
       precommit: [], pending: false, url, key, commitState: state, transitionData: null,
     };
