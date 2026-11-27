@@ -271,6 +271,10 @@ fn range_text(r: &RangeData, rendered: bool) -> JsResult<String> {
         if !matches!(dom.node_type(n), Ok(NodeType::Text | NodeType::CDataSection)) {
             continue;
         }
+        // Rendered text (Selection.toString) leaves out what is inert: it cannot be selected.
+        if rendered && dom.parent_element(n).ok().flatten().is_some_and(|p| page.layout().style().is_inert(&dom, p)) {
+            continue;
+        }
         let len = dom.char_length(n).js()?;
         // A text node contributes only where its interval intersects the range;
         // compare_points handles offsets into ancestor containers at any depth.

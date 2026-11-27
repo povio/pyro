@@ -1301,8 +1301,10 @@ fn find_text(page: &Rc<PageDom>, needle: &str, case_sensitive: bool, backwards: 
     let doc = page.document();
     let texts: Vec<(pyro_dom::NodeId, Vec<u16>)> = {
         let dom = page.dom.borrow();
-        let Ok(nodes) = dom.descendants(doc) else { return false };
+        // Shadow trees are searched too (Chromium searches the flat tree: text in a shadow root is findable).
+        let Ok(nodes) = dom.shadow_including_nodes(doc) else { return false };
         nodes
+            .into_iter()
             .filter(|&n| dom.node_type(n).ok() == Some(pyro_dom::NodeType::Text))
             .filter_map(|n| Some((n, dom.text_content_ref(n).ok()??.encode_utf16().collect())))
             .collect()
