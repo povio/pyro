@@ -2674,6 +2674,8 @@ impl Browser {
         // Otherwise the locale default: windows-1252 for Chrome's en-US, no UTF-8
         // sniffing (encoding/sniffing.html). file: keeps UTF-8, which Chrome detects there.
         let http = resource.url.starts_with("http://") || resource.url.starts_with("https://");
+        // Chrome runs its encoding detector on an unlabelled http(s) document unless a same-origin parent supplies one.
+        parser.set_detect_charset(http && inherited.is_none());
         parser.set_fallback_charset(inherited.or(http.then_some("windows-1252")));
         // An image is shown in an image document (HTML § 7.6.6 "Page load processing model for
         // media"): Chromium's markup, the image at the top left in a frame, centred on a dark

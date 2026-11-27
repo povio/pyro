@@ -823,6 +823,9 @@ pub struct DocumentParser {
     /// The encoding when nothing declares one (a same-origin parent
     /// document's), before the UTF-8 default.
     fallback_charset: Option<&'static encoding_rs::Encoding>,
+    /// Run the compact encoding detector (chardetng, as Chrome/Firefox do) on an
+    /// unlabelled document with non-ASCII bytes, ahead of `fallback_charset`.
+    detect_charset: bool,
     decoder: Option<encoding_rs::Decoder>,
     /// The first input chunk has been seen. Only one BOM is ever removed:
     /// by the decoder for bytes, or here once for input that came as text.
@@ -1218,6 +1221,7 @@ impl DocumentParser {
             plaintext: false,
             transport_charset: None,
             fallback_charset: None,
+            detect_charset: false,
             decoder: None,
             bom_checked: false,
             decoded: String::new(),
@@ -1295,6 +1299,12 @@ impl DocumentParser {
             .filter(|e| *e != encoding_rs::UTF_16LE && *e != encoding_rs::UTF_16BE);
     }
 
+    /// Enables encoding detection for documents that declare no encoding
+    /// (no BOM, transport charset or `<meta>`), before the fallback charset.
+    pub fn set_detect_charset(&mut self, on: bool) {
+        self.detect_charset = on;
+    }
+
     /// Sets the Content-Type charset label for `feed_bytes`.
     pub fn set_transport_charset(&mut self, label: Option<&str>) {
         self.transport_charset = label.and_then(|l| encoding_rs::Encoding::for_label(l.as_bytes()));
@@ -1329,7 +1339,9 @@ impl DocumentParser {
         } else {
             matches!(meta_charset(&self.sniff, false), MetaScan::More) && self.sniff.len() < MAX_META_SCAN
         };
-        if !decided && waiting {
+        // Detection looks at more than the meta window: keep buffering while the bytes are all ASCII.
+        let detect_waiting = self.detect_charset && !self.plaintext && self.sniff.len() < 4096 && self.sniff.is_ascii();
+        if !decided && (waiting || detect_waiting) {
             return ParseStep::NeedInput;
         }
         self.start_decoder();
@@ -1342,6 +1354,14 @@ impl DocumentParser {
             .map(|(e, _)| e)
             .or(self.transport_charset)
             .or_else(|| if self.plaintext { None } else { prescan_charset(&self.sniff) })
+            .or_else(|| {
+                if !self.detect_charset || self.plaintext || self.sniff.is_ascii() {
+                    return None;
+                }
+                let mut det = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Allow);
+                det.feed(&self.sniff, true);
+                Some(det.guess(None, chardetng::Utf8Detection::Allow))
+            })
             .or(self.fallback_charset)
             .unwrap_or(encoding_rs::UTF_8);
         self.decoder = Some(enc.new_decoder_with_bom_removal());
