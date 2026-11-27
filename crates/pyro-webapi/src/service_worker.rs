@@ -779,12 +779,20 @@ pub fn navigation_redirect_stop(services: &ContextServices) -> pyro_net::Prefetc
     pyro_net::PrefetchRedirectStop { scopes, navigation: true }
 }
 
+/// A request of an `<embed>` or `<object>` (their content, a document included): the browser
+/// loads it without the page's service worker (Chrome's "embed"/"object" request contexts are
+/// not intercepted).
+fn is_embedded_content(request: &Request) -> bool {
+    matches!(request.destination, Destination::Embed | Destination::Object)
+}
+
 /// A request `document` makes (its `fetch()`, XHR, scripts, stylesheets,
 /// images, ...): its controller's route, if any. One flag test for a
 /// document that no worker controls.
 pub fn subresource_route(document: &PageDom, request: &Request) -> Option<LoadRoute> {
     if !document.sw_controlled.get()
         || request.skip_interception
+        || is_embedded_content(request)
         || document.bypass_service_worker()
         || !matches!(request.url.scheme(), "http" | "https")
     {
@@ -806,7 +814,7 @@ pub fn subresource_route(document: &PageDom, request: &Request) -> Option<LoadRo
 /// document is the client the worker saw as `resultingClientId`. Callers test
 /// [`ContextServices::may_route_loads`] first.
 pub fn navigation_route(services: &ContextServices, request: &Request) -> Option<LoadRoute> {
-    if request.skip_interception || !matches!(request.url.scheme(), "http" | "https") {
+    if request.skip_interception || is_embedded_content(request) || !matches!(request.url.scheme(), "http" | "https") {
         return None;
     }
     let registry = &services.service_workers;
