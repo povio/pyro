@@ -3489,6 +3489,7 @@ fn collect_table_cells(
         | DisplayInside::Contents => {
             drop_part_box(doc, node_id);
             let first_row = rows.len();
+            let first_cell = cells.len();
             if display.inside() != DisplayInside::Contents {
                 cursor.end_group();
             }
@@ -3532,6 +3533,36 @@ fn collect_table_cells(
                 cursor.end_group();
                 for row in &mut rows[first_row..] {
                     row.group.get_or_insert(node_id);
+                }
+                // pyro: a row group's `height` is a minimum of the rows it holds (css-tables-3 § 3.9 "computing row
+                // measures"): when they add up to less, they grow in proportion to what they ask for (a lone row
+                // takes it all). Their asking is their `height`, else their tallest single-row cell's. Known only for
+                // rows that ask something (the content of the others is laid out later), and without collapsed
+                // borders (a row's `height` covers half of them). WPT css-tables
+                // `height-distribution/computing-row-measure-0`, `-1`.
+                let group_height = (!wm.is_vertical() && border_collapse == BorderCollapse::Separate)
+                    .then(|| physical_size(&doc.nodes[node_id]))
+                    .flatten()
+                    .and_then(|size| (size.height.tag() == taffy::CompactLength::LENGTH_TAG).then(|| size.height.value()));
+                if let Some(group_height) = group_height.filter(|&height| height > 0.0 && rows.len() > first_row) {
+                    let asks: Vec<f32> = (first_row..rows.len())
+                        .map(|index| {
+                            let cell_height = cells[first_cell..]
+                                .iter()
+                                .filter(|cell| cell.row as usize == index && cell.rowspan == 1)
+                                .filter_map(|cell| cell.min_height)
+                                .fold(0.0, f32::max);
+                            rows[index].height.unwrap_or(0.0).max(cell_height)
+                        })
+                        .collect();
+                    let total: f32 = asks.iter().sum();
+                    let known = asks.len() == 1 || asks.iter().all(|&ask| ask > 0.0);
+                    if known && group_height > total + 0.01 {
+                        for (row, ask) in rows[first_row..].iter_mut().zip(asks) {
+                            row.height = Some(if total > 0.0 { ask * group_height / total } else { group_height });
+                            row.is_constrained = true;
+                        }
+                    }
                 }
             }
         }
