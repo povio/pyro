@@ -175,6 +175,18 @@ pub struct ExternalQuads {
     pub fixed: bool,
 }
 
+/// pyro: a hit test point against a box under a transform ([`GeometrySource::hit_plane`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HitPlane {
+    /// The point maps back into the border box through the inverse of the box's transforms, in
+    /// front of the viewer, and the box is not hidden by a 3D transform.
+    pub inside: bool,
+    /// A plane of a 3D rendering context: the key of the context's root and the plane's depth at
+    /// the point (greater: nearer the viewer). Planes of one root are ordered by it, not by paint
+    /// order.
+    pub depth: Option<(u64, f64)>,
+}
+
 /// What a sub-resource a geometry source loads is for (the request's
 /// destination: its `Accept`, `Sec-Fetch-Dest` and CDP resource type).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -775,6 +787,13 @@ pub trait GeometrySource {
     /// One element's boxes as quads as of the last sync (`None`: not
     /// rendered, or the engine does not report them).
     fn element_quads(&self, _key: u64) -> Option<ExternalQuads> {
+        None
+    }
+    /// pyro: how a box under a transform answers a hit test at the point `(x, y)` (document CSS
+    /// px, where [`Self::element_box`] places the box): see [`HitPlane`]. `None` (the default): no
+    /// transform other than a translation applies to the box (or the engine does not report it):
+    /// the caller tests its rect.
+    fn hit_plane(&self, _key: u64, _x: f64, _y: f64) -> Option<HitPlane> {
         None
     }
     /// Hit regions (document x, y, width, height) when fragmentation restricts the element's

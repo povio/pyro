@@ -1108,6 +1108,11 @@ impl GeometrySource for BlitzGeometry {
         })
     }
 
+    fn hit_plane(&self, key: u64, x: f64, y: f64) -> Option<pyro_dom::geometry::HitPlane> {
+        let (inside, depth) = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.hit_plane(self.page, key, x, y))?;
+        Some(pyro_dom::geometry::HitPlane { inside, depth })
+    }
+
     fn element_fragments(&self, key: u64) -> Option<Vec<[f64; 4]>> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_fragments(self.page, key))
     }

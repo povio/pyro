@@ -71,6 +71,16 @@ struct ListHit {
     key: Rc<[PaintEntry]>,
     el: NodeId,
     chain: Vec<NodeId>,
+    /// The plane's 3D rendering context and depth at the point ([`HitPlane::depth`]).
+    depth: Option<(u64, f64)>,
+}
+
+/// Whether the plane at depth `a` is nearer the viewer than the one at `b` (`Some`), when both
+/// are planes of one 3D rendering context and at different depths there: such planes are
+/// sorted by depth, not by paint order. `None`: paint order decides.
+fn depth_over(a: Option<(u64, f64)>, b: Option<(u64, f64)>) -> Option<bool> {
+    let ((ra, za), (rb, zb)) = (a?, b?);
+    (ra == rb && (za - zb).abs() > 1e-9 * (1.0 + za.abs() + zb.abs())).then_some(za > zb)
 }
 
 /// Whether paint order keys `a` and `b` are in one layer (one stacking context and paint
@@ -2929,6 +2939,7 @@ impl Layout {
     ) -> Option<NodeId> {
         let inside = |r: &Rect| (ignore_x || (x >= r.x && x < r.x + r.width)) && y >= r.y && y < r.y + r.height;
         let mut best: Option<(Rc<[PaintEntry]>, NodeId)> = None;
+        let mut best_depth: Option<(u64, f64)> = None;
         for el in candidates {
             let Some(b) = result.get(el) else { continue };
             if b.rect.width <= 0.0 && b.rect.height <= 0.0 {
@@ -2978,6 +2989,24 @@ impl Layout {
             if self.is_table_row_box(dom, el) {
                 continue;
             }
+            // pyro: a box under a transform (`layout_origin`: it or a box it is laid out in has
+            // one, or is a plane of a 3D rendering context; nothing else asks the engine) holds
+            // the points that map back into it through the inverse of its transforms, not those
+            // of the bounds of the transformed box: a rotated box is not hit in the corners of
+            // its bounds. A box a 3D transform hides (its back face with `backface-visibility:
+            // hidden`) is not hit; the planes of a 3D rendering context are ordered by their
+            // depth at the point below.
+            let mut plane_depth = None;
+            if !ignore_x && b.layout_origin.is_some() && b.rect.width > 0.0 && b.rect.height > 0.0 {
+                if let Some(plane) = self.external.as_ref().and_then(|source| {
+                    source.hit_plane(crate::snapshot::render_key(el), x - (r.x - b.rect.x), y - (r.y - b.rect.y))
+                }) {
+                    if !plane.inside {
+                        continue;
+                    }
+                    plane_depth = plane.depth;
+                }
+            }
             if self.outside_inset_clip_path(dom, el, x, y, ignore_x, |node| {
                 self.hit_test_client_rect(dom, result, node, geometry)
             }) {
@@ -2985,13 +3014,19 @@ impl Layout {
             }
             let key = self.paint_key(dom, result, el);
             if let (None, Some((top_key, top_node))) = (&all, &best) {
-                let same_layer = same_paint_layer(&key, top_key);
-                // Shadow-including: a host's shadow content paints over it.
-                if same_layer && dom.shadow_including_contains(el, *top_node) {
-                    continue;
-                }
-                if *top_key > key && !(same_layer && dom.shadow_including_contains(*top_node, el)) {
-                    continue;
+                match depth_over(plane_depth, best_depth) {
+                    Some(true) => {}
+                    Some(false) => continue,
+                    None => {
+                        let same_layer = same_paint_layer(&key, top_key);
+                        // Shadow-including: a host's shadow content paints over it.
+                        if same_layer && dom.shadow_including_contains(el, *top_node) {
+                            continue;
+                        }
+                        if *top_key > key && !(same_layer && dom.shadow_including_contains(*top_node, el)) {
+                            continue;
+                        }
+                    }
                 }
             }
             let clipped = self.hit_test_clips(dom, result, el).iter().any(|&(a, clips)| {
@@ -3038,16 +3073,20 @@ impl Layout {
                         let at = list
                             .iter()
                             .position(|e| {
+                                if let Some(over) = depth_over(plane_depth, e.depth) {
+                                    return over;
+                                }
                                 let same_layer = same_paint_layer(&key, &e.key);
                                 !(same_layer && dom.shadow_including_contains(el, e.el))
                                     && (key >= e.key || (same_layer && dom.shadow_including_contains(e.el, el)))
                             })
                             .unwrap_or(list.len());
-                        list.insert(at, ListHit { key: key.clone(), el, chain });
+                        list.insert(at, ListHit { key: key.clone(), el, chain, depth: plane_depth });
                     }
                 }
                 if let Some(target) = target.or_else(|| self_hit.then_some(el)) {
                     best = Some((key, target));
+                    best_depth = plane_depth;
                 }
             }
         }
@@ -3070,7 +3109,7 @@ impl Layout {
         });
         if let (Some(list), Some(modal)) = (all, hit) {
             if list.is_empty() {
-                list.push(ListHit { key: Rc::from(Vec::<PaintEntry>::new()), el: modal, chain: vec![modal] });
+                list.push(ListHit { key: Rc::from(Vec::<PaintEntry>::new()), el: modal, chain: vec![modal], depth: None });
             }
         }
         hit

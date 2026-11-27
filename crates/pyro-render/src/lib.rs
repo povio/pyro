@@ -2759,6 +2759,15 @@ impl Renderer {
         self.geometry.get(&page)?.element_quads(&m.doc, m.node(key)?)
     }
 
+    /// pyro: how the box `key` under a transform answers a hit test at `(x, y)` (document CSS px):
+    /// see `Geometry::hit_plane`. The context root is by its key. `None`: no transform other than
+    /// a translation applies to it, or it is unknown.
+    pub fn hit_plane(&self, page: u64, key: u64, x: f64, y: f64) -> Option<(bool, Option<(u64, f64)>)> {
+        let m = self.mirrors.get(&page)?;
+        let (inside, depth) = self.geometry.get(&page)?.hit_plane(&m.doc, m.node(key)?, x, y)?;
+        Some((inside, depth.and_then(|(root, z)| Some((m.key_of(root)?, z)))))
+    }
+
     pub fn overflowing_text_hits(&self, page: u64, key: u64, border: [f64; 4]) -> Vec<[f64; 4]> {
         let Some(mirror) = self.mirrors.get(&page) else { return Vec::new() };
         let (Some(geometry), Some(id)) = (self.geometry.get(&page), mirror.node(key)) else { return Vec::new() };

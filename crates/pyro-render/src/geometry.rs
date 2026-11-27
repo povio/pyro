@@ -240,7 +240,9 @@ impl Geometry {
             chain.push(node);
             cur = node.containing_block();
         }
-        if !chain.iter().any(|node| node.transform().is_some()) {
+        // pyro: a plane of a 3D rendering context counts though its transform is the identity (a
+        // `translateZ`): hit testing maps the point through it (`Self::hit_plane`).
+        if !chain.iter().any(|node| node.transform().is_some() || node.plane_3d().is_some() || node.flags.contains(blitz_dom::node::NodeFlags::TRANSFORM_HIDES)) {
             return None;
         }
         let scale = doc.viewport().scale_f64();
@@ -349,6 +351,85 @@ impl Geometry {
             parent = Some(node);
         }
         Some(t)
+    }
+
+    /// pyro: `(x, y)` (document CSS px, as [`Self::element_box`] places the box) in `id`'s own
+    /// coordinates (its border box's origin at 0, 0), by the inverse of the transform chain (a
+    /// homography where a plane is drawn through a perspective), and whether the point is in
+    /// front of the viewer. `None` when the chain cannot be inverted.
+    fn local_point(&self, doc: &BaseDocument, id: NodeId, x: f64, y: f64) -> Option<(f64, f64, bool)> {
+        let (t, _, projective) = self.transform_and_planes(doc, id)?;
+        if projective {
+            if let Some(h) = self.projective(doc, id) {
+                let inverse = h.inverse()?;
+                let m = &inverse.0;
+                let w = m[6] * x + m[7] * y + m[8];
+                if !w.is_finite() || w == 0.0 {
+                    return None;
+                }
+                let (u, v) = ((m[0] * x + m[1] * y + m[2]) / w, (m[3] * x + m[4] * y + m[5]) / w);
+                let f = &h.0;
+                return Some((u, v, f[6] * u + f[7] * v + f[8] > 1e-6));
+            }
+        }
+        if t.determinant().abs() < 1e-12 {
+            return None;
+        }
+        let p = t.inverse() * kurbo::Point::new(x, y);
+        (p.x.is_finite() && p.y.is_finite()).then_some((p.x, p.y, true))
+    }
+
+    /// pyro: how a box under a transform answers a hit test at `(x, y)` (document CSS px, as
+    /// [`Self::element_box`] places it): whether the point maps back into the border box through
+    /// the inverse of its transforms (Chromium hit-tests the local point, not the bounds of the
+    /// transformed box), and, for a plane of a 3D rendering context, the context's root and the
+    /// plane's depth at the point (`Z / W` towards the viewer) which orders the planes of a
+    /// context. A box a 3D transform hides (its back face with `backface-visibility: hidden`,
+    /// or behind the viewer), or inside one, is not hit. `None`: no transform other than a
+    /// translation applies to it, the caller tests the box.
+    pub(crate) fn hit_plane(&self, doc: &BaseDocument, id: NodeId, x: f64, y: f64) -> Option<(bool, Option<(NodeId, f64)>)> {
+        if !self.in_layout_tree(doc, id) || is_cell(doc, id) || is_table_part(doc, id) {
+            return None;
+        }
+        let mut hidden = false;
+        let mut up = doc.get_node(id);
+        while let Some(n) = up {
+            hidden |= n.flags.contains(blitz_dom::node::NodeFlags::TRANSFORM_HIDES);
+            up = n.parent.and_then(|p| doc.get_node(p));
+        }
+        let node = doc.get_node(id)?;
+        let (mut any, mut plane_node) = (false, None);
+        let mut cur = Some(node);
+        while let Some(n) = cur {
+            any |= n.transform().is_some() || n.plane_3d().is_some();
+            if plane_node.is_none() && n.plane_3d().is_some() {
+                plane_node = Some(n);
+            }
+            cur = n.containing_block().and_then(|p| doc.get_node(p));
+        }
+        if hidden {
+            return Some((false, None));
+        }
+        if !any {
+            return None;
+        }
+        const EDGE: f64 = 1e-3;
+        let l = doc.physical_unrounded_layout(id);
+        let (w, h) = (l.size.width as f64, l.size.height as f64);
+        let inside = match self.local_point(doc, id, x, y) {
+            // Half-open as the rect test is; the tolerance absorbs f32 layout noise on the edges.
+            Some((u, v, front)) => front && u >= -EDGE && u < w - EDGE && v >= -EDGE && v < h - EDGE,
+            None => false,
+        } && !node.plane_3d().is_some_and(|plane| plane.own_hidden);
+        let depth = plane_node.and_then(|n| {
+            let plane = n.plane_3d()?;
+            let (u, v, front) = self.local_point(doc, n.id, x, y)?;
+            let m = &plane.matrix;
+            let w = u * m.m14 + v * m.m24 + m.m44;
+            let z = (u * m.m13 + v * m.m23 + m.m43) / w;
+            (front && z.is_finite()).then_some((plane.root, z))
+        });
+        Some((inside, depth))
     }
 
     /// pyro: the border box of `id` in the columns of the nearest multi-column container on its
@@ -1873,6 +1954,25 @@ impl Homography {
     pub(crate) fn then_affine_before(&self, t: Affine) -> Homography {
         let [a, b, c, d, e, f] = t.as_coeffs();
         self.mul(&Homography([a, c, e, b, d, f, 0.0, 0.0, 1.0]))
+    }
+
+    /// The inverse homography, `None` for a singular one.
+    pub(crate) fn inverse(&self) -> Option<Homography> {
+        let m = &self.0;
+        let cofactor = |r0: usize, r1: usize, c0: usize, c1: usize| m[r0 * 3 + c0] * m[r1 * 3 + c1] - m[r0 * 3 + c1] * m[r1 * 3 + c0];
+        let adjugate = [
+            cofactor(1, 2, 1, 2),
+            -cofactor(0, 2, 1, 2),
+            cofactor(0, 1, 1, 2),
+            -cofactor(1, 2, 0, 2),
+            cofactor(0, 2, 0, 2),
+            -cofactor(0, 1, 0, 2),
+            cofactor(1, 2, 0, 1),
+            -cofactor(0, 2, 0, 1),
+            cofactor(0, 1, 0, 1),
+        ];
+        let determinant = m[0] * adjugate[0] + m[1] * adjugate[3] + m[2] * adjugate[6];
+        (determinant.is_finite() && determinant != 0.0).then(|| Homography(adjugate.map(|v| v / determinant)))
     }
 
     /// The bounds of `rect`'s projection, its part behind the viewer cut away; `None` when nothing
