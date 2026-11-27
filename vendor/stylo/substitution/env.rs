@@ -14,7 +14,7 @@ use crate::device::Device;
 use crate::parser::{Parse, ParserContext};
 use crate::stylesheets::UrlExtraData;
 use crate::{Atom, derives::*};
-use cssparser::{Delimiter, Parser};
+use cssparser::{Delimiter, Parser, Token};
 use style_traits::ParseError;
 
 /// Environment variable name.
@@ -34,6 +34,9 @@ impl Parse for EnvName {
 pub struct EnvFunction {
     /// The referenced environment variable name.
     pub name: SubstitutionArgument<EnvName>,
+    /// Whether `<integer [0,∞]>` index arguments followed the name. No environment variable is
+    /// indexed here, so such a function always substitutes its fallback.
+    pub has_indices: bool,
     /// The fallback for this function, if any.
     pub fallback: Option<ArbitraryDeclarationValue>,
 }
@@ -43,14 +46,28 @@ impl EnvFunction {
     /// - <env-args> = env(<declaration-value>, <declaration-value>?)
     /// - env() = env(<custom-ident> <integer [0,∞]>*, <declaration-value>?)
     ///
-    /// TODO(Bug 2081127) - Support the optional index arguments.
+    /// The name must be a literal identifier (no references) followed only by non-negative
+    /// integers; anything else is a parse error, as in Chrome (the whole declaration is dropped).
     pub fn parse(
         input: &mut Parser,
         context: &mut SubstitutionParserContext,
     ) -> Result<Self, ParseError> {
-        let name = SubstitutionArgument::try_parse(input, context, Delimiter::Comma)?;
+        let (name, has_indices) = input.parse_until_before(Delimiter::Comma, |input| {
+            let name = EnvName(Atom::from(input.expect_ident()?.as_ref()));
+            let mut has_indices = false;
+            while !input.is_exhausted() {
+                match *input.next()? {
+                    Token::Number { int_value: Some(v), .. } if v >= 0 => has_indices = true,
+                    ref t => {
+                        let t = t.clone();
+                        return Err(input.new_unexpected_token_error(t));
+                    },
+                }
+            }
+            Ok((name, has_indices))
+        })?;
         let fallback = parse_optional_fallback(input, context)?;
-        Ok(Self { name, fallback })
+        Ok(Self { name: SubstitutionArgument::Parsed(name), has_indices, fallback })
     }
 
     /// Replaces the `env()` function with its substitution value.
@@ -64,6 +81,7 @@ impl EnvFunction {
         let device = context.stylist.device();
         let mut substitution = name
             .value
+            .filter(|_| !self.has_indices)
             .and_then(|name| {
                 device
                     .environment()
