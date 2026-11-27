@@ -594,7 +594,7 @@ impl Shared {
         }
         // Cookies.
         // (`same_origin` is the hop's response tainting being "basic": `includes_credentials`.)
-        let send_cookies = includes_credentials(req.credentials, same_origin);
+        let send_cookies = includes_credentials(req.hop_credentials(same_origin), same_origin);
         if send_cookies && !h.contains_key(header::COOKIE) {
             let top = matches!(req.destination, Destination::Document);
             let safe = matches!(req.method, Method::GET | Method::HEAD);
@@ -2351,7 +2351,7 @@ impl Io {
             // pyro: whether this hop carries credentials (as the cookie decision above): the cache
             // serves a response only to a request of the same kind (`HttpCache::lookup`).
             let credentialed =
-                includes_credentials(req.credentials, basic_tainting) || headers.contains_key(header::AUTHORIZATION);
+                includes_credentials(req.hop_credentials(basic_tainting), basic_tainting) || headers.contains_key(header::AUTHORIZATION);
             let mut revalidating = None;
             // A stored redirect: followed below as a network one would be.
             let mut cached_redirect = None;
@@ -2370,7 +2370,7 @@ impl Io {
                     }
                     crate::cache::Lookup::StaleWhileRevalidate(cached) => {
                         // RFC 5861: served stale, revalidated in the background.
-                        let cookies = includes_credentials(req.credentials, basic_tainting);
+                        let cookies = includes_credentials(req.hop_credentials(basic_tainting), basic_tainting);
                         self.revalidate_in_background(&req, &url, &headers, &cached, credentialed, cookies);
                         crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
                         let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
@@ -2609,7 +2609,7 @@ impl Io {
             }
             // pyro: the same decision as the cookies sent (`includes_credentials`): a tainted hop
             // (a no-cors chain that went through another origin) neither sends nor stores.
-            self.store_cookies(&req, &url, &resp_headers, includes_credentials(req.credentials, basic_tainting));
+            self.store_cookies(&req, &url, &resp_headers, includes_credentials(req.hop_credentials(basic_tainting), basic_tainting));
             // Client Hints: a top-level document's `Accept-CH` (a redirect's too) replaces the origin's
             // set; `Clear-Site-Data` clears it from a navigation or a same-origin fetch, not a subframe's.
             self.shared.client_hints.lock().unwrap().response(

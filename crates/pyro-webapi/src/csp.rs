@@ -141,18 +141,22 @@ pub fn inherited_policies(page: &PageDom) -> Vec<pyro_dom::CspPolicy> {
 pub struct InheritedCsp {
     pub policies: Vec<pyro_dom::CspPolicy>,
     pub self_origin: Option<String>,
+    /// The cross-origin embedder policy of the same policy container (HTML § 7.1.4 "embedder policy"
+    /// is inherited with the CSP list by local-scheme documents).
+    pub embedder_policy: pyro_net::EmbedderPolicy,
 }
 
 impl InheritedCsp {
     /// `page`'s, now.
     pub fn of(page: &PageDom) -> InheritedCsp {
-        InheritedCsp { policies: inherited_policies(page), self_origin: self_origin(page) }
+        InheritedCsp { policies: inherited_policies(page), self_origin: self_origin(page), embedder_policy: page.embedder_policy() }
     }
 
     /// Gives `page`'s document, new and its parser not started, these policies. When its own
     /// origin is opaque (`data:`, a sandboxed frame) and nothing set its precursor origin yet,
     /// `'self'` keeps meaning the creator's origin (as Chrome).
     pub fn apply(&self, page: &PageDom) {
+        page.set_embedder_policy(self.embedder_policy);
         if !self.policies.is_empty() {
             let _ = page.dom.borrow_mut().inherit_csp_policies(page.document(), &self.policies);
         }

@@ -8,7 +8,7 @@ use http::{header, HeaderMap, HeaderValue, Method};
 use rustc_hash::FxHashMap;
 use url::Url;
 
-use crate::request::{Credentials, Request, RequestMode};
+use crate::request::{Credentials, Destination, EmbedderPolicy, Request, RequestMode};
 
 pub fn same_origin(a: &Url, b: &Url) -> bool {
     // A tuple origin compared in place: `Url::origin` allocates its host,
@@ -30,21 +30,43 @@ const CROSS_ORIGIN_RESOURCE_POLICY: header::HeaderName =
 /// by its `Cross-Origin-Resource-Policy` header. The value is compared byte
 /// for byte as the header list's combined value, so a repeated or unknown
 /// value (`same, same-origin`, `SAME-ORIGIN`) allows.
+///
+/// With the requester's embedder policy `require-corp` (HTML § 7.1.4, Fetch "cross-origin resource policy
+/// check" step 6) a response without a usable policy header (none, repeated or not one of the
+/// three values) counts as `same-origin`, so another origin's response needs `cross-origin`.
+/// `credentialless` skips that default for subresources (its cross-origin `no-cors` requests carry no
+/// credentials, `Request::hop_credentials`) but not for a nested navigation, and neither applies to a response that is not HTTP(S) (`data:`,
+/// `blob:`, files).
 pub fn corp_blocks(req: &Request, url: &Url, headers: &HeaderMap) -> bool {
-    if req.mode != RequestMode::NoCors {
+    let embedder = req.defaults.embedder_policy;
+    // Fetch "cross-origin resource policy check" `forNavigation`: a nested navigation's response is
+    // checked for the embedding document, whose policy is not `unsafe-none`.
+    let for_navigation = req.mode == RequestMode::Navigate
+        && req.destination == Destination::Iframe
+        && embedder != EmbedderPolicy::UnsafeNone;
+    if req.mode != RequestMode::NoCors && !for_navigation {
         return false;
     }
     // A browser-initiated request has no initiator to protect.
-    let Some(origin) = req.origin.as_deref() else { return false };
+    let origin = if for_navigation { req.defaults.embedder_origin.as_deref() } else { req.origin.as_deref() };
+    let Some(origin) = origin else { return false };
+    let default_same_origin = matches!(url.scheme(), "http" | "https")
+        && (embedder == EmbedderPolicy::RequireCorp || (for_navigation && embedder == EmbedderPolicy::Credentialless));
     let mut values = headers.get_all(CROSS_ORIGIN_RESOURCE_POLICY).iter();
-    let Some(policy) = values.next() else { return false };
-    if values.next().is_some() {
-        return false;
-    }
+    // A repeated header is a combined value no policy matches.
+    let header: Option<&[u8]> = match (values.next(), values.next()) {
+        (Some(policy), None) => Some(policy.as_bytes()),
+        _ => None,
+    };
+    let policy: &[u8] = match header {
+        Some(known @ (b"same-origin" | b"same-site" | b"cross-origin")) => known,
+        _ if default_same_origin => b"same-origin",
+        _ => return false,
+    };
     // "null" (an opaque origin) parses to an error: same-origin and
     // same-site with nothing.
     let origin = Url::parse(origin).ok();
-    match policy.as_bytes() {
+    match policy {
         b"same-origin" => !origin.is_some_and(|o| same_origin(&o, url)),
         b"same-site" => {
             let Some(o) = origin else { return true };

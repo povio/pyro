@@ -118,6 +118,17 @@ pub struct InsecurePolicy {
     pub upgrade: bool,
 }
 
+/// The value of a context's cross-origin embedder policy (HTML § 7.1.4): what its `no-cors` requests
+/// must be allowed to load (`require-corp`: only a response with a `Cross-Origin-Resource-Policy`
+/// that admits the requester; `credentialless`: any, but fetched without credentials).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EmbedderPolicy {
+    #[default]
+    UnsafeNone,
+    RequireCorp,
+    Credentialless,
+}
+
 /// Browser/page defaults, distinct from author headers for CORS preflight.
 /// Cloned into a request so later page changes do not alter an in-flight hop.
 #[derive(Clone, Debug, Default)]
@@ -139,6 +150,13 @@ pub struct RequestDefaults {
     pub client_hints: Option<std::sync::Arc<Vec<(http::HeaderName, HeaderValue)>>>,
     /// Mixed Content blocking and Upgrade Insecure Requests of the requesting context.
     pub insecure: InsecurePolicy,
+    /// Cross-origin embedder policy of the requesting context (the embedding document's for a
+    /// nested navigation): the client's Cross-Origin Resource Policy check and credential rules.
+    pub embedder_policy: EmbedderPolicy,
+    /// For a nested navigation (`Destination::Iframe`): the serialized origin of the embedding
+    /// document, which its `embedder_policy`'s Cross-Origin Resource Policy check on the response
+    /// protects (the request itself has no `origin`: it is not a requester's fetch).
+    pub embedder_origin: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -221,6 +239,16 @@ pub enum CacheMode {
 }
 
 impl Request {
+    /// The credentials mode a hop is sent with: a `no-cors` request of a `credentialless` context
+    /// carries none to another origin (HTML "credentialless": its response tainting is not basic).
+    pub(crate) fn hop_credentials(&self, basic_tainting: bool) -> Credentials {
+        if self.defaults.embedder_policy == EmbedderPolicy::Credentialless && self.mode == RequestMode::NoCors && !basic_tainting {
+            Credentials::Omit
+        } else {
+            self.credentials
+        }
+    }
+
     pub fn get(url: Url, destination: Destination) -> Self {
         let mode = match destination {
             Destination::Document | Destination::Iframe => RequestMode::Navigate,

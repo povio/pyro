@@ -214,6 +214,10 @@ pub struct Resource {
     /// context, and only by the first document of its origin in the browsing
     /// context group ([`crate::frames::FrameHost::record_origin_keying`]).
     pub origin_agent_cluster: bool,
+    /// A document's `Cross-Origin-Embedder-Policy` (HTML § 7.1.4 "obtain an embedder policy"):
+    /// `unsafe-none` for other kinds and for a local-scheme document, which inherits its creator's
+    /// ([`pyro_webapi::csp::InheritedCsp::embedder_policy`]).
+    pub embedder_policy: pyro_net::EmbedderPolicy,
     /// A document navigation's Cross-Origin-Opener-Policy per response of its redirect chain, in
     /// order, each with the origin of the response's URL; the last is the committed document's.
     /// Empty: the loader does not say (nothing is enforced).
@@ -448,6 +452,9 @@ impl ResourceLoader for NetLoader {
             if request.kind != ResourceKind::Document {
                 if let Some(d) = &document {
                     req.defaults.insecure = d.insecure_policy();
+                    // Its cross-origin embedder policy: a no-cors subresource's response check, and
+                    // for a nested navigation the embedding document's (HTML § 7.1.4).
+                    req.defaults.embedder_policy = d.embedder_policy();
                 }
             }
             if request.kind == ResourceKind::Document {
@@ -517,6 +524,11 @@ impl ResourceLoader for NetLoader {
                 req.headers.insert(pyro_net::http::HeaderName::from_static("sec-required-csp"), value);
             }
         }
+        if request.kind == ResourceKind::Iframe {
+            // The embedder whose policy the navigation's response is checked for (a nested
+            // navigation has no `origin`).
+            req.defaults.embedder_origin = parent_origin(browser, request.page, request.frame_id.as_deref());
+        }
         // Resource Timing: an iframe navigation's entry goes to the parent,
         // so its TAO check runs against the parent's origin, not `origin`
         // (a POST's: the frame's own document).
@@ -581,6 +593,7 @@ impl ResourceLoader for NetLoader {
                 dictionary_links: Vec::new(),
                 referrer_policy: None,
                 origin_agent_cluster: false,
+                embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                 coop: Vec::new(),
                 sent_referrer: document.then(|| {
                     pyro_net::referrer::ReferrerChain::new(req.referrer.clone(), req.referrer_policy)
@@ -673,6 +686,7 @@ impl ResourceLoader for NetLoader {
                     dictionary_links: Vec::new(),
                     referrer_policy: None,
                     origin_agent_cluster: false,
+                    embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                     coop: Vec::new(),
                     sent_referrer: None,
                     timing: None,
@@ -760,6 +774,7 @@ impl ResourceLoader for NetLoader {
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
                         origin_agent_cluster: document && origin_agent_cluster_requested(&h.headers),
+                        embedder_policy: if document { obtain_embedder_policy(&h.headers, &h.url) } else { pyro_net::EmbedderPolicy::UnsafeNone },
                         coop: if document {
                             let mut responses = std::mem::take(&mut coop_responses);
                             responses.push((obtain_coop(&h.headers, &h.url), origin_of(h.url.as_str())));
@@ -906,6 +921,30 @@ fn parse_sf_non_token(value: &str) -> Option<&str> {
     }
 }
 
+/// HTML "obtain an embedder policy" of a response for `url`: the `Cross-Origin-Embedder-Policy` header as a
+/// structured-field token (parameters allowed, so `require-corp; report-to="x"` is `require-corp`;
+/// a repeated header, a string or byte-sequence item or a malformed field is none), `unsafe-none` when
+/// it is absent, unrecognised or sent from a context that is not potentially trustworthy.
+pub(crate) fn obtain_embedder_policy(headers: &http::HeaderMap, url: &pyro_net::Url) -> pyro_net::EmbedderPolicy {
+    let trustworthy = url.scheme() == "https"
+        || url.host_str().is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h.ends_with(".localhost"));
+    if !trustworthy {
+        return pyro_net::EmbedderPolicy::UnsafeNone;
+    }
+    // Repeated headers combine with ", ", which no single structured item parses as.
+    let Some(values) = headers.get_all("cross-origin-embedder-policy").iter().map(|v| v.to_str().ok()).collect::<Option<Vec<&str>>>() else {
+        return pyro_net::EmbedderPolicy::UnsafeNone;
+    };
+    if values.is_empty() {
+        return pyro_net::EmbedderPolicy::UnsafeNone;
+    }
+    match structured_item_token(&values.join(", ")) {
+        Some("require-corp") => pyro_net::EmbedderPolicy::RequireCorp,
+        Some("credentialless") => pyro_net::EmbedderPolicy::Credentialless,
+        _ => pyro_net::EmbedderPolicy::UnsafeNone,
+    }
+}
+
 /// HTML "obtain a cross-origin opener policy" of a response for `url` (its COOP value only; the
 /// report-only header and endpoints are not implemented): the `Cross-Origin-Opener-Policy` header
 /// as a structured-field token (parameters allowed), `unsafe-none` when absent, malformed,
@@ -926,9 +965,7 @@ pub(crate) fn obtain_coop(headers: &http::HeaderMap, url: &pyro_net::Url) -> Coo
     let Some(coop) = field("cross-origin-opener-policy") else { return CoopValue::UnsafeNone };
     match structured_item_token(&coop) {
         Some("same-origin") => {
-            let isolated = field("cross-origin-embedder-policy")
-                .is_some_and(|coep| matches!(structured_item_token(&coep), Some("require-corp" | "credentialless")));
-            if isolated {
+            if obtain_embedder_policy(headers, url) != pyro_net::EmbedderPolicy::UnsafeNone {
                 CoopValue::SameOriginPlusCoep
             } else {
                 CoopValue::SameOrigin
@@ -1293,6 +1330,7 @@ impl ResourceLoader for StaticLoader {
                         dictionary_links: Vec::new(),
                         referrer_policy,
                         origin_agent_cluster: false,
+                        embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                         coop: Vec::new(),
                         sent_referrer: sent_referrer.clone(),
                         timing: None,
@@ -2069,6 +2107,14 @@ impl Browser {
                         // top-level navigation whose response has a COOP is a network error.
                         b.navigation_failed(page, &opts, loader_id, BLOCKED_BY_RESPONSE.into());
                     }
+                    Ok(resource) if b.embedder_policy_blocks(page, &resource) => {
+                        // HTML "check a navigation response's adherence to its embedder policy": a
+                        // frame of a `require-corp` or `credentialless` document refuses a response
+                        // without a COEP of its own; as for `frame-ancestors`, Chrome commits its
+                        // opaque-origin error document.
+                        b.prepare_required_csp(page, required_csp, None);
+                        b.commit_error_document(page, opts, loader_id, BLOCKED_BY_RESPONSE.into(), history);
+                    }
                     Ok(resource) if b.frame_ancestors_block(page, &resource) => {
                         // CSP `frame-ancestors` refuses this frame's ancestors: Chrome commits
                         // its (opaque-origin) error document instead, and the frame loads.
@@ -2128,6 +2174,19 @@ impl Browser {
                 crate::frames::Sandbox::from_csp(csp.split_once('\n').map_or(csp, |(enforce, _)| enforce)).is_some()
             });
         p.popup_sandbox.is_some() || csp_sandbox
+    }
+
+    /// HTML "check a navigation response's adherence to its embedder policy": whether `resource`, the
+    /// response of child frame `page`'s navigation, is refused because the embedding document's
+    /// cross-origin embedder policy is `require-corp` or `credentialless` and the response's is
+    /// `unsafe-none`. A local-scheme document inherits its creator's policy and is not checked.
+    fn embedder_policy_blocks(&self, page: FrameKey, resource: &Resource) -> bool {
+        if page.child.is_none() || resource.embedder_policy != pyro_net::EmbedderPolicy::UnsafeNone || is_local_scheme(&resource.url) {
+            return false;
+        }
+        let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return false };
+        let parent = host.parent_key(page);
+        host.page_dom(parent).is_some_and(|dom| dom.embedder_policy() != pyro_net::EmbedderPolicy::UnsafeNone)
     }
 
     /// Whether CSP `frame-ancestors` blocks `resource`, the response of child frame `page`'s
@@ -2251,6 +2310,7 @@ impl Browser {
             dictionary_links: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
+            embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             coop: Vec::new(),
             sent_referrer: None,
             timing: None,
@@ -2404,6 +2464,11 @@ impl Browser {
                 kept_csp = Some(pyro_webapi::csp::InheritedCsp::of(&dom));
             }
         }
+        // The same container's embedder policy (HTML § 7.1.4) goes with it: a top-level local-scheme
+        // document a script navigated to (`location = blobURL`) has the one of the document that did.
+        let prior_embedder = (document_initiated && page.child.is_none() && is_local_scheme(&resource.url))
+            .then(|| self.doc(page).and_then(|d| d.main_frame.page_dom.as_ref().map(|dom| dom.embedder_policy())))
+            .flatten();
         let csp_sandbox = resource
             .header_csp
             .as_deref()
@@ -2484,6 +2549,13 @@ impl Browser {
             Some(kept) => Some(kept),
             None => self.local_scheme_csp(page, &resource.url),
         };
+        // The embedder policy of the document (HTML § 7.1.4): its response's, or for a local-scheme
+        // document (`about:blank`, `srcdoc`, `blob:`, `data:`, a `javascript:` result) its
+        // creator's, before its scripts make a request.
+        page_dom.set_embedder_policy(match &inherited {
+            Some(i) => i.embedder_policy,
+            None => prior_embedder.unwrap_or(resource.embedder_policy),
+        });
         if let Some(inherited) = inherited.filter(|_| !bypass_csp && resource.header_csp.is_none()) {
             inherited.apply(&page_dom);
         }
@@ -4769,6 +4841,7 @@ mod disposition_tests {
             dictionary_links: Vec::new(),
             referrer_policy: None,
             origin_agent_cluster: false,
+            embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             coop: Vec::new(),
             sent_referrer: None,
             timing: None,

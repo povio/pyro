@@ -85,6 +85,10 @@ pub(crate) struct WorkerStart {
     creator_secure: bool,
     /// The creator's Mixed Content / Upgrade Insecure Requests state: the worker's requests keep it.
     insecure: pyro_net::InsecurePolicy,
+    /// The creator's cross-origin embedder policy (HTML § 7.1.4): a worker has its script response's, which an
+    /// owner whose policy is not `unsafe-none` requires to be the same or stronger, and a `blob:` or
+    /// `data:` worker inherits the owner's. The worker's requests are subject to it.
+    embedder_policy: pyro_net::EmbedderPolicy,
     cookie_partition_key: Option<String>,
     cookie_site_context: pyro_net::cookies::SiteContext,
     user_agent: Option<UserAgentOverride>,
@@ -150,6 +154,7 @@ impl WorkerStart {
             cookie_partition_key: page.cookie_partition_key(),
             cookie_site_context: page.cookie_site_context(),
             insecure: page.insecure_policy(),
+            embedder_policy: page.embedder_policy(),
             creator_secure: s.global_data::<WorkerGlobalScope>()
                 .map_or_else(|| crate::secure_context::secure(s, page), |parent| parent.secure),
             user_agent: page.identity.borrow().value.clone(),
@@ -204,6 +209,7 @@ impl WorkerStart {
             cookie_site_context: service.cookie_site_context,
             creator_secure: true,
             insecure: page.insecure_policy(),
+            embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
@@ -702,6 +708,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
     page.set_creator_insecure(start.insecure);
+    page.set_embedder_policy(start.embedder_policy);
     page.set_storage_namespaces(
         crate::storage::StorageNamespace::with_shared(
             start.indexed_db.clone(), start.caches.clone(), start.opfs.clone(), start.buckets.clone(),

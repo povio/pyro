@@ -25,6 +25,8 @@ impl UserAgentOverride {
             cache_disabled: false,
             client_hints: self.metadata.as_ref().map(|m| std::sync::Arc::new(client_hint_headers(m))),
             insecure: pyro_net::InsecurePolicy::default(),
+            embedder_policy: pyro_net::EmbedderPolicy::default(),
+            embedder_origin: None,
         })
     }
 }
@@ -72,6 +74,9 @@ pub(crate) struct IdentityState {
     /// A worker's Mixed Content / Upgrade Insecure Requests state from its creator (its own
     /// document has no window origin to ask): `None` for a window.
     creator_insecure: Option<pyro_net::InsecurePolicy>,
+    /// The document's cross-origin embedder policy (HTML § 7.1.4): from its response, or for a local-scheme
+    /// document the one it inherits; a worker's is its owner's (or its script response's).
+    embedder_policy: pyro_net::EmbedderPolicy,
 }
 impl PageDom {
     /// Applies atomically to existing navigator wrappers/worlds and future
@@ -127,6 +132,15 @@ impl PageDom {
             None => pyro_net::InsecurePolicy { prohibits_mixed: self.window_prohibits_mixed(), upgrade: own_upgrade },
         }
     }
+    /// Sets the document's cross-origin embedder policy, as its navigation commits.
+    pub fn set_embedder_policy(&self, policy: pyro_net::EmbedderPolicy) {
+        self.identity.borrow_mut().embedder_policy = policy;
+    }
+    /// The cross-origin embedder policy requests this context makes are subject to
+    /// (`RequestDefaults::embedder_policy`).
+    pub fn embedder_policy(&self) -> pyro_net::EmbedderPolicy {
+        self.identity.borrow().embedder_policy
+    }
     fn window_prohibits_mixed(&self) -> bool {
         if let Some(origin) = self.main_world_realm().and_then(|r| r.origin()) {
             if origin.starts_with("https:") {
@@ -154,6 +168,7 @@ impl PageDom {
             extra_headers: identity.extra_headers.clone(),
             cache_disabled: identity.cache_disabled,
             insecure: self.insecure_policy(),
+            embedder_policy: identity.embedder_policy,
             ..identity.defaults.clone()
         };
     }
