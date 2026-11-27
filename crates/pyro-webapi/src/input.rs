@@ -3624,8 +3624,11 @@ fn dispatch_mouse_inner(
                         // `FocusController::SetFocusedFrame` on mouse down): an iframe's owner becomes
                         // the parent's activeElement and keys go to the frame (WPT css-overscroll-behavior
                         // `overscroll-behavior-keyboard-scroll-child-frame`).
+                        // (Without scrolling the owner into view: a press reveals nothing.)
                         if !page.is_disposed() {
-                            focus_window(page);
+                            if let Some(token) = request_focus(page, FocusTarget::Window, true) {
+                                focus_window_with_transition(page, &token);
+                            }
                         }
                     }
                 }
