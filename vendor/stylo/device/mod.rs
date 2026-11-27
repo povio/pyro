@@ -115,6 +115,11 @@ impl Device {
         *self.root_style.write() = style.clone();
     }
 
+    /// The writing mode of the root element (for vi and vb).
+    pub fn root_writing_mode(&self) -> crate::logical_geometry::WritingMode {
+        self.root_style.read().writing_mode
+    }
+
     /// Get the font size of the root element (for rem)
     pub fn root_font_size(&self) -> Length {
         self.used_root_font_size.store(true, Ordering::Relaxed);
