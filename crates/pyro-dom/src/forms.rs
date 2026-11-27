@@ -1064,7 +1064,7 @@ impl Dom {
         }
         // The parser's form element pointer gave it a form it is not inside of: valid while both
         // are in one tree.
-        let pf = e.parser_form;
+        let pf = e.parser_form.and_then(|id| self.check(id).ok()).unwrap_or(NIL);
         if pf != NIL && self.html_local(pf) == Some(&local_name!("form")) && self.root_idx(pf) == self.root_idx(idx) {
             return pf;
         }

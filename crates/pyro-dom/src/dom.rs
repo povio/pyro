@@ -3246,7 +3246,7 @@ impl Dom {
         // HTML "reset the form owner": the node itself left its place, so the form the parser
         // gave it from outside its ancestors no longer holds (its ancestors' removal keeps it).
         if let Some(e) = self.n_mut(node).element_mut() {
-            e.parser_form = NIL;
+            e.parser_form = None;
         }
         // Removing steps (form owners) come before disconnectedCallback.
         if self.internals.faces != 0 {

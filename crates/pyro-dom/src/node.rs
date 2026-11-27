@@ -429,7 +429,8 @@ pub struct ElementData {
     /// form-associated element although it is no descendant of it (`<table><form><tr><td><input>`);
     /// NIL for none. It stays while the element and the form share a tree and ends when the element
     /// itself is removed (the "reset the form owner" of an ancestor chain change of the element).
-    pub(crate) parser_form: u32,
+    /// (A generation-checked handle: slots are recycled, so a form released since reads as none.)
+    pub(crate) parser_form: Option<NodeId>,
     /// `element_flags` bits.
     pub flags: u8,
     /// An HTML `<style>`: the `Dom::style_text_revision` at which its child
@@ -481,7 +482,7 @@ impl ElementData {
             template_contents: NIL,
             shadow_root: NIL,
             control: None,
-            parser_form: NIL,
+            parser_form: None,
             flags: 0,
             style_text_revision: 0,
             is_value: None,

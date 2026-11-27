@@ -544,8 +544,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             if d.root_idx(*nodes.0) != d.root_idx(*form) {
                 return;
             }
+            let form = d.id_of(*form);
             if let Some(e) = d.n_mut(*target).element_mut() {
-                e.parser_form = *form;
+                e.parser_form = Some(form);
             }
         });
     }
