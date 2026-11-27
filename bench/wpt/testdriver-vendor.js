@@ -4,7 +4,7 @@
 // (window.__pyroTestdriver, a function returning a promise of the runner's JSON answer). Elements cannot cross the
 // binding: they go as their center in this frame's viewport, and the runner adds the offsets of the frames around it.
 // Implemented: click, send_keys, action_sequence (pointer, key, wheel and none sources), and with them bless, and
-// set_permission, get_computed_role, get_computed_label and delete_all_cookies; get_named_cookie and get_all_cookies;
+// set_permission, get_computed_role, get_computed_label (from Pyro's accessibility tree) and get_accessibility_properties_for_element / _for_accessibility_node, delete_all_cookies; get_named_cookie and get_all_cookies;
 // bidi.log.entry_added, bidi.permissions.set_permission and the bidi.emulation overrides the browser really has
 // (geolocation, locale, touch, prefers-color-scheme/reduced-motion), and WebDriver's virtual authenticators. The rest keeps testdriver.js's own "not
 // implemented" rejections. A command group is added with one `def` line below (td/index.mjs says how).
@@ -93,16 +93,12 @@
   // The permission for this document's origin (WebDriver's Set Permission), in the page's browser context.
   internal.set_permission = (params) => call({ cmd: 'set_permission', descriptor: params.descriptor, state: params.state, origin: location.origin });
 
-  // Computed role and name (WebDriver's Get Computed Role / Label): the runner reads them with Playwright's
-  // accessibility engine, which finds the element by a marker attribute held only for the call.
-  async function aria(el) {
-    if (!(el instanceof Element)) throw new Error('testdriver: not an element');
-    const id = String(++marks);
-    el.setAttribute('data-pyro-testdriver', id);
-    try { return await call({ cmd: 'aria', id }); } finally { el.removeAttribute('data-pyro-testdriver'); }
-  }
-  internal.get_computed_role = async (el) => (await aria(el)).role;
-  internal.get_computed_label = async (el) => (await aria(el)).name;
+  // Computed role and name (WebDriver's Get Computed Role / Label) and the accessibility properties of an element or
+  // node, from Pyro's accessibility tree (td/aria.mjs).
+  def('get_computed_role', { elements: [0] });
+  def('get_computed_label', { elements: [0] });
+  def('get_accessibility_properties_for_element', { elements: [0] });
+  def('get_accessibility_properties_for_accessibility_node');
 
   // WebDriver's Delete All Cookies: the browser context's cookies.
   internal.delete_all_cookies = () => call({ cmd: 'delete_all_cookies' });

@@ -166,15 +166,6 @@ export const commands = {
     const touch = async (type, touchPoints) => (await ctx.session()).send('Input.dispatchTouchEvent', { type, touchPoints });
     await actions(ctx.page, off, c.sources, touch, ctx.state('touch', () => new Map()));
   },
-  async aria(ctx, c) {
-    await ctx.off();
-    // The snapshot's first line is the element's own node: `- role "name" [...]` (or `- role: text`).
-    const snap = await ctx.frame.locator(`[data-pyro-testdriver="${c.id}"]`).ariaSnapshot({ timeout: 5000 });
-    const m = snap.split('\n')[0].match(/^- ([\w-]+)(?: ("(?:[^"\\]|\\.)*"))?/);
-    // Nothing in the accessibility tree (hidden, or presentational with no content): no role, no name.
-    if (!m) return { role: '', name: '' };
-    return { role: m[1], name: m[2] ? JSON.parse(m[2]) : '' };
-  },
   async delete_all_cookies(ctx) {
     await ctx.off();
     await ctx.context.clearCookies();
