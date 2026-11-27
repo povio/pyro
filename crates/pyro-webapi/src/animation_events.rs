@@ -1113,6 +1113,7 @@ pub(crate) fn layout_flush(page: &Rc<PageDom>, el: NodeId) {
         layout.synced_geometry_source(&dom);
     }
     style_flush(page, Some(el));
+    crate::layout_api::apply_owed_scroll_anchors(page);
 }
 
 /// Once transitions are tracked, the engine keeps the elements whose style a

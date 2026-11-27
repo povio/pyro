@@ -623,6 +623,20 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
     }
 }
 
+/// pyro: a script read of geometry (`getBoundingClientRect`, `offsetTop`, ...) lays out, which
+/// adjusts the scroll offsets of the scrollers whose anchor moved (CSS Scroll Anchoring 1 § 3;
+/// Chromium does it in layout, before the read returns; WPT `contain-paint-offscreen-container`
+/// reads a rect after the change). The `scroll` events follow at the next frame.
+pub(crate) fn apply_owed_scroll_anchors(page: &Rc<PageDom>) {
+    let owed = match (page.dom.try_borrow(), page.layout.try_borrow()) {
+        (Ok(dom), Ok(layout)) => layout.scroll_anchors_owed(&dom),
+        _ => false,
+    };
+    if owed {
+        clamp_scrolls(page, false);
+    }
+}
+
 /// After a task that changed the DOM while something is scrolled: re-clamp
 /// at the next frame (16 ms, the scroll event cadence), when Chromium's
 /// rendering update would lay out without any script read.

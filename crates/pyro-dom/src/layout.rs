@@ -4145,6 +4145,16 @@ impl Layout {
         })
     }
 
+    /// pyro: whether a scroller's anchor was selected in a layout that is not the current one: a
+    /// geometry read then owes the adjustment (Chromium adjusts during layout, before the read).
+    pub fn scroll_anchors_owed(&self, dom: &Dom) -> bool {
+        if self.scroll_anchors.is_empty() {
+            return false;
+        }
+        let flow = self.layout_result(dom);
+        self.scroll_anchors.values().any(|(old, _)| !Rc::ptr_eq(old, &flow))
+    }
+
     /// `contain: paint` (also `strict`, `content`): the box clips its descendants' overflow.
     fn contains_paint(&self, dom: &Dom, el: NodeId) -> bool {
         self.style
