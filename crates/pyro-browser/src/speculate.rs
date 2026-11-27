@@ -16,8 +16,8 @@
 //! a request, so markup a write made unreachable may have been requested in
 //! vain (as in other browsers). A `<base href>` in scanned markup resolves
 //! the URLs after it when the document has none yet; a `<meta
-//! name=referrer>` stops the scan, since requests after it would carry
-//! another policy. Nonces (CSP is not enforced) and `integrity` do not
+//! name=referrer>` sets the policy of the requests after it (the elements'
+//! own `referrerpolicy` first). Nonces (CSP is not enforced) and `integrity` do not
 //! change a request; `crossorigin` (CORS mode and credentials) is part of
 //! the key.
 //!
@@ -69,6 +69,9 @@ pub(crate) struct Speculation {
     /// A scanned `<base href>`, resolved: scanned URLs after it resolve
     /// against it.
     base: Option<String>,
+    /// The policy of the last scanned `<meta name=referrer>`: the document's, once the
+    /// parser reaches it, for the requests after it.
+    referrer_policy: Option<pyro_net::ReferrerPolicy>,
     /// By URL (one speculative request per URL: the first found).
     entries: HashMap<String, Entry>,
     /// Requests not started yet, in document order.
@@ -290,15 +293,22 @@ impl Browser {
                             }
                         }
                     }
-                    Prescanned::ReferrerPolicy => break,
+                    Prescanned::ReferrerPolicy(content) => {
+                        // An invalid value leaves the policy as it was.
+                        if let Some(policy) = pyro_net::ReferrerPolicy::from_meta(&content) {
+                            spec.referrer_policy = Some(policy);
+                        }
+                    }
                     item => {
                         let href = match &item {
-                            Prescanned::Script { src, .. } | Prescanned::Image { src } => src.trim(),
-                            Prescanned::Stylesheet { href, .. } | Prescanned::Preload { href, .. } => href.trim(),
+                            Prescanned::Script { src, .. } | Prescanned::Image { src, .. } => src.trim(),
+                            Prescanned::Stylesheet { href, .. }
+                            | Prescanned::Preload { href, .. }
+                            | Prescanned::SvgImage { href, .. } => href.trim(),
                             _ => unreachable!("handled above"),
                         };
                         if let Some(url) = base.as_ref().and_then(|b| b.join(href).ok()) {
-                            resolved.push((url.to_string(), item));
+                            resolved.push((url.to_string(), item, spec.referrer_policy));
                         }
                     }
                 }
@@ -311,28 +321,51 @@ impl Browser {
         let Some(requester) = self.requester(page) else { return };
         let requests = requests
             .into_iter()
-            .filter_map(|(url, item)| match item {
-                Prescanned::Script { module: true, crossorigin, .. } => {
-                    Some(requester.request(url, ResourceKind::ModuleScript, crossorigin, Some(ModuleType::JavaScript)))
+            .filter_map(|(url, item, document_policy)| {
+                // The request carries its element's `referrerpolicy`, else the policy a scanned
+                // <meta name=referrer> gave the document (the element's own request reads it
+                // from the document once the parser has reached the <meta>).
+                let with_policy = |mut request: FetchRequest, own: Option<String>| {
+                    request.referrer_policy = pyro_net::ReferrerPolicy::from_attribute(own.as_deref()).or(document_policy);
+                    Some(request)
+                };
+                match item {
+                    Prescanned::Script { module: true, crossorigin, referrer_policy, .. } => with_policy(
+                        requester.request(url, ResourceKind::ModuleScript, crossorigin, Some(ModuleType::JavaScript)),
+                        referrer_policy,
+                    ),
+                    Prescanned::Script { crossorigin, referrer_policy, .. } => {
+                        with_policy(requester.request(url, ResourceKind::Script, crossorigin, None), referrer_policy)
+                    }
+                    Prescanned::Stylesheet { crossorigin, referrer_policy, .. } => {
+                        with_policy(requester.request(url, ResourceKind::Stylesheet, crossorigin, None), referrer_policy)
+                    }
+                    Prescanned::Preload { as_, crossorigin, referrer_policy, .. } => {
+                        // As `preload_event` maps `as`.
+                        let kind = match as_.as_deref().map(str::to_ascii_lowercase).as_deref() {
+                            Some("script") => ResourceKind::Script,
+                            Some("style") => ResourceKind::Stylesheet,
+                            _ => ResourceKind::Image,
+                        };
+                        with_policy(requester.request(url, kind, crossorigin, None), referrer_policy)
+                    }
+                    Prescanned::Image { .. } if url.starts_with("blob:") => None,
+                    Prescanned::Image { referrer_policy, .. } => {
+                        with_policy(requester.request(url, ResourceKind::Image, None, None), referrer_policy)
+                    }
+                    // As `svg_image_event` fetches it (for its `load` and `error` events): an
+                    // object-kind request whose CORS mode is its `crossorigin` attribute's.
+                    Prescanned::SvgImage { .. } if url.starts_with("blob:") || url.starts_with("about:") => None,
+                    Prescanned::SvgImage { crossorigin, .. } => {
+                        let crossorigin = crossorigin.map(|value| {
+                            if value.eq_ignore_ascii_case("use-credentials") { value } else { "anonymous".to_owned() }
+                        });
+                        let mut request = requester.request(url, ResourceKind::Object, crossorigin, None);
+                        request.initiator = Some(pyro_webapi::resource_timing::Initiator::Other);
+                        with_policy(request, None)
+                    }
+                    Prescanned::Base { .. } | Prescanned::ReferrerPolicy(_) => None,
                 }
-                Prescanned::Script { crossorigin, .. } => {
-                    Some(requester.request(url, ResourceKind::Script, crossorigin, None))
-                }
-                Prescanned::Stylesheet { crossorigin, .. } => {
-                    Some(requester.request(url, ResourceKind::Stylesheet, crossorigin, None))
-                }
-                Prescanned::Preload { as_, crossorigin, .. } => {
-                    // As `preload_event` maps `as`.
-                    let kind = match as_.as_deref().map(str::to_ascii_lowercase).as_deref() {
-                        Some("script") => ResourceKind::Script,
-                        Some("style") => ResourceKind::Stylesheet,
-                        _ => ResourceKind::Image,
-                    };
-                    Some(requester.request(url, kind, crossorigin, None))
-                }
-                Prescanned::Image { .. } if url.starts_with("blob:") => None,
-                Prescanned::Image { .. } => Some(requester.request(url, ResourceKind::Image, None, None)),
-                Prescanned::Base { .. } | Prescanned::ReferrerPolicy => None,
             })
             .collect();
         self.speculate(page, requests);

@@ -2,22 +2,26 @@
 //! preload scanner): a tokenizer light enough to run over the buffered rest
 //! of a document while the parser waits for a blocking script, finding the
 //! start tags whose resources the document will request (`<script src>`,
-//! `<link rel=stylesheet>`, `<link rel=preload>`, `<img src>`) and the tags
-//! that change how later ones are requested (`<base href>`, `<meta
-//! name=referrer>`). It inserts nothing: the browser starts the fetches, and
-//! the elements take the responses when the parser reaches them.
+//! `<link rel=stylesheet>`, `<link rel=preload>`, `<img src|srcset>` and the
+//! `<picture><source srcset>` before it, `<video poster>`, SVG `<script href>`
+//! and `<image href>`) and the tags that change how later ones are requested
+//! (`<base href>`, `<meta name=referrer>`). It inserts nothing: the browser
+//! starts the fetches, and the elements take the responses when the parser
+//! reaches them.
 //!
 //! What it skips, as the real tokenizer never sees a tag there: comments and
 //! bogus comments, the contents of raw text elements (`script`, `style`,
 //! `textarea`, `title`, `xmp`, `iframe`, `noembed`, `noframes`, and
 //! `noscript`, since the scan only runs with scripting on), `<template>`
-//! contents (inert), foreign content (`<svg>`, `<math>`, with CDATA
+//! contents (inert; a declarative shadow root, `<template shadowrootmode>`
+//! outside an inert template, is not inert, but a `<base>` or `<meta>` in it
+//! affects nothing outside), foreign content (`<svg>`, `<math>`, with CDATA
 //! sections) except inside its integration points (`foreignObject`,
-//! `mtext`, ...) and until a tag that breaks out of it, script text in its
-//! escaped states (`<!--<script>...</script>-->`), and everything after
-//! `<plaintext>`. An `<img>` inside
-//! `<picture>` or with a `srcset` is left to the element (its source
-//! depends on the viewport). A tag the chunk cuts off is dropped.
+//! `mtext`, ...) and until a tag that breaks out of it (only SVG `<script>`
+//! and `<image>` are requested there), script text in its escaped states
+//! (`<!--<script>...</script>-->`), and everything after `<plaintext>`. An
+//! image whose source depends on the viewport (a `w` descriptor, a `<source
+//! media>`) is left to the element. A tag the chunk cuts off is dropped.
 
 use std::borrow::Cow;
 
@@ -29,32 +33,90 @@ use markup5ever::data::NAMED_ENTITIES;
 pub enum Prescanned {
     /// `<script src>` the document will fetch: a classic script, or a
     /// module (`type=module`).
-    Script { src: String, module: bool, crossorigin: Option<String> },
+    /// (An SVG `<script>` with an `href` or `xlink:href` is a classic one.)
+    /// `referrer_policy` is the element's `referrerpolicy` attribute as written.
+    Script { src: String, module: bool, crossorigin: Option<String>, referrer_policy: Option<String> },
     /// `<link rel=stylesheet href>` (enabled, CSS type).
-    Stylesheet { href: String, crossorigin: Option<String> },
+    Stylesheet { href: String, crossorigin: Option<String>, referrer_policy: Option<String> },
     /// `<link rel=preload href as>` (not a modulepreload).
-    Preload { href: String, as_: Option<String>, crossorigin: Option<String> },
-    /// An eager `<img src>` without `srcset` and outside `<picture>`.
-    Image { src: String },
+    Preload { href: String, as_: Option<String>, crossorigin: Option<String>, referrer_policy: Option<String> },
+    /// An eager image: the source an `<img>` (its `src`, `srcset` or the
+    /// `<picture><source>` before it, at density 1) or a `<video poster>` requests.
+    Image { src: String, referrer_policy: Option<String> },
+    /// An SVG `<image href|xlink:href>`: requested as the element's own
+    /// load-event fetch is (not as an `<img>`).
+    SvgImage { href: String, crossorigin: Option<String> },
     /// The first `<base href>`: later URLs resolve against it.
     Base { href: String },
-    /// `<meta name=referrer>`: later requests may carry another referrer
-    /// policy, so the scan stops here.
-    ReferrerPolicy,
+    /// `<meta name=referrer content>`: the `content` as written; later
+    /// requests without a `referrerpolicy` carry the policy it names.
+    ReferrerPolicy(String),
 }
 
 /// Scanner state carried across the chunks of one document's input (the
 /// parser's remaining input may grow at the front with written markup).
 #[derive(Default)]
 pub struct Prescan {
-    template_depth: usize,
-    picture_depth: usize,
+    /// The open `<template>`s, innermost last: `true` for an inert one (its
+    /// contents are no part of the document), `false` for a declarative shadow
+    /// root (`shadowrootmode`) outside an inert template.
+    templates: Vec<bool>,
+    /// The open `<picture>`s, innermost last, with the source each selected.
+    pictures: Vec<PictureSel>,
     /// The open elements from the outermost `<svg>`/`<math>` in: empty in
     /// HTML content. HTML elements inside an integration point are kept
     /// too, so their end tags do not close foreign ones.
     foreign: Vec<Open>,
     base_seen: bool,
     stopped: bool,
+}
+
+/// What a `<picture>`'s `<source>` children before the current position select.
+#[derive(Default)]
+struct PictureSel {
+    /// The URL the first applicable `<source>` selected: its `<img>` requests it.
+    selected: Option<String>,
+    /// A `<source>` whose applicability (`media`) or candidate (a `w`
+    /// descriptor) depends on the viewport: left to the element.
+    unknown: bool,
+}
+
+impl PictureSel {
+    /// A `<source>`, as `Dom::picture_candidate_auto` considers it (at device pixel ratio 1).
+    fn consider(&mut self, attrs: &Attrs<'_>) {
+        if self.selected.is_some() || self.unknown {
+            return;
+        }
+        if let Some(t) = attr(attrs, "type") {
+            let t = t.trim().to_ascii_lowercase();
+            if !t.is_empty() && !t.starts_with("image/") {
+                return;
+            }
+        }
+        if attr(attrs, "media").is_some_and(|m| !m.trim().is_empty() && !m.trim().eq_ignore_ascii_case("all")) {
+            self.unknown = true;
+            return;
+        }
+        let Some(srcset) = attr(attrs, "srcset") else { return };
+        if has_width_descriptor(srcset) {
+            self.unknown = true;
+            return;
+        }
+        let candidates = crate::picture::parse_srcset(srcset, 0.0);
+        if let Some(c) = crate::picture::pick_candidate(&candidates, 1.0) {
+            self.selected = Some(c.url.clone());
+        }
+    }
+}
+
+/// Whether a candidate of `srcset` has a width descriptor (its density then needs the `sizes` source size).
+fn has_width_descriptor(srcset: &str) -> bool {
+    srcset.split(',').any(|candidate| {
+        candidate
+            .split_ascii_whitespace()
+            .skip(1)
+            .any(|d| d.strip_suffix('w').is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())))
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -152,9 +214,14 @@ fn ascii(b: &[u8]) -> &str {
 }
 
 impl Prescan {
-    /// Whether a `<plaintext>` or `<meta name=referrer>` ended the scan.
+    /// Whether a `<plaintext>` ended the scan.
     pub fn stopped(&self) -> bool {
         self.stopped
+    }
+
+    /// Whether the current node is inside an inert `<template>`.
+    fn inert(&self) -> bool {
+        self.templates.last().copied().unwrap_or(false)
     }
 
     /// Whether the current node is an SVG or MathML element.
@@ -273,6 +340,18 @@ impl Prescan {
             }
             // A foreign element, in the current node's namespace.
             let ns = top.ns;
+            // SVG `<script>` and `<image>` request their `href` (else `xlink:href`).
+            if ns == Ns::Svg && !self.inert() && (is("script") || is("image")) {
+                if let Some(href) = attr(attrs, "href").or_else(|| attr(attrs, "xlink:href")).filter(|v| !v.trim().is_empty()) {
+                    let crossorigin = attr(attrs, "crossorigin").map(str::to_owned);
+                    if is("script") {
+                        let referrer_policy = attr(attrs, "referrerpolicy").map(str::to_owned);
+                        emit(Prescanned::Script { src: href.to_owned(), module: false, crossorigin, referrer_policy });
+                    } else {
+                        emit(Prescanned::SvgImage { href: href.to_owned(), crossorigin });
+                    }
+                }
+            }
             if !self_closing {
                 let lower = name.to_ascii_lowercase();
                 let text_point = ns == Ns::MathMl && matches!(&*lower, "mi" | "mo" | "mn" | "ms" | "mtext");
@@ -313,7 +392,7 @@ impl Prescan {
     ) -> Option<&'static str> {
         let is = |tag: &str| name.eq_ignore_ascii_case(tag);
         if let Some(raw) = RAW_TEXT.iter().find(|r| is(r)) {
-            if is("script") && self.template_depth == 0 {
+            if is("script") && !self.inert() {
                 self.script(attrs, emit);
             }
             return Some(raw);
@@ -321,7 +400,12 @@ impl Prescan {
         if is("plaintext") {
             self.stopped = true;
         } else if is("template") {
-            self.template_depth += 1;
+            // A declarative shadow root (HTML "attach a shadow root" with `shadowrootmode`
+            // open or closed) is part of the document, and its scripts, styles and images
+            // are requested; any other template, and one inside an inert one, is inert.
+            let shadow = !self.inert()
+                && attr(attrs, "shadowrootmode").is_some_and(|m| m.eq_ignore_ascii_case("open") || m.eq_ignore_ascii_case("closed"));
+            self.templates.push(!shadow);
         } else if is("svg") || is("math") {
             if !self_closing {
                 let ns = if is("svg") { Ns::Svg } else { Ns::MathMl };
@@ -333,30 +417,34 @@ impl Prescan {
                 });
             }
         } else if is("picture") {
-            self.picture_depth += 1;
-        } else if self.template_depth > 0 {
+            self.pictures.push(PictureSel::default());
+        } else if self.inert() {
+        } else if is("source") {
+            if let Some(picture) = self.pictures.last_mut() {
+                picture.consider(attrs);
+            }
         } else if is("base") {
-            if !self.base_seen {
+            // Not in a declarative shadow root: a <base> there affects no URL outside it.
+            if !self.base_seen && self.templates.is_empty() {
                 if let Some(href) = attr(attrs, "href") {
                     self.base_seen = true;
                     emit(Prescanned::Base { href: href.to_owned() });
                 }
             }
         } else if is("meta") {
-            if attr(attrs, "name").is_some_and(|n| n.trim().eq_ignore_ascii_case("referrer")) {
-                self.stopped = true;
-                emit(Prescanned::ReferrerPolicy);
+            // Not in a declarative shadow root: its policy is no part of the document's.
+            if self.templates.is_empty() && attr(attrs, "name").is_some_and(|n| n.trim().eq_ignore_ascii_case("referrer")) {
+                if let Some(content) = attr(attrs, "content") {
+                    emit(Prescanned::ReferrerPolicy(content.to_owned()));
+                }
             }
-        } else if attr(attrs, "referrerpolicy").is_some() {
-            // The element's request carries its own referrer policy, which a
-            // speculative request (the document's) would not: left to the element.
         } else if is("img") || is("image") {
             // The HTML tree builder reprocesses <image> as <img>.
-            let lazy = attr(attrs, "loading").is_some_and(|value| value.eq_ignore_ascii_case("lazy"));
-            if !lazy && self.picture_depth == 0 && attr(attrs, "srcset").is_none() {
-                if let Some(src) = attr(attrs, "src").filter(|v| !v.trim().is_empty()) {
-                    emit(Prescanned::Image { src: src.to_owned() });
-                }
+            self.image(attrs, emit);
+        } else if is("video") {
+            // A poster image is requested at once, as an image (it has no `loading`).
+            if let Some(poster) = attr(attrs, "poster").filter(|v| !v.trim().is_empty()) {
+                emit(Prescanned::Image { src: poster.to_owned(), referrer_policy: None });
             }
         } else if is("link") {
             self.link(attrs, emit);
@@ -377,9 +465,46 @@ impl Prescan {
             }
         }
         if name.eq_ignore_ascii_case("template") {
-            self.template_depth = self.template_depth.saturating_sub(1);
+            self.templates.pop();
         } else if name.eq_ignore_ascii_case("picture") {
-            self.picture_depth = self.picture_depth.saturating_sub(1);
+            self.pictures.pop();
+        }
+    }
+
+    /// An `<img>`: the source its `<picture>` selected, else its `srcset` (the
+    /// density-1 candidate, as `Dom::own_srcset_source` picks it), else its `src`.
+    /// A lazy image waits for the element; so does one whose source needs the viewport.
+    fn image(&self, attrs: &Attrs<'_>, emit: &mut impl FnMut(Prescanned)) {
+        if attr(attrs, "loading").is_some_and(|value| value.eq_ignore_ascii_case("lazy")) {
+            return;
+        }
+        let referrer_policy = attr(attrs, "referrerpolicy").map(str::to_owned);
+        if let Some(picture) = self.pictures.last() {
+            if picture.unknown {
+                return;
+            }
+            if let Some(src) = &picture.selected {
+                emit(Prescanned::Image { src: src.clone(), referrer_policy });
+                return;
+            }
+        }
+        let src = match attr(attrs, "srcset") {
+            None => attr(attrs, "src").filter(|v| !v.trim().is_empty()).map(str::to_owned),
+            Some(srcset) => {
+                if has_width_descriptor(srcset) {
+                    return;
+                }
+                let mut candidates = crate::picture::parse_srcset(srcset, 0.0);
+                if let Some(src) = attr(attrs, "src").filter(|v| !v.is_empty()) {
+                    if !candidates.iter().any(|c| c.density == 1.0) {
+                        candidates.push(crate::picture::Candidate { url: src.to_owned(), density: 1.0 });
+                    }
+                }
+                crate::picture::pick_candidate(&candidates, 1.0).map(|c| c.url.clone())
+            }
+        };
+        if let Some(src) = src {
+            emit(Prescanned::Image { src, referrer_policy });
         }
     }
 
@@ -388,10 +513,6 @@ impl Prescan {
     /// is classic (not fetched with `nomodule`); `module` is a module;
     /// anything else is a data block.
     fn script(&self, attrs: &Attrs<'_>, emit: &mut impl FnMut(Prescanned)) {
-        // Its request carries its own referrer policy: left to the element.
-        if attr(attrs, "referrerpolicy").is_some() {
-            return;
-        }
         let Some(src) = attr(attrs, "src").filter(|v| !v.is_empty()) else { return };
         let module = match attr(attrs, "type") {
             Some(t) if !t.is_empty() => {
@@ -419,7 +540,8 @@ impl Prescan {
             return;
         }
         let crossorigin = attr(attrs, "crossorigin").map(str::to_owned);
-        emit(Prescanned::Script { src: src.to_owned(), module, crossorigin });
+        let referrer_policy = attr(attrs, "referrerpolicy").map(str::to_owned);
+        emit(Prescanned::Script { src: src.to_owned(), module, crossorigin, referrer_policy });
     }
 
     fn link(&self, attrs: &Attrs<'_>, emit: &mut impl FnMut(Prescanned)) {
@@ -427,16 +549,18 @@ impl Prescan {
         let has = |token: &str| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case(token));
         let Some(href) = attr(attrs, "href").filter(|v| !v.trim().is_empty()) else { return };
         let crossorigin = attr(attrs, "crossorigin").map(str::to_owned);
+        let referrer_policy = attr(attrs, "referrerpolicy").map(str::to_owned);
         if has("stylesheet") {
             let enabled = attr(attrs, "disabled").is_none()
                 && attr(attrs, "type").is_none_or(|v| v.is_empty() || v.eq_ignore_ascii_case("text/css"));
             if enabled {
-                emit(Prescanned::Stylesheet { href: href.to_owned(), crossorigin });
+                emit(Prescanned::Stylesheet { href: href.to_owned(), crossorigin, referrer_policy });
             }
         } else if has("preload") && !has("modulepreload") && attr(attrs, "imagesrcset").is_none() {
             // An image preload with a source set fetches a candidate of it, not `href`: the
             // element's own fetch decides.
-            emit(Prescanned::Preload { href: href.to_owned(), as_: attr(attrs, "as").map(str::to_owned), crossorigin });
+            let as_ = attr(attrs, "as").map(str::to_owned);
+            emit(Prescanned::Preload { href: href.to_owned(), as_, crossorigin, referrer_policy });
         }
     }
 }
@@ -710,7 +834,11 @@ mod tests {
     }
 
     fn script(src: &str) -> Prescanned {
-        Prescanned::Script { src: src.into(), module: false, crossorigin: None }
+        Prescanned::Script { src: src.into(), module: false, crossorigin: None, referrer_policy: None }
+    }
+
+    fn img(src: &str) -> Prescanned {
+        Prescanned::Image { src: src.into(), referrer_policy: None }
     }
 
     #[test]
@@ -728,14 +856,21 @@ mod tests {
         assert_eq!(
             items,
             [
-                Prescanned::Stylesheet { href: "/a.css".into(), crossorigin: None },
-                Prescanned::Stylesheet { href: "b.css".into(), crossorigin: Some(String::new()) },
-                Prescanned::Preload { href: "/p.js".into(), as_: Some("script".into()), crossorigin: None },
+                Prescanned::Stylesheet { href: "/a.css".into(), crossorigin: None, referrer_policy: None },
+                Prescanned::Stylesheet { href: "b.css".into(), crossorigin: Some(String::new()), referrer_policy: None },
+                Prescanned::Preload { href: "/p.js".into(), as_: Some("script".into()), crossorigin: None, referrer_policy: None },
                 script("/s1.js"),
-                Prescanned::Script { src: "/mod.js".into(), module: true, crossorigin: Some("anonymous".into()) },
+                Prescanned::Script {
+                    src: "/mod.js".into(),
+                    module: true,
+                    crossorigin: Some("anonymous".into()),
+                    referrer_policy: None
+                },
                 script("/lang.js"),
-                Prescanned::Image { src: "/eager.png".into() },
-                Prescanned::Image { src: "/i.png".into() },
+                img("/eager.png"),
+                img("/i.png"),
+                // `src` is the 1x candidate of a set without one.
+                img("/set.png"),
             ]
         );
     }
@@ -744,10 +879,18 @@ mod tests {
     fn treats_image_as_img_only_in_html_content() {
         let items = scan(
             r#"<IMAGE src="/alias.png"><image loading="lazy" src="/lazy.png">
-            <svg><image src="/foreign.png"/></svg>
+            <svg><image src="/not-href.png"/><image href="/foreign.png"/></svg>
             <picture><image src="/fallback.png"></picture>"#,
         );
-        assert_eq!(items, [Prescanned::Image { src: "/alias.png".into() }]);
+        // An `<image>` in `<picture>` is an `<img>` there; an SVG one is requested by its `href`.
+        assert_eq!(
+            items,
+            [
+                img("/alias.png"),
+                Prescanned::SvgImage { href: "/foreign.png".into(), crossorigin: None },
+                img("/fallback.png"),
+            ]
+        );
     }
 
     #[test]
@@ -759,8 +902,10 @@ mod tests {
             <textarea><script src="/ta.js"></script></textarea><title><img src="/t.png"></title>
             <noscript><img src="/ns.png"><link rel=stylesheet href="/ns.css"></noscript>
             <template><script src="/tpl.js"></script><template><img src="/tpl2.png"></template><img src="/tpl3.png"></template>
-            <svg><script href="/svg.js"></script><image href="/svg.png"/><foreignObject><p>x</p></foreignObject></svg>
-            <picture><source srcset="/pic.png"><img src="/fallback.png"></picture>
+            <svg><script src="/svg-src.js"></script><image src="/svg-src.png"/><foreignObject><p>x</p></foreignObject></svg>
+            <math><script href="/math.js"></script></math>
+            <picture><source srcset="/pic.png" media="(min-width: 1px)"><img src="/fallback.png"></picture>
+            <template><svg><script href="/tpl-svg.js"></script></svg><video poster="/tpl-poster.png"></video></template>
             <iframe src="/frame.html"><script src="/if.js"></script></iframe>
             <SCRIPT SRC="/last.js"></SCRIPT><plaintext><script src="/plain.js"></script>"#,
         );
@@ -770,16 +915,64 @@ mod tests {
     #[test]
     fn breakout_tags_end_foreign_content() {
         let items = scan(r#"<svg><circle/><img src="/in-svg.png"><script src="/html.js"></script>"#);
-        assert_eq!(items, [Prescanned::Image { src: "/in-svg.png".into() }, script("/html.js")]);
+        assert_eq!(items, [img("/in-svg.png"), script("/html.js")]);
     }
 
     #[test]
-    fn an_element_with_its_own_referrer_policy_is_not_speculated() {
+    fn an_element_with_its_own_referrer_policy_is_speculated_with_it() {
         let found = scan(
             r#"<script src="/a.js" referrerpolicy="origin"></script><img src="/a.png" referrerpolicy=no-referrer>
             <link rel=stylesheet href="/a.css" referrerpolicy="unsafe-url"><script src="/b.js"></script>"#,
         );
-        assert_eq!(found, vec![Prescanned::Script { src: "/b.js".into(), module: false, crossorigin: None }]);
+        assert_eq!(
+            found,
+            [
+                Prescanned::Script { src: "/a.js".into(), module: false, crossorigin: None, referrer_policy: Some("origin".into()) },
+                Prescanned::Image { src: "/a.png".into(), referrer_policy: Some("no-referrer".into()) },
+                Prescanned::Stylesheet { href: "/a.css".into(), crossorigin: None, referrer_policy: Some("unsafe-url".into()) },
+                script("/b.js"),
+            ]
+        );
+    }
+
+    #[test]
+    fn declarative_shadow_roots_are_scanned_and_plain_templates_are_not() {
+        let found = scan(
+            r#"<div><template shadowrootmode="closed"><script src="/dsd.js"></script><base href="/dsd-base/"><meta name=referrer content=origin></template></div>
+            <template shadowrootmode="bogus"><img src="/bogus.png"></template>
+            <template><div><template shadowrootmode=open><img src="/nested-1.png"></template></div></template>
+            <template shadowrootmode=open><template><img src="/nested-2.png"></template><img src="/dsd.png"></template>
+            <script src="/after.js"></script>"#,
+        );
+        assert_eq!(found, [script("/dsd.js"), img("/dsd.png"), script("/after.js")]);
+    }
+
+    #[test]
+    fn picture_sources_srcset_posters_and_svg_references() {
+        let found = scan(
+            r#"<picture><source srcset="/br.png"><br><img></picture>
+            <picture><source srcset="/text.png" type="text/plain"><source srcset="/second.png 1x, /second2.png 2x"><img src="/img.png"></picture>
+            <picture><source srcset="/media.png" media="not all"><img src="/unknown.png"></picture>
+            <picture><source srcset="/no-img.png"></picture>
+            <picture><source srcset="/wide.png 100w"><img src="/wide-img.png"></picture>
+            <img srcset="/only.png"><img srcset="/w.png 2w"><img srcset="/a.png 2x, /b.png 3x" src="/c.png"><img srcset="/d.png 1x" src="/e.png">
+            <video poster="/poster.png"></video><video poster=" "></video>
+            <svg><script xlink:href="/x.js"></script><script href="/h.js" xlink:href="/ignored.js"></script><image xlink:href="/x.png" crossorigin/></svg>"#,
+        );
+        assert_eq!(
+            found,
+            [
+                img("/br.png"),
+                img("/second.png"),
+                img("/only.png"),
+                img("/c.png"),
+                img("/d.png"),
+                img("/poster.png"),
+                script("/x.js"),
+                script("/h.js"),
+                Prescanned::SvgImage { href: "/x.png".into(), crossorigin: Some(String::new()) },
+            ]
+        );
     }
 
     #[test]
@@ -797,7 +990,8 @@ mod tests {
                 script("/q?a=1&b=2<3AB&copy=x∉"),
                 script("/sq.js"),
                 script("/unq.js?x"),
-                Prescanned::ReferrerPolicy,
+                Prescanned::ReferrerPolicy("no-referrer".into()),
+                script("/late.js"),
             ]
         );
     }
@@ -819,13 +1013,11 @@ mod tests {
             <script><!--<script>--></script><img src="/dd.png">
             <script><!--><img src="/no.png"></script><img src="/short.png">"#,
         );
-        let img = |s: &str| Prescanned::Image { src: s.into() };
         assert_eq!(items, [img("/after.png"), img("/escaped-end.png"), img("/dd.png"), img("/short.png")]);
     }
 
     #[test]
     fn integration_points_keep_foreign_content() {
-        let img = |s: &str| Prescanned::Image { src: s.into() };
         // HTML inside a text integration point does not end the <math>.
         assert_eq!(
             scan(
@@ -840,7 +1032,7 @@ mod tests {
                 r#"<svg><foreignObject><img src="/fo.png"><script src="/fo.js"></script></foreignObject><image href="/x.png"/></svg>
                 <math><mi><img src="/mi.png"></mi><annotation-xml encoding="text/html"><script src="/ax.js"></script></annotation-xml></math>"#
             ),
-            [img("/fo.png"), script("/fo.js"), img("/mi.png"), script("/ax.js")]
+            [img("/fo.png"), script("/fo.js"), Prescanned::SvgImage { href: "/x.png".into(), crossorigin: None }, img("/mi.png"), script("/ax.js")]
         );
         // A breakout tag in plain foreign content ends it.
         assert_eq!(
