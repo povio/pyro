@@ -1272,6 +1272,12 @@ fn update(page: &Rc<PageDom>, registration: &Rc<Registration>, script_url: pyro_
         if registration.update_via_cache == "all" { pyro_net::CacheMode::Default } else { pyro_net::CacheMode::NoCache };
     request.headers.insert("service-worker", pyro_net::http::HeaderValue::from_static("script"));
     page.apply_request_defaults(&mut request);
+    // The script is fetched by the browser, not a document: no UA client hints go with it (an empty
+    // set is "overridden without metadata": the low-entropy ones are not added) unless the page has
+    // its own metadata override. Its headers are what the update tests read back from the worker.
+    if request.defaults.client_hints.is_none() {
+        request.defaults.client_hints = Some(Arc::new(Vec::new()));
+    }
     request.top_level_site = registration.partition.clone();
     request.cross_site_ancestor = registration.site == SiteContext::CrossSite;
     #[derive(Default)]
