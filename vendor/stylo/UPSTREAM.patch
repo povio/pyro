@@ -1234,7 +1234,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
 diff -ruN a/dom.rs b/dom.rs
 --- a/dom.rs	2026-11-11 19:55:57
-+++ b/dom.rs	2026-11-23 06:58:46
++++ b/dom.rs	2026-11-27 21:15:11
 @@ -498,6 +498,11 @@
  
      /// Get this element's style attribute.
@@ -1247,28 +1247,43 @@ diff -ruN a/dom.rs b/dom.rs
  
      /// Get this element's SMIL override declarations.
      fn smil_override(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
-@@ -951,7 +956,20 @@
+@@ -951,7 +956,35 @@
          &self,
          display: &Display,
      ) -> euclid::default::Size2D<Option<app_units::Au>>;
 +
 +    /// Last layout's selected fallback, if any.
 +    fn query_anchored_fallback(&self) -> Option<crate::values::specified::position::PositionTryFallbacksItem> { None }
- 
++
 +    /// pyro: the writing mode of this element's containing block at the last layout, for
 +    /// `anchored()` container queries; None before a layout placed it.
 +    fn query_anchored_containing_block_writing_mode(&self) -> Option<crate::logical_geometry::WritingMode> { None }
-+
+ 
 +    /// pyro: the edges this element, as a scroll-state query container, can be scrolled towards
 +    /// at the last layout's scroll position (the `scrollable` scroll-state feature).
 +    fn query_scrollable_edges(&self) -> crate::stylesheets::container_rule::ScrollableEdges {
 +        Default::default()
 +    }
 +
++    /// pyro: the edges this scroll-state container was last scrolled towards (`scrolled`).
++    fn query_scrolled_edges(&self) -> crate::stylesheets::container_rule::ScrollableEdges {
++        Default::default()
++    }
++
++    /// pyro: the axes this scroll-state container is currently a snap target on (`snapped`).
++    fn query_snapped_axes(&self) -> crate::stylesheets::container_rule::SnappedAxes {
++        Default::default()
++    }
++
++    /// pyro: the edges this scroll-state container, a sticky box, is stuck to (`stuck`).
++    fn query_stuck_edges(&self) -> crate::stylesheets::container_rule::ScrollableEdges {
++        Default::default()
++    }
++
      /// Returns true if the element has all of specified selector flags.
      fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool;
  
-@@ -974,6 +992,9 @@
+@@ -974,6 +1007,9 @@
      /// Return the value of the given custom attribute if it exists.
      fn get_attr(&self, attr: &LocalName, namespace: &Namespace) -> Option<String>;
  
@@ -1278,7 +1293,7 @@ diff -ruN a/dom.rs b/dom.rs
      /// Traverse the siblings of the element, returning the element's sibling-index()
      /// and sibling-count(). Also populates `caches` with the sibling-index() and
      /// sibling-count() values for all siblings of this element.
-@@ -1003,7 +1024,16 @@
+@@ -1003,7 +1039,16 @@
  
  /// Provides element-level context needed during style computation.
  pub trait ElementContext {
@@ -1296,7 +1311,7 @@ diff -ruN a/dom.rs b/dom.rs
      fn opaque_element(&self) -> Option<OpaqueElement>;
  
      /// Opaque handle to the element's parent node.
-@@ -1023,6 +1053,24 @@
+@@ -1023,6 +1068,24 @@
  }
  
  impl<T: TElement> ElementContext for T {
@@ -2863,7 +2878,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                  self.${shorthand.sub_properties[i].ident},
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-23 06:58:46
++++ b/properties/longhands.toml	2026-11-27 21:18:39
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -2984,12 +2999,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/masking.html#ClipRuleProperty"
  affects = "paint"
-@@ -567,8 +595,64 @@
- animation_type = "discrete"
- ignored_when_colors_disabled = true
+@@ -569,6 +597,62 @@
  servo_restyle_damage = "repaint"
-+affects = "paint"
-+
+ affects = "paint"
+ 
 +[column-rule-inset-cap-start]
 +type = "length::RuleInset"
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
@@ -3030,8 +3043,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
 +struct = "column"
 +spec = "https://drafts.csswg.org/css-gaps-1/#inset"
- affects = "paint"
- 
++affects = "paint"
++
 +[row-rule-inset-junction-start]
 +type = "length::RuleInset"
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
@@ -3085,7 +3098,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial_specified_value = "specified::BorderSideWidth::medium().into()"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
  affects = "layout"
- 
++
 +[column-rule-break]
 +type = "column::RuleBreak"
 +initial = "computed::column::RuleBreak::Normal"
@@ -3139,7 +3152,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +ignored_when_colors_disabled = true
 +spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-color"
 +affects = "paint"
-+
+ 
 +[row-rule-style]
 +type = "column::RuleStyle"
 +initial = "computed::BorderStyle::None.into()"
@@ -3652,12 +3665,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-name"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2335,6 +2548,16 @@
- servo_pref = "layout.css.view-transitions.enabled"
- animation_type = "discrete"
+@@ -2337,6 +2550,16 @@
  spec = "https://drafts.csswg.org/css-view-transitions-2/#view-transition-class-prop"
-+affects = ""
-+
+ affects = ""
+ 
 +[view-transition-scope]
 +type = "ViewTransitionScope"
 +initial = "computed::ViewTransitionScope::None"
@@ -3666,9 +3677,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_pref = "layout.css.view-transitions.enabled"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-view-transitions-2/#view-transition-scope-prop"
- affects = ""
- 
++affects = ""
++
  [view-transition-name]
+ type = "ViewTransitionName"
+ initial = "computed::ViewTransitionName::none()"
 @@ -2350,7 +2573,6 @@
  type = "VectorEffect"
  initial = "computed::VectorEffect::none()"
@@ -3985,7 +3998,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [scroll-behavior]
  struct = "box"
  servo_pref = "layout.css.scroll-behavior.enabled"
-@@ -3770,12 +4076,30 @@
+@@ -3770,13 +4076,31 @@
  
  [column-fill]
  struct = "column"
@@ -3995,7 +4008,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  type = "ColumnFill"
  initial = "computed::ColumnFill::Balance"
-+
+ 
 +# pyro: css-multicol-2 `column-height` and `column-wrap` (blitz-dom lays them out: multicol.rs).
 +[column-height]
 +type = "length::NonNegativeLengthOrAuto"
@@ -4014,9 +4027,19 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_pref = "layout.css.columns.enabled"
 +type = "ColumnWrap"
 +initial = "computed::ColumnWrap::Auto"
- 
++
  [column-span]
  struct = "column"
+ spec = "https://drafts.csswg.org/css-multicol/#propdef-column-span"
+@@ -3845,7 +4169,7 @@
+ 
+ [math-shift]
+ struct = "font"
+-engine = "gecko"
++servo_pref = "layout.css.math-properties.enabled"
+ spec = "https://w3c.github.io/mathml-core/#the-math-shift"
+ animation_type = "discrete"
+ affects = "layout"
 @@ -3865,6 +4189,15 @@
  type = "FontSmoothing"
  initial = "computed::FontSmoothing::Auto"
@@ -4109,11 +4132,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [ruby-align]
  struct = "inherited_text"
  servo_pref = "layout.css.ruby.enabled"
-@@ -4092,6 +4440,17 @@
- servo_restyle_damage = "rebuild_box"
+@@ -4093,6 +4441,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
-+
+ 
 +# pyro: css-sizing-4 `frame-sizing` (responsive iframes), for Servo: blitz-dom gives an iframe the size of
 +# its embedded document's content (`data-pyro-frame-content-size`, from pyro) on the axis its value names.
 +[frame-sizing]
@@ -4124,13 +4146,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +affects = "layout"
 +type = "FrameSizing"
 +initial = "computed::FrameSizing::Auto"
- 
++
  [object-fit]
  struct = "position"
-@@ -4110,6 +4469,61 @@
+ spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
+@@ -4109,7 +4468,62 @@
+ affects = "paint"
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
- 
++
 +[mask-border-source]
 +type = "Image"
 +initial = "computed::Image::None"
@@ -4167,7 +4191,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border-outset"
 +boxed = true
 +affects = "paint"
-+
+ 
 +[mask-border-repeat]
 +type = "BorderImageRepeat"
 +initial = "computed::BorderImageRepeat::stretch()"
@@ -6699,8 +6723,8 @@ diff -ruN a/queries/mod.rs b/queries/mod.rs
  #[macro_use]
 diff -ruN a/queries/values.rs b/queries/values.rs
 --- a/queries/values.rs	2026-11-11 19:55:57
-+++ b/queries/values.rs	2026-11-23 06:58:46
-@@ -19,6 +19,27 @@
++++ b/queries/values.rs	2026-11-27 21:15:11
+@@ -19,6 +19,58 @@
      Landscape,
  }
  
@@ -6723,6 +6747,37 @@ diff -ruN a/queries/values.rs b/queries/values.rs
 +    Y,
 +    Block,
 +    Inline,
++}
++
++/// pyro: the value of the `snapped` scroll-state container feature.
++/// https://drafts.csswg.org/css-conditional-5/#snapped
++#[derive(Clone, Copy, Debug, FromPrimitive, Parse, ToCss)]
++#[repr(u8)]
++#[allow(missing_docs)]
++pub enum Snapped {
++    None,
++    X,
++    Y,
++    Block,
++    Inline,
++    Both,
++}
++
++/// pyro: the value of the `stuck` scroll-state container feature.
++/// https://drafts.csswg.org/css-conditional-5/#stuck
++#[derive(Clone, Copy, Debug, FromPrimitive, Parse, ToCss)]
++#[repr(u8)]
++#[allow(missing_docs)]
++pub enum Stuck {
++    None,
++    Top,
++    Right,
++    Bottom,
++    Left,
++    BlockStart,
++    InlineStart,
++    BlockEnd,
++    InlineEnd,
 +}
 +
  impl Orientation {
@@ -8652,7 +8707,7 @@ diff -ruN a/style_resolver.rs b/style_resolver.rs
          stylist.push_applicable_declarations(
 diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
 --- a/stylesheets/container_rule.rs	2026-11-11 19:55:57
-+++ b/stylesheets/container_rule.rs	2026-11-23 06:58:46
++++ b/stylesheets/container_rule.rs	2026-11-27 21:15:11
 @@ -8,11 +8,11 @@
  
  use crate::computed_value_flags::ComputedValueFlags;
@@ -8663,7 +8718,7 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
  use crate::properties::ComputedValues;
  use crate::queries::feature::{AllowsRanges, Evaluator, FeatureFlags, QueryFeatureDescription};
 -use crate::queries::values::Orientation;
-+use crate::queries::values::{Orientation, Scrollable};
++use crate::queries::values::{Orientation, Scrollable, Snapped, Stuck};
  use crate::queries::{FeatureType, QueryCondition};
  use crate::selector_map::{PrecomputedHashMap, PrecomputedHashSet};
  use crate::shared_lock::{
@@ -8706,7 +8761,7 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
          if !available_axes.contains(self.flags.container_axes()) {
              return TraversalResult::InProgress;
          }
-@@ -287,18 +300,29 @@
+@@ -287,18 +300,32 @@
  
          let size = potential_container.query_container_size(box_style.get_display());
          let style = style.to_arc();
@@ -8730,6 +8785,9 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
 +                fallback: if anchored { potential_container.query_anchored_fallback() } else { None },
 +                anchored_cb_wm,
 +                scrollable: if scroll_state { potential_container.query_scrollable_edges() } else { ScrollableEdges::empty() },
++                scrolled: if scroll_state { potential_container.query_scrolled_edges() } else { ScrollableEdges::empty() },
++                snapped: if scroll_state { potential_container.query_snapped_axes() } else { SnappedAxes::empty() },
++                stuck: if scroll_state { potential_container.query_stuck_edges() } else { ScrollableEdges::empty() },
                  size,
                  wm,
 -                inherited_style: {
@@ -8743,7 +8801,7 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
              },
              style,
          })
-@@ -351,6 +375,11 @@
+@@ -351,6 +378,11 @@
          if self.flags.contains(FeatureFlags::STYLE) {
              invalidation_flags.insert(ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY);
          }
@@ -8755,7 +8813,7 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
          let (container, info) = match result {
              Some(r) => (r.element, (r.info, r.style)),
              None => {
-@@ -442,8 +471,14 @@
+@@ -442,8 +474,20 @@
  /// Information needed to evaluate an individual container query.
  #[derive(Clone)]
  pub struct ContainerInfo {
@@ -8765,13 +8823,19 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
 +    pub(crate) anchored_cb_wm: WritingMode,
 +    /// pyro: the edges a scroll-state container can be scrolled towards (`scrollable`).
 +    pub(crate) scrollable: ScrollableEdges,
++    /// pyro: the edges the container was last scrolled towards (`scrolled`).
++    pub(crate) scrolled: ScrollableEdges,
++    /// pyro: the axes the container is snapped on (`snapped`).
++    pub(crate) snapped: SnappedAxes,
++    /// pyro: the edges a sticky container is stuck to (`stuck`).
++    pub(crate) stuck: ScrollableEdges,
      size: Size2D<Option<Au>>,
 -    wm: WritingMode,
 +    pub(crate) wm: WritingMode,
      inherited_style: Option<Arc<ComputedValues>>,
  }
  
-@@ -502,6 +537,72 @@
+@@ -502,6 +546,161 @@
      KleeneValue::from(Orientation::eval(size, value))
  }
  
@@ -8799,13 +8863,23 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
 +    }
 +}
 +
-+/// pyro: `scroll-state(scrollable[: <value>])`, against the container's writing mode for the
-+/// logical values. In a boolean context, any edge.
-+fn eval_scrollable(context: &Context, value: Option<Scrollable>) -> KleeneValue {
-+    let Some(info) = context.container_info.as_ref() else {
-+        return KleeneValue::Unknown;
-+    };
-+    let (edges, wm) = (info.scrollable, info.wm);
++/// pyro: the physical axes a scroll-state container is a snap target on, which the `snapped`
++/// feature queries (CSS Conditional 5 § 7.3.3).
++#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
++pub struct SnappedAxes(u8);
++bitflags! {
++    impl SnappedAxes: u8 {
++        /// Snapped on the horizontal axis.
++        const X = 1 << 0;
++        /// Snapped on the vertical axis.
++        const Y = 1 << 1;
++    }
++}
++
++/// pyro: the physical edge set `edges` against a `<scroll-state>` direction keyword, with the
++/// logical values resolved by the container's writing mode. In a boolean context (`None`), any
++/// edge; `none` matches an empty set.
++fn eval_edges(edges: ScrollableEdges, wm: WritingMode, value: Option<Scrollable>) -> KleeneValue {
 +    let block = ScrollableEdges::side(wm.block_start_physical_side())
 +        | ScrollableEdges::side(wm.block_end_physical_side());
 +    let inline = ScrollableEdges::side(wm.inline_start_physical_side())
@@ -8829,16 +8903,95 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
 +    KleeneValue::from(edges.intersects(wanted))
 +}
 +
++/// pyro: `scroll-state(scrollable[: <value>])`.
++fn eval_scrollable(context: &Context, value: Option<Scrollable>) -> KleeneValue {
++    let Some(info) = context.container_info.as_ref() else {
++        return KleeneValue::Unknown;
++    };
++    eval_edges(info.scrollable, info.wm, value)
++}
++
++/// pyro: `scroll-state(scrolled[: <value>])`, the directions of the container's last scroll
++/// (same value set as `scrollable`).
++fn eval_scrolled(context: &Context, value: Option<Scrollable>) -> KleeneValue {
++    let Some(info) = context.container_info.as_ref() else {
++        return KleeneValue::Unknown;
++    };
++    eval_edges(info.scrolled, info.wm, value)
++}
++
++/// pyro: `scroll-state(stuck[: <value>])`, the edges a sticky container is stuck to.
++fn eval_stuck(context: &Context, value: Option<Stuck>) -> KleeneValue {
++    let Some(info) = context.container_info.as_ref() else {
++        return KleeneValue::Unknown;
++    };
++    let value = value.map(|value| match value {
++        Stuck::None => Scrollable::None,
++        Stuck::Top => Scrollable::Top,
++        Stuck::Right => Scrollable::Right,
++        Stuck::Bottom => Scrollable::Bottom,
++        Stuck::Left => Scrollable::Left,
++        Stuck::BlockStart => Scrollable::BlockStart,
++        Stuck::InlineStart => Scrollable::InlineStart,
++        Stuck::BlockEnd => Scrollable::BlockEnd,
++        Stuck::InlineEnd => Scrollable::InlineEnd,
++    });
++    eval_edges(info.stuck, info.wm, value)
++}
++
++/// pyro: `scroll-state(snapped[: <value>])`; `block` and `inline` name physical axes through the
++/// container's writing mode, `both` needs both axes, a bare `snapped` any.
++fn eval_snapped(context: &Context, value: Option<Snapped>) -> KleeneValue {
++    let Some(info) = context.container_info.as_ref() else {
++        return KleeneValue::Unknown;
++    };
++    let axes = info.snapped;
++    let (block, inline) = if info.wm.is_horizontal() {
++        (SnappedAxes::Y, SnappedAxes::X)
++    } else {
++        (SnappedAxes::X, SnappedAxes::Y)
++    };
++    KleeneValue::from(match value {
++        None => !axes.is_empty(),
++        Some(Snapped::None) => axes.is_empty(),
++        Some(Snapped::X) => axes.contains(SnappedAxes::X),
++        Some(Snapped::Y) => axes.contains(SnappedAxes::Y),
++        Some(Snapped::Block) => axes.contains(block),
++        Some(Snapped::Inline) => axes.contains(inline),
++        Some(Snapped::Both) => axes.contains(SnappedAxes::X | SnappedAxes::Y),
++    })
++}
++
 +/// pyro: the features of a container query's `scroll-state()` function.
 +/// https://drafts.csswg.org/css-conditional-5/#scroll-state-container
-+pub static SCROLL_STATE_FEATURES: std::sync::LazyLock<[QueryFeatureDescription; 1]> =
++pub static SCROLL_STATE_FEATURES: std::sync::LazyLock<[QueryFeatureDescription; 4]> =
 +    std::sync::LazyLock::new(|| {
-+        [feature!(
-+            crate::Atom::from("scrollable"),
-+            AllowsRanges::No,
-+            keyword_evaluator!(eval_scrollable, Scrollable),
-+            FeatureFlags::SCROLL_STATE,
-+        )]
++        [
++            feature!(
++                crate::Atom::from("scrollable"),
++                AllowsRanges::No,
++                keyword_evaluator!(eval_scrollable, Scrollable),
++                FeatureFlags::SCROLL_STATE,
++            ),
++            feature!(
++                crate::Atom::from("scrolled"),
++                AllowsRanges::No,
++                keyword_evaluator!(eval_scrolled, Scrollable),
++                FeatureFlags::SCROLL_STATE,
++            ),
++            feature!(
++                crate::Atom::from("snapped"),
++                AllowsRanges::No,
++                keyword_evaluator!(eval_snapped, Snapped),
++                FeatureFlags::SCROLL_STATE,
++            ),
++            feature!(
++                crate::Atom::from("stuck"),
++                AllowsRanges::No,
++                keyword_evaluator!(eval_stuck, Stuck),
++                FeatureFlags::SCROLL_STATE,
++            ),
++        ]
 +    });
 +
  /// https://drafts.csswg.org/css-contain-3/#container-features
@@ -10271,6 +10424,67 @@ diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 +        }
 +    }
 +}
+diff -ruN a/substitution/env.rs b/substitution/env.rs
+--- a/substitution/env.rs	2026-11-11 19:55:57
++++ b/substitution/env.rs	2026-11-27 21:11:05
+@@ -14,8 +14,8 @@
+ use crate::parser::{Parse, ParserContext};
+ use crate::stylesheets::UrlExtraData;
+ use crate::{Atom, derives::*};
+-use cssparser::{Delimiter, Parser};
+-use style_traits::ParseError;
++use cssparser::{Delimiter, Parser, Token};
++use style_traits::{ParseError, StyleParseErrorKind};
+ 
+ /// Environment variable name.
+ #[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
+@@ -34,6 +34,9 @@
+ pub struct EnvFunction {
+     /// The referenced environment variable name.
+     pub name: SubstitutionArgument<EnvName>,
++    /// Whether `<integer [0,∞]>` index arguments followed the name. No environment variable is
++    /// indexed here, so such a function always substitutes its fallback.
++    pub has_indices: bool,
+     /// The fallback for this function, if any.
+     pub fallback: Option<ArbitraryDeclarationValue>,
+ }
+@@ -43,14 +46,25 @@
+     /// - <env-args> = env(<declaration-value>, <declaration-value>?)
+     /// - env() = env(<custom-ident> <integer [0,∞]>*, <declaration-value>?)
+     ///
+-    /// TODO(Bug 2081127) - Support the optional index arguments.
++    /// The name must be a literal identifier (no references) followed only by non-negative
++    /// integers; anything else is a parse error, as in Chrome (the whole declaration is dropped).
+     pub fn parse(
+         input: &mut Parser,
+         context: &mut SubstitutionParserContext,
+     ) -> Result<Self, ParseError> {
+-        let name = SubstitutionArgument::try_parse(input, context, Delimiter::Comma)?;
++        let (name, has_indices) = input.parse_until_before(Delimiter::Comma, |input| -> Result<(EnvName, bool), ParseError> {
++            let name = EnvName(Atom::from(input.expect_ident()?.as_ref()));
++            let mut has_indices = false;
++            while !input.is_exhausted() {
++                match *input.next()? {
++                    Token::Number { int_value: Some(v), .. } if v >= 0 => has_indices = true,
++                    _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
++                }
++            }
++            Ok((name, has_indices))
++        })?;
+         let fallback = parse_optional_fallback(input, context)?;
+-        Ok(Self { name, fallback })
++        Ok(Self { name: SubstitutionArgument::Parsed(name), has_indices, fallback })
+     }
+ 
+     /// Replaces the `env()` function with its substitution value.
+@@ -64,6 +78,7 @@
+         let device = context.stylist.device();
+         let mut substitution = name
+             .value
++            .filter(|_| !self.has_indices)
+             .and_then(|name| {
+                 device
+                     .environment()
 diff -ruN a/substitution/function.rs b/substitution/function.rs
 --- a/substitution/function.rs	1970-01-01 00:00:00.000000000 +0000
 +++ b/substitution/function.rs	2026-11-23 06:58:46
@@ -12000,7 +12214,7 @@ diff -ruN a/values/computed/effects.rs b/values/computed/effects.rs
  pub type SimpleShadow = GenericSimpleShadow<Color, Length, NonNegativeLength>;
 diff -ruN a/values/computed/font.rs b/values/computed/font.rs
 --- a/values/computed/font.rs	2026-11-11 19:55:57
-+++ b/values/computed/font.rs	2026-11-23 06:58:46
++++ b/values/computed/font.rs	2026-11-27 21:18:39
 @@ -32,11 +32,14 @@
  use style_traits::{CssWriter, ParseError, ToCss};
  use thin_vec::ThinVec;
@@ -12017,6 +12231,44 @@ diff -ruN a/values/computed/font.rs b/values/computed/font.rs
      FontVariantCaps, FontVariantEmoji, FontVariantPosition, MathShift, MathStyle, MathVariant,
      MozScriptSizeMultiplier,
  };
+@@ -451,7 +454,7 @@
+         generic_font_family!(MONOSPACE, Monospace);
+         generic_font_family!(CURSIVE, Cursive);
+         generic_font_family!(FANTASY, Fantasy);
+-        #[cfg(feature = "gecko")]
++        // pyro: also for servo (MathML Core's `font-family: math`).
+         generic_font_family!(MATH, Math);
+         #[cfg(feature = "gecko")]
+         generic_font_family!(MOZ_EMOJI, MozEmoji);
+@@ -467,7 +470,6 @@
+             GenericFontFamily::Monospace => &*MONOSPACE,
+             GenericFontFamily::Cursive => &*CURSIVE,
+             GenericFontFamily::Fantasy => &*FANTASY,
+-            #[cfg(feature = "gecko")]
+             GenericFontFamily::Math => &*MATH,
+             #[cfg(feature = "gecko")]
+             GenericFontFamily::MozEmoji => &*MOZ_EMOJI,
+@@ -678,7 +680,7 @@
+     Monospace,
+     Cursive,
+     Fantasy,
+-    #[cfg(feature = "gecko")]
++    // pyro: also for servo (MathML Core's `font-family: math`).
+     Math,
+     #[parse(condition = "system_ui_enabled")]
+     SystemUi,
+@@ -694,9 +696,9 @@
+     /// the user. See bug 789788 and bug 1730098.
+     pub(crate) fn valid_for_user_font_prioritization(self) -> bool {
+         match self {
+-            Self::None | Self::Cursive | Self::Fantasy | Self::SystemUi => false,
++            Self::None | Self::Cursive | Self::Fantasy | Self::SystemUi | Self::Math => false,
+             #[cfg(feature = "gecko")]
+-            Self::Math | Self::MozEmoji => false,
++            Self::MozEmoji => false,
+             Self::Serif | Self::SansSerif | Self::Monospace => true,
+         }
+     }
 diff -ruN a/values/computed/image.rs b/values/computed/image.rs
 --- a/values/computed/image.rs	2026-11-11 19:55:57
 +++ b/values/computed/image.rs	2026-11-15 07:03:49
@@ -15051,7 +15303,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-23 07:11:34
++++ b/values/specified/box.rs	2026-11-27 21:10:43
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -15177,10 +15429,12 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const WebkitInlineBox: Self = Self(
          ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
      );
-@@ -370,6 +398,31 @@
+@@ -368,8 +396,33 @@
+     #[inline]
+     pub fn is_inline_flow(&self) -> bool {
          self.outside() == DisplayOutside::Inline && self.inside() == DisplayInside::Flow
-     }
- 
++    }
++
 +    /// pyro: whether this is `display: run-in` (see [`Self::RUN_IN_MASK`]).
 +    #[inline]
 +    pub const fn is_run_in(&self) -> bool {
@@ -15191,8 +15445,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    #[inline]
 +    pub const fn is_pyro_ruby(&self) -> bool {
 +        (self.0 & Self::RUBY_MASK) != 0
-+    }
-+
+     }
+ 
 +    /// pyro: whether this is `display: ruby-text` (see [`Self::RUBY_TEXT_MASK`]).
 +    #[inline]
 +    pub const fn is_pyro_ruby_text(&self) -> bool {
@@ -15479,34 +15733,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// A specified value for the `baseline-source` property.
  /// https://drafts.csswg.org/css-inline-3/#baseline-source
  #[derive(
-@@ -1095,6 +1277,9 @@
+@@ -1093,6 +1275,35 @@
+ pub enum ScrollSnapStop {
+     Normal,
      Always,
- }
- 
++}
++
 +/// pyro: the `scroll-initial-target` property (CSS Scroll Snap 2): `none | nearest`. With
 +/// `nearest`, the element's nearest scroll container starts scrolled to it.
 +/// https://drafts.csswg.org/css-scroll-snap-2/#scroll-initial-target
- #[allow(missing_docs)]
- #[derive(
-     Clone,
-@@ -1102,6 +1287,8 @@
-     Debug,
-     Deserialize,
-     Eq,
-+    FromPrimitive,
-+    Hash,
-     MallocSizeOf,
-     Parse,
-     PartialEq,
-@@ -1114,6 +1301,30 @@
-     ToTyped,
- )]
- #[repr(u8)]
-+pub enum ScrollInitialTarget {
-+    None,
-+    Nearest,
-+}
-+
 +#[allow(missing_docs)]
 +#[derive(
 +    Clone,
@@ -15514,6 +15749,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    Debug,
 +    Deserialize,
 +    Eq,
++    FromPrimitive,
++    Hash,
 +    MallocSizeOf,
 +    Parse,
 +    PartialEq,
@@ -15526,16 +15763,17 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    ToTyped,
 +)]
 +#[repr(u8)]
- pub enum OverscrollBehavior {
-     Auto,
-     Contain,
++pub enum ScrollInitialTarget {
++    None,
++    Nearest,
+ }
+ 
+ #[allow(missing_docs)]
 @@ -1336,11 +1547,17 @@
      ToShmem,
      ToTyped,
  )]
 -#[css(bitflags(single = "none,auto,manipulation", mixed = "pan-x,pan-y,pinch-zoom"))]
--#[repr(C)]
--pub struct TouchAction(u8);
 +// pyro: `pan-left`, `pan-right`, `pan-up` and `pan-down` too (Pointer Events 3, as Chromium):
 +// `[pan-x | pan-left | pan-right] || [pan-y | pan-up | pan-down] || pinch-zoom`.
 +#[css(bitflags(
@@ -15543,7 +15781,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    mixed = "pan-x,pan-left,pan-right,pan-y,pan-up,pan-down,pinch-zoom",
 +    validate_mixed = "Self::validate_mixed_flags",
 +))]
-+#[repr(C)]
+ #[repr(C)]
+-pub struct TouchAction(u8);
 +pub struct TouchAction(u16);
  bitflags! {
 -    impl TouchAction: u8 {
@@ -15594,7 +15833,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      overlapping_bits
  ))]
  #[repr(C)]
-@@ -1407,7 +1638,26 @@
+@@ -1407,6 +1638,25 @@
          const CONTENT = 1 << 6 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits();
          /// `strict` variant, turns on all types of containment
          const STRICT = 1 << 7 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits() | Contain::SIZE.bits();
@@ -15613,14 +15852,13 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        } else {
 +            *self
 +        }
-     }
++    }
 +
 +    fn from_computed_value(value: &Self) -> Self {
 +        *value
-+    }
+     }
  }
  
- impl Parse for ContainIntrinsicSize {
 @@ -1593,7 +1843,7 @@
  )]
  #[css(bitflags(
@@ -15688,12 +15926,10 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  /// https://drafts.fxtf.org/compositing/#isolation
-@@ -2318,6 +2585,16 @@
- pub enum Isolation {
-     Auto,
+@@ -2320,6 +2587,16 @@
      Isolate,
-+}
-+
+ }
+ 
 +/// Which view transition names are scoped to this element (`none | all`, initially `none`,
 +/// as in Chrome).
 +#[allow(missing_docs)]
@@ -15702,9 +15938,11 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum ViewTransitionScope {
 +    None,
 +    All,
- }
- 
++}
++
  /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
+ #[allow(missing_docs)]
+ #[derive(
 @@ -2488,6 +2765,39 @@
      None,
  }
@@ -15745,14 +15983,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)
  #[allow(missing_docs)]
  #[derive(
-@@ -2629,3 +2939,90 @@
+@@ -2629,3 +2939,131 @@
      Ltr,
      Rtl,
  }
 +
 +/// pyro: the `scroll-marker-group` property (CSS Overflow 5): whether a scroll container
 +/// generates a `::scroll-marker-group` box, and on which side of its own box it goes.
-+/// `none | [ [ before | after ] || [ links | tabs ] ]`.
++/// `none | [ [ before | after ] || [ links | tabs ] ]` (the mode after the side: `links after` is
++/// invalid, as Chrome; the computed value always names the mode, `links` by default).
 +/// https://drafts.csswg.org/css-overflow-5/#scroll-marker-group-property
 +#[derive(
 +    Clone,
@@ -15762,9 +16001,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    Hash,
 +    MallocSizeOf,
 +    PartialEq,
-+    Parse,
 +    SpecifiedValueInfo,
-+    ToComputedValue,
 +    ToCss,
 +    ToResolvedValue,
 +    ToShmem,
@@ -15792,7 +16029,49 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    }
 +}
 +
++impl Parse for ScrollMarkerGroup {
++    fn parse(_: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
++            return Ok(Self::NONE);
++        }
++        let mut result = Self::NONE;
++        // The side first, then the mode (either alone is valid).
++        if input.try_parse(|i| i.expect_ident_matching("before")).is_ok() {
++            result |= Self::BEFORE;
++        } else if input.try_parse(|i| i.expect_ident_matching("after")).is_ok() {
++            result |= Self::AFTER;
++        }
++        if input.try_parse(|i| i.expect_ident_matching("links")).is_ok() {
++            result |= Self::LINKS;
++        } else if input.try_parse(|i| i.expect_ident_matching("tabs")).is_ok() {
++            result |= Self::TABS;
++        }
++        if result == Self::NONE {
++            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++        }
++        Ok(result)
++    }
++}
++
++impl crate::values::computed::ToComputedValue for ScrollMarkerGroup {
++    type ComputedValue = Self;
++
++    /// The computed value names the mode: `before` is `before links`.
++    fn to_computed_value(&self, _: &crate::values::computed::Context) -> Self {
++        if self.generates_group() && !self.intersects(Self::LINKS | Self::TABS) {
++            *self | Self::LINKS
++        } else {
++            *self
++        }
++    }
++
++    fn from_computed_value(value: &Self) -> Self {
++        *value
++    }
++}
++
 +impl ScrollMarkerGroup {
++    #[allow(dead_code)]
 +    fn validate_mixed_flags(&self) -> bool {
 +        !self.contains(Self::BEFORE | Self::AFTER) && !self.contains(Self::LINKS | Self::TABS)
 +    }
