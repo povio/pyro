@@ -19,7 +19,7 @@ use servo_arc::Arc;
 use std::cell::RefCell;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
-use style_traits::ParseError;
+use style_traits::{ParseError, StyleParseErrorKind};
 
 /// A positional invocation with each argument retained as a token range.
 #[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
@@ -200,6 +200,15 @@ pub(super) fn local_value(
     None
 }
 
+/// Whether an unbraced argument's text is a named argument without a value: a dashed identifier
+/// and a colon only (`--name:`, whitespace between and around allowed).
+fn unvalued_named_argument(text: &str) -> bool {
+    let text = text.trim();
+    let Some(name) = text.strip_suffix(':') else { return false };
+    let name = name.trim_end();
+    name.starts_with("--") && !name.contains(|c: char| c.is_whitespace() || c == ':')
+}
+
 impl FunctionCall {
     pub(super) fn parse(
         name: Atom,
@@ -210,7 +219,16 @@ impl FunctionCall {
         let mut arguments = Vec::new();
         if !input.is_exhausted() {
             loop {
-                let (arg, _) = ArbitraryDeclarationValue::parse_free_form(input, cx, Delimiter::Comma, false)?;
+                let state = input.state();
+                let braced = input.expect_curly_bracket_block().is_ok();
+                input.reset(&state);
+                let (arg, text) = ArbitraryDeclarationValue::parse_free_form(input, cx, Delimiter::Comma, false)?;
+                // css-mixins-1 § 3.1: the arguments are `<declaration-value>`s, which cannot be
+                // empty (`--f(,)`, `--f(a,,b)`, `--f(a,)`, `--f({})`; only `--f()` has none), and a
+                // named argument (`--name: <value>`) has a value after its colon.
+                if arg.is_empty() || (!braced && unvalued_named_argument(text)) {
+                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+                }
                 arguments.push(arg);
                 if input.is_exhausted() {
                     break;
