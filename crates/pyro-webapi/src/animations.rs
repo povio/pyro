@@ -465,6 +465,16 @@ pub(crate) fn root_animations<'s>(s: &Scope<'s>, page: &Rc<PageDom>, root: Value
     }
 }
 
+/// The `CSSAnimation`/`CSSTransition` of the engine's run `id` (the `animation` of the events the
+/// UA fires), after the module took the current runs; null when there is no such run any more.
+pub(crate) fn run_object<'s>(s: &Scope<'s>, id: u64) -> JsResult<Value<'s>> {
+    let page = page_of(s)?;
+    match with_css_runs(s, &page)? {
+        Some(module) => call(module, "cssObject", &[s.number(id as f64)]),
+        None => Ok(s.null()),
+    }
+}
+
 /// `document.timeline`: the realm's default document timeline.
 pub(crate) fn timeline<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
     call(module(s, page)?, "timeline", &[])

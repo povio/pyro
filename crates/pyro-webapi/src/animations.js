@@ -2445,6 +2445,7 @@
       if (animations.get(value)?.css !== (transition ? CSS_TRANSITION : CSS_ANIMATION))
         throw new TypeError(transition ? 'Expected a CSSTransition' : 'Expected a CSSAnimation');
     },
+    cssObject: id => cssRuns.get(id) ?? null,
     animate, elementAnimations, rootAnimations, cssSync, viewRuns, timeline: () => documentTimeline,
   };
 })

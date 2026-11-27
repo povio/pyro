@@ -376,6 +376,8 @@ struct Planned {
     epoch: Option<Rc<Cell<bool>>>,
     /// An animation's progress and the step this event takes it to.
     step: Option<(Rc<Cell<u32>>, u32)>,
+    /// The run (`Timeline::id`) whose `CSSAnimation`/`CSSTransition` the event's `animation` is.
+    run: Option<u64>,
 }
 
 /// [`Timeline::progress`] once `animationend` fired.
@@ -423,6 +425,7 @@ fn plan_transition(t: &mut Timeline, local: f64, rate: f64, held: bool, planned:
             ends: (step == ENDED && !due).then(|| t.ended.clone()),
             epoch: (!due).then(|| t.epoch.clone()),
             step: (!due).then(|| (t.progress.clone(), step)),
+            run: Some(t.id),
         }
     };
     if progress < 1 {
@@ -481,6 +484,7 @@ fn plan_animation(t: &mut Timeline, local: f64, rate: f64, held: bool, planned: 
             ends: (step == ENDED && !due).then(|| t.ended.clone()),
             epoch: (!due).then(|| t.epoch.clone()),
             step: (!due).then(|| (t.progress.clone(), step)),
+            run: Some(t.id),
         }
     };
     if progress < 1 {
@@ -631,6 +635,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                     ends: None,
                     epoch: None,
                     step: None,
+                    run: Some(known.id),
                 });
             }
         }
@@ -856,6 +861,7 @@ pub(crate) fn scripted_state(
                         ends: None,
                         epoch: None,
                         step: None,
+                        run: Some(t.id),
                     });
                 }
             }
@@ -1627,6 +1633,7 @@ fn cancel_event(el: NodeId, pseudo: Option<PseudoElement>, name: &str) -> Planne
         ends: None,
         epoch: None,
         step: None,
+        run: None,
     }
 }
 
@@ -1805,6 +1812,7 @@ fn start_transitions_of(
                 ends: (step == Some(ENDED)).then(|| timeline.ended.clone()),
                 epoch: step.map(|_| timeline.epoch.clone()),
                 step: step.map(|step| (timeline.progress.clone(), step)),
+                run: Some(timeline.id),
             };
             starting.events.push(event("transitionrun", 0.0, 0.0, None));
             starting.events.push(event("transitionstart", delay, (-delay).max(0.0), Some(1)));
@@ -1969,6 +1977,7 @@ fn fire(page: &Rc<PageDom>, event: &Planned) {
         }
         fields.elapsed_time = event.elapsed_s;
         fields.pseudo_element = event.pseudo.to_owned();
+        fields.css_run = event.run;
     }
     crate::target::fire_at_node(page, event.el, &ev);
 }
