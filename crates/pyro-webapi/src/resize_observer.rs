@@ -518,6 +518,9 @@ fn notify(page: &Rc<PageDom>) {
         }
         let Some(realm) = observer.realm.upgrade() else { continue };
         let Ok(s) = realm.scope() else { continue };
+        // Web IDL "invoke a callback function": an exception is reported to the global of the
+        // callback's own realm, which differs from the observer's for a function of another window.
+        let mut callback_realm = None;
         let result = (|| {
             let wrapper = s.lookup_identity(observer.identity).ok_or(JsError::ContextDestroyed)?;
             let _root = Persistent::new(&s, wrapper.value());
@@ -525,11 +528,15 @@ fn notify(page: &Rc<PageDom>) {
             let callback =
                 s.get_hidden(wrapper, CALLBACK)?.and_then(|v| v.as_object()).ok_or(JsError::ContextDestroyed)?;
             let list = entries(&s, page, records)?;
+            callback_realm = s.object_realm(callback).filter(|r| r.id() != s.realm_id());
             callback.call(Some(wrapper), &[list, wrapper.value()])?;
             Ok(())
         })();
         if let Err(error) = result {
-            s.report_exception(&error);
+            match callback_realm.as_ref().and_then(|r| r.scope().ok()) {
+                Some(owner) => owner.report_exception(&error),
+                None => s.report_exception(&error),
+            }
         }
     }
 }
