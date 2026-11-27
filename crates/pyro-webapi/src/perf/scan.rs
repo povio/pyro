@@ -17,9 +17,12 @@
 //! nobody observes (`page.timeline().is_observed(..)`, or the first paint not yet
 //! reported) must not scan. A scan walks the document; it is skipped (the last
 //! result is returned) when layout's `observation_stamp` is unchanged, no image
-//! finished loading and the document has no `<canvas>` (a canvas can change
-//! without the document changing). [`walks`] counts the walks, for tests that
-//! assert work and not time.
+//! finished loading, no `<canvas>` seen undrawn has since been drawn on (a canvas's
+//! first drawing changes no document state; later drawings change no candidate: a
+//! canvas alone never forces a rescan) and no poster or CSS image is awaited (a
+//! fetch that failed is not awaited, any other for at most [`MAX_WAIT_WALKS`]
+//! walks in a document that does not change). [`walks`] counts the walks, for
+//! tests that assert work and not time.
 //!
 //! # What is a candidate
 //!
@@ -44,7 +47,10 @@
 //! child may opt back in), an ancestor with `opacity: 0`, a rectangle clipped away by
 //! an ancestor's overflow clip or outside the viewport, zero-area boxes. `visible`
 //! is the border box (client coordinates of the document) intersected with the
-//! overflow clips of its ancestors and the viewport; transforms are those layout
+//! overflow clips of the boxes that clip it (at their padding boxes; those of the
+//! containing block chain: an absolutely positioned box is not clipped by an
+//! `overflow` ancestor between it and its containing block, a fixed one only by
+//! an ancestor that contains fixed boxes) and the viewport; transforms are those layout
 //! reports (a `scale(0)` box has no area, a translated-away one is outside).
 //! Not done: content boxes of replaced elements (`object-fit`), `clip-path`/`mask`
 //! clipping, backface visibility, shadow trees (the walk stays in the light tree),
@@ -55,8 +61,9 @@
 //!
 //! Each candidate has an identity (`node`, kind and `url`): the scan remembers the
 //! `presented` time of the first frame in which that identity was painted visible
-//! ([`Candidate::first_painted`]). An element that is hidden and reappears is
-//! first painted when it reappears; one that is resized or whose text changes
+//! ([`Candidate::first_painted`]). An element that is hidden and reappears keeps
+//! its identity and its first-painted time (as in Chrome: a node's paint is
+//! recorded once); one that is resized or whose text changes
 //! keeps its identity (so modified text and resized images are not new, as LCP
 //! says); an `<img>` whose `src` changes is a new identity.
 //!
@@ -84,6 +91,11 @@ use super::FrameInfo;
 /// Whether some ENABLED module reads scan results (a const: the load-time
 /// bookkeeping of [`note_image_loaded`] costs nothing while none does).
 pub(crate) const WANTED: bool = super::paint::ENABLED || super::lcp::ENABLED || super::element::ENABLED || super::softnav::ENABLED;
+
+/// How many walks a poster or CSS image whose fetch Resource Timing has not reported may keep
+/// forcing in a document that does not change (one per frame): a load that never finishes does
+/// not rescan forever.
+const MAX_WAIT_WALKS: u32 = 120;
 
 const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
@@ -149,11 +161,13 @@ type Stamp = ((u64, u64, u32, u32), u64);
 pub(crate) struct ScanState {
     last: Option<Rc<FrameScan>>,
     stamp: Option<Stamp>,
-    /// A canvas was seen in the last walk: rescan every frame.
-    has_canvas: bool,
+    /// The canvases the last walk saw with nothing drawn on them: rescan once one has.
+    undrawn: Vec<NodeId>,
     /// The last walk skipped a poster or background image whose load Resource Timing
-    /// has not reported yet: rescan next frame.
+    /// has not reported yet (and has not failed): rescan next frame, for [`MAX_WAIT_WALKS`] walks.
     waiting: bool,
+    /// Consecutive walks made while `waiting` in an unchanged document.
+    wait_walks: u32,
     /// An image finished loading since the last walk.
     dirty: bool,
     /// `(img, resolved url)` -> time its request finished.
@@ -189,7 +203,8 @@ pub fn painted_candidates(page: &Rc<PageDom>, frame: &FrameInfo) -> Rc<FrameScan
                 return last.clone();
             }
         }
-        (state.stamp, state.has_canvas || state.dirty || state.waiting)
+        let waiting = state.waiting && state.wait_walks < MAX_WAIT_WALKS;
+        (state.stamp, state.dirty || waiting || state.undrawn.iter().any(|&canvas| canvas_drawn(page, canvas)))
     };
     let now_stamp = page.layout().observation_stamp(&page.dom.borrow());
     if !force && stamp == Some(now_stamp) {
@@ -200,6 +215,8 @@ pub fn painted_candidates(page: &Rc<PageDom>, frame: &FrameInfo) -> Rc<FrameScan
     }
     let scan = Rc::new(walk(page, frame));
     let mut state = page.timeline().scan.borrow_mut();
+    let changed = stamp != Some(now_stamp) || state.dirty;
+    state.wait_walks = if state.waiting && !changed { state.wait_walks + 1 } else { 0 };
     state.stamp = Some(now_stamp);
     state.dirty = false;
     state.walks += 1;
@@ -223,6 +240,10 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
         let dom = page.dom.borrow();
         let document = page.document();
         let Ok(nodes) = dom.descendants(document) else { return FrameScan { presented: frame.presented, ..Default::default() } };
+        // A `background-image` url comes from a sheet, a `style` attribute or the `background` attribute;
+        // without one in any sheet, only elements with the latter two need their style read.
+        let mut sheets_have_url = false;
+        page.layout().style().for_each_author_sheet(&dom, &mut |text| sheets_have_url |= text.contains("url("));
         for id in nodes {
             match dom.node_type(id) {
                 Ok(NodeType::Text) => {
@@ -248,7 +269,9 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                         }
                         _ => {}
                     }
-                    found.push(Found::Background(id));
+                    if sheets_have_url || el.attr("background").is_some() || el.attr("style").is_some_and(|style| style.contains("url(")) {
+                        found.push(Found::Background(id));
+                    }
                 }
                 _ => {}
             }
@@ -277,6 +300,9 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
         .filter(|e| e.response_status < 400 && e.response_end > 0.0)
         .map(|e| (e.name.clone(), e.response_end))
         .collect();
+    // ... and the ones that failed (not awaited).
+    let failed: rustc_hash::FxHashSet<String> =
+        page.resource_timings().entries().iter().filter(|e| e.response_status >= 400).map(|e| e.name.clone()).collect();
     // Pass 3: geometry.
     let dom = page.dom.borrow();
     let layout = page.layout();
@@ -286,7 +312,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
     let visible_el = |el: NodeId| layout.check_visibility(&dom, el, shown);
     let mut waiting = false;
     let mut candidates: Vec<Candidate> = Vec::new();
-    let mut has_canvas = false;
+    let mut undrawn: Vec<NodeId> = Vec::new();
     let mut texts: Vec<(NodeId, Rect, Rect)> = Vec::new();
     let mut blocks: FxHashMap<NodeId, NodeId> = FxHashMap::default();
     let state = page.timeline().scan.borrow();
@@ -296,7 +322,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                 let Some(poster) = dom.get_attribute(el, "poster").ok().flatten() else { continue };
                 let url = crate::html::resolve_url(&dom, el, poster);
                 let Some(load_time) = finished.get(&url).copied().or_else(|| url.starts_with("data:").then_some(0.0)) else {
-                    waiting = true;
+                    waiting |= !failed.contains(&url);
                     continue;
                 };
                 if !visible_el(el) {
@@ -327,7 +353,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                 let url = crate::html::resolve_url(&dom, el, &url);
                 let load_time = if url.starts_with("data:") { Some(0.0) } else { finished.get(&url).copied() };
                 if load_time.is_none() {
-                    waiting = true;
+                    waiting |= !failed.contains(&url);
                     continue;
                 }
                 // The root element's background (the body's when the root has none) is the canvas
@@ -345,8 +371,11 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                 candidates.push(Candidate { node: el, kind: Kind::Svg, url: None, natural: None, border_box, visible, area: visible.width * visible.height, load_time: None, first_painted: 0.0 });
             }
             Found::Canvas(el) => {
-                has_canvas = true;
-                if !visible_el(el) || !canvas_drawn(page, el) {
+                if !canvas_drawn(page, el) {
+                    undrawn.push(el);
+                    continue;
+                }
+                if !visible_el(el) {
                     continue;
                 }
                 let border_box = layout.bounding_client_rect(&dom, el);
@@ -394,7 +423,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
     drop(dom);
     // First painted: remember the frame an identity was first seen painted in.
     let mut state = page.timeline().scan.borrow_mut();
-    state.has_canvas = has_canvas;
+    state.undrawn = undrawn;
     state.waiting = waiting;
     state.first.retain(|(node, _, _), _| page.dom.borrow().is_alive(*node));
     state.loaded.retain(|(node, _), _| page.dom.borrow().is_alive(*node));
@@ -504,7 +533,29 @@ fn intersect(a: Rect, b: Rect) -> Option<Rect> {
 
 /// `rect` of `el`'s box clipped by the overflow clips of the ancestors of `el` and the viewport.
 fn visible_rect(dom: &Dom, layout: &pyro_dom::layout::Layout, el: NodeId, rect: Rect, view: Rect) -> Option<Rect> {
-    visible_rect_from(dom, layout, dom.parent_element(el).ok().flatten(), rect, view)
+    visible_rect_from(dom, layout, clipping_parent(dom, layout, el), rect, view)
+}
+
+/// The box whose overflow clip applies next to `el`'s box: its containing block (CSS Overflow 3 § 3:
+/// a clip applies to the descendants whose containing block chain passes through the clipping box).
+/// `None`: the viewport (an absolute box with no positioned ancestor, a fixed one outside any
+/// transform-like ancestor).
+fn clipping_parent(dom: &Dom, layout: &pyro_dom::layout::Layout, el: NodeId) -> Option<NodeId> {
+    use pyro_dom::style::Position;
+    let style = layout.style().computed(dom, el).unwrap_or_default();
+    let mut ancestor = dom.parent_element(el).ok().flatten();
+    let wanted: fn(&pyro_dom::style::ComputedStyle) -> bool = match style.position {
+        Position::Absolute => |s| s.contains_absolute,
+        Position::Fixed => |s| s.contains_fixed,
+        _ => return ancestor,
+    };
+    while let Some(node) = ancestor {
+        if layout.style().computed(dom, node).is_some_and(|s| wanted(&s)) {
+            return Some(node);
+        }
+        ancestor = dom.parent_element(node).ok().flatten();
+    }
+    None
 }
 
 /// [`visible_rect`] starting the clip chain at `start` (inclusive).
@@ -519,7 +570,16 @@ fn visible_rect_from(dom: &Dom, layout: &pyro_dom::layout::Layout, start: Option
         if !layout.is_root_container(dom, node) {
             let axes = layout.style().overflow_clip_axes(dom, node);
             if axes.x || axes.y {
-                let b = layout.bounding_client_rect(dom, node);
+                let mut b = layout.bounding_client_rect(dom, node);
+                // The clip is at the padding box: inside the borders (not under a transform, where the
+                // client sizes are not the painted ones; there the border box stays).
+                if !layout.style().computed(dom, node).is_some_and(|s| s.transformed) {
+                    let (left, top) = (layout.client_left(dom, node), layout.client_top(dom, node));
+                    let (width, height) = (layout.client_width(dom, node), layout.client_height(dom, node));
+                    if width > 0.0 && height > 0.0 {
+                        b = Rect { x: b.x + left, y: b.y + top, width, height };
+                    }
+                }
                 let clip = Rect {
                     x: if axes.x { b.x } else { f64::MIN / 4.0 },
                     y: if axes.y { b.y } else { f64::MIN / 4.0 },
@@ -529,7 +589,7 @@ fn visible_rect_from(dom: &Dom, layout: &pyro_dom::layout::Layout, start: Option
                 rect = intersect(rect, clip)?;
             }
         }
-        ancestor = dom.parent_element(node).ok().flatten();
+        ancestor = clipping_parent(dom, layout, node);
     }
     intersect(rect, view)
 }
