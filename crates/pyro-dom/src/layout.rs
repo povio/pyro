@@ -314,6 +314,11 @@ pub struct Layout {
     /// origin is at its end (right-to-left, `row-reverse`, `column-reverse`, ...), as CSSOM View
     /// and Blitz's scroll offsets have them.
     element_scroll: FxHashMap<NodeId, (i32, i32)>,
+    /// The direction of each scroll container's last scroll on each axis (the viewport under
+    /// `None`): -1 when the offset decreased (towards the top or left), 1 when it increased, 0
+    /// before the first move on that axis. `scroll-state(scrolled)` queries it (CSS Conditional 5
+    /// § 7.3.2); an axis keeps its direction while the other scrolls.
+    scroll_directions: FxHashMap<Option<NodeId>, (i8, i8)>,
     /// CSS Overflow 5 § 2.1: each scroll container's current scroll target, the element a script
     /// scroll into view last revealed in it, until it scrolls otherwise (the viewport's under
     /// `None`). Scroll marker selection reads it (`scroll_targets`).
@@ -639,6 +644,7 @@ impl Layout {
             scroll_pushed: std::cell::Cell::new(None),
             scroll_pushed_at: std::cell::Cell::new(f64::NEG_INFINITY),
             element_scroll: FxHashMap::default(),
+            scroll_directions: FxHashMap::default(),
             scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
             scroll_anchor_carry: FxHashMap::default(),
@@ -3255,7 +3261,9 @@ impl Layout {
             self.capture_scroll_anchor(dom, None);
             return false;
         }
+        let from = self.window_scroll;
         self.window_scroll = (new_x, new_y);
+        self.note_scroll_direction(None, from, (new_x, new_y));
         self.scroll_anchor_carry.remove(&None);
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
         self.capture_scroll_anchor(dom, None);
@@ -3292,8 +3300,36 @@ impl Layout {
         if let Some(source) = self.external.as_ref() {
             let window = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
             source.set_scroll(self.scrolled_elements(), window);
+            source.set_scroll_directions(self.scroll_direction_keys());
         }
         true
+    }
+
+    /// Records that `target` (`None`: the viewport) scrolled from `from` to `to`: the direction
+    /// of each axis that moved (`scroll-state(scrolled)`).
+    fn note_scroll_direction(&mut self, target: Option<NodeId>, from: (i32, i32), to: (i32, i32)) {
+        if from == to {
+            return;
+        }
+        let entry = self.scroll_directions.entry(target).or_insert((0, 0));
+        if to.0 != from.0 {
+            entry.0 = if to.0 < from.0 { -1 } else { 1 };
+        }
+        if to.1 != from.1 {
+            entry.1 = if to.1 < from.1 { -1 } else { 1 };
+        }
+    }
+
+    /// The directions of the last scrolls ([`Self::note_scroll_direction`]) by render key
+    /// (`u64::MAX`: the viewport), for the geometry source.
+    pub fn scroll_direction_keys(&self) -> Vec<(u64, (i8, i8))> {
+        let mut out: Vec<(u64, (i8, i8))> = self
+            .scroll_directions
+            .iter()
+            .map(|(&target, &dirs)| (target.map_or(u64::MAX, crate::snapshot::render_key), dirs))
+            .collect();
+        out.sort_unstable();
+        out
     }
 
     /// [`Self::push_scroll`] when `now_ms` (the page clock) is a frame (16 ms) or more past the last
@@ -3419,7 +3455,8 @@ impl Layout {
     /// § 4.1 "perform a smooth scroll"): neither snapped nor clamped, as its ends are offsets a
     /// scroll write chose (snapped and clamped there). Whether it moved.
     pub fn set_scroll_position(&mut self, dom: &Dom, target: Option<NodeId>, pos: (i32, i32)) -> bool {
-        if self.scroll_position(target) == pos {
+        let from = self.scroll_position(target);
+        if from == pos {
             return false;
         }
         match target {
@@ -3431,6 +3468,7 @@ impl Layout {
             }
             None => self.window_scroll = pos,
         }
+        self.note_scroll_direction(target, from, pos);
         self.scroll_anchor_carry.remove(&target);
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
         self.capture_scroll_anchor(dom, target);
@@ -3479,6 +3517,7 @@ impl Layout {
             return false;
         }
         self.element_scroll.insert(el, (x, y));
+        self.note_scroll_direction(Some(el), current, (x, y));
         self.scroll_anchor_carry.remove(&Some(el));
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
         self.capture_scroll_anchor(dom, Some(el));

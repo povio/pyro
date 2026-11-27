@@ -873,6 +873,9 @@ pub struct Renderer {
     /// at its first sync. (The page tells them once per change, so a document that lost them
     /// would sample its scroll timelines at offset 0 until the next scroll.)
     timeline_scroll: HashMap<u64, TimelineScroll>,
+    /// pyro: each page's scroll directions as last told ([`Renderer::set_scroll_directions`]),
+    /// which a document built again takes at its next sync.
+    scroll_directions: HashMap<u64, Vec<(u64, (i8, i8))>>,
     pdf_cache: pdf::PdfCache,
     /// Layout queries of persistent documents, by page (present once the
     /// page's document has been laid out for them).
@@ -1043,6 +1046,7 @@ impl Renderer {
             mirrors: HashMap::new(),
             animations: HashMap::new(),
             timeline_scroll: HashMap::new(),
+            scroll_directions: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
             sprites: HashMap::new(),
@@ -1065,6 +1069,7 @@ impl Renderer {
     pub fn forget(&mut self, page: u64) {
         self.forget_document(page);
         self.timeline_scroll.remove(&page);
+        self.scroll_directions.remove(&page);
     }
 
     /// Drops the persistent document of a page that lives on: its next sync builds it again (a
@@ -1230,7 +1235,19 @@ impl Renderer {
         invalidated
     }
 
+    /// pyro: the direction of each scroll container's last scroll on each axis (by key, -1
+    /// towards the start, 1 towards the end; `u64::MAX`: the viewport), which
+    /// `scroll-state(scrolled)` follows. Whether the document's styles are stale now.
+    pub fn set_scroll_directions(&mut self, page: u64, directions: Vec<(u64, (i8, i8))>) -> bool {
+        let changed = self.mirrors.get_mut(&page).is_some_and(|m| m.set_scroll_directions(&directions));
+        self.scroll_directions.insert(page, directions);
+        changed
+    }
+
     fn apply_animations(&mut self, page: u64) {
+        if let (Some(m), Some(directions)) = (self.mirrors.get_mut(&page), self.scroll_directions.get(&page)) {
+            m.set_scroll_directions(directions);
+        }
         if let (Some(m), Some(scroll)) = (self.mirrors.get_mut(&page), self.timeline_scroll.get_mut(&page)) {
             if !scroll.applied {
                 let map = scroll.elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();

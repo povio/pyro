@@ -1697,7 +1697,13 @@ impl<'a> TElement for BlitzNode<'a> {
     /// pyro: the edges recorded at the last layout (none until one ran): a change after a layout
     /// restyles the container's subtree (`resolve::refresh_scroll_state_queries`).
     fn query_scrollable_edges(&self) -> style::stylesheets::container_rule::ScrollableEdges {
-        *self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default()
+        self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default().scrollable
+    }
+
+    /// pyro: the edges of the container's last scroll recorded at the last layout (none until one
+    /// ran), refreshed with `scrollable`.
+    fn query_scrolled_edges(&self) -> style::stylesheets::container_rule::ScrollableEdges {
+        self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default().scrolled
     }
 
     fn query_container_size(

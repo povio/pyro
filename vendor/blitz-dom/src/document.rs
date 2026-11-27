@@ -742,6 +742,10 @@ pub struct BaseDocument {
     /// pyro: each scroll container's current scroll target (CSS Overflow 5 § 2.1; the viewport's
     /// under the root element), as the embedder tracks them (`set_scroll_targets`).
     pub(crate) scroll_targets: std::collections::HashMap<NodeId, NodeId>,
+    /// pyro: the direction of each scroll container's last scroll on each axis (-1 towards the
+    /// start, 1 towards the end, 0 none yet), as the embedder tracks them
+    /// (`set_scroll_directions`): `scroll-state(scrolled)`.
+    pub(crate) scroll_directions: std::collections::HashMap<NodeId, (i8, i8)>,
     /// pyro: a style traversal kept a `::first-line` style for some element (sticky): inline
     /// roots look for the style of their first line (`layout::first_line`).
     pub(crate) first_line_styles: bool,
@@ -1100,6 +1104,7 @@ impl BaseDocument {
             transition_paint: None,
             scroll_target_groups: Vec::new(),
             scroll_targets: Default::default(),
+            scroll_directions: Default::default(),
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
@@ -2667,8 +2672,30 @@ impl BaseDocument {
                 }
             }
         }
+        // pyro: `scroll-state()` containers read the offsets (`refresh_scroll_state_queries`).
+        let scroll_state_changed = !self.nodes.scroll_state_queries.lock().unwrap().is_empty()
+            && self.timeline_scroll.as_ref().is_none_or(|(old, _)| *old != elements);
         self.timeline_scroll = Some((elements, viewport));
+        if scroll_state_changed {
+            self.update_scroll_marker_states();
+            invalidated = true;
+        }
         invalidated
+    }
+
+    /// pyro: the direction of each scroll container's last scroll on each axis (`-1` towards the
+    /// start, `1` towards the end), which `scroll-state(scrolled)` queries. Whether it changed
+    /// (a container with such a query then styles again at the next resolve).
+    pub fn set_scroll_directions(&mut self, directions: std::collections::HashMap<NodeId, (i8, i8)>) -> bool {
+        if self.scroll_directions == directions {
+            return false;
+        }
+        self.scroll_directions = directions;
+        if self.nodes.scroll_state_queries.lock().unwrap().is_empty() {
+            return false;
+        }
+        self.update_scroll_marker_states();
+        true
     }
 
     /// pyro: see [`Self::scroll_group_moves`].

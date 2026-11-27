@@ -970,6 +970,17 @@ impl GeometrySource for BlitzGeometry {
         });
     }
 
+    fn set_scroll_directions(&self, directions: Vec<(u64, (i8, i8))>) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                let r = r.get_or_insert_with(Renderer::new);
+                if r.set_scroll_directions(self.page, directions) {
+                    self.scroll_stale.set(true);
+                }
+            }
+        });
+    }
+
     fn sync_styles(&self, dom: &Dom, style: &StyleEngine) {
         let t = profile::on().then(Instant::now);
         self.sync_inner(dom, style, true);

@@ -309,6 +309,21 @@ impl Mirror {
         self.doc.set_popover_anchors(anchors);
     }
 
+    /// Gives the document the directions of the scroll containers' last scrolls (by key;
+    /// `u64::MAX`: the viewport's, which is the root element's), for `scroll-state(scrolled)`.
+    /// Whether they changed.
+    pub(crate) fn set_scroll_directions(&mut self, directions: &[(u64, (i8, i8))]) -> bool {
+        let root = self.doc.try_root_element().map(|root| root.id);
+        let directions = directions
+            .iter()
+            .filter_map(|&(key, dirs)| {
+                let id = if key == u64::MAX { root? } else { self.nodes.get(&key)?.id };
+                Some((id, dirs))
+            })
+            .collect();
+        self.doc.set_scroll_directions(directions)
+    }
+
     pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) {
         let root = self.doc.try_root_element().map(|root| root.id);
         let targets: Vec<(NodeId, NodeId)> = targets

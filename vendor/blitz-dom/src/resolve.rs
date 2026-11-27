@@ -1207,17 +1207,34 @@ impl BaseDocument {
             }
             // Within a hundredth of a pixel of an end is at it (fractional scroll ranges).
             const EPSILON: f64 = 0.01;
-            let (offset, min, max) = self.scroll_state(crate::scrolling::ScrollTarget::Node(id), false);
+            let (mut offset, min, max) = self.scroll_state(crate::scrolling::ScrollTarget::Node(id), false);
+            // The page's scroll offsets as its embedder last told them (a geometry document does
+            // not have them on its nodes; one it does not list is at the origin there).
+            if let Some((offsets, _)) = &self.timeline_scroll {
+                if let Some(&(x, y)) = offsets.get(&id) {
+                    offset = crate::Point { x, y };
+                }
+            }
             let mut edges = ScrollableEdges::empty();
             edges.set(ScrollableEdges::LEFT, offset.x > min.x + EPSILON);
             edges.set(ScrollableEdges::RIGHT, offset.x < max.x - EPSILON);
             edges.set(ScrollableEdges::TOP, offset.y > min.y + EPSILON);
             edges.set(ScrollableEdges::BOTTOM, offset.y < max.y - EPSILON);
+            // `scrolled`: the direction of the last scroll that moved on each axis (CSS Conditional
+            // 5 § 7.3.2), kept until the next one on that axis.
+            let mut scrolled = ScrollableEdges::empty();
+            if let Some(&(dx, dy)) = self.scroll_directions.get(&id) {
+                scrolled.set(ScrollableEdges::LEFT, dx < 0);
+                scrolled.set(ScrollableEdges::RIGHT, dx > 0);
+                scrolled.set(ScrollableEdges::TOP, dy < 0);
+                scrolled.set(ScrollableEdges::BOTTOM, dy > 0);
+            }
+            let entry = crate::tree::ScrollStateEntry { scrollable: edges, scrolled };
             let mut queries = self.nodes.scroll_state_queries.lock().unwrap();
             if let Some(previous) = queries.get_mut(&id)
-                && *previous != edges
+                && *previous != entry
             {
-                *previous = edges;
+                *previous = entry;
                 changed.push(id);
             }
         }

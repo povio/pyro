@@ -729,6 +729,9 @@ pub trait GeometrySource {
     /// The page scrolled: its scrolled elements' offsets (by key) and the viewport's, which
     /// scroll-driven animations follow.
     fn set_scroll(&self, _elements: Vec<(u64, (f64, f64))>, _viewport: (f64, f64)) {}
+    /// The direction of each scroll container's last scroll on each axis (-1 towards the start, 1
+    /// towards the end) by key (`u64::MAX`: the viewport), which `scroll-state(scrolled)` follows.
+    fn set_scroll_directions(&self, _directions: Vec<(u64, (i8, i8))>) {}
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
     /// HTML-in-Canvas `drawElementImage`: the element `key` painted alone (its subtree only, its

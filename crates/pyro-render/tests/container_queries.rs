@@ -413,3 +413,35 @@ i {display:block;width:1px;height:1px}
     assert_eq!(size(&doc, "#b"), (5.0, 1.0));
     assert_eq!(size(&doc, "#c"), (9.0, 7.0));
 }
+
+/// pyro: `@container scroll-state(scrolled: ...)` matches the directions of the container's last
+/// scroll on each axis, kept until the next scroll on that axis (CSS Conditional 5 § 7.3.2; WPT
+/// css-conditional container-queries/scroll-state `scroll-state-scrolled-hv`). Nothing matches
+/// but `none` before the first one, and `scrollable` follows the offsets the embedder tells.
+#[test]
+fn scroll_state_scrolled_queries_follow_the_last_scroll_directions() {
+    const SCROLLED: &str = r#"<!doctype html><style>
+body {margin:0}
+.s {container-type:scroll-state;width:100px;height:100px;overflow:auto}
+.big {width:300px;height:300px}
+i {display:block;width:1px;height:1px}
+@container scroll-state(scrolled: none) {i {width:5px}}
+@container scroll-state(scrolled: bottom) {i {height:20px}}
+@container scroll-state(scrolled: right) {i {height:30px}}
+@container scroll-state(scrolled: top) {i {height:40px}}
+@container scroll-state(scrollable: top) {i {width:9px}}
+</style><div class=s id=s><i id=a></i><div class=big></div></div>"#;
+    let mut doc = HtmlDocument::from_html(SCROLLED, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (5.0, 1.0));
+    let scroller = doc.query_selector("#s").unwrap().unwrap();
+    doc.set_timeline_scroll([(scroller, (0.0, 50.0))].into(), (0.0, 0.0));
+    doc.set_scroll_directions([(scroller, (0, 1))].into());
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (9.0, 20.0));
+    doc.set_timeline_scroll([(scroller, (30.0, 50.0))].into(), (0.0, 0.0));
+    doc.set_scroll_directions([(scroller, (1, 1))].into());
+    doc.resolve(0.0);
+    assert_eq!(size(&doc, "#a"), (9.0, 30.0));
+}
