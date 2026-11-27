@@ -1004,11 +1004,27 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bo
     let Ok(s) = state.realm.scope() else { return false };
     sync_compile_gate(&s, state);
     if !module {
-        if let Err(e) = s.eval(&script.0, Some(&script.1), 1) {
-            s.report_exception(&e);
-            return false;
-        }
-        return true;
+        // HTML "run a classic script": the exception is reported before the clean-up's microtask
+        // checkpoint, so the evaluation and the report share one script frame (the checkpoint
+        // follows the report; WPT microtasks/evaluation-order-1-throw-importScripts).
+        let (source, name) = (script.0.clone(), script.1.clone());
+        let ok = s.in_script_frame(move |s| match s.eval(&source, Some(&name), 1) {
+            Ok(_) => true,
+            Err(e) => {
+                s.report_exception(&e);
+                false
+            }
+        });
+        return match ok {
+            Ok(ok) => ok,
+            Err(_) => match s.eval(&script.0, Some(&script.1), 1) {
+                Ok(_) => true,
+                Err(e) => {
+                    s.report_exception(&e);
+                    false
+                }
+            },
+        };
     }
     // A module's graph loads, then it evaluates: an import that fails or a
     // throw at its top level rejects the evaluation promise, which reports

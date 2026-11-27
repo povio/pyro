@@ -4772,9 +4772,7 @@ impl Browser {
             dom.set_executing_classic_script(element.node);
             pyro_webapi::trusted_types::sync_compile_strings(&scope, dom);
         }
-        if let Err(e) = scope.eval(text, Some(url), i32::try_from(line).unwrap_or(i32::MAX)) {
-            scope.report_exception(&e);
-        }
+        eval_and_report(&scope, text, url, i32::try_from(line).unwrap_or(i32::MAX));
         if let Some(dom) = &bindings {
             dom.set_current_script(outer);
         }
@@ -5536,6 +5534,26 @@ fn suggested_filename(attribute: &str, url: &str) -> String {
 }
 
 /// Whether a Content-Disposition value has the `attachment` type.
+/// HTML "run a classic script" for a script the parser or the loader runs: the exception is
+/// reported (step 7.3, the `error` event) BEFORE "clean up after running script" (step 7.2's
+/// microtask checkpoint). JavaScriptCore checkpoints when the outermost call returns, so the
+/// evaluation and the report share one script frame ([`pyro_js::Scope::in_script_frame`]); a
+/// microtask the script queued then runs after the `error` listeners. WPT
+/// html/semantics/scripting-1/the-script-element/microtasks/evaluation-order-1.
+fn eval_and_report(scope: &pyro_js::Scope<'_>, text: &str, url: &str, line: i32) {
+    let (source, name) = (text.to_owned(), url.to_owned());
+    let ran = scope.in_script_frame(move |s| {
+        if let Err(e) = s.eval(&source, Some(&name), line) {
+            s.report_exception(&e);
+        }
+    });
+    if ran.is_err() {
+        if let Err(e) = scope.eval(text, Some(url), line) {
+            scope.report_exception(&e);
+        }
+    }
+}
+
 /// An inline module script's source text placed at its document line: the engine numbers a module's
 /// lines from 1, so the lines before the script's own are blank ones (columns are kept; WPT
 /// html/semantics/scripting-1/the-script-element/module/evaluation-error-5 reports the document line).
