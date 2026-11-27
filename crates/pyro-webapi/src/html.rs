@@ -4914,6 +4914,7 @@ simple_class!(SvgPatternElement, "SVGPatternElement", SvgElement, |def| {
     unit_type_constants(def);
     svg_enum!(def, "patternUnits", PATTERN_UNITS);
     svg_enum!(def, "patternContentUnits", PATTERN_CONTENT_UNITS);
+    def.getter("patternTransform", |s, n| Ok(collections::animated_transform_list(s, n.page(), n.id, "patternTransform")?.value()));
 });
 simple_class!(SvgGradientElement, "SVGGradientElement", SvgElement, |def| {
     svg_href(def);
@@ -4923,6 +4924,7 @@ simple_class!(SvgGradientElement, "SVGGradientElement", SvgElement, |def| {
     def.constant("SVG_SPREADMETHOD_REFLECT", 2.0);
     def.constant("SVG_SPREADMETHOD_REPEAT", 3.0);
     svg_enum!(def, "gradientUnits", GRADIENT_UNITS);
+    def.getter("gradientTransform", |s, n| Ok(collections::animated_transform_list(s, n.page(), n.id, "gradientTransform")?.value()));
     svg_enum!(def, "spreadMethod", SPREAD_METHOD);
 });
 simple_class!(SvgLinearGradientElement, "SVGLinearGradientElement", SvgGradientElement, |def| {
