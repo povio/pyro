@@ -134,6 +134,11 @@ pub(crate) struct Images {
     /// The observation stamp (DOM, style, viewport, scroll) and the window `load` state at
     /// the last lazy load check.
     lazy_checked: Option<(((u64, u64, u32, u32), u64), bool)>,
+    /// The `<img>`s whose source selection reads the environment (a `srcset`, or a `<picture>`
+    /// parent), and the viewport their last selection saw: HTML "reacting to environment
+    /// changes" selects again for them when it changes.
+    responsive: HashSet<NodeId>,
+    environment: Option<pyro_dom::media::Viewport>,
     generation: u64,
     /// Entry count at which those of collected elements are dropped (a
     /// finished request no longer pins its element, and `new Image()`
@@ -434,6 +439,25 @@ impl Browser {
                 && dom.natural_size(node).is_none();
             (lazy, hidden, rendered, attr, auto_css)
         };
+        // HTML "reacting to environment changes": an image whose selection reads the viewport
+        // (`srcset`, a `<picture>` parent) is selected again when it changes
+        // ([`Browser::reselect_responsive_images`]).
+        {
+            let responsive = {
+                let dom = bindings.dom.borrow();
+                dom.get_attribute(node, "srcset").ok().flatten().is_some()
+                    || dom.parent(node).ok().flatten().is_some_and(|p| dom.element(p).is_ok_and(|e| e.is_html() && &*e.name.local == "picture"))
+            };
+            let viewport = responsive.then(|| bindings.viewport());
+            if let Some(mut p) = self.doc_mut(page) {
+                if let Some(viewport) = viewport {
+                    p.images.responsive.insert(node);
+                    p.images.environment.get_or_insert(viewport);
+                } else {
+                    p.images.responsive.remove(&node);
+                }
+            }
+        }
         // A lazy image's concrete width, for `sizes="auto"`: laid out (the default object size's
         // 300 px while its width is `auto` and no image gave a natural width). Not rendered: its
         // last width while rendered when still connected, else none (the `auto` entry is skipped).
@@ -991,6 +1015,39 @@ impl Browser {
             object_without_url_csp(&bindings, node, &base, pyro_net::csp::RequestDest::Object);
         }
         self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0, ResourceKind::Object);
+    }
+
+    /// HTML "reacting to environment changes": when the viewport (its size, device pixel ratio,
+    /// media features) is not the one the responsive `<img>`s of `page`'s document last selected
+    /// for, each runs "update the image data" again (a `srcset` with `w` descriptors and `sizes`,
+    /// a `<picture>`'s `<source media>`); one whose selected URL changed requests it. Runs at the
+    /// microtask checkpoint, only for documents that have such images.
+    pub(crate) fn reselect_responsive_images(&mut self, page: FrameKey) {
+        let Some(state) = self.doc(page) else { return };
+        if state.images.responsive.is_empty() {
+            return;
+        }
+        let Some(bindings) = state.main_frame.page_dom.clone() else { return };
+        drop(state);
+        // A store borrowed elsewhere: at the next checkpoint.
+        if bindings.dom.try_borrow().is_err() {
+            return;
+        }
+        let viewport = bindings.viewport();
+        let nodes: Vec<NodeId> = {
+            let Some(mut state) = self.doc_mut(page) else { return };
+            if state.images.environment.as_ref() == Some(&viewport) {
+                return;
+            }
+            state.images.environment = Some(viewport);
+            let dom = bindings.dom.borrow();
+            state.images.responsive.retain(|node| dom.is_alive(*node) && dom.node_document(*node).ok() == Some(bindings.document()));
+            let nodes: Vec<NodeId> = state.images.responsive.iter().copied().collect();
+            nodes
+        };
+        for node in nodes {
+            self.image_event_with(page, node, false);
+        }
     }
 
     /// The deferred lazy images of `page` that are rendered now run their steps again (select

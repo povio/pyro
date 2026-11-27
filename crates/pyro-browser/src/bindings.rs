@@ -845,6 +845,9 @@ impl Browser {
         self.resume_lazy_frames(&host);
         host.refresh_media_visibility();
         self.fetch_rendered_images(page);
+        for key in host.keys() {
+            self.reselect_responsive_images(key);
+        }
         // Runs at every checkpoint: leave early when nothing is queued.
         let (iframe_events, resource_events) = {
             let dom = host.dom.borrow();
