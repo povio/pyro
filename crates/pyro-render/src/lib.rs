@@ -876,6 +876,8 @@ pub struct Renderer {
     /// pyro: each page's scroll directions as last told ([`Renderer::set_scroll_directions`]),
     /// which a document built again takes at its next sync.
     scroll_directions: HashMap<u64, Vec<(u64, (i8, i8))>>,
+    /// pyro: each page's snap targets as last told ([`Renderer::set_snapped`]), likewise.
+    snapped: HashMap<u64, Vec<(u64, (bool, bool))>>,
     pdf_cache: pdf::PdfCache,
     /// Layout queries of persistent documents, by page (present once the
     /// page's document has been laid out for them).
@@ -1047,6 +1049,7 @@ impl Renderer {
             animations: HashMap::new(),
             timeline_scroll: HashMap::new(),
             scroll_directions: HashMap::new(),
+            snapped: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
             sprites: HashMap::new(),
@@ -1070,6 +1073,7 @@ impl Renderer {
         self.forget_document(page);
         self.timeline_scroll.remove(&page);
         self.scroll_directions.remove(&page);
+        self.snapped.remove(&page);
     }
 
     /// Drops the persistent document of a page that lives on: its next sync builds it again (a
@@ -1244,9 +1248,23 @@ impl Renderer {
         changed
     }
 
+    /// pyro: the elements that are a scroll container's snap target now (by key, with the axes
+    /// (x, y) they are snapped on), which `scroll-state(snapped)` follows. Whether the
+    /// document's styles are stale now.
+    pub fn set_snapped(&mut self, page: u64, snapped: Vec<(u64, (bool, bool))>) -> bool {
+        let changed = self.mirrors.get_mut(&page).is_some_and(|m| m.set_snapped(&snapped));
+        self.snapped.insert(page, snapped);
+        changed
+    }
+
     fn apply_animations(&mut self, page: u64) {
-        if let (Some(m), Some(directions)) = (self.mirrors.get_mut(&page), self.scroll_directions.get(&page)) {
-            m.set_scroll_directions(directions);
+        if let Some(m) = self.mirrors.get_mut(&page) {
+            if let Some(directions) = self.scroll_directions.get(&page) {
+                m.set_scroll_directions(directions);
+            }
+            if let Some(snapped) = self.snapped.get(&page) {
+                m.set_snapped(snapped);
+            }
         }
         if let (Some(m), Some(scroll)) = (self.mirrors.get_mut(&page), self.timeline_scroll.get_mut(&page)) {
             if !scroll.applied {

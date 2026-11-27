@@ -34,11 +34,12 @@ pub(crate) struct ContainerQuerySize {
 
 /// pyro: what the scroll-state features of one query container read at its last layout
 /// (`resolve::refresh_scroll_state_queries`): `scrollable` (edges with room to scroll towards),
-/// and `scrolled` (the edges of its last scroll).
+/// `scrolled` (the edges of its last scroll) and `snapped` (the axes it is a snap target on).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct ScrollStateEntry {
     pub(crate) scrollable: style::stylesheets::container_rule::ScrollableEdges,
     pub(crate) scrolled: style::stylesheets::container_rule::ScrollableEdges,
+    pub(crate) snapped: style::stylesheets::container_rule::SnappedAxes,
 }
 
 /// The versioned map in which the nodes of the DOM tree are stored, backed by

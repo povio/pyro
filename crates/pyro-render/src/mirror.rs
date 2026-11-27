@@ -324,6 +324,13 @@ impl Mirror {
         self.doc.set_scroll_directions(directions)
     }
 
+    /// Gives the document the elements that are a scroll container's snap target, with the axes
+    /// (x, y) they are snapped on, for `scroll-state(snapped)`. Whether they changed.
+    pub(crate) fn set_snapped(&mut self, snapped: &[(u64, (bool, bool))]) -> bool {
+        let snapped = snapped.iter().filter_map(|&(key, axes)| Some((self.nodes.get(&key)?.id, axes))).collect();
+        self.doc.set_snapped(snapped)
+    }
+
     pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) {
         let root = self.doc.try_root_element().map(|root| root.id);
         let targets: Vec<(NodeId, NodeId)> = targets

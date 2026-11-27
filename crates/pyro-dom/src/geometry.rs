@@ -732,6 +732,9 @@ pub trait GeometrySource {
     /// The direction of each scroll container's last scroll on each axis (-1 towards the start, 1
     /// towards the end) by key (`u64::MAX`: the viewport), which `scroll-state(scrolled)` follows.
     fn set_scroll_directions(&self, _directions: Vec<(u64, (i8, i8))>) {}
+    /// The elements that are a scroll container's snap target now, by key, with the axes (x, y)
+    /// they are snapped on, which `scroll-state(snapped)` follows.
+    fn set_snapped(&self, _snapped: Vec<(u64, (bool, bool))>) {}
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
     /// HTML-in-Canvas `drawElementImage`: the element `key` painted alone (its subtree only, its

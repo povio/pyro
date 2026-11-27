@@ -746,6 +746,9 @@ pub struct BaseDocument {
     /// start, 1 towards the end, 0 none yet), as the embedder tracks them
     /// (`set_scroll_directions`): `scroll-state(scrolled)`.
     pub(crate) scroll_directions: std::collections::HashMap<NodeId, (i8, i8)>,
+    /// pyro: the elements that are a scroll container's snap target, with the axes (x, y) they
+    /// are snapped on, as the embedder tracks them (`set_snapped`): `scroll-state(snapped)`.
+    pub(crate) snapped_targets: std::collections::HashMap<NodeId, (bool, bool)>,
     /// pyro: a style traversal kept a `::first-line` style for some element (sticky): inline
     /// roots look for the style of their first line (`layout::first_line`).
     pub(crate) first_line_styles: bool,
@@ -1105,6 +1108,7 @@ impl BaseDocument {
             scroll_target_groups: Vec::new(),
             scroll_targets: Default::default(),
             scroll_directions: Default::default(),
+            snapped_targets: Default::default(),
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
@@ -2691,6 +2695,21 @@ impl BaseDocument {
             return false;
         }
         self.scroll_directions = directions;
+        if self.nodes.scroll_state_queries.lock().unwrap().is_empty() {
+            return false;
+        }
+        self.update_scroll_marker_states();
+        true
+    }
+
+    /// pyro: the elements that are a scroll container's snap target, with the axes (x, y) they
+    /// are snapped on, which `scroll-state(snapped)` queries. Whether it changed (a container with
+    /// such a query then styles again at the next resolve).
+    pub fn set_snapped(&mut self, snapped: std::collections::HashMap<NodeId, (bool, bool)>) -> bool {
+        if self.snapped_targets == snapped {
+            return false;
+        }
+        self.snapped_targets = snapped;
         if self.nodes.scroll_state_queries.lock().unwrap().is_empty() {
             return false;
         }

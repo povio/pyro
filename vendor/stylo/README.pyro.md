@@ -529,7 +529,11 @@ without a style context (custom properties left as they are): pyro serializes a 
   and `scrolled` per container; `scrolled` comes from `BaseDocument::set_scroll_directions` (pyro-dom `Layout` records the
   last direction per axis at each scroll write and pushes it with `push_scroll`), and `scrollable` reads the offsets of
   `set_timeline_scroll` when it has them (a geometry document's nodes carry none). WPT css-conditional
-  `scroll-state-scrolled-{hv,wm,multiple-scrollers,programmatic-*}`, `scroll-state-scrollable-change`. WPT css-conditional
+  `scroll-state-scrolled-{hv,wm,multiple-scrollers,programmatic-*}`, `scroll-state-scrollable-change`.
+- Round 8 (`snapped` evaluation): `Layout::snapped_keys` (the elements the scroll containers last snapped to, with their x/y
+  axes) goes to the geometry source with `push_scroll` (also when only the snap targets changed) and to
+  `BaseDocument::set_snapped`; `query_snapped_axes` feeds `ContainerInfo::snapped`. WPT css-conditional
+  `scroll-state-snapped-*`, `scroll-state-initially-snapped`. WPT css-conditional
   `container-queries/scroll-state/*scrollable*`, `container-type-scroll-state-*`.
 - Round 7 (R-HTML-16r): `queries/feature_expression.rs` `QueryExpressionValue::parse`: a length media feature takes a
   math function that resolves to the number 0 (`calc(0)`) as a zero length, as Blink does. WPT html

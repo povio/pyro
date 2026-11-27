@@ -1229,7 +1229,13 @@ impl BaseDocument {
                 scrolled.set(ScrollableEdges::TOP, dy < 0);
                 scrolled.set(ScrollableEdges::BOTTOM, dy > 0);
             }
-            let entry = crate::tree::ScrollStateEntry { scrollable: edges, scrolled };
+            // `snapped`: the container is the snap target of a snap container on x and/or y.
+            let mut snapped = style::stylesheets::container_rule::SnappedAxes::empty();
+            if let Some(&(x, y)) = self.snapped_targets.get(&id) {
+                snapped.set(style::stylesheets::container_rule::SnappedAxes::X, x);
+                snapped.set(style::stylesheets::container_rule::SnappedAxes::Y, y);
+            }
+            let entry = crate::tree::ScrollStateEntry { scrollable: edges, scrolled, snapped };
             let mut queries = self.nodes.scroll_state_queries.lock().unwrap();
             if let Some(previous) = queries.get_mut(&id)
                 && *previous != entry

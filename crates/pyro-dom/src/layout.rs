@@ -310,6 +310,8 @@ pub struct Layout {
     /// (page clock, ms) ([`Self::push_scroll`]).
     scroll_pushed: std::cell::Cell<Option<u64>>,
     scroll_pushed_at: std::cell::Cell<f64>,
+    /// The snapped elements last told to the geometry source ([`Self::snapped_keys`]).
+    snapped_pushed: std::cell::RefCell<Vec<(u64, (bool, bool))>>,
     /// Each scrolled element's `scrollLeft` and `scrollTop`: negative on an axis whose scroll
     /// origin is at its end (right-to-left, `row-reverse`, `column-reverse`, ...), as CSSOM View
     /// and Blitz's scroll offsets have them.
@@ -642,6 +644,7 @@ impl Layout {
             window_scroll: (0, 0),
             scroll_generation: 0,
             scroll_pushed: std::cell::Cell::new(None),
+            snapped_pushed: Default::default(),
             scroll_pushed_at: std::cell::Cell::new(f64::NEG_INFINITY),
             element_scroll: FxHashMap::default(),
             scroll_directions: FxHashMap::default(),
@@ -3293,7 +3296,9 @@ impl Layout {
     /// scroll timelines at the next frame, as in browsers (their times hold still until then).
     /// `true`: told.
     pub fn push_scroll(&self) -> bool {
-        if self.scroll_pushed.get() == Some(self.scroll_generation as u64) {
+        // (A snap target changes without a scroll when layout does: `scroll-state(snapped)`.)
+        let snapped = self.snapped_keys();
+        if self.scroll_pushed.get() == Some(self.scroll_generation as u64) && *self.snapped_pushed.borrow() == snapped {
             return false;
         }
         self.scroll_pushed.set(Some(self.scroll_generation as u64));
@@ -3301,8 +3306,34 @@ impl Layout {
             let window = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
             source.set_scroll(self.scrolled_elements(), window);
             source.set_scroll_directions(self.scroll_direction_keys());
+            if *self.snapped_pushed.borrow() != snapped {
+                source.set_snapped(snapped.clone());
+            }
         }
+        *self.snapped_pushed.borrow_mut() = snapped;
         true
+    }
+
+    /// The elements that are the snap target of a scroll container now, by render key, with the
+    /// axes (x, y) they are snapped on (`scroll-state(snapped)`; CSS Conditional 5 § 7.3.3).
+    pub fn snapped_keys(&self) -> Vec<(u64, (bool, bool))> {
+        let mut axes: FxHashMap<NodeId, (bool, bool)> = FxHashMap::default();
+        for boxes in self.snapped.values() {
+            for (axis, snap_box) in boxes.iter().enumerate() {
+                if let Some((el, _)) = snap_box {
+                    let entry = axes.entry(*el).or_default();
+                    if axis == 0 {
+                        entry.0 = true;
+                    } else {
+                        entry.1 = true;
+                    }
+                }
+            }
+        }
+        let mut out: Vec<(u64, (bool, bool))> =
+            axes.into_iter().map(|(el, axes)| (crate::snapshot::render_key(el), axes)).collect();
+        out.sort_unstable();
+        out
     }
 
     /// Records that `target` (`None`: the viewport) scrolled from `from` to `to`: the direction

@@ -1706,6 +1706,11 @@ impl<'a> TElement for BlitzNode<'a> {
         self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default().scrolled
     }
 
+    /// pyro: the axes the container is a snap target on, recorded at the last layout.
+    fn query_snapped_axes(&self) -> style::stylesheets::container_rule::SnappedAxes {
+        self.tree().scroll_state_queries.lock().unwrap().entry(self.id).or_default().snapped
+    }
+
     fn query_container_size(
         &self,
         display: &style::values::specified::Display,
