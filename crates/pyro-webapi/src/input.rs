@@ -925,7 +925,7 @@ fn run_activation_behavior(
                 InputType::Reset => {
                     let form = page.dom.borrow().form_owner(el).ok().flatten();
                     if let Some(f) = form {
-                        reset_form(page, f);
+                        reset_form_by_activation(page, f);
                     }
                 }
                 InputType::File => {
@@ -957,7 +957,7 @@ fn run_activation_behavior(
             // `type=button` goes on to its command.
             if let Some(f) = form {
                 match ty.as_deref() {
-                    Some("reset") => return reset_form(page, f),
+                    Some("reset") => return reset_form_by_activation(page, f),
                     Some("button") => {}
                     _ if crate::popover::button_is_submit(&page.dom.borrow(), el) => {
                         return submit_form(page, f, Some(el), true);
@@ -1334,6 +1334,17 @@ pub fn submit_form(page: &Rc<PageDom>, form: NodeId, submitter: Option<NodeId>, 
 
 /// `form.reset()`: fires `reset`, then restores default values.
 pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
+    reset_form_with(page, form, false);
+}
+
+/// The activation behavior of a reset button: as `form.reset()`, but the click is not a
+/// [CEReactions] call, so the `formResetCallback`s run from the backup element queue, in a
+/// microtask.
+pub fn reset_form_by_activation(page: &Rc<PageDom>, form: NodeId) {
+    reset_form_with(page, form, true);
+}
+
+fn reset_form_with(page: &Rc<PageDom>, form: NodeId, backup_queue: bool) {
     if !fire_simple(page, form, "reset", true, true) {
         return;
     }
@@ -1373,7 +1384,33 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
         }
     }
     // Form-associated custom elements reset themselves (formResetCallback).
-    let _ = dom.enqueue_form_reset(form);
+    if !backup_queue {
+        let _ = dom.enqueue_form_reset(form);
+        return;
+    }
+    let targets = dom.form_reset_targets(form).unwrap_or_default();
+    drop(dom);
+    if targets.is_empty() {
+        return;
+    }
+    let Some(realm) = page.main_world_realm() else { return };
+    let Ok(s) = realm.scope() else { return };
+    let weak = Rc::downgrade(page);
+    let queued = s.then(
+        s.undefined(),
+        move |_, _| {
+            if let Some(page) = weak.upgrade() {
+                if let Ok(mut dom) = page.dom.try_borrow_mut() {
+                    dom.enqueue_form_reset_for(&targets);
+                }
+                crate::custom::run_reactions(&page);
+            }
+        },
+        |_, _| {},
+    );
+    if let Err(error) = queued {
+        s.report_exception(&error);
+    }
 }
 
 // ----- keyboard ---------------------------------------------------------------------

@@ -433,7 +433,10 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
         CollectionKind::FormElements => {
             let listed = html
                 && matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
-                || e.flags & pyro_dom::node::element_flags::FORM_ASSOCIATED != 0;
+                // A form-associated custom element is a listed element once it is custom, not while
+                // its constructor runs in the upgrade (HTML: custom element state "precustomized").
+                || e.flags & (pyro_dom::node::element_flags::FORM_ASSOCIATED | pyro_dom::node::element_flags::CUSTOM_DEFINED)
+                    == pyro_dom::node::element_flags::FORM_ASSOCIATED | pyro_dom::node::element_flags::CUSTOM_DEFINED;
             // HTML: a fieldset's `elements` are its listed descendants (whatever their form owner,
             // image buttons included); a form's are the listed elements it owns, but image buttons.
             if is_fieldset(dom, root) {

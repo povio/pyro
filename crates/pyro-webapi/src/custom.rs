@@ -389,6 +389,10 @@ fn upgrade_with<'s>(
             .collect();
         let connected = dom.is_connected(el).js()?;
         dom.prepare_custom_element(el, !observed.is_empty(), face).js()?;
+        if face {
+            // `setFormValue()` and the like work in the constructor.
+            dom.begin_form_associated(el).js()?;
+        }
         record_definition(&mut dom, el, &owner, key)?;
         (attributes, connected)
     };
