@@ -4300,29 +4300,13 @@ impl JsClass for SvgElement {
             crate::typed_om::attribute_style_map(s, n.page(), el)
         });
         def.getter("ownerSVGElement", |s, n| {
-            let dom = n.page().dom.borrow();
-            let mut p = dom.parent_element(n.id).js()?;
-            while let Some(x) = p {
-                if dom.element(x).is_ok_and(|e| &*e.name.local == "svg") {
-                    drop(dom);
-                    return node_value(s, n.page(), Some(x));
-                }
-                p = dom.parent_element(x).js()?;
-            }
-            Ok(s.null())
+            let owner = svg_owner(&n.page().dom.borrow(), n.id);
+            node_value(s, n.page(), owner)
         });
         // The nearest viewport element: an `<svg>` ancestor (as Chrome; `ownerSVGElement`'s answer).
         def.getter("viewportElement", |s, n| {
-            let dom = n.page().dom.borrow();
-            let mut p = dom.parent_element(n.id).js()?;
-            while let Some(x) = p {
-                if dom.element(x).is_ok_and(|e| &*e.name.local == "svg") {
-                    drop(dom);
-                    return node_value(s, n.page(), Some(x));
-                }
-                p = dom.parent_element(x).js()?;
-            }
-            Ok(s.null())
+            let owner = svg_owner(&n.page().dom.borrow(), n.id);
+            node_value(s, n.page(), owner)
         });
         def.method("focus", 0, focus_element);
         def.method("blur", 0, |s, n, _a| {
@@ -4358,6 +4342,25 @@ impl JsClass for MathMlElement {
         });
     }
 }
+/// The nearest `<svg>` ancestor of an SVG element (SVG 2 `ownerSVGElement`): none for the outermost
+/// one, and not through a `foreignObject` or a non-SVG ancestor (an `<svg>` in HTML content is outermost).
+fn svg_owner(dom: &Dom, el: NodeId) -> Option<NodeId> {
+    let mut p = dom.parent_element(el).ok().flatten();
+    while let Some(x) = p {
+        let e = dom.element(x).ok()?;
+        if e.namespace() != &markup5ever::ns!(svg) {
+            return None;
+        }
+        match &*e.name.local {
+            "svg" => return Some(x),
+            "foreignObject" => return None,
+            _ => {}
+        }
+        p = dom.parent_element(x).ok().flatten();
+    }
+    None
+}
+
 simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     use pyro_dom::svg_string_list::StringListAttribute;
     def.getter("requiredExtensions", |s, n| collections::svg_string_list(s, n, StringListAttribute::RequiredExtensions));
@@ -4525,7 +4528,7 @@ simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
     // pyro: the user agent's pan and zoom (SVG 2 `currentTranslate`, `currentScale`), which the
     // renderer applies to the `<svg>`'s content (pyro-dom `SVG_PAN_ATTR`).
     def.getter("currentTranslate", |s, n| {
-        Ok(s.wrap::<collections::SvgPoint>(collections::SvgPointData::Translate(collections::NodeHold::new(n.page(), n.id)?), None)?.value())
+        collections::current_translate(s, n.page(), n.id)
     });
     def.accessor(
         "currentScale",

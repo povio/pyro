@@ -3516,6 +3516,12 @@ impl JsClass for SvgPoint {
 
 use pyro_dom::svg_point_list::PointItem;
 
+/// `SVGSVGElement.currentTranslate` (`[SameObject]`): one wrapper per element while it is held.
+pub(crate) fn current_translate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, id: NodeId) -> JsResult<Value<'s>> {
+    let key = coll_identity(page, 480, id);
+    Ok(s.wrap::<SvgPoint>(SvgPointData::Translate(NodeHold::new(page, id)?), Some(key))?.value())
+}
+
 fn point_value<'s>(s: &Scope<'s>, item: Rc<PointItem>) -> JsResult<Value<'s>> {
     // The wrapper owns this Rc and its weak identity entry ends at GC. Each
     // realm therefore gets one wrapper per point for as long as it is held.
