@@ -23,6 +23,7 @@ mod responsive_frames;
 mod speculate;
 mod speculation_document_rules;
 mod speculation_rules;
+mod speculation_tags;
 mod stylesheets;
 mod viewport;
 mod window;

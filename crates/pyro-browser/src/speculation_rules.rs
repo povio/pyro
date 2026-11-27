@@ -141,7 +141,7 @@ pub struct Rule {
     pub eagerness: Eagerness,
     /// `referrer_policy` (`None`: absent or the empty string: the document's policy applies).
     pub referrer_policy: Option<ReferrerPolicy>,
-    /// The rule's own `tag` (a valid one: printable ASCII); see [`Candidate::tag`].
+    /// The rule's own `tag` (printable ASCII; an invalid one invalidates the rule); see [`Candidate::tag`].
     pub tag: Option<String>,
     pub requires: Vec<Requirement>,
     /// `expects_no_vary_search`: the raw header-syntax string, parsed by the No-Vary-Search lane.
@@ -155,7 +155,7 @@ pub struct RuleSet {
     pub prefetch: Vec<Rule>,
     pub prerender: Vec<Rule>,
     pub prefetch_with_subresources: Vec<Rule>,
-    /// The set's `tag` (an invalid one is dropped with a warning, as an absent tag).
+    /// The set's `tag` (an invalid one fails the whole parse).
     pub tag: Option<String>,
     /// Problems that skipped a rule or key; reported as console warnings.
     pub warnings: Vec<String>,
@@ -207,6 +207,7 @@ pub fn parse(text: &str, ctx: &ParseContext<'_>) -> Result<RuleSet, ParseError> 
         return Err(ParseError("Invalid speculation rules: the rule set must be a JSON object".into()));
     };
     let mut set = RuleSet::default();
+    // An invalid set tag (present, but not a string of printable ASCII) invalidates the whole set.
     if let Some(tag) = top.get("tag") {
         match valid_tag(tag) {
             Some(tag) => set.tag = Some(tag),
@@ -895,6 +896,9 @@ mod tests {
 
     #[test]
     fn the_empty_referrer_policy_is_valid_and_tags_follow_printable_ascii() {
+        assert!(parse_str(r#"{"tag":"é","prefetch":[{"urls":["a"]}]}"#).is_err());
+        assert!(parse_str(r#"{"tag":null}"#).is_err());
+        assert!(parse_str(r#"{"tag":" ","prefetch":[{"urls":["a"],"tag":"\u007f"},{"urls":["b"],"tag":7}]}"#).unwrap().prefetch.is_empty());
         let set = parse_str(
             r#"{"tag":"set","prefetch":[{"urls":["a"],"referrer_policy":"","tag":"rule"},{"urls":["b"],"tag":"é"},{"urls":["c"]}]}"#,
         )
