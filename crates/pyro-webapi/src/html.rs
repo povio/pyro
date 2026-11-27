@@ -3146,6 +3146,9 @@ simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
         let c = collections::collection(s, n.page(), n.id, CollectionKind::FormElements)?;
         c.get_atom("length")
     });
+    // A legacy platform object: deleting or writing a supported index or visible name is refused
+    // (a TypeError in strict mode code: WPT the-form-element/form-indexed-element).
+    def.legacy_platform_object();
     def.indexed(|s, n, i| {
         let c = collections::collection(s, n.page(), n.id, CollectionKind::FormElements)?;
         let v = c.get_index(i)?;
