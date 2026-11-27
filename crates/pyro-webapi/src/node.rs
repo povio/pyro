@@ -1323,7 +1323,10 @@ impl JsClass for Element {
         define_non_doctype_child(def);
         // Fullscreen API (`crate::fullscreen`): granted with transient activation, denied otherwise.
         crate::handlers::define_fullscreen(def);
-        def.promise_method("requestFullscreen", 0, |s, n, _a| crate::fullscreen::request(s, n.page(), n.id));
+        def.promise_method("requestFullscreen", 0, |s, n, a| {
+            crate::fullscreen::check_options(a.get(0))?;
+            crate::fullscreen::request(s, n.page(), n.id)
+        });
         def.method("pseudo", 1, |s, n, a| {
             a.require(1, "Element.pseudo")?;
             let el = crate::node::wrap_node(s, n.page(), n.id)?.value();

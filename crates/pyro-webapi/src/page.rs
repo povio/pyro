@@ -493,6 +493,8 @@ pub struct PageDom {
     debugger_gesture: Cell<bool>,
     /// Fullscreen API: the document's fullscreen elements, the topmost last (`crate::fullscreen`).
     pub(crate) fullscreen_stack: RefCell<Vec<NodeId>>,
+    /// An `exitFullscreen()` task is queued: a further call joins it (`crate::fullscreen::exit`).
+    pub(crate) fullscreen_exit_pending: Cell<bool>,
     /// The document's permissions policy allows `fullscreen` (`crate::fullscreen::enabled`).
     fullscreen_allowed: Cell<bool>,
     /// The document's permissions policy allows `media-playback-while-not-visible` (default
@@ -1228,6 +1230,7 @@ impl PageDom {
             input_activation: Cell::new(None),
             debugger_gesture: Cell::new(false),
             fullscreen_stack: RefCell::new(Vec::new()),
+            fullscreen_exit_pending: Cell::new(false),
             fullscreen_allowed: Cell::new(true),
             media_while_hidden_allowed: Cell::new(true),
             media_frame_rendered: Cell::new(true),
