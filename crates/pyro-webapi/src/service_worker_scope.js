@@ -266,12 +266,29 @@
     constructor(type, init) {
       super(type, init);
       const i = init || {};
+      // WebIDL: `(Client or ServiceWorker or MessagePort)? source = null`, `sequence<MessagePort> ports = []`.
+      const source = i.source === undefined ? null : i.source;
+      if (source !== null && !(clientData.has(source) || workerData.has(source) || source instanceof MessagePort)) {
+        throw new TypeErrorC("Failed to construct 'ExtendableMessageEvent': Failed to read the 'source' property from 'ExtendableMessageEventInit': The provided value is neither a Client, a ServiceWorker nor a MessagePort.");
+      }
+      let ports = [];
+      if (i.ports !== undefined) {
+        if (i.ports === null || typeof i.ports !== 'object' || typeof i.ports[Symbol.iterator] !== 'function') {
+          throw new TypeErrorC("Failed to construct 'ExtendableMessageEvent': Failed to read the 'ports' property from 'ExtendableMessageEventInit': The provided value cannot be converted to a sequence.");
+        }
+        ports = Array.from(i.ports);
+        for (const port of ports) {
+          if (!(port instanceof MessagePort)) {
+            throw new TypeErrorC("Failed to construct 'ExtendableMessageEvent': Failed to read the 'ports' property from 'ExtendableMessageEventInit': Failed to convert a value to 'MessagePort'.");
+          }
+        }
+      }
       messageData.set(this, {
         data: i.data === undefined ? null : i.data,
         origin: i.origin === undefined ? '' : String(i.origin),
         lastEventId: i.lastEventId === undefined ? '' : String(i.lastEventId),
-        source: i.source === undefined ? null : i.source,
-        ports: freeze(i.ports ? Array.from(i.ports) : []),
+        source,
+        ports: freeze(ports),
       });
     }
     get data() { return messageData.get(this).data; }

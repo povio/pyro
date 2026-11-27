@@ -119,22 +119,44 @@ pub(crate) fn encoding_helper<'s>(s: &Scope<'s>, name: &'static str) -> JsResult
     Ok(helpers.get(s).as_object().expect("encoding helpers").get_atom(name)?.as_object().expect("encoding function"))
 }
 
-/// New `Uint8Array` holding a copy of `bytes`.
+/// Frees what [`uint8_array`] handed JSC: the context is a `Box<Box<[u8]>>` made there.
+unsafe extern "C" fn free_owned_bytes(_bytes: *mut std::ffi::c_void, context: *mut std::ffi::c_void) {
+    // SAFETY: `context` is the pointer `uint8_array` got from `Box::into_raw`, freed once, by JSC.
+    drop(unsafe { Box::from_raw(context as *mut Box<[u8]>) });
+}
+
+/// New `Uint8Array` holding a copy of `bytes`. Its buffer is JSC's own `ArrayBuffer` over memory this
+/// side owns: reading the bytes of a buffer through `JSObjectGetTypedArrayBytesPtr` pins and locks
+/// it, and a locked buffer cannot be transferred (`postMessage(ab, [ab.buffer])` would leave it
+/// attached), so a fresh buffer is never touched through that call.
 pub fn uint8_array<'s>(s: &Scope<'s>, bytes: &[u8]) -> JsResult<Value<'s>> {
     let ctx = s.ctx();
     let mut exc = std::ptr::null();
-    // SAFETY: JSObjectMakeTypedArray allocates a zeroed array of `len` bytes
-    // owned by JSC; we copy into it before returning control to JS.
+    // SAFETY: the boxed copy lives until JSC frees the buffer (`free_owned_bytes`); an empty array
+    // is made by JSC itself (nothing to copy).
     unsafe {
-        let obj = sys::JSObjectMakeTypedArray(ctx, sys::kJSTypedArrayTypeUint8Array, bytes.len(), &mut exc);
-        check_exc(s, exc)?;
-        if !bytes.is_empty() {
-            let mut exc = std::ptr::null();
-            let ptr = sys::JSObjectGetTypedArrayBytesPtr(ctx, obj, &mut exc) as *mut u8;
+        if bytes.is_empty() {
+            let obj = sys::JSObjectMakeTypedArray(ctx, sys::kJSTypedArrayTypeUint8Array, 0, &mut exc);
             check_exc(s, exc)?;
-            if !ptr.is_null() {
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
-            }
+            return Ok(Value::from_raw(ctx, obj as sys::JSValueRef));
+        }
+        let owned: Box<[u8]> = bytes.into();
+        let raw = Box::into_raw(Box::new(owned));
+        let data = (*raw).as_mut_ptr();
+        let obj = sys::JSObjectMakeTypedArrayWithBytesNoCopy(
+            ctx,
+            sys::kJSTypedArrayTypeUint8Array,
+            data as *mut std::ffi::c_void,
+            bytes.len(),
+            Some(free_owned_bytes),
+            raw as *mut std::ffi::c_void,
+            &mut exc,
+        );
+        if obj.is_null() || !exc.is_null() {
+            // JSC did not take the memory over (it calls the deallocator itself only when it did).
+            drop(Box::from_raw(raw));
+            check_exc(s, exc)?;
+            return Err(JsError::Type("Failed to allocate a Uint8Array".into()));
         }
         Ok(Value::from_raw(ctx, obj as sys::JSValueRef))
     }

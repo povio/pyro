@@ -25,10 +25,18 @@
   const EventC = Event;
   const DOMExceptionC = DOMException;
   const TypeErrorC = TypeError;
+  const setTimeoutC = typeof setTimeout === 'function' ? setTimeout : undefined;
   const addListener = EventTargetC.prototype.addEventListener;
   const dispatchEvent = EventTargetC.prototype.dispatchEvent;
   const illegal = (name) => new TypeErrorC(`Failed to construct '${name}': Illegal constructor`);
   const tag = (C, name) => defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
+  // WebIDL: regular operations and attributes of an interface are enumerable.
+  const enumerable = (C) => {
+    for (const key of Reflect.ownKeys(C.prototype)) {
+      if (key === 'constructor' || key === Symbol.toStringTag) continue;
+      defineProperty(C.prototype, key, { enumerable: true });
+    }
+  };
   const ownTag = (o, name) => defineProperty(o, Symbol.toStringTag, { value: name, configurable: true });
 
   // `on<type>` attributes: the stored handler runs from one listener.
@@ -36,10 +44,12 @@
   const handler = (C, type) => {
     defineProperty(C.prototype, 'on' + type, {
       get() {
+        if (!(this instanceof C)) throw new TypeErrorC('Illegal invocation');
         const map = handlers.get(this);
         return (map && map[type]) || null;
       },
       set(value) {
+        if (!(this instanceof C)) throw new TypeErrorC('Illegal invocation');
         let map = handlers.get(this);
         if (!map) handlers.set(this, (map = {}));
         const had = type in map;
@@ -92,7 +102,8 @@
   const workers = new Map();
   const workerData = new WeakMap();
   class ServiceWorker extends EventTargetC {
-    constructor(t, v) {
+    constructor() {
+      const [t, v] = arguments; // WebIDL: the interface object's length is 0
       if (t !== token) throw illegal('ServiceWorker');
       super();
       ownTag(this, 'ServiceWorker');
@@ -109,9 +120,9 @@
         throw new TypeErrorC("Failed to execute 'postMessage' on 'ServiceWorker': 1 argument required, but only 0 present.");
       }
       const d = workerData.get(this);
-      if (d.state === 'redundant') {
-        throw new DOMExceptionC("Failed to execute 'postMessage' on 'ServiceWorker': The worker is redundant.", 'InvalidStateError');
-      }
+      // A message to a redundant worker is dropped silently (no exception, as Chrome and the spec's
+      // "Run Service Worker" steps: there is no worker to run).
+      if (d.state === 'redundant') return;
       native.postMessage(d.id, message, options);
     }
   }
@@ -140,8 +151,8 @@
   const registrations = new Map();
   const registrationData = new WeakMap();
   class NavigationPreloadManager {
-    constructor(t) {
-      if (t !== token) throw illegal('NavigationPreloadManager');
+    constructor() {
+      if (arguments[0] !== token) throw illegal('NavigationPreloadManager');
     }
     enable() {
       return PromiseC.resolve(undefined);
@@ -159,7 +170,8 @@
   tag(NavigationPreloadManager, 'NavigationPreloadManager');
 
   class ServiceWorkerRegistration extends EventTargetC {
-    constructor(t, r) {
+    constructor() {
+      const [t, r] = arguments;
       if (t !== token) throw illegal('ServiceWorkerRegistration');
       super();
       ownTag(this, 'ServiceWorkerRegistration');
@@ -247,25 +259,38 @@
     readyDone = true;
     readyResolve(registration);
   };
+  // The client message queue (ServiceWorker spec): disabled until `startMessages()`, an `onmessage`
+  // assignment or the end of DOMContentLoaded; enabling it queues a task that dispatches what waits, so
+  // the microtasks of the script that enabled it run first, and so do the other DOMContentLoaded listeners.
   let messagesEnabled = false;
+  let flushing = false;
   const queued = [];
-  function startMessages() {
-    if (messagesEnabled) return;
-    messagesEnabled = true;
+  function flush() {
+    flushing = false;
     const list = queued.splice(0);
     for (const event of list) native.deliverMessage(container, event);
   }
+  function startMessages() {
+    if (messagesEnabled) return;
+    messagesEnabled = true;
+    if (queued.length === 0) return;
+    flushing = true;
+    if (setTimeoutC !== undefined) setTimeoutC(flush, 0);
+    else flush();
+  }
 
   class ServiceWorkerContainer extends EventTargetC {
-    constructor(t) {
-      if (t !== token) throw illegal('ServiceWorkerContainer');
+    constructor() {
+      if (arguments[0] !== token) throw illegal('ServiceWorkerContainer');
       super();
       ownTag(this, 'ServiceWorkerContainer');
     }
     get controller() {
+      if (this !== container) throw new TypeErrorC('Illegal invocation');
       return controller;
     }
     get ready() {
+      if (this !== container) return PromiseC.reject(new TypeErrorC('Illegal invocation'));
       return ready;
     }
     register(scriptURL, options) {
@@ -329,8 +354,11 @@
     }
   }
 
+  for (const C of [ServiceWorker, NavigationPreloadManager, ServiceWorkerRegistration, ServiceWorkerContainer]) enumerable(C);
+
   const deliver = (event) => {
-    if (messagesEnabled) native.deliverMessage(container, event);
+    // Behind a flush that is still to run: in order.
+    if (messagesEnabled && !flushing) native.deliverMessage(container, event);
     else queued.push(event);
   };
 

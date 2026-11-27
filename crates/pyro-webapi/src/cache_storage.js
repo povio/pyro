@@ -86,7 +86,8 @@
   };
 
   class Cache {
-    constructor(t, h) {
+    constructor() {
+      const [t, h] = arguments; // WebIDL: the interface object's length is 0
       if (t !== token) throw illegal('Cache');
       handles.set(this, h);
     }
@@ -182,6 +183,13 @@
     }
   }
   tag(Cache, 'Cache');
+  // WebIDL: regular operations are enumerable.
+  const enumerable = (C) => {
+    for (const key of Reflect.ownKeys(C.prototype)) {
+      if (key !== 'constructor' && key !== Symbol.toStringTag) O.defineProperty(C.prototype, key, { enumerable: true });
+    }
+  };
+  enumerable(Cache);
 
   const stores = new WeakMap();
   const storeOf = (storage) => {
@@ -190,7 +198,8 @@
     return backend;
   };
   class CacheStorage {
-    constructor(t, ...backend) {
+    constructor() {
+      const [t, ...backend] = arguments;
       if (t !== token) throw illegal('CacheStorage');
       stores.set(this, backend[0]);
     }
@@ -231,6 +240,7 @@
     }
   }
   tag(CacheStorage, 'CacheStorage');
+  enumerable(CacheStorage);
 
   return { Cache, CacheStorage, caches: new CacheStorage(token, native), bucketCaches: backend => new CacheStorage(token, backend) };
 })
