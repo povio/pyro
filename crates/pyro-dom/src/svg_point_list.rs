@@ -85,6 +85,7 @@ impl<T: Copy> Slot<T> {
 pub struct ListStorage<T: Copy> {
     base: RefCell<Vec<Slot<T>>>,
     animated: RefCell<Vec<Slot<T>>>,
+    animation: RefCell<Option<Box<dyn Fn(&[T]) -> Option<Vec<T>>>>>,
     writing: Cell<bool>,
     length_unit_factor: Option<Box<dyn Fn(u16) -> f64>>,
     write: Writer,
@@ -96,6 +97,7 @@ impl<T: Copy> ListStorage<T> {
         Rc::new(Self {
             base: RefCell::default(),
             animated: RefCell::default(),
+            animation: RefCell::new(None),
             writing: Cell::new(false),
             length_unit_factor,
             write,
@@ -108,6 +110,9 @@ impl<T: Copy> ListStorage<T> {
     }
 
     pub fn len(&self, animated: bool) -> usize {
+        if animated {
+            self.refresh();
+        }
         self.view(animated).borrow().len()
     }
 
@@ -128,6 +133,25 @@ impl<T: Copy> ListStorage<T> {
         for slot in list.drain(count..) {
             slot.detach();
         }
+    }
+
+    /// Where the animated list's values come from while an animation is in effect: the source takes
+    /// the base list's values and returns the animated ones, or `None` when no animation is in effect.
+    pub fn set_animation(&self, source: Box<dyn Fn(&[T]) -> Option<Vec<T>>>) {
+        *self.animation.borrow_mut() = Some(source);
+    }
+
+    /// Brings the animated list up to the animations' current values.
+    fn refresh(&self) {
+        if self.animation.borrow().is_none() {
+            return;
+        }
+        let base: Vec<T> = self.base.borrow().iter().map(|s| s.value).collect();
+        let sampled = match &*self.animation.borrow() {
+            Some(source) => source(&base),
+            None => return,
+        };
+        Self::synchronize(&mut self.animated.borrow_mut(), sampled.unwrap_or(base).into_iter());
     }
 
     fn sync_attribute(&self, values: impl Iterator<Item = T>) {
@@ -159,6 +183,9 @@ impl<T: Copy> ListStorage<T> {
     }
 
     pub fn item(self: &Rc<Self>, index: usize, animated: bool) -> Option<Rc<ListItem<T>>> {
+        if animated {
+            self.refresh();
+        }
         let mut view = self.view(animated).borrow_mut();
         let slot = view.get_mut(index)?;
         if let Some(item) = slot.item.upgrade() {
