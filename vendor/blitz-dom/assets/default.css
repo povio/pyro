@@ -1732,3 +1732,20 @@ m|mmultiscripts > m|mprescripts ~ m|*:nth-child(2n+1),
 m|mover[accent="true" i] > m|*:first-child,
 m|munderover[accent="true" i] > m|*:first-child { math-shift: compact; }
 m|mmultiscripts > m|mprescripts ~ m|*:nth-child(2n) { math-shift: normal; }
+
+/* pyro: script levels of the scripts, limits and radicals (MathML Core Appendix A; layout in
+ * `layout::math::{scripts, underover, radical}`): every child but the first of a script or a
+ * limit element is a script level deeper in compact math, an accent's script keeps the font size
+ * of its base, and the index of a root is two levels deeper. */
+m|msub > m|*:not(:first-child),
+m|msup > m|*:not(:first-child),
+m|msubsup > m|*:not(:first-child),
+m|mmultiscripts > m|*:not(:first-child),
+m|munder > m|*:not(:first-child),
+m|mover > m|*:not(:first-child),
+m|munderover > m|*:not(:first-child) { math-depth: add(1); math-style: compact; font-size: math; }
+m|munder[accentunder="true" i] > m|*:nth-child(2),
+m|mover[accent="true" i] > m|*:nth-child(2),
+m|munderover[accentunder="true" i] > m|*:nth-child(2),
+m|munderover[accent="true" i] > m|*:nth-child(3) { font-size: inherit; }
+m|mroot > m|*:not(:first-child) { math-depth: add(2); math-style: compact; font-size: math; }
