@@ -302,10 +302,14 @@ pub(super) fn refresh(p: &Rc<PageDom>, node: NodeId) {
             size_change = Some(size);
         }
         let old = st.ready;
-        let covered = m
-            .buffered
-            .iter()
-            .any(|&(a, b)| a <= position && (position < b || m.ended && b == st.duration && position == b));
+        // Chrome's SourceBufferStream seeks to the start of the first buffered
+        // range when it begins within kSeekToStartFudgeRoom (1 s) of the
+        // position, so a first PTS a fraction after 0 (edit list, composition
+        // offset) does not stall playback in HAVE_METADATA.
+        const START_FUDGE: f64 = 1.0;
+        let first_start = m.buffered.first().map(|r| r.0);
+        let covered = m.buffered.iter().any(|&(a, b)| a <= position && (position < b || m.ended && b == st.duration && position == b))
+            || first_start.is_some_and(|a| position < a && a <= START_FUDGE && m.buffered[0].1 > a);
         let ready = if covered {
             if m.ended {
                 HAVE_ENOUGH_DATA

@@ -111,7 +111,10 @@ impl PacketConfig {
         }
         let profile = u8::from_str_radix(&hex[..2], 16).ok()?;
         let level = u8::from_str_radix(&hex[4..], 16).ok()?;
-        if !matches!(profile, 66 | 77 | 100) || !matches!(level, 10..=13 | 20..=22 | 30..=32 | 40..=42 | 50..=52) {
+        // The level only bounds resource use; OpenH264 decodes the stream by
+        // its SPS whatever level_idc says, and Chrome accepts every non-zero
+        // level_idc (WPT's MSE helpers probe avc1.4D4001).
+        if !matches!(profile, 66 | 77 | 100) || level == 0 {
             return None;
         }
         let (length_size, parameter_sets) = match description {
