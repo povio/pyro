@@ -169,7 +169,7 @@ impl Images {
 }
 
 impl Browser {
-    pub(crate) fn dispatch_image(&mut self, frame: FrameKey, loader: &Rc<dyn ResourceLoader>, request: FetchRequest, done: FetchDone, layout: bool) -> Option<ResourceCancellation> {
+    pub(crate) fn dispatch_image(&mut self, frame: FrameKey, loader: &Rc<dyn ResourceLoader>, mut request: FetchRequest, done: FetchDone, layout: bool) -> Option<ResourceCancellation> {
         // An `<img>` whose request CSP blocked and reported (`PageDom::note_blocked_image`) is
         // asked for again by layout: the same blocked request, a network error without a second
         // violation report. Only while that element is still connected and still has this
@@ -184,6 +184,24 @@ impl Browser {
             let error = format!("{} {}", pyro_webapi::csp::BLOCKED_BY_CSP, request.url);
             self.scheduler().post(TaskSource::Networking, move |b| done(b, Err(error)));
             return None;
+        }
+        // The layout engine's request for the image of an `<img>` that already went through its
+        // pre-request check (`bind_image`, reported then, at the document) must not report that
+        // violation again: with a report-only `img-src` (nothing blocked, so no note above) every
+        // image was reported twice (CSP reporting/report-multiple-violations). The request keeps a
+        // guard, so a redirect is still checked, but nobody reports its findings a second time.
+        if layout && request.csp.is_none() {
+            let guard = self.doc(frame).and_then(|state| {
+                let page = state.main_frame.page_dom.clone()?;
+                let dom = page.dom.borrow();
+                let of_element = state.images.entries.iter().any(|(node, i)| i.url == request.url && dom.is_alive(*node) && dom.is_connected(*node) == Ok(true));
+                drop(dom);
+                if !of_element { return None; }
+                let list = pyro_webapi::csp::policy_list(&page)?;
+                let check = pyro_net::csp::CspRequest::new(url::Url::parse(&request.url).ok()?, pyro_net::csp::RequestDest::Image);
+                Some(pyro_net::csp::RequestCsp::new(list, check))
+            });
+            request.csp = guard;
         }
         let shape = Shape::of(self, &request).expect("whole image");
         let flights = {
