@@ -3983,9 +3983,54 @@ impl Layout {
         // Several boxes at the same position on an axis: the box at the snap position on both axes
         // wins (Chromium picks a box aligned on both before one aligned on a single axis).
         let picked = [best[0].map(|b| b.0), best[1].map(|b| b.0)];
+        // pyro: of the areas aligned at the chosen position on an axis, the one that holds the
+        // focused element, then the one holding the `:target`, then an innermost one (no other
+        // candidate inside it), then one aligned on both axes, then the first in tree order (CSS
+        // Scroll Snap 1 § 6.2.3; WPT css-scroll-snap `snap-after-relayout/multiple-aligned-targets`).
+        // The focused and the targeted must be in the snapport.
+        if only.is_none() {
+            let focused = dom.focused(doc).ok().flatten();
+            let url_target = dom.url_target_element(doc);
+            let contains = |outer: NodeId, inner: NodeId| dom.contains(outer, inner).unwrap_or(false);
+            for axis in 0..2 {
+                let other = 1 - axis;
+                let Some(p) = picked[axis] else { continue };
+                if best[axis].is_some_and(|(_, (_, column))| column.is_some()) {
+                    continue;
+                }
+                let close = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 0.5);
+                let aligned: Vec<NodeId> = all.iter().filter(|(_, c)| close(c[axis], p)).map(|(id, _)| *id).collect();
+                if aligned.len() < 2 {
+                    continue;
+                }
+                let cross = picked[other].or(target[other]).unwrap_or(from[other]);
+                let (pad_start, pad_end, size) = if other == 0 { (pl, pr, width) } else { (pt, pb, height) };
+                let in_view = |id: NodeId| {
+                    areas.iter().find(|area| area.0 == id).is_some_and(|area| area.4[other].1 >= cross + pad_start && area.4[other].0 <= cross + size - pad_end)
+                };
+                let mut chosen: Option<((bool, bool, bool, bool), NodeId)> = None;
+                for &id in &aligned {
+                    let key = (
+                        focused.is_some_and(|f| contains(id, f)) && in_view(id),
+                        url_target.is_some_and(|t| contains(id, t)) && in_view(id),
+                        !aligned.iter().any(|&inner| inner != id && contains(id, inner)),
+                        picked[other].is_some_and(|q| all.iter().any(|(a, c)| *a == id && close(c[other], q))),
+                    );
+                    if chosen.is_none_or(|(best_key, _)| key > best_key) {
+                        chosen = Some((key, id));
+                    }
+                }
+                if let Some((_, id)) = chosen {
+                    best[axis] = Some((p, (id, None)));
+                }
+            }
+        }
         for axis in 0..2 {
             let other = 1 - axis;
             let (Some(p), Some(q)) = (picked[axis], picked[other]) else { continue };
+            if only.is_none() {
+                continue;
+            }
             let close = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 0.5);
             if let Some((id, _)) = all.iter().find(|(_, c)| close(c[axis], p) && close(c[other], q)) {
                 best[axis] = Some((p, (*id, None)));
