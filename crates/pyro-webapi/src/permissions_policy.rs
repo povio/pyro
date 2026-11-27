@@ -62,7 +62,7 @@ const FEATURES: &[(&str, DefaultAllowlist)] = {
         ("ch-ua-full-version-list", Star),
         ("ch-ua-model", Star),
         ("ch-ua-platform-version", Star),
-        ("ch-ua-wow64", SelfOrigin),
+        ("ch-ua-wow64", Star),
         ("ch-device-memory", Star),
         ("ch-downlink", Star),
         ("ch-dpr", Star),
