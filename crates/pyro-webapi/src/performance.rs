@@ -144,6 +144,7 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
         o.set("redirectCount", s.number(redirect_count(n)))?;
         // Pyro has no back/forward cache: a document is never "not restored".
         o.set("notRestoredReasons", s.null())?;
+        o.set("confidence", confidence_json(s)?)?;
     }
     Ok(o.value())
 }
@@ -302,8 +303,46 @@ impl JsClass for PerformanceNavigationTiming {
         def.getter("type", |s, e| Ok(s.string(e.navigation.as_ref().map_or("navigate", |n| n.nav_type))));
         def.getter("redirectCount", |s, e| Ok(s.number(e.navigation.as_deref().map_or(0.0, redirect_count))));
         def.getter("notRestoredReasons", |s, _e| Ok(s.null()));
+        def.getter("confidence", |s, _e| confidence(s));
         def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
     }
+}
+
+/// Navigation Timing's `PerformanceTimingConfidence`: how far the timings can be trusted.
+/// Pyro never clamps, jitters or throttles a document's timers (no background throttling, no
+/// reduced-precision mode, no randomized flips), so the rate is 0 and the value "high".
+pub struct PerformanceTimingConfidence;
+
+pub struct ConfidenceData;
+
+impl JsClass for PerformanceTimingConfidence {
+    const NAME: &'static str = "PerformanceTimingConfidence";
+    type Data = ConfidenceData;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("randomizedTriggerRate", |s, _c| Ok(s.number(0.0)));
+        def.getter("value", |s, _c| Ok(s.string("high")));
+        def.method("toJSON", 0, |s, _c, _a| confidence_json(s));
+    }
+}
+
+const KEY_CONFIDENCE: u64 = 0x5065_7254_436f_6e00;
+
+/// The realm's `confidence` object (`[SameObject]`).
+fn confidence<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+    let key = pyro_js::IdentityKey(KEY_CONFIDENCE, 0);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o.value());
+    }
+    Ok(s.wrap::<PerformanceTimingConfidence>(ConfidenceData, Some(key))?.value())
+}
+
+fn confidence_json<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+    let o = s.object();
+    o.set("randomizedTriggerRate", s.number(0.0))?;
+    o.set("value", s.string("high"))?;
+    Ok(o.value())
 }
 
 /// Navigation Timing's `PerformanceTiming` attribute names: not usable as
