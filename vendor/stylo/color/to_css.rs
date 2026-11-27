@@ -24,7 +24,13 @@ impl<'a> ToCss for ModernComponent<'a> {
     {
         if let Some(value) = self.0 {
             if value.is_finite() {
-                value.to_css(dest)
+                // pyro: a component under half a millionth is float noise of the colour space conversion
+                // (a grey's oklab a and b: `8.9407e-8`); browsers print six decimals, so 0, never an exponent.
+                if value.abs() < 5e-7 {
+                    dest.write_char('0')
+                } else {
+                    value.to_css(dest)
+                }
             } else if value.is_nan() {
                 dest.write_str("calc(NaN)")
             } else {
