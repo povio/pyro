@@ -2557,6 +2557,11 @@ fn timeline_entries<'s>(
         }
     }
     p.user.collect(s, name, entry_type, &mut entries);
+    // Event Timing: the document's one `first-input` entry is on its timeline (the other types
+    // of `perf/` are for observers only).
+    if pyro_webapi::perf::event::ENABLED && entry_type.is_none_or(|t| t == "first-input") {
+        entries.extend(pyro_webapi::perf::event::first_input_entries(s, &p.target.page, name)?);
+    }
     if entry_type.is_none_or(|t| t == "resource") {
         perf::collect_resources(s, &p.target.page, name, &mut entries)?;
     }

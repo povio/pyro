@@ -117,6 +117,8 @@ pub struct TimelineBuffers {
     last_wheel: Cell<Option<f64>>,
     /// The shared painted-candidate scan's memo and identities (`perf/scan.rs`).
     pub(super) scan: RefCell<super::scan::ScanState>,
+    /// Event Timing's counters, pending entries and interaction state (`perf/event.rs`).
+    pub(super) event: super::event::EventTimingState,
 }
 
 impl TimelineBuffers {
