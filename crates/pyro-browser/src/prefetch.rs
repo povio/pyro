@@ -54,6 +54,15 @@
 //! it, and its response is stored) but its result is kept in this cache, not in the HTTP cache's
 //! hands: a response that is not 2xx is dropped, never served.
 //!
+//! # Interception and overrides
+//! Nothing is prefetched, and no entry answers a navigation, while the page's context has an
+//! interceptor (`Fetch.enable`, routes, mocks), is offline, or the page or context disables the
+//! cache or overrides the user agent, language or extra headers
+//! ([`Browser::prefetch_bypassed`], checked at both ends so an override set after the prefetch
+//! counts): the navigation then goes through the net client, which applies them and reports it.
+//! A navigation that does use a prefetch reports `Network.requestWillBeSent`, `responseReceived`
+//! (`fromPrefetchCache: true`) and `loadingFinished` itself (`Browser::deliver_prefetched`).
+//!
 //! # The cache and the claim
 //! One cache per [`Browser`], entries tagged with their browsing context; an entry is usable
 //! once, by a navigation of the same context started by the document that asked for it (matched
@@ -78,7 +87,7 @@ use pyro_net::{DeferredCookies, ReferrerPolicy};
 use url::Url;
 
 use crate::frames::FrameKey;
-use crate::loader::{Purpose, ResourceCancellation};
+use crate::loader::{PrefetchedHead, Purpose, ResourceCancellation};
 use crate::speculation_tags::tag_header;
 use crate::speculation_rules::{Action, Candidate, Eagerness, Requirement, RuleSetId, SpeculationChange};
 use crate::{Browser, ContextId, FetchRequest, NavigateOpts, NavigationReason, PageId, Resource, ResourceKind};
@@ -91,12 +100,19 @@ const MAX_ENTRIES: usize = 64;
 /// What a navigation that joined a pending prefetch is given: the response (rebased on the
 /// navigation), or `None` when the prefetch failed, was not usable for the navigation's URL, or
 /// was cleared, and the navigation must fetch.
-pub(crate) type Waiter = Box<dyn FnOnce(&mut Browser, Option<Resource>)>;
+pub(crate) type Waiter = Box<dyn FnOnce(&mut Browser, Option<Prefetched>)>;
+
+/// A prefetched response: what the navigation commits, and the response head it reports to the
+/// Network domain (`Network.responseReceived` with `fromPrefetchCache`).
+pub(crate) struct Prefetched {
+    pub resource: Resource,
+    pub head: pyro_net::ResponseHead,
+}
 
 enum State {
     /// In flight. `waiter`: a navigation (to this URL) took it and waits.
     Pending { waiter: Option<(Url, Waiter)>, cancel: Option<ResourceCancellation> },
-    Ready(Resource),
+    Ready(Prefetched),
 }
 
 impl State {
@@ -119,6 +135,8 @@ struct Entry {
     /// The `Set-Cookie` headers of a cross-site response, kept out of the jar until a navigation
     /// claims the entry (then applied to its context's jar) and dropped with it otherwise.
     cookies: Arc<DeferredCookies>,
+    /// Where the loader leaves the response head.
+    head: Arc<PrefetchedHead>,
     set: RuleSetId,
     /// The requested URL without fragment: the only one a navigation matches, up to `nvs`.
     url: Url,
@@ -142,7 +160,7 @@ pub(crate) struct PrefetchCache {
 /// What a navigation got from the cache.
 pub(crate) enum Claim {
     /// The response, already rebased on the navigation.
-    Ready(Resource),
+    Ready(Prefetched),
     /// An entry still in flight: join it with [`Browser::prefetch_wait`]. The navigation's start,
     /// which the response's timing is rebased on.
     Pending(u64, Instant),
@@ -275,6 +293,9 @@ impl Browser {
         let Some(frame) = self.doc(page).map(|d| d.main_frame.clone()) else { return };
         let Some(loader) = self.loader_for(page) else { return };
         let Some(context) = self.page(page.page).map(|p| p.context) else { return };
+        if self.prefetch_bypassed(page.page) {
+            return;
+        }
         // The document's URL as it is now (a `pushState` changed it), which a navigation it starts
         // names as its referrer.
         let Some(document_url) = self.document_url_of(page) else { return };
@@ -322,6 +343,7 @@ impl Browser {
         }
         self.prefetches.make_room();
         let cookies = Arc::new(DeferredCookies::default());
+        let head = Arc::new(PrefetchedHead::default());
         let id = self.prefetches.next_id;
         self.prefetches.next_id += 1;
         let nvs = candidate.expects_no_vary_search.as_deref().map(NoVarySearch::parse).unwrap_or_default();
@@ -333,6 +355,7 @@ impl Browser {
             initiator,
             cross_site,
             cookies: cookies.clone(),
+            head: head.clone(),
             set: candidate.set,
             url: url.clone(),
             nvs,
@@ -343,7 +366,7 @@ impl Browser {
             accept_signature: None,
             csp: None,
             required_csp: None,
-            purpose: Some(Purpose::Prefetch { cross_site, tags, cookies }),
+            purpose: Some(Purpose::Prefetch { cross_site, tags, cookies, head }),
             parser_priority: false,
             credentials: None,
             post: None,
@@ -414,6 +437,25 @@ impl Browser {
         urls.iter().any(|u| net.prefetch_cache_cleared_since(&u.origin().ascii_serialization(), since))
     }
 
+    /// Whether something that acts on this page's requests is on, so a stored response must
+    /// neither be made nor stand in for a navigation (it would not see it): request interception
+    /// (`Fetch.enable`, routes, mocks), offline, a disabled cache, extra headers, or a user agent or
+    /// language override, of the page or of its context. The simplest sound rule: any of them is
+    /// on now, at the prefetch and at the claim, so an override set since the prefetch counts.
+    fn prefetch_bypassed(&self, page: PageId) -> bool {
+        let Some(state) = self.page(page) else { return true };
+        let defaults = &state.request_defaults;
+        state.cache_disabled
+            || !state.extra_http_headers.is_empty()
+            || state.user_agent_override.is_some()
+            || defaults.cache_disabled
+            || !defaults.extra_headers.is_empty()
+            || defaults.user_agent.is_some()
+            || defaults.accept_language.is_some()
+            || defaults.client_hints.is_some()
+            || self.context_net(state.context).is_some_and(|net| net.alters_requests())
+    }
+
     /// Whether the cookie jar of `context` holds a cookie a navigation to any of `urls` would
     /// send (see `NetClient::has_cookies_for`).
     fn prefetch_has_cookies(&self, context: ContextId, urls: &[&Url]) -> bool {
@@ -442,6 +484,8 @@ impl Browser {
         }
         // The response's `No-Vary-Search` replaces the rule's hint.
         let nvs = result.as_ref().ok().and_then(|r| r.no_vary_search.clone()).unwrap_or_default();
+        let head = entry.head.take();
+        // A response whose head the loader did not keep cannot be reported as the navigation's.
         let resource = result.ok().filter(usable).filter(|r| {
             let final_url = Url::parse(&r.url).ok();
             let mut urls = vec![&entry.url];
@@ -449,6 +493,7 @@ impl Browser {
             // A cross-site response was made without cookies: not for a user who has some now.
             !self.prefetch_cleared(entry.context, entry.started, &urls) && !(entry.cross_site && self.prefetch_has_cookies(entry.context, &urls))
         });
+        let resource = resource.zip(head).map(|(resource, head)| Prefetched { resource, head });
         match (waiter, resource) {
             (Some((target, waiter)), resource) => {
                 // The navigation joined under the hint: the response may not allow its URL.
@@ -474,6 +519,9 @@ impl Browser {
             return None;
         }
         let context = self.page(page.page)?.context;
+        if self.prefetch_bypassed(page.page) {
+            return None;
+        }
         let started = Instant::now();
         self.sweep_prefetches();
         // The document that navigates: a traversal's is the one that called `history.go()`;
@@ -515,7 +563,7 @@ impl Browser {
         if entry.cross_site {
             let mut urls = vec![&entry.url];
             let final_url = match &entry.state {
-                State::Ready(resource) => Url::parse(&resource.url).ok(),
+                State::Ready(prefetched) => Url::parse(&prefetched.resource.url).ok(),
                 State::Pending { .. } => None,
             };
             urls.extend(final_url.as_ref());
@@ -529,9 +577,9 @@ impl Browser {
         }
         let entry = self.prefetches.entries.remove(at);
         self.apply_prefetch_cookies(&entry);
-        let State::Ready(mut resource) = entry.state else { return None };
-        rebase_timing(&mut resource, started);
-        Some(Claim::Ready(resource))
+        let State::Ready(mut prefetched) = entry.state else { return None };
+        rebase_timing(&mut prefetched.resource, started);
+        Some(Claim::Ready(prefetched))
     }
 
     /// Gives the navigation to `target` that claimed the pending prefetch `id` its waiter (it
@@ -582,6 +630,7 @@ mod tests {
                 initiator: Url::parse("https://a.test/").unwrap(),
                 cross_site: false,
                 cookies: Default::default(),
+                head: Default::default(),
                 set: RuleSetId(0),
                 url: Url::parse("https://a.test/x").unwrap(),
                 nvs: NoVarySearch::default(),

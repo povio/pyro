@@ -119,7 +119,43 @@ pub enum Purpose {
     /// `cookies`: where the `Set-Cookie` headers of a cross-site prefetch's responses go instead
     /// of the jar (`pyro_net::Request::deferred_cookies`): the cache entry applies them when a
     /// navigation uses the response and drops them with the entry.
-    Prefetch { cross_site: bool, tags: Option<String>, cookies: std::sync::Arc<pyro_net::DeferredCookies> },
+    /// `head`: where the loader leaves the final response's head, which a navigation that uses
+    /// the prefetch reports to the Network domain (`Browser::deliver_prefetched`).
+    Prefetch {
+        cross_site: bool,
+        tags: Option<String>,
+        cookies: std::sync::Arc<pyro_net::DeferredCookies>,
+        head: std::sync::Arc<PrefetchedHead>,
+    },
+}
+
+/// The response head of a speculation-rules prefetch, left by the loader for the prefetch cache.
+/// Equal and hashed by identity: it is a shared slot, not a value.
+#[derive(Debug, Default)]
+pub struct PrefetchedHead(std::sync::Mutex<Option<pyro_net::ResponseHead>>);
+
+impl PrefetchedHead {
+    fn set(&self, head: pyro_net::ResponseHead) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(head);
+    }
+
+    pub(crate) fn take(&self) -> Option<pyro_net::ResponseHead> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+impl PartialEq for PrefetchedHead {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl Eq for PrefetchedHead {}
+
+impl std::hash::Hash for PrefetchedHead {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::ptr::hash(self, state);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -570,7 +606,7 @@ impl ResourceLoader for NetLoader {
         req.referrer_policy = referrer.policy;
         // A speculation-rules prefetch says so on every hop (the client keeps a request's headers
         // across redirects); it is not a user's navigation, and cross-site it is credential-less.
-        if let Some(Purpose::Prefetch { cross_site, tags, cookies }) = &request.purpose {
+        if let Some(Purpose::Prefetch { cross_site, tags, cookies, .. }) = &request.purpose {
             req.headers.insert(pyro_net::http::HeaderName::from_static("sec-purpose"), pyro_net::http::HeaderValue::from_static("prefetch"));
             req.cross_site_prefetch = *cross_site;
             req.deferred_cookies = cross_site.then(|| cookies.clone());
@@ -578,6 +614,10 @@ impl ResourceLoader for NetLoader {
                 req.headers.insert(pyro_net::http::HeaderName::from_static("sec-speculation-tags"), value);
             }
         }
+        let prefetch_head = match &request.purpose {
+            Some(Purpose::Prefetch { head, .. }) => Some(head.clone()),
+            None => None,
+        };
         let part = request.part;
         if let Some(start) = part.map(|p| p.start).filter(|&s| s > 0) {
             if let Ok(value) = pyro_net::http::HeaderValue::from_str(&format!("bytes={start}-")) {
@@ -822,7 +862,11 @@ impl ResourceLoader for NetLoader {
                         render_blocking: false,
                     }))
                 };
-                let result = match head.take() {
+                let finished = head.take();
+                if let (Some(slot), Some(h)) = (&prefetch_head, &finished) {
+                    slot.set(h.clone());
+                }
+                let result = match finished {
                     Some(h) => Ok(Resource {
                         allow_csp_from: document.then(|| allow_csp_from_header(&h.headers)).flatten(),
                         timing: timing(&h),
@@ -2498,16 +2542,16 @@ impl Browser {
         });
         let fallback_id = pending_id.clone();
         let cancel = match claim {
-            Some(crate::prefetch::Claim::Ready(resource)) => {
-                self.scheduler().post(TaskSource::Networking, move |b| done(b, Ok(resource)));
+            Some(crate::prefetch::Claim::Ready(prefetched)) => {
+                self.deliver_prefetched(page, &req, pending_id.clone(), prefetched, done);
                 None
             }
             Some(crate::prefetch::Claim::Pending(prefetch, started)) => {
                 let target = url::Url::parse(&claim_url).ok();
-                let waiter: crate::prefetch::Waiter = Box::new(move |b, resource| match resource {
-                    Some(mut resource) => {
-                        crate::prefetch::rebase_timing(&mut resource, started);
-                        done(b, Ok(resource));
+                let waiter: crate::prefetch::Waiter = Box::new(move |b, prefetched| match prefetched {
+                    Some(mut prefetched) => {
+                        crate::prefetch::rebase_timing(&mut prefetched.resource, started);
+                        b.deliver_prefetched(page, &req, fallback_id.clone(), prefetched, done);
                     }
                     // The prefetch failed, was not a success, was cleared, or its response does not
                     // serve this URL: the navigation goes to the network after all.
@@ -2533,6 +2577,63 @@ impl Browser {
             d.pending_cancel = cancel;
         }
         Ok(())
+    }
+
+    /// Answers the navigation `nav` of `page` with the response of a speculation-rules prefetch:
+    /// the Network domain sees the navigation's request and response as Chrome reports a
+    /// prefetched one (`pyro_net::NetClient::report_prefetched`), then `done` gets the response
+    /// in a task, like a response from the network.
+    fn deliver_prefetched(
+        &mut self,
+        page: FrameKey,
+        nav: &FetchRequest,
+        loader_id: LoaderId,
+        prefetched: crate::prefetch::Prefetched,
+        done: FetchDone,
+    ) {
+        let crate::prefetch::Prefetched { resource, head } = prefetched;
+        let network = self.report_prefetched_navigation(page, nav, &loader_id, &resource, head);
+        let data_bytes = resource.body.len() as u64;
+        self.scheduler().post(TaskSource::Networking, move |b| {
+            if let Some(id) = network {
+                b.report_resource_delivery(
+                    page.page,
+                    Some(&loader_id),
+                    id,
+                    pyro_net::NetworkDelivery { response: true, data_bytes, terminal: true },
+                );
+            }
+            done(b, Ok(resource));
+        });
+    }
+
+    /// Publishes the Network events of `nav` answered by `resource` (see `deliver_prefetched`)
+    /// and lets observers drain the request announcement now, keeping the response behind its
+    /// delivery frontier. `None`: no client, or no page.
+    fn report_prefetched_navigation(
+        &self,
+        page: FrameKey,
+        nav: &FetchRequest,
+        loader_id: &LoaderId,
+        resource: &Resource,
+        head: pyro_net::ResponseHead,
+    ) -> Option<pyro_net::RequestId> {
+        let state = self.page(page.page)?;
+        let net = self.context_net(state.context)?;
+        let url = url::Url::parse(&nav.url).ok()?;
+        let mut req = pyro_net::Request::get(url, pyro_net::Destination::Document);
+        let referrer = request_referrer(self, nav);
+        req.referrer = referrer.referrer;
+        req.referrer_policy = referrer.policy;
+        req.frame_id = nav.frame_id.clone();
+        req.loader_id = nav.loader_id.clone();
+        req.defaults = state.request_defaults.clone();
+        req.top_level_site = pyro_net::cookies::partition_key(&req.url);
+        let encoded = resource.timing.as_ref().and_then(|t| t.response.as_ref()).map_or(resource.body.len() as u64, |r| r.encoded);
+        let body = resource.body.clone();
+        let id = net.report_prefetched(&req, head, move || bytes::Bytes::from(body.as_ref().clone()), encoded);
+        self.report_resource_delivery(page.page, Some(loader_id), id, pyro_net::NetworkDelivery { response: false, data_bytes: 0, terminal: false });
+        Some(id)
     }
 
     /// Whether `resource`, the response of top-level frame `page`'s navigation, is refused for

@@ -388,6 +388,9 @@ pub struct ResponseHead {
     pub charset: Option<String>,
     pub redirected: bool,
     pub from_cache: bool,
+    /// A navigation's response came from a speculation-rules prefetch (CDP
+    /// `Network.Response.fromPrefetchCache`): no network request was made for it.
+    pub from_prefetch_cache: bool,
     /// Response tainting for fetch: basic/cors/opaque/opaqueredirect.
     pub kind: ResponseKind,
     /// Remote address "ip:port" when known (CDP remoteIPAddress).

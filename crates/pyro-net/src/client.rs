@@ -759,6 +759,7 @@ fn response_head(
         charset,
         redirected,
         from_cache: false,
+        from_prefetch_cache: false,
         kind,
         remote_addr: None,
         protocol: Version::HTTP_11,
@@ -885,6 +886,18 @@ impl NetClient {
         for c in cookies {
             jar.set_from_header_in(&c.url, &c.header, crate::cookies::Access::Http, now, c.partition.as_deref(), c.site);
         }
+    }
+    /// Whether something changes the requests this client sends or answers them itself: an
+    /// interceptor (CDP `Fetch`, mocks), offline, a context-wide cache bypass, a user agent,
+    /// language or extra headers override. A stored response (a speculation-rules prefetch's)
+    /// must not stand in for a request while it is so: the interceptor, the cache setting and
+    /// the overrides would not apply to it.
+    pub fn alters_requests(&self) -> bool {
+        if self.inner.shared.interceptor.lock().unwrap().is_some() {
+            return true;
+        }
+        let s = self.inner.shared.settings.lock().unwrap();
+        s.offline || s.cache_disabled || s.user_agent.is_some() || s.accept_language.is_some() || !s.extra_headers.is_empty()
     }
     pub fn config(&self) -> &NetConfig {
         &self.inner.shared.config
@@ -3649,6 +3662,55 @@ impl NetClient {
         })
     }
 
+    /// Publishes the `NetEvent`s of the navigation `req` that a speculation-rules prefetch
+    /// answered, as Chrome reports one: `RequestWillBeSent` with the headers the navigation
+    /// would have sent (`req` is the navigation's own request, never sent), `ResponseReceived`
+    /// of `head` marked `from_prefetch_cache`, the body (`body` is only called when someone
+    /// observes) and `LoadingFinished` (`encoded_len` bytes on the wire). On the caller's thread,
+    /// in order, all at once. Returns the request's identity for the caller's delivery frontier.
+    pub fn report_prefetched(&self, req: &Request, mut head: ResponseHead, body: impl FnOnce() -> Bytes, encoded_len: u64) -> RequestId {
+        let id = self.next_request_id();
+        let shared = &self.inner.shared;
+        if !shared.observed() {
+            return id;
+        }
+        let origin_url = req.origin.as_deref().and_then(|o| Url::parse(o).ok());
+        let site = hop_site(req, origin_url.as_ref());
+        let headers = shared.build_headers(&self.inner.cookies, req, req.referrer.as_ref(), origin_url.as_ref(), false, site, true);
+        let now = shared.now();
+        shared.emit(NetEvent::RequestWillBeSent {
+            id,
+            request: Box::new(RequestInfo {
+                url: req.url.clone(),
+                method: req.method.clone(),
+                headers,
+                post_data: None,
+                destination: req.destination,
+                frame_id: req.frame_id.clone(),
+                loader_id: req.loader_id.clone(),
+            }),
+            redirect_response: None,
+            timestamp: now,
+            wall_time: wall_time(),
+        });
+        head.from_cache = false;
+        head.from_prefetch_cache = true;
+        shared.emit(NetEvent::ResponseReceived {
+            id,
+            head: Box::new(head),
+            destination: req.destination,
+            frame_id: req.frame_id.clone(),
+            loader_id: req.loader_id.clone(),
+            timestamp: now,
+        });
+        let body = body();
+        if !body.is_empty() {
+            shared.emit(NetEvent::DataReceived { id, data: body, timestamp: now });
+        }
+        shared.emit(NetEvent::LoadingFinished { id, encoded_len, timestamp: now });
+        id
+    }
+
     /// Publishes the `NetEvent`s of a request the embedder answered from a
     /// `static_direct` hit (on the caller's thread, in order, all at once)
     /// and returns the response head to build the resource from.
@@ -3677,6 +3739,7 @@ impl NetClient {
             charset,
             redirected: false,
             from_cache: false,
+            from_prefetch_cache: false,
             kind: ResponseKind::Basic,
             remote_addr: None,
             protocol: Version::HTTP_11,

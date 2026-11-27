@@ -668,6 +668,7 @@ fn respond_head(s: &Scope<'_>, job: &mut FetchJob, a: &pyro_js::Args<'_>) -> JsR
         charset,
         redirected: false,
         from_cache: false,
+        from_prefetch_cache: false,
         kind,
         remote_addr: None,
         protocol: pyro_net::http::Version::HTTP_11,
