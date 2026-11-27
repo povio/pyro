@@ -108,7 +108,7 @@ impl SharedInner {
                     let _ = handle.post(move |state| match item {
                         Early::Message(message) => state.receive(message),
                         Early::Inspect(task) => state.inspect(task),
-                        Early::Connect(message) => state.connect(message),
+                        Early::Connect(message, check) => state.connect(message, check),
                     });
                 }
                 *self.state.borrow_mut() = State::Running(handle);
@@ -120,11 +120,11 @@ impl SharedInner {
         }
     }
 
-    fn connect(self: &Rc<Self>, message: WireMessage) {
+    fn connect(self: &Rc<Self>, message: WireMessage, check: worker_scope::ConnectCheck) {
         match &mut *self.state.borrow_mut() {
-            State::Held(start) => start.early.push(Early::Connect(message)),
+            State::Held(start) => start.early.push(Early::Connect(message, check)),
             State::Running(handle) => {
-                let _ = handle.post(move |state| state.connect(message));
+                let _ = handle.post(move |state| state.connect(message, check));
             }
             State::Failed | State::Closed => {}
         }
@@ -193,6 +193,19 @@ pub(crate) fn deliver_up(id: u64, up: Up) {
     match up {
         Up::LoadFailed => worker.fail_to_load(),
         Up::Closed => worker.finish(),
+        // The worker's embedder policy is weaker than the connecting document's: `error` at that object only.
+        Up::ConnectRefused(client) => {
+            let refused = {
+                let mut clients = worker.clients.borrow_mut();
+                clients.iter().position(|c| matches!(c.key, TargetKey::Other(k) if k == client)).map(|i| clients.remove(i))
+            };
+            if let Some(client) = refused {
+                reject_client_later(client);
+                if worker.clients.borrow().is_empty() {
+                    worker.finish();
+                }
+            }
+        }
         // The owner's CSP, violated on the worker's thread: reported at a connected document.
         Up::Violations(violations) => {
             let page = worker.clients.borrow().iter().find_map(|c| c.page.upgrade().filter(|p| !p.is_disposed()));
@@ -345,6 +358,7 @@ impl JsClass for SharedWorker {
             // A live worker retains its context's network client. A different
             // profile or top-level site must not reuse that worker's cookie jar.
             let network_context = page.net.borrow().as_ref().map_or(0, |net| Arc::as_ptr(net.cookies()) as usize);
+            let resolved_url = resolved.clone();
             let key = WorkerKey {
                 network_context,
                 cross_site_ancestor: page.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite,
@@ -415,7 +429,15 @@ impl JsClass for SharedWorker {
                 worker.fail_later();
                 return Ok(object);
             }
-            worker.connect(message);
+            let check = worker_scope::ConnectCheck {
+                owner: worker_scope::OwnerEmbedder::of(&page),
+                client: match client_key {
+                    TargetKey::Other(k) => k,
+                    _ => unreachable!(),
+                },
+                url: resolved_url,
+            };
+            worker.connect(message, check);
             worker.start();
             Ok(object)
         });

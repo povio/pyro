@@ -77,6 +77,32 @@ pub(crate) struct OwnerEmbedder {
     report: Option<pyro_net::CorpReport>,
 }
 
+impl OwnerEmbedder {
+    /// `page`'s policies, when its worker's script has to be compatible with them: none for an owner without
+    /// a (report-only) policy or one with a Document-Isolation-Policy (its workers inherit it).
+    pub(crate) fn of(page: &PageDom) -> Option<OwnerEmbedder> {
+        let owner_reporting = page.embedder_reporting();
+        if owner_reporting.dip || owner_reporting.report_only_dip {
+            return None;
+        }
+        let mut owner = pyro_net::RequestDefaults::default();
+        page.apply_embedder_defaults(&mut owner);
+        owner.corp_report.map(|report| OwnerEmbedder { policy: owner.embedder_policy, report_only: report.report_only, report: Some(report) })
+    }
+}
+
+/// A document's connection to a shared worker, checked on the worker's thread, where its embedder policy is
+/// known once its script has loaded (HTML "check a global object's embedder policy" for every connecting
+/// document, not only the one that started it). `Send`.
+pub(crate) struct ConnectCheck {
+    /// The connecting document's policies (`None`: nothing to check).
+    pub(crate) owner: Option<OwnerEmbedder>,
+    /// Identifies the connecting `SharedWorker` object to the document side if it is refused.
+    pub(crate) client: u64,
+    /// The worker's script URL, the blocked URL of a report.
+    pub(crate) url: String,
+}
+
 /// What a worker's thread needs from the page side. `Send`.
 pub(crate) struct WorkerStart {
     id: u64,
@@ -162,14 +188,7 @@ impl WorkerStart {
         let poster = page.remote_poster()?;
         let script = (url.scheme() == "blob").then(|| page.blob_url(url.as_str()).map(|(bytes, _)| bytes)).flatten();
         // (A Document-Isolation-Policy's workers inherit it: nothing to check.)
-        let owner_reporting = page.embedder_reporting();
-        let owner_embedder = if owner_reporting.dip || owner_reporting.report_only_dip {
-            None
-        } else {
-            let mut owner = pyro_net::RequestDefaults::default();
-            page.apply_embedder_defaults(&mut owner);
-            owner.corp_report.map(|report| OwnerEmbedder { policy: owner.embedder_policy, report_only: report.report_only, report: Some(report) })
-        };
+        let owner_embedder = OwnerEmbedder::of(page);
         Some(WorkerStart {
             id,
             url,
@@ -433,7 +452,7 @@ impl GraphPhase {
 /// What a worker that is still starting was sent.
 enum Held {
     Message(WireMessage),
-    Connect(WireMessage),
+    Connect(WireMessage, ConnectCheck),
 }
 
 impl LoopState for WorkerLoop {
@@ -447,7 +466,7 @@ impl LoopState for WorkerLoop {
             for held in std::mem::take(&mut self.held) {
                 match held {
                     Held::Message(message) => self.receive(message),
-                    Held::Connect(message) => self.connect(message),
+                    Held::Connect(message, check) => self.connect(message, check),
                 }
                 self.engine.drain_finalized();
                 self.page.after_task();
@@ -473,12 +492,23 @@ impl WorkerLoop {
 
     /// A document connected to this shared worker: `connect` at the global,
     /// with the port `message` transfers as `ports[0]` and `source`.
-    pub(crate) fn connect(&mut self, message: WireMessage) {
+    pub(crate) fn connect(&mut self, message: WireMessage, check: ConnectCheck) {
         if self.starting.get() {
-            return self.held.push(Held::Connect(message));
+            return self.held.push(Held::Connect(message, check));
         }
         if self.shared.closing.load(Ordering::Acquire) {
             return;
+        }
+        // HTML "check a global object's embedder policy": a connecting document whose policy is not
+        // `unsafe-none` needs the worker's to be one too (the worker's is its script's, whichever document
+        // started it). A refused connection gets no `connect`, and its SharedWorker object an `error`.
+        if let Some(owner) = &check.owner {
+            let url = pyro_net::Url::parse(&check.url).ok();
+            if url.is_some_and(|url| !owner_accepts_worker(owner, &url, self.page.embedder_policy())) {
+                let (id, client) = (self.id, check.client);
+                (self.poster)(Box::new(move || deliver_up(id, Up::ConnectRefused(client))));
+                return;
+            }
         }
         let Ok(s) = self.realm.scope() else { return };
         let Some(target) = self.page.window_target() else { return };
@@ -944,8 +974,8 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
             // HTML "run a worker": a dedicated worker whose script's embedder policy is not
             // compatible with its owner's is a failure to load (the owner's `require-corp` or
             // `credentialless` needs the worker's own), and the owner reports it.
-            if let Some(owner) = start.owner_embedder.as_ref().filter(|_| !start.shared_worker && start.service.is_none()) {
-                if matches!(response_url.scheme(), "http" | "https") && !owner_accepts_worker(owner, start, page.embedder_policy()) {
+            if let Some(owner) = start.owner_embedder.as_ref().filter(|_| start.service.is_none()) {
+                if matches!(response_url.scheme(), "http" | "https") && !owner_accepts_worker(owner, &start.url, page.embedder_policy()) {
                     return None;
                 }
             }
@@ -960,17 +990,17 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
     Some(bytes)
 }
 
-/// HTML "check a global object's embedder policy" for a dedicated worker whose script response has the
+/// HTML "check a global object's embedder policy" for a dedicated or shared worker whose script response has the
 /// embedder policy `worker`: a policy that is not `unsafe-none` needs the worker's to be one too. The
 /// owner reports a mismatch of its report-only policy (`reporting`) and one of its enforced policy
 /// (`enforce`, which fails the worker); whether the worker may run is the second.
-fn owner_accepts_worker(owner: &OwnerEmbedder, start: &WorkerStart, worker: pyro_net::EmbedderPolicy) -> bool {
+fn owner_accepts_worker(owner: &OwnerEmbedder, url: &pyro_net::Url, worker: pyro_net::EmbedderPolicy) -> bool {
     let compatible = |owner: pyro_net::EmbedderPolicy| owner == pyro_net::EmbedderPolicy::UnsafeNone || worker != pyro_net::EmbedderPolicy::UnsafeNone;
     let report = |report_only: bool| {
         if let Some(report) = &owner.report {
             (report.sink)(pyro_net::CorpViolation {
                 kind: "worker initialization",
-                blocked_url: start.url.as_str().to_owned(),
+                blocked_url: url.as_str().to_owned(),
                 destination: None,
                 report_only,
             });

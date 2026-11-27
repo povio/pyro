@@ -268,7 +268,7 @@ pub(crate) enum Early {
     Message(WireMessage),
     Inspect(InspectTask),
     /// A document connects to a shared worker (its port in the message).
-    Connect(WireMessage),
+    Connect(WireMessage, crate::worker_scope::ConnectCheck),
 }
 
 /// Runs on the worker's thread between its tasks.
@@ -283,6 +283,9 @@ pub(crate) enum Up {
     /// Violations of the owner document's CSP that the worker's thread found (a redirect of
     /// its script, a static import of its module graph): reported at that document.
     Violations(Vec<pyro_net::csp::Violation>),
+    /// A shared worker refused the connection of the `SharedWorker` object this token names (its embedder
+    /// policy is not compatible with the connecting document's).
+    ConnectRefused(u64),
 }
 
 enum State {
@@ -380,7 +383,7 @@ impl WorkerInner {
                     let _ = handle.post(move |state| match item {
                         Early::Message(message) => state.receive(message),
                         Early::Inspect(task) => state.inspect(task),
-                        Early::Connect(message) => state.connect(message),
+                        Early::Connect(message, check) => state.connect(message, check),
                     });
                 }
                 *self.state.borrow_mut() = State::Running(handle);
@@ -478,6 +481,7 @@ impl WorkerInner {
             Up::LoadFailed => self.fail_to_load(),
             Up::Closed => self.finish(),
             Up::Violations(violations) => crate::csp::report(&page, violations, None),
+            Up::ConnectRefused(_) => {}
         }
     }
 }
