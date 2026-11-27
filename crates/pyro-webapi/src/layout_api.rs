@@ -382,6 +382,9 @@ pub(crate) fn run_scroll_steps(page: &Rc<PageDom>) {
     if queued {
         // The delayed task that was to do it finds nothing owed.
         page.scroll_clamp.set((checked, false));
+        // (The offsets script just wrote reach the engine before the clamp lays out: this runs
+        // ahead of the frame, which would push them only after its callbacks.)
+        push_scroll_offsets(page);
         clamp_scrolls(page, true);
     }
     flush_pending_scrolls(page);
@@ -536,11 +539,7 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
     // samples the scroll-driven animations at the offsets it was told, and the animation stamp it
     // computes is kept for the rest of the task (a view timeline showed the previous frame's
     // progress; WPT scroll-animations `view-timeline-relative-ancestor`).
-    if let Some(layout) = page.try_layout() {
-        if layout.push_scroll() {
-            layout.set_scroll_pushed_at(crate::event::page_now_ms(page));
-        }
-    }
+    push_scroll_offsets(page);
     // The resize steps for the visual viewport (its classic scrollbars changed).
     page.fire_visual_viewport_resize();
     // HTML "update the rendering": the scroll to the load's fragment is tried again.
@@ -577,6 +576,20 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
     crate::smooth_scroll::step(page);
     flush_pending_scrolls(page);
     fire_snap_events(page);
+}
+
+/// pyro: tells the layout engine the scroll offsets as they are now (scroll timelines, scroll
+/// markers, `position-try` fallbacks that follow a scroller) before a layout a clamp or a frame
+/// forces: that layout would choose with the offsets of the last push.
+fn push_scroll_offsets(page: &Rc<PageDom>) {
+    if let Some(layout) = page.try_layout() {
+        if layout.push_scroll() {
+            layout.set_scroll_pushed_at(crate::event::page_now_ms(page));
+        }
+        if let Ok(dom) = page.dom.try_borrow() {
+            layout.push_stuck(&dom);
+        }
+    }
 }
 
 pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
@@ -796,6 +809,7 @@ pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
             let (checked, queued) = p.scroll_clamp.get();
             p.scroll_clamp.set((checked, false));
             if queued && !p.is_disposed() {
+                push_scroll_offsets(&p);
                 clamp_scrolls(&p, true);
             }
         }),
