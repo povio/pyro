@@ -595,16 +595,18 @@ impl Dom {
     }
 
     /// Pushes the `<style>` steps of the sheets `scope` adopts (rendered
-    /// after what `stack` holds above them), each text once; `emitted` counts
-    /// the adopted sheets rendered so far (their keys).
+    /// after what `stack` holds above them), one per distinct sheet, at the
+    /// position of its last occurrence (Chrome: a sheet adopted twice applies
+    /// once, last; two sheets with the same text are still two sheets);
+    /// `emitted` counts the adopted sheets rendered so far (their keys).
     fn push_adopted(&self, stack: &mut Vec<Step>, opts: &RenderHtml<'_>, scope: u32, emitted: &mut usize) {
         let Some(adopted) = opts.adopted else { return };
         let mut sheets = Vec::new();
-        let mut texts = rustc_hash::FxHashSet::default();
-        for (_, text) in adopted(self.id_of(scope)) {
-            if !text.is_empty() && texts.insert(text.clone()) {
+        let list = adopted(self.id_of(scope));
+        for (i, (id, text)) in list.iter().enumerate() {
+            if !text.is_empty() && !list[i + 1..].iter().any(|(later, _)| later == id) {
                 *emitted += 1;
-                sheets.push((adopted_key(*emitted), text));
+                sheets.push((adopted_key(*emitted), text.clone()));
             }
         }
         for (key, text) in sheets.into_iter().rev() {
