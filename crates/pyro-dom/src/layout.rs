@@ -3991,6 +3991,7 @@ impl Layout {
             areas.push((id, candidates, covering, spans, [(left, right), (top, bottom)], [align_x, align_y], always));
         };
         let source = self.external.as_ref().filter(|s| s.active());
+        let may_have_pseudo_boxes = self.style.may_have_generated_before_after(dom);
         for id in nodes {
             if dom.element(id).is_err() {
                 continue;
@@ -4004,6 +4005,10 @@ impl Layout {
             let pseudo_boxes = [(1u8, style::selector_parser::PseudoElement::Before), (2, style::selector_parser::PseudoElement::After)]
                 .into_iter()
                 .filter_map(|(n, pseudo)| {
+                    // (Neither lookup below runs for a pseudo-element no rule generates a box for.)
+                    if !may_have_pseudo_boxes || self.style.stylo_pseudo_style(dom, id, &pseudo, true).is_none() {
+                        return None;
+                    }
                     let b = source?.element_box(crate::snapshot::pseudo_render_key(id, n))?;
                     let align = self.computed_pseudo_style_value(dom, id, &pseudo, "scroll-snap-align");
                     (!(align.is_empty() || align == "none")).then_some((b, pseudo, align))
