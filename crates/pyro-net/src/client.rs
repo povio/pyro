@@ -2571,6 +2571,17 @@ impl Io {
                         let Some((scheme, realm)) = auth_challenge(resp.headers(), challenge_header) else {
                             break resp;
                         };
+                        // Chrome answers the first Basic 401 with the URL's own credentials before asking the interceptor.
+                        if let (true, Some((user, password)), false, 0, "basic") =
+                            (basic_hop, &url_credentials, proxy, auth_attempts, scheme.as_str())
+                        {
+                            if let Ok(value) = basic_authorization(user, password) {
+                                headers.insert(header::AUTHORIZATION, value);
+                                auth_attempts += 1;
+                                drop(resp);
+                                continue;
+                            }
+                        }
                         (Some(resp), proxy, scheme, realm)
                     }
                     Err(SendError::ProxyChallenge { scheme, realm }) if auth_interceptor.is_some() => {
