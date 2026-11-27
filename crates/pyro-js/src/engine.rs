@@ -184,6 +184,10 @@ pub(crate) struct EngineInner {
     pub(crate) collections: crate::interned::Collections,
     /// The property hooks' switches (see [`class::HookState`]).
     pub(crate) hook_state: class::HookState,
+    /// COOP access reporting: whether some document names a reporting endpoint, and the one-element
+    /// array holding it that the WindowProxy helpers of every realm read (null until first needed).
+    coop_on: Cell<bool>,
+    coop_flag: Cell<sys::JSObjectRef>,
     /// The values [`crate::HeldValue`]s keep alive.
     pub(crate) held: RefCell<crate::persistent::HeldValues>,
     /// Block coverage: enables not yet matched by a disable, and while on,
@@ -551,6 +555,21 @@ impl EngineInner {
     pub(crate) fn group(&self) -> sys::JSContextGroupRef {
         self.group
     }
+    /// The shared COOP flag array `[on]`, made in the root context on first use (page script cannot
+    /// reach it) and protected for the engine's lifetime.
+    pub(crate) fn coop_flag(&self) -> sys::JSObjectRef {
+        if self.coop_flag.get().is_null() {
+            let root = self.root_ctx();
+            // SAFETY: the root context is live; the array is protected for the engine's lifetime.
+            unsafe {
+                let on = sys::JSValueMakeBoolean(root, self.coop_on.get());
+                let array = sys::JSObjectMakeArray(root, 1, &on, std::ptr::null_mut());
+                sys::JSValueProtect(root, array as sys::JSValueRef);
+                self.coop_flag.set(array);
+            }
+        }
+        self.coop_flag.get()
+    }
     pub(crate) fn root_ctx(&self) -> sys::JSContextRef {
         self.root as sys::JSContextRef
     }
@@ -850,6 +869,19 @@ pub(crate) fn callback_tls() -> &'static CallbackTls {
     CALLBACK.with(|c| unsafe { &*(c as *const CallbackTls) })
 }
 
+/// Tells the thread's engine whether some document names a COOP reporting endpoint: the WindowProxy
+/// helpers report cross-window property accesses only while it is on.
+pub fn set_coop_reporting(on: bool) {
+    let Some(e) = current_inner() else { return };
+    e.coop_on.set(on);
+    let flag = e.coop_flag.get();
+    if !flag.is_null() {
+        let root = e.root_ctx();
+        // SAFETY: the engine's live flag array, written in the root context.
+        unsafe { sys::JSObjectSetPropertyAtIndex(root, flag, 0, sys::JSValueMakeBoolean(root, on), std::ptr::null_mut()) };
+    }
+}
+
 pub(crate) fn current_inner() -> Option<Rc<EngineInner>> {
     CURRENT.try_with(|c| c.borrow().upgrade()).ok().flatten().filter(|e| !e.is_shut_down() && !e.owner_dropped.get())
 }
@@ -919,6 +951,8 @@ impl Engine {
             lingering: RefCell::new(Vec::new()),
             deferred_waker: RefCell::new(None),
             collections: crate::interned::Collections::new(),
+            coop_on: Cell::new(false),
+            coop_flag: Cell::new(std::ptr::null_mut()),
             hook_state: class::HookState::default(),
             held: RefCell::new(crate::persistent::HeldValues::default()),
             coverage_users: Cell::new(0),

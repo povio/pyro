@@ -1701,7 +1701,7 @@ impl<'s> Scope<'s> {
         deny: Object<'_>,
     ) -> JsResult<Object<'s>> {
         let make = self.realm.cached_helper(self, "windowProxy")?;
-        make.call(None, &[stand_in.value(), target.value(), child.value(), deny.value()])?
+        make.call(None, &[stand_in.value(), target.value(), child.value(), deny.value(), self.coop_flag()])?
             .as_object()
             .ok_or_else(|| JsError::Type("windowProxy made no object".into()))
     }
@@ -1713,9 +1713,16 @@ impl<'s> Scope<'s> {
     /// anything else. `stand_in` is never handed to page code through it.
     pub fn cross_origin_window(&self, stand_in: Object<'_>) -> JsResult<Object<'s>> {
         let make = self.realm.cached_helper(self, "crossOriginWindow")?;
-        make.call(None, &[stand_in.value()])?
+        make.call(None, &[stand_in.value(), self.coop_flag()])?
             .as_object()
             .ok_or_else(|| JsError::Type("crossOriginWindow made no object".into()))
+    }
+
+    /// The engine's COOP reporting flag (an array `[on]` shared by every realm, see
+    /// [`crate::set_coop_reporting`]) that the WindowProxy helpers read before reporting an access.
+    fn coop_flag(&self) -> Value<'s> {
+        // SAFETY: the flag is a live array of this VM, protected for the engine's lifetime.
+        unsafe { Value::from_raw(self.ctx, self.engine_inner().coop_flag() as sys::JSValueRef) }
     }
 
     /// The accessible global behind a popup WindowProxy created by this

@@ -50,7 +50,12 @@ thread_local! {
 /// The embedder's count of documents naming a COOP reporting endpoint changed by `delta` (see
 /// [`note_window_access`]).
 pub fn coop_reporting_documents(delta: isize) {
-    COOP_REPORTING_DOCUMENTS.with(|c| c.set(c.get().saturating_add_signed(delta)));
+    let active = COOP_REPORTING_DOCUMENTS.with(|c| {
+        c.set(c.get().saturating_add_signed(delta));
+        c.get() != 0
+    });
+    // The WindowProxy helpers of every realm read the engine's flag, not this count.
+    pyro_js::set_coop_reporting(active);
 }
 
 /// Whether some document names a COOP reporting endpoint.

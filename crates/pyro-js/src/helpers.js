@@ -677,8 +677,9 @@
     // run with the Window, not the proxy, as `this` (a WindowProxy is the
     // Window to the bindings). Neither `standIn` nor the target is ever
     // handed to page code, and no list is made through page-observable
-    // hooks (species, spreading, iteration).
-    windowProxy(standIn, target, child, deny) {
+    // hooks (species, spreading, iteration). `coop` is the engine's shared flag array
+    // (`[true]` while a document names a COOP reporting endpoint).
+    windowProxy(standIn, target, child, deny, coop) {
       const ALWAYS = { __proto__: null, closed: 1, close: 1, focus: 1, blur: 1 };
       const SELF = { __proto__: null, window: 1, self: 1, frames: 1, globalThis: 1, top: 1, parent: 1 };
       const CROSS_GETTERS = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1, location: 1, opener: 1, closed: 1, length: 1 };
@@ -698,7 +699,9 @@
       // involved and costs a thread-local read otherwise). A same-origin Window reports its own
       // natives; this covers what the proxy answers by itself.
       const NOTED = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1, location: 1, opener: 1, closed: 1, length: 1, close: 1, focus: 1, blur: 1, postMessage: 1 };
-      const note = (k) => { if (typeof k === 'string') reflectGet(standIn, '\0coop:' + k, standIn); };
+      // `coop[0]` is the engine's flag (true while some document names a COOP reporting endpoint): without one a
+      // cross-window access costs this read, not a string concatenation and a native hop.
+      const note = (k) => { if (coop[0] === true && typeof k === 'string') reflectGet(standIn, '\0coop:' + k, standIn); };
       // Same origin (and before the page): functions of the Window or the stand-in, each as one function that calls it with `self()` for the
       // proxy as `this` (kept per function).
       // stand-in, each as one function that calls it with `self()` for the
@@ -814,7 +817,7 @@
         __proto__: null,
         get(t, k) {
           const w = target();
-          if (NOTED[k] === 1) note(k);
+          if (coop[0] === true && NOTED[k] === 1) note(k);
           if (isCross(w)) return crossGet(w, k);
           if (ALWAYS[k]) return fromStandIn(k);
           // A discarded popup has no parent or top (the stand-in answers null).
@@ -907,7 +910,7 @@
     // with only `href` (set) and `replace()`; `then` and the well-known symbols are undefined and
     // anything else throws a SecurityError. [[GetPrototypeOf]] is null, [[SetPrototypeOf]] fails
     // for anything but null and [[PreventExtensions]] fails. `standIn` is never handed out.
-    crossOriginWindow(standIn) {
+    crossOriginWindow(standIn, coop) {
       const GETTERS = { __proto__: null, window: 1, self: 1, location: 1, closed: 1, frames: 1, length: 1, top: 1, opener: 1, parent: 1 };
       const METHODS = { __proto__: null, close: 0, focus: 0, blur: 0, postMessage: 1 };
       const NAMES = ['window', 'self', 'location', 'close', 'closed', 'focus', 'blur', 'frames', 'length', 'top', 'opener', 'parent', 'postMessage', 'then'];
@@ -982,7 +985,7 @@
       };
       // COOP access reporting: which CrossOriginProperty a script reached (see `windowProxy`).
       const note = (k) => {
-        if (typeof k !== 'string') return;
+        if (coop[0] !== true || typeof k !== 'string') return;
         if (isIndex(k)) reflectGet(standIn, '\0coop:indexed', standIn);
         else if (METHODS[k] !== undefined || GETTERS[k]) reflectGet(standIn, '\0coop:' + k, standIn);
       };
