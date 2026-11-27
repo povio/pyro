@@ -874,6 +874,9 @@ impl Dom {
             Visited => false,
             Active => {
                 let a = self.activated_idx(self.n(idx).owner_doc);
+                if a != NIL && self.activated_alone_flag(self.n(idx).owner_doc) {
+                    return idx == a;
+                }
                 a != NIL && (self.user_action_chain_holds(idx, a) || self.labeled_by_active_label(idx, a))
             }
             Target => self.is_url_target(idx),

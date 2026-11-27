@@ -136,6 +136,9 @@ pub struct DocumentData {
     /// Element being activated (a primary press or Space on it) for
     /// `:active`, which also matches its shadow-including ancestors.
     pub(crate) activated: u32,
+    /// `activated` is a keyboard activation (Space held on a button): only that element is
+    /// `:active`, not its ancestors (Blink `Element::SetActive` without the hover/active chain).
+    pub(crate) activated_alone: bool,
     /// The focused element matches `:focus-visible` (Chrome's heuristics,
     /// decided by the bindings when focus moves).
     pub(crate) focus_visible: bool,

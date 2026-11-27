@@ -314,11 +314,11 @@ fn set_active(page: &PageDom, doc: NodeId, el: Option<NodeId>) {
 
 fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>, token: &FocusTransition) {
     let _ = page.dom.borrow_mut().set_focused(doc, None);
-    if page.space_target.take().is_some() {
-        // A Space-activated control stops being `:active` when it blurs.
-        if page.dom.borrow().activated(doc) == Some(el) {
-            set_active(page, doc, None);
-        }
+    // A button or checkable input that blurs stops being `:active`, pressed by Space or a pointer
+    // (WPT checkable-active-onblur-with-click).
+    let held = page.space_target.take().is_some();
+    if page.dom.borrow().activated(doc) == Some(el) && (held || space_clickable(&page.dom.borrow(), el)) {
+        set_active(page, doc, None);
     }
     if !live_element(page, doc, el) {
         return;
@@ -1439,7 +1439,9 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 // Browsers mark the control active on Space keydown and click
                 // it on the matching keyup (Blink KeyboardClickableInputTypeView).
                 page.space_target.set(Some(target));
-                set_active(page, doc, Some(target));
+                // Only the control itself is `:active`, not its ancestors (a press makes the chain).
+                let restyle = page.layout.try_borrow().map_or(true, |l| l.style().active_styled());
+                let _ = page.dom.borrow_mut().set_activated_alone(doc, Some(target), restyle);
             }
             // A focusgroup's arrow, Home and End keys move focus before the editing commands the
             // key carries (`moveRight`, ...) are run: those only act in editable content, which
@@ -2689,6 +2691,25 @@ pub fn insert_text(page: &Rc<PageDom>, text: &str) {
 /// other items of the segment it leaves, and entering a segment lands on
 /// its entry (`Dom::focusgroup_entry`) from either side.
 fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
+    // Moving focus with Tab ends the `:active` state of a button or checkable input, or of the
+    // label pressed for one, whose pointer is still down.
+    {
+        let doc = page.document();
+        let dom = page.dom.borrow();
+        let mut cur = dom.activated(doc);
+        let mut clears = false;
+        while let Some(n) = cur {
+            if space_clickable(&dom, n) || (local(&dom, n).as_deref() == Some("label") && dom.labeled_control(n).ok().flatten().is_some_and(|c| space_clickable(&dom, c))) {
+                clears = true;
+                break;
+            }
+            cur = dom.parent(n).ok().flatten();
+        }
+        drop(dom);
+        if clears {
+            set_active(page, doc, None);
+        }
+    }
     let next = {
         let layout = page.layout();
         let dom = page.dom.borrow();

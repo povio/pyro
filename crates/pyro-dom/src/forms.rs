@@ -2175,6 +2175,10 @@ impl Dom {
         }
     }
 
+    pub(crate) fn activated_alone_flag(&self, doc: u32) -> bool {
+        matches!(&self.n(doc).kind, NodeKind::Document(d) if d.activated_alone)
+    }
+
     pub(crate) fn focus_visible_flag(&self, doc: u32) -> bool {
         matches!(&self.n(doc).kind, NodeKind::Document(d) if d.focus_visible)
     }
@@ -2218,16 +2222,27 @@ impl Dom {
     /// changes: nothing computed from the document is invalidated, and the
     /// layout engine reads the state at its next sync.
     pub fn set_activated(&mut self, doc: NodeId, el: Option<NodeId>, restyle: bool) -> DomResult<()> {
+        self.set_activated_as(doc, el, restyle, false)
+    }
+
+    /// [`Self::set_activated`] for a keyboard activation (Space held on a button): only `el` itself
+    /// is `:active`, not its ancestors.
+    pub fn set_activated_alone(&mut self, doc: NodeId, el: Option<NodeId>, restyle: bool) -> DomResult<()> {
+        self.set_activated_as(doc, el, restyle, true)
+    }
+
+    fn set_activated_as(&mut self, doc: NodeId, el: Option<NodeId>, restyle: bool, alone: bool) -> DomResult<()> {
         let d = self.check(doc)?;
         let new = match el {
             Some(e) => self.check(e)?,
             None => NIL,
         };
-        if self.activated_idx(d) == new {
+        if self.activated_idx(d) == new && self.activated_alone_flag(d) == alone {
             return Ok(());
         }
         if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
             dd.activated = new;
+            dd.activated_alone = alone;
         }
         if restyle {
             self.bump();

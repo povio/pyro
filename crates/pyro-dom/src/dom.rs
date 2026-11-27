@@ -1038,6 +1038,7 @@ impl Dom {
             focused: NIL,
             hovered: NIL,
             activated: NIL,
+            activated_alone: false,
             focus_visible: false,
             design_mode: false,
             style_with_css: false,
