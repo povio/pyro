@@ -1576,6 +1576,11 @@ impl LayoutPassState<'_> {
                                 _ if none => (0.0, 0.0),
                                 _ => (13.0, 13.0),
                             };
+                            // pyro: scaled by CSS `zoom` (the theme size is in the element's own px; WPT
+                            // css-viewport `zoom/widget`).
+                            let zoom: f32 = node.primary_styles().map_or(1.0, |style| style.effective_zoom.value());
+                            let zoom = if zoom.is_finite() && zoom > 0.0 { zoom } else { 1.0 };
+                            let (w, h) = (w * zoom, h * zoom);
                             // pyro: a range whose `width` is a percentage has no
                             // min-content width (Blink, as its text controls; CSS Sizing 3
                             // § 5.2.1 compressible; WPT css-sizing `range-percent-intrinsic-size-1`):
@@ -1940,6 +1945,19 @@ impl LayoutPassState<'_> {
                         };
 
                     let mut intrinsic_sizes = intrinsic_sizes;
+                    let mut default_object_size = default_object_size;
+                    // pyro: CSS `zoom` scales the natural size of a replaced element (an image of 1x1
+                    // is 4x4 in a `zoom: 4` box, a canvas's default 300x150 too; the ratio stays;
+                    // WPT cssom-view `image-x-y-zoom`).
+                    let zoom: f32 = node.primary_styles().map_or(1.0, |style| style.effective_zoom.value());
+                    if zoom != 1.0 && zoom.is_finite() && zoom > 0.0 {
+                        intrinsic_sizes.width = intrinsic_sizes.width.map(|w| w * zoom);
+                        intrinsic_sizes.height = intrinsic_sizes.height.map(|h| h * zoom);
+                        default_object_size = taffy::Size {
+                            width: default_object_size.width * zoom,
+                            height: default_object_size.height * zoom,
+                        };
+                    }
                     if let Some(styles) = node.primary_styles() {
                         use style::values::computed::Contain;
                         use style::values::generics::box_::ContainIntrinsicSize;

@@ -1478,6 +1478,7 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
         |s, n| crate::layout_api::scroll_get(s, n, false),
         |s, n, v| crate::layout_api::scroll_set(s, n, v, false),
     );
+    def.getter("currentCSSZoom", |s, n| crate::layout_api::current_css_zoom(s, n));
     def.getter("scrollWidth", |s, n| crate::layout_api::metric(s, n, "scrollWidth"));
     def.getter("scrollHeight", |s, n| crate::layout_api::metric(s, n, "scrollHeight"));
     def.getter("clientWidth", |s, n| crate::layout_api::metric(s, n, "clientWidth"));

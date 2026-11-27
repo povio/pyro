@@ -1182,8 +1182,16 @@ pub(crate) fn metric<'s>(s: &Scope<'s>, n: &NodeData, which: &str) -> JsResult<V
         "offsetHeight" => Metric::OffsetHeight,
         _ => return Ok(s.number(0.0)),
     };
-    let v = l.metric(&dom, n.id, metric);
+    let v = l.metric_css(&dom, n.id, metric);
     Ok(s.number(v))
+}
+
+/// `Element.currentCSSZoom` (CSSOM View): the element's effective `zoom`, 1 where it is not rendered.
+pub(crate) fn current_css_zoom<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
+    let page = n.page();
+    crate::animation_events::layout_flush(page, n.id);
+    let zoom = page.layout().effective_zoom(&page.dom.borrow(), n.id);
+    Ok(s.number(zoom))
 }
 
 pub(crate) fn offset_parent<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {

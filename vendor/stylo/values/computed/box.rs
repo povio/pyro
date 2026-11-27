@@ -180,7 +180,10 @@ impl ToAnimatedValue for Zoom {
 
     #[inline]
     fn from_animated_value(animated: Self::AnimatedValue) -> Self {
-        Zoom(animated.max(0.0))
+        // A value at or below zero (an extrapolated zoom) computes to 1, as `zoom: 0` does, not to the
+        // `document` keyword that `0` stands for (WPT css-viewport `animations/zoom-interpolation`).
+        let n = animated.max(0.0);
+        if n == 0.0 { Zoom::ONE } else { Zoom(n) }
     }
 }
 

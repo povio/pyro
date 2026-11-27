@@ -1452,6 +1452,31 @@ impl Layout {
     /// a fractional width). Offsets and offset dimensions round independently;
     /// client and scroll sizes snap at the padding edge.
     pub fn metric(&self, dom: &Dom, el: NodeId, metric: Metric) -> f64 {
+        self.metric_zoomed(dom, el, metric, 1.0)
+    }
+
+    /// [`Self::metric`] as script reads it: in the element's own CSS px, the layout sizes divided
+    /// by its effective `zoom` (CSSOM View: `clientWidth`, `scrollHeight`, `offsetTop` ... "remove
+    /// the zoom"; Chromium's `AdjustForAbsoluteZoom`), before they are snapped. The viewport's
+    /// metrics (the root element's, the body's in quirks mode) have none.
+    pub fn metric_css(&self, dom: &Dom, el: NodeId, metric: Metric) -> f64 {
+        let zoom = if self.is_root_container(dom, el) { 1.0 } else { self.effective_zoom(dom, el) };
+        self.metric_zoomed(dom, el, metric, zoom)
+    }
+
+    /// The effective CSS `zoom` of `el` (1 without a style or a box): `Element.currentCSSZoom`.
+    pub fn effective_zoom(&self, dom: &Dom, el: NodeId) -> f64 {
+        if !self.is_visible(dom, el) {
+            return 1.0;
+        }
+        self.style
+            .stylo_style(dom, el)
+            .map(|style| f64::from(style.effective_zoom.value()))
+            .filter(|zoom| zoom.is_finite() && *zoom > 0.0)
+            .unwrap_or(1.0)
+    }
+
+    fn metric_zoomed(&self, dom: &Dom, el: NodeId, metric: Metric, zoom: f64) -> f64 {
         let raw = match metric {
             Metric::ScrollWidth => self.scroll_width(dom, el),
             Metric::ScrollHeight => self.scroll_height(dom, el),
@@ -1465,14 +1490,15 @@ impl Layout {
         if raw == 0.0 {
             return raw;
         }
-        let border = |side: usize| self.layout_box(dom, el).map_or(0.0, |b| b.border[side]);
+        let raw = raw / zoom;
+        let border = |side: usize| self.layout_box(dom, el).map_or(0.0, |b| b.border[side] / zoom);
         match metric {
             Metric::OffsetTop | Metric::OffsetLeft | Metric::OffsetWidth | Metric::OffsetHeight => round_layout_unit(raw),
             Metric::ScrollWidth | Metric::ClientWidth => {
-                snap_size_to_pixel(raw, self.offset_left(dom, el) + border(LEFT))
+                snap_size_to_pixel(raw, self.offset_left(dom, el) / zoom + border(LEFT))
             }
             Metric::ScrollHeight | Metric::ClientHeight => {
-                snap_size_to_pixel(raw, self.offset_top(dom, el) + border(TOP))
+                snap_size_to_pixel(raw, self.offset_top(dom, el) / zoom + border(TOP))
             }
         }
     }
@@ -1499,7 +1525,9 @@ impl Layout {
         if !self.is_visible(dom, el) {
             return 0.0;
         }
-        self.layout_box(dom, el).map_or(0.0, |b| round_layout_unit(b.border[side]))
+        // (In the element's own CSS px: less its effective `zoom`.)
+        let zoom = if self.is_root_container(dom, el) { 1.0 } else { self.effective_zoom(dom, el) };
+        self.layout_box(dom, el).map_or(0.0, |b| round_layout_unit(b.border[side] / zoom))
     }
 
     /// `offsetParent`, including positioned ancestors styled through stylesheets.
