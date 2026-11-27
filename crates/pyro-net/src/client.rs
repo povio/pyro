@@ -2458,7 +2458,8 @@ impl Io {
             let url_credentials = crate::auth::take_userinfo(&mut url);
             let basic_hop = includes_credentials(req.hop_credentials(basic_tainting), basic_tainting)
                 && !headers.contains_key(header::AUTHORIZATION)
-                && !req.body_from_stream;
+                && !req.body_from_stream
+                && !req.cross_site_prefetch;
             let mut preemptive = None;
             if basic_hop && url_credentials.is_none() {
                 if self.shared.basic_auth_stored.load(std::sync::atomic::Ordering::Relaxed) {
@@ -2503,7 +2504,10 @@ impl Io {
             // HTTP cache (RFC 9111), after request-stage interception and CORS
             // preflight so that both still apply to cached responses.
             // A response to be paused is neither served from nor stored in it.
+            // A cross-site speculation prefetch (made without the user's credentials) neither
+            // reads nor writes it: its response must not answer another request.
             let cacheable = method == Method::GET
+                && !req.cross_site_prefetch
                 && body.is_none()
                 && !headers.contains_key(header::RANGE)
                 && pause_response.is_none();
@@ -2515,8 +2519,8 @@ impl Io {
                 .and_then(|v| self.shared.dictionaries.lock().unwrap().by_header(v));
             // pyro: whether this hop carries credentials (as the cookie decision above): the cache
             // serves a response only to a request of the same kind (`HttpCache::lookup`).
-            let credentialed =
-                includes_credentials(req.hop_credentials(basic_tainting), basic_tainting) || headers.contains_key(header::AUTHORIZATION);
+            let credentialed = !req.cross_site_prefetch
+                && (includes_credentials(req.hop_credentials(basic_tainting), basic_tainting) || headers.contains_key(header::AUTHORIZATION));
             let mut revalidating = None;
             // A stored redirect: followed below as a network one would be.
             let mut cached_redirect = None;
@@ -2587,6 +2591,10 @@ impl Io {
                     && (cors_cross || tainted || origin_url.as_ref().is_some_and(|o| !cors::same_origin(o, &target)))
                 {
                     return Err(NetError::Cors("Redirect to a URL with credentials".into()));
+                }
+                // A cached redirect of a prefetch is held to the same site bound as a network one.
+                if req.prefetch_redirect_stop.as_ref().is_some_and(|stop| stop.crosses_site(&url, &target)) {
+                    return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
                 }
                 crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
                 redirects += 1;
