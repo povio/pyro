@@ -4004,7 +4004,10 @@ impl Layout {
             let (width, height) = self.without_scrollbars(dom, self.window_size());
             // (An absolute box's containing block is inside the document: `positioned`.)
             let (pad_top, pad_bottom) = self.scroll_padding_vertical(dom, root, height);
-            return self.anchor_in(dom, flow, self.document(), [left, top + pad_top, left + width, (top + height - pad_bottom).max(top + pad_top)], true, keep);
+            let port = [left, top + pad_top, left + width, (top + height - pad_bottom).max(top + pad_top)];
+            return self
+                .focused_anchor(dom, flow, None, port, keep)
+                .or_else(|| self.anchor_in(dom, flow, self.document(), port, true, keep));
         };
         if self.overflow_anchor_none(dom, scroller) {
             return None;
@@ -4015,7 +4018,36 @@ impl Layout {
         let positioned = self.forms_containing_block(dom, scroller, sb);
         let (pad_top, pad_bottom) = self.scroll_padding_vertical(dom, scroller, sb.client_height);
         let port = [left, top + pad_top, left + sb.client_width, (top + sb.client_height - pad_bottom).max(top + pad_top)];
-        self.anchor_in(dom, flow, scroller, port, positioned, keep)
+        self.focused_anchor(dom, flow, Some(scroller), port, keep)
+            .or_else(|| self.anchor_in(dom, flow, scroller, port, positioned, keep))
+    }
+
+    /// The focused element when it is editable (a text control or an element with
+    /// `contenteditable`), inside `scroller` (`None`: the document) and in `port`: it is chosen
+    /// before the tree order's first candidate, so the caret stays where it is (CSS Scroll
+    /// Anchoring 1 § 2.2: "priority candidate"; WPT `focus-prioritized`).
+    fn focused_anchor(&self, dom: &Dom, flow: &LayoutResult, scroller: Option<NodeId>, port: [f64; 4], keep: &dyn Fn(NodeId) -> bool) -> Option<NodeId> {
+        let focused = dom.focused(self.document()).ok().flatten()?;
+        let editable = dom.element(focused).is_ok_and(|e| matches!(&*e.name.local, "input" | "textarea"))
+            || dom.get_attribute(focused, "contenteditable").ok().flatten().is_some_and(|v| !v.eq_ignore_ascii_case("false"));
+        if !editable || self.overflow_anchor_none(dom, focused) {
+            return None;
+        }
+        if let Some(scroller) = scroller {
+            let mut cur = dom.parent_element(focused).ok().flatten();
+            while cur != Some(scroller) {
+                cur = dom.parent_element(cur?).ok().flatten();
+            }
+        }
+        let b = flow.get(focused)?;
+        let [left, top, right, bottom] = port;
+        let visible = b.rect.height > 0.0
+            && b.rect.width > 0.0
+            && b.rect.y + b.rect.height > top
+            && b.rect.y < bottom
+            && b.rect.x + b.rect.width > left
+            && b.rect.x < right;
+        (keep(focused) && b.position != crate::geometry::BoxPosition::Fixed && visible).then_some(focused)
     }
 
     /// `scroll-padding-top` and `-bottom` of `el` (CSS px) against a scrollport `height` tall: the
