@@ -1832,8 +1832,16 @@ impl LayoutPassState<'_> {
                     // The token is the density-corrected natural size (a `srcset` candidate's `2x`),
                     // which a loaded raster image's pixel size is not.
                     let raster = matches!(&element_data.special_data, SpecialElementData::Image(d) if matches!(&**d, ImageData::Raster(_)));
+                    // pyro: a loaded SVG image takes it too: HTML's density-corrected intrinsic width and
+                    // height (`<img srcset="a.svg 2x">`) are the image's own dimensions divided by the
+                    // density, which the SVG's own intrinsic size does not know. The token is only there
+                    // when the SVG states a dimension (the embedder parsed it).
+                    #[cfg(feature = "svg")]
+                    let svg_image = matches!(&element_data.special_data, SpecialElementData::Image(d) if matches!(&**d, ImageData::Svg(_)));
+                    #[cfg(not(feature = "svg"))]
+                    let svg_image = false;
                     let (intrinsic_sizes, default_object_size) = match pyro_natural_size(element_data) {
-                        Some((width, height)) if is_video || (is_image && (!loaded || raster)) => (
+                        Some((width, height)) if is_video || (is_image && (!loaded || raster || svg_image)) => (
                             IntrinsicSizes {
                                 width: Some(width),
                                 height: Some(height),
