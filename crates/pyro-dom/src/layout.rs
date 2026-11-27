@@ -319,11 +319,11 @@ pub struct Layout {
     /// `None`). Scroll marker selection reads it (`scroll_targets`).
     scroll_targets: FxHashMap<Option<NodeId>, NodeId>,
     /// CSS Scroll Anchoring: the layout each vertically scrolled element
-    /// was last settled in, to select its anchor in when the layout next
+    /// (`None`: the viewport) was last settled in, to select its anchor in when the layout next
     /// changes.
     /// pyro: with the anchor selected in it and the suppression-trigger values of the anchor and
     /// its ancestors then (`anchor_fingerprint`).
-    scroll_anchors: FxHashMap<NodeId, (Rc<LayoutResult>, Option<(NodeId, String)>)>,
+    scroll_anchors: FxHashMap<Option<NodeId>, (Rc<LayoutResult>, Option<(NodeId, String)>)>,
     /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
     /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
     snapped: FxHashMap<Option<NodeId>, [Option<SnapBox>; 2]>,
@@ -3171,6 +3171,7 @@ impl Layout {
         }
         self.window_scroll = (new_x, new_y);
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        self.capture_scroll_anchor(dom, None);
         true
     }
 
@@ -3344,9 +3345,7 @@ impl Layout {
             None => self.window_scroll = pos,
         }
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
-        if let Some(el) = target {
-            self.capture_scroll_anchor(dom, el);
-        }
+        self.capture_scroll_anchor(dom, target);
         true
     }
 
@@ -3387,7 +3386,7 @@ impl Layout {
         }
         self.element_scroll.insert(el, (x, y));
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
-        self.capture_scroll_anchor(dom, el);
+        self.capture_scroll_anchor(dom, Some(el));
         true
     }
 
@@ -3907,10 +3906,13 @@ impl Layout {
         changes
     }
 
-    /// Whether any element or the window is scrolled away from the origin.
-    /// Records the layout `scroller` is settled in (nothing at the top).
-    fn capture_scroll_anchor(&mut self, dom: &Dom, scroller: NodeId) {
-        if self.scroll_top(scroller) <= 0 {
+    /// Records the layout `scroller` (`None`: the viewport) is settled in (nothing at the top).
+    fn capture_scroll_anchor(&mut self, dom: &Dom, scroller: Option<NodeId>) {
+        let top = match scroller {
+            Some(el) => self.scroll_top(el),
+            None => self.window_scroll.1,
+        };
+        if top <= 0 {
             self.scroll_anchors.remove(&scroller);
             return;
         }
@@ -3926,7 +3928,7 @@ impl Layout {
     /// and its ancestors up to `scroller`. A change between selecting the anchor and adjusting for
     /// it suppresses the adjustment (WPT scroll-animations `view-timeline-subject-bounds-update`:
     /// the anchor's own height and margin change).
-    fn anchor_fingerprint(&self, dom: &Dom, scroller: NodeId, anchor: NodeId) -> String {
+    fn anchor_fingerprint(&self, dom: &Dom, scroller: Option<NodeId>, anchor: NodeId) -> String {
         const PROPERTIES: &[&str] = &[
             "position", "top", "right", "bottom", "left", "margin-top", "margin-right", "margin-bottom",
             "margin-left", "padding-top", "padding-right", "padding-bottom", "padding-left", "width", "height",
@@ -3934,7 +3936,7 @@ impl Layout {
         ];
         let mut out = String::new();
         let mut current = Some(anchor);
-        while let Some(el) = current.filter(|&el| el != scroller) {
+        while let Some(el) = current.filter(|&el| Some(el) != scroller) {
             for property in PROPERTIES {
                 out.push_str(&self.style.computed_value(dom, el, property).unwrap_or_default());
                 out.push('|');
@@ -3957,9 +3959,22 @@ impl Layout {
         &self,
         dom: &Dom,
         flow: &LayoutResult,
-        scroller: NodeId,
+        scroller: Option<NodeId>,
         keep: &dyn Fn(NodeId) -> bool,
     ) -> Option<NodeId> {
+        let Some(scroller) = scroller else {
+            // pyro: the viewport (CSS Scroll Anchoring 1 § 2.2: the document scroller): the
+            // scrollport is the viewport rect in document coordinates, the search starts at the
+            // document element, and `overflow-anchor: none` on it or on `<body>` (the element the
+            // viewport's overflow propagates from) opts the document out (WPT `opt-out`).
+            let root = dom.document_element(self.document()).ok().flatten()?;
+            if self.overflow_anchor_none(dom, root) || self.viewport_style_element(dom).is_some_and(|el| self.overflow_anchor_none(dom, el)) {
+                return None;
+            }
+            let top = self.window_scroll.1 as f64;
+            let height = self.without_scrollbars(dom, self.window_size()).1;
+            return self.anchor_in(dom, flow, self.document(), top, top + height, keep);
+        };
         if self.overflow_anchor_none(dom, scroller) {
             return None;
         }
@@ -3996,6 +4011,11 @@ impl Layout {
             if !keep(child) || self.style.computed(dom, child).is_some_and(|c| c.absolutely_positioned) {
                 continue;
             }
+            // CSS Scroll Anchoring 1 § 2.2: sticky-positioned boxes are not candidates either
+            // (WPT `exclude-sticky`).
+            if self.style.computed_value(dom, child, "position").is_some_and(|v| v.trim().eq_ignore_ascii_case("sticky")) {
+                continue;
+            }
             let (y0, y1) = (b.rect.y, b.rect.y + b.rect.height);
             if y1 <= top || y0 >= bottom {
                 continue;
@@ -4003,8 +4023,10 @@ impl Layout {
             if y0 >= top && y1 <= bottom {
                 return Some(child);
             }
+            // (The root's and `<body>`'s overflow is the viewport's, which does not clip them.)
             let clips = self.style.overflow_clip_axes(dom, child);
-            if !(clips.x || clips.y) {
+            let propagated = dom.element(child).is_ok_and(|e| matches!(&*e.name.local, "html" | "body"));
+            if propagated || !(clips.x || clips.y) {
                 if let Some(a) = self.anchor_in(dom, flow, child, top, bottom, keep) {
                     return Some(a);
                 }
@@ -4027,17 +4049,27 @@ impl Layout {
             return;
         }
         let flow = self.layout_result(dom);
-        let mut anchors: Vec<(NodeId, Rc<LayoutResult>, Option<(NodeId, String)>)> =
+        let mut anchors: Vec<(Option<NodeId>, Rc<LayoutResult>, Option<(NodeId, String)>)> =
             self.scroll_anchors.iter().map(|(&k, (v, a))| (k, v.clone(), a.clone())).collect();
-        anchors.sort_by_key(|(k, _, _)| (k.idx, k.gen));
-        for (el, old, captured) in anchors {
+        anchors.sort_by_key(|(k, _, _)| k.map(|k| (k.idx, k.gen)));
+        for (scroller, old, captured) in anchors {
             if Rc::ptr_eq(&old, &flow) {
                 continue;
             }
-            let Some(&(x, y)) = self.element_scroll.get(&el) else { continue };
-            if y <= 0 || !dom.is_connected(el).unwrap_or(false) {
+            let (x, y) = match scroller {
+                Some(el) => {
+                    let Some(&offset) = self.element_scroll.get(&el) else { continue };
+                    if !dom.is_connected(el).unwrap_or(false) {
+                        continue;
+                    }
+                    offset
+                }
+                None => self.window_scroll,
+            };
+            if y <= 0 {
                 continue;
             }
+            let el = scroller;
             let keep = |n: NodeId| flow.get(n).is_some();
             let Some(anchor) = self.scroll_anchor(dom, &old, el, &keep) else { continue };
             // A suppression trigger on the anchor or an ancestor since: no adjustment.
@@ -4047,17 +4079,34 @@ impl Layout {
             if suppressed {
                 continue;
             }
-            let (Some(sb), Some(ab), Some(osb), Some(oab)) =
-                (flow.get(el), flow.get(anchor), old.get(el), old.get(anchor))
-            else {
-                continue;
+            let (Some(ab), Some(oab)) = (flow.get(anchor), old.get(anchor)) else { continue };
+            let delta = match el {
+                Some(el) => {
+                    let (Some(sb), Some(osb)) = (flow.get(el), old.get(el)) else { continue };
+                    (ab.rect.y - sb.rect.y) - (oab.rect.y - osb.rect.y)
+                }
+                // The viewport has no box: document coordinates.
+                None => ab.rect.y - oab.rect.y,
             };
-            let delta = (ab.rect.y - sb.rect.y) - (oab.rect.y - osb.rect.y);
             let ny = (y as f64 + delta).round().clamp(0.0, i32::MAX as f64) as i32;
             if ny != y {
-                self.element_scroll.insert(el, (x, ny));
+                match el {
+                    Some(el) => {
+                        self.element_scroll.insert(el, (x, ny));
+                        moved.push(ScrollTarget::Container(el));
+                    }
+                    None => {
+                        // Within the new scroll range (WPT `anchoring-with-bounds-clamping`: the
+                        // anchor's move is applied before the range clamps the offset).
+                        let (_, ry) = self.viewport_scroll_range(dom);
+                        self.window_scroll = (x, ny.clamp(ry.0, ry.1));
+                        if self.window_scroll == (x, y) {
+                            continue;
+                        }
+                        moved.push(ScrollTarget::Viewport);
+                    }
+                }
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
-                moved.push(ScrollTarget::Container(el));
             }
         }
     }
@@ -4301,9 +4350,14 @@ impl Layout {
                 }
             }
         }
-        let anchored: Vec<NodeId> = self.element_scroll.iter().filter(|(_, &(_, y))| y > 0).map(|(&k, _)| k).collect();
+        let mut anchored: Vec<Option<NodeId>> =
+            self.element_scroll.iter().filter(|(_, &(_, y))| y > 0).map(|(&k, _)| Some(k)).collect();
+        // (The viewport last: after its offset is clamped below.)
+        if self.window_scroll.1 > 0 {
+            anchored.push(None);
+        }
         self.scroll_anchors.retain(|k, _| anchored.contains(k));
-        for el in anchored {
+        for el in anchored.iter().copied().filter(Option::is_some) {
             self.capture_scroll_anchor(dom, el);
         }
         if self.window_scroll != (0, 0) {
@@ -4314,6 +4368,9 @@ impl Layout {
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
                 moved.push(ScrollTarget::Viewport);
             }
+        }
+        if anchored.contains(&None) {
+            self.capture_scroll_anchor(dom, None);
         }
         moved
     }
