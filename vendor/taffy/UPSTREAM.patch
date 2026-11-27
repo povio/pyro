@@ -5144,7 +5144,7 @@ index 037a2d1c..aab051a4 100644
      tracks.first_mut().unwrap().collapse();
      tracks.last_mut().unwrap().collapse();
 diff --git a/src/compute/grid/mod.rs b/src/compute/grid/mod.rs
-index f0109c6e..87def787 100644
+index f0109c6e..04e559b4 100644
 --- a/src/compute/grid/mod.rs
 +++ b/src/compute/grid/mod.rs
 @@ -36,15 +36,22 @@ pub(crate) use types::{GridCoordinate, GridLine, OriginZeroLine, MAX_GRID_TRACKS
@@ -6281,7 +6281,7 @@ index f0109c6e..87def787 100644
              } else {
                  item_overflow_rect
                      .union(Rect { right: if direction.is_rtl() { client_width } else { 0.0 }, ..Rect::ZERO })
-@@ -926,25 +1470,71 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -926,25 +1470,74 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
          return output;
      }
  
@@ -6345,8 +6345,11 @@ index f0109c6e..87def787 100644
 +        // box of its cells (css-tables-3 § 3.10; WPT css-flexbox `flex-align-baseline-table-001`, css-grid
 +        // `grid-align-baseline-table-001`). (A cell of the table's last row is not the last item in grid order.)
 +        if table_rows {
++            // (a row whose cells all span several rows has no baseline of its own, as in Blink: the last row
++            // with a single-row cell gives it)
++            let baseline_row = items.iter().filter(|item| item.span(AbstractAxis::Block) == 1).map(|item| item.row_indexes.end).max();
 +            let row_cells = || {
-+                items.iter().filter(|item| item.row_indexes.end == last_row && item.span(AbstractAxis::Block) == 1)
++                items.iter().filter(|item| Some(item.row_indexes.end) == baseline_row && item.span(AbstractAxis::Block) == 1)
 +            };
 +            let lowest = |values: &mut dyn Iterator<Item = f32>| values.reduce(f32::max);
 +            let aligned = lowest(&mut row_cells()
@@ -6360,7 +6363,7 @@ index f0109c6e..87def787 100644
      };
  
      // A scroll container's own padding at the end of the content is part of its scrollable
-@@ -954,12 +1544,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -954,12 +1547,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      let scrollable_overflow_rect = {
          let client_width = (container_border_box.width - border.horizontal_axis_sum() - scrollbar_gutter.x).max(0.0);
          let overflow_rect = if is_scroll_container {
@@ -6381,7 +6384,7 @@ index f0109c6e..87def787 100644
          } else {
              item_overflow_rect.union(Rect { right: if direction.is_rtl() { client_width } else { 0.0 }, ..Rect::ZERO })
          };
-@@ -976,13 +1568,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
+@@ -976,13 +1571,86 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
      let mut output = LayoutOutput::from_sizes_and_baselines(
          container_border_box,
          scrollable_overflow_rect,
@@ -6469,7 +6472,7 @@ index f0109c6e..87def787 100644
  /// Resolve the static-position rectangle (the grid area determined by the grid-placement
  /// properties) for an out-of-flow child of a positioned grid container.
  ///
-@@ -1298,6 +1963,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
+@@ -1298,6 +1966,10 @@ pub struct DetailedGridTracksInfo<S: CheapCloneStr = DefaultCheapStr> {
      /// [`DetailedGridTracksInfo::iter_line_names`] for indices relative to the full grid
      /// (including implicit tracks). Empty if the grid has no named lines.
      pub line_names: GridLineNames<S>,
@@ -6480,7 +6483,7 @@ index f0109c6e..87def787 100644
  }
  
  impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
-@@ -1337,6 +2006,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1337,6 +2009,7 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              collapsed_tracks,
              empty_axis_line,
              line_names,
@@ -6488,7 +6491,7 @@ index f0109c6e..87def787 100644
          }
      }
  
-@@ -1380,6 +2050,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1380,6 +2053,16 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
              out.write_char(']')
          }
  
@@ -6505,7 +6508,7 @@ index f0109c6e..87def787 100644
          if self.positions.is_empty() {
              return out.write_str("none");
          }
-@@ -1425,6 +2105,8 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
+@@ -1425,6 +2108,8 @@ impl<S: CheapCloneStr> DetailedGridTracksInfo<S> {
  /// This matches the Chrome and Firefox's format as of 2nd Jan 2024.
  #[derive(Debug, Clone, PartialEq)]
  pub struct DetailedGridItemsInfo {
@@ -6514,7 +6517,7 @@ index f0109c6e..87def787 100644
      /// row-start with 1-indexed grid line numbers
      pub row_start: u16,
      /// row-end with 1-indexed grid line numbers
-@@ -1447,6 +2129,7 @@ impl DetailedGridItemsInfo {
+@@ -1447,6 +2132,7 @@ impl DetailedGridItemsInfo {
          }
  
          DetailedGridItemsInfo {
@@ -6522,7 +6525,7 @@ index f0109c6e..87def787 100644
              row_start: to_one_indexed_grid_line(grid_item.row_indexes.start),
              row_end: to_one_indexed_grid_line(grid_item.row_indexes.end),
              column_start: to_one_indexed_grid_line(grid_item.column_indexes.start),
-@@ -1454,3 +2137,187 @@ impl DetailedGridItemsInfo {
+@@ -1454,3 +2140,187 @@ impl DetailedGridItemsInfo {
          }
      }
  }
@@ -9863,7 +9866,7 @@ index bb954acf..a07ad780 100644
  }
  
 diff --git a/src/compute/oof.rs b/src/compute/oof.rs
-index 2c6179a4..3464aa37 100644
+index 2c6179a4..87eb0901 100644
 --- a/src/compute/oof.rs
 +++ b/src/compute/oof.rs
 @@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
@@ -10145,7 +10148,7 @@ index 2c6179a4..3464aa37 100644
              SizingMode::ContentSize,
          );
          known_dimensions = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
-@@ -691,8 +802,180 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -691,8 +802,189 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          }
      }
  
@@ -10251,25 +10254,34 @@ index 2c6179a4..3464aa37 100644
 +    // § 3.9.2, § 3.9.4 and the abspos section; WPT css-tables `absolute-tables-002`, `-004`,
 +    // `-height-quirks-001`, css-position `position-absolute-table-001`). A width or height the table
 +    // takes from stretching is a minimum already (`min_size` above).
++    // (A table's min-content width also wins over `max-width` in Chrome: it is applied again after the
++    // final clamp below.)
++    let table_min_width = if is_table && (known_dimensions.width.is_some() || max_size.width.is_some()) {
++        Some(tree.measure_child_size(
++            candidate.node,
++            Size::NONE,
++            area_size.map(Some),
++            Size { width: AvailableSpace::MinContent, height: AvailableSpace::MaxContent },
++            SizingMode::ContentSize,
++            AbsoluteAxis::Horizontal,
++            Line::FALSE,
++        ))
++    } else {
++        None
++    };
 +    if is_table {
-+        if let Some(width) = known_dimensions.width {
-+            let content = tree.measure_child_size(
-+                candidate.node,
-+                Size::NONE,
-+                area_size.map(Some),
-+                Size { width: AvailableSpace::MinContent, height: AvailableSpace::MaxContent },
-+                SizingMode::ContentSize,
-+                AbsoluteAxis::Horizontal,
-+                Line::FALSE,
-+            );
++        if let (Some(width), Some(content)) = (known_dimensions.width, table_min_width) {
 +            known_dimensions.width = Some(width.max(content));
 +        }
-+        if let (Some(width), Some(height)) = (known_dimensions.width, known_dimensions.height) {
++        // (the height is a minimum with or without a known width: without one the table is measured at its
++        // shrink-to-fit width)
++        if let Some(height) = known_dimensions.height {
++            let width = known_dimensions.width;
 +            let content = tree.measure_child_size(
 +                candidate.node,
-+                Size { width: Some(width), height: None },
++                Size { width, height: None },
 +                area_size.map(Some),
-+                Size { width: AvailableSpace::Definite(width), height: available_space.height },
++                Size { width: width.map_or(available_space.width, AvailableSpace::Definite), height: available_space.height },
 +                SizingMode::ContentSize,
 +                AbsoluteAxis::Vertical,
 +                Line::FALSE,
@@ -10326,7 +10338,7 @@ index 2c6179a4..3464aa37 100644
          _ => {
              let measured_size = tree.measure_child_size_both(
                  candidate.node,
-@@ -702,14 +985,40 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -702,14 +994,44 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
                  SizingMode::ContentSize,
                  Line::FALSE,
              );
@@ -10343,6 +10355,10 @@ index 2c6179a4..3464aa37 100644
          }
      }
      .maybe_clamp(min_size, max_size);
++    let final_size = match table_min_width {
++        Some(min_width) => Size { width: final_size.width.max(min_width), ..final_size },
++        None => final_size,
++    };
  
 +    if trial || tree.checks_position_overflow(candidate.node) {
 +        let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset(candidate.node, container));
@@ -10369,7 +10385,7 @@ index 2c6179a4..3464aa37 100644
          parent_size: area_size.map(Some),
          available_space,
          sizing_mode: SizingMode::ContentSize,
-@@ -719,6 +1028,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -719,6 +1041,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
      before_layout(tree, &layout_input);
      let mut layout_output = tree.compute_child_layout(candidate.node, layout_input);
@@ -10380,7 +10396,7 @@ index 2c6179a4..3464aa37 100644
  
      // Resolve auto margins <https://www.w3.org/TR/css-position-3/#abspos-margins>
      let horizontal_margin = horizontal.resolve_margins(final_size.width);
-@@ -731,17 +1044,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -731,17 +1057,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
  
      // Align the margin box within the IMCB <https://www.w3.org/TR/css-position-3/#abspos-alignment>
@@ -10413,7 +10429,7 @@ index 2c6179a4..3464aa37 100644
  
      let layout = Layout {
          order: candidate.order,
-@@ -756,14 +1079,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -756,14 +1092,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
      tree.set_unrounded_layout(candidate.node, &layout);
  
@@ -10430,7 +10446,7 @@ index 2c6179a4..3464aa37 100644
  }
  
  /// Perform final layout on the out-of-flow candidates for which the current node is the
-@@ -801,7 +1124,24 @@ pub(crate) fn perform_oof_layout(
+@@ -801,7 +1137,24 @@ pub(crate) fn perform_oof_layout(
      #[cfg_attr(not(feature = "content_size"), allow(unused_variables))] reversed: Point<bool>,
      hoisted: &mut Vec<NodeId>,
      unclaimed: &mut OofCandidates,
@@ -10455,7 +10471,7 @@ index 2c6179a4..3464aa37 100644
      #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
      let mut absolute_overflow_rect = Rect::ZERO;
      #[cfg(feature = "content_size")]
-@@ -828,7 +1168,8 @@ pub(crate) fn perform_oof_layout(
+@@ -828,7 +1181,8 @@ pub(crate) fn perform_oof_layout(
      // to the work list (Blink-style re-sweep).
      let mut worklist: Vec<OofCandidate> = Vec::new();
      for candidate in candidates {
@@ -10465,7 +10481,7 @@ index 2c6179a4..3464aa37 100644
              worklist.push(*candidate);
          } else {
              unclaimed.push(*candidate);
-@@ -851,17 +1192,22 @@ pub(crate) fn perform_oof_layout(
+@@ -851,17 +1205,22 @@ pub(crate) fn perform_oof_layout(
              overflow,
              #[cfg(feature = "content_size")]
              contain,
@@ -10499,7 +10515,7 @@ index 2c6179a4..3464aa37 100644
          let location = layout.location;
          let final_size = layout.size;
  
-@@ -871,7 +1217,7 @@ pub(crate) fn perform_oof_layout(
+@@ -871,7 +1230,7 @@ pub(crate) fn perform_oof_layout(
          if !surfaced.is_empty() {
              surfaced.translate(location);
              for surfaced_candidate in surfaced.iter() {
@@ -10508,7 +10524,7 @@ index 2c6179a4..3464aa37 100644
                      worklist.push(*surfaced_candidate);
                  } else {
                      unclaimed.push(*surfaced_candidate);
-@@ -900,7 +1246,7 @@ pub(crate) fn perform_oof_layout(
+@@ -900,7 +1259,7 @@ pub(crate) fn perform_oof_layout(
  
  #[cfg(test)]
  mod tests {
@@ -10517,7 +10533,7 @@ index 2c6179a4..3464aa37 100644
      use crate::geometry::{Line, Point, Rect, Size};
      use crate::style::AlignmentSafety;
      use crate::tree::{AxisStaticAlign, AxisStaticEdge, AxisStaticPosition};
-@@ -963,6 +1309,38 @@ mod tests {
+@@ -963,6 +1322,38 @@ mod tests {
          assert_eq!(resolve_x(sp_x, 120.0, NO_MARGIN), -10.0);
      }
  

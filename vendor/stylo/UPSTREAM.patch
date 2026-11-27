@@ -7420,7 +7420,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
          !self.transform.0.is_empty()
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-23 06:58:46
++++ b/servo/selector_parser.rs	2026-11-27 21:47:02
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -7748,10 +7748,12 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          result
      }
  
-@@ -168,6 +402,56 @@
+@@ -166,8 +400,58 @@
+     #[inline]
+     pub fn is_marker(&self) -> bool {
          *self == PseudoElement::Marker
-     }
- 
++    }
++
 +    /// pyro: whether this pseudo-element is `::scroll-marker`.
 +    #[inline]
 +    pub fn is_scroll_marker(&self) -> bool {
@@ -7791,8 +7793,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +        } else {
 +            self.clone()
 +        }
-+    }
-+
+     }
+ 
 +    /// State used when cascading a custom scrollbar for a physical axis.
 +    pub fn scrollbar_orientation(&self) -> Option<NonTSPseudoClass> {
 +        match self {
@@ -8004,15 +8006,17 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          )
      }
  
-@@ -441,6 +820,20 @@
+@@ -439,8 +818,22 @@
+         if let Lang(ref lang) = *self {
+             dest.write_str(":lang(")?;
              serialize_identifier(lang, dest)?;
-             return dest.write_char(')');
-         }
++            return dest.write_char(')');
++        }
 +        if let Dir(ref dir) = *self {
 +            dest.write_str(":dir(")?;
 +            serialize_identifier(dir, dest)?;
-+            return dest.write_char(')');
-+        }
+             return dest.write_char(')');
+         }
 +        if let HasSlotted(ref argument) = *self {
 +            dest.write_str(":has-slotted")?;
 +            if let Some(argument) = argument {
@@ -8081,7 +8085,19 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -621,7 +1030,9 @@
+@@ -567,6 +976,11 @@
+     /// The style of the originating element in order to evaluate @container
+     /// size queries affecting pseudo-elements.
+     pub originating_element_style: Option<&'a ComputedValues>,
++
++    /// pyro: set when matching a `::scroll-marker-group` or `::scroll-button()`:
++    /// size container queries skip the originating element (CSS Conditional 5 § 3.3) and look at
++    /// its ancestors (the root element has none and is its own container).
++    pub skip_originating_container: bool,
+ }
+ 
+ impl ::selectors::SelectorImpl for SelectorImpl {
+@@ -621,7 +1035,9 @@
          let pseudo_class = match_ignore_ascii_case! { &name,
              "active" => NonTSPseudoClass::Active,
              "any-link" => NonTSPseudoClass::AnyLink,
@@ -8092,7 +8108,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "checked" => NonTSPseudoClass::Checked,
              "default" => NonTSPseudoClass::Default,
              "defined" => NonTSPseudoClass::Defined,
-@@ -646,6 +1057,12 @@
+@@ -646,6 +1062,12 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
@@ -8105,7 +8121,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -669,6 +1086,14 @@
+@@ -669,6 +1091,14 @@
                  }
                  NonTSPseudoClass::MozTopmostModal
              },
@@ -8120,7 +8136,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "-servo-nonzero-border" => {
                  if !self.in_user_agent_stylesheet() {
                      return Err(ParseError::custom(
-@@ -687,15 +1112,38 @@
+@@ -687,16 +1117,39 @@
          &self,
          name: &str,
          parser: &mut CssParser<'i>,
@@ -8137,7 +8153,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "state" => {
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
-+            },
+             },
 +            "dir" => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
 +            },
@@ -8158,10 +8174,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                    return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
 +                }
 +                NonTSPseudoClass::HasSlotted(Some(HasSlottedArgument(list)))
-             },
++            },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
-@@ -714,8 +1162,26 @@
+ 
+@@ -714,8 +1167,26 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -8188,12 +8205,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "placeholder" => Placeholder,
              "-servo-text-control-inner-container" => {
                  if !self.in_user_agent_stylesheet() {
-@@ -774,6 +1240,43 @@
-         };
- 
+@@ -776,6 +1247,43 @@
          Ok(pseudo_element)
-+    }
-+
+     }
+ 
 +    // pyro: `::scroll-button(<direction> | *)` (CSS Overflow 5 § 3.2).
 +    fn parse_functional_pseudo_element(
 +        &self,
@@ -8229,9 +8244,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            "right" => ScrollButtonRight,
 +            _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
 +        })
-     }
- 
++    }
++
      fn default_namespace(&self) -> Option<Namespace> {
+         self.namespaces.default.as_ref().map(|ns| ns.clone())
+     }
 diff -ruN a/sharing/checks.rs b/sharing/checks.rs
 --- a/sharing/checks.rs	2026-11-11 19:55:57
 +++ b/sharing/checks.rs	2026-11-23 06:58:46
@@ -9663,7 +9680,7 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  }
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-23 06:58:46
++++ b/stylist.rs	2026-11-27 21:47:02
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -9752,10 +9769,16 @@ diff -ruN a/stylist.rs b/stylist.rs
      }
  
      /// Execute callback for all applicable style rule data.
-@@ -1371,6 +1434,64 @@
-         ))
-     }
- 
+@@ -1365,6 +1428,65 @@
+         Some(self.compute_pseudo_element_style_with_inputs(
+             cascade_inputs,
+             pseudo,
++            guards,
++            Some(originating_element_style),
++            Some(element),
++        ))
++    }
++
 +    /// pyro: the style of a node that is a pseudo-element's box (`element.implemented_pseudo_element()`,
 +    /// which reaches its originating element through `pseudo_element_originating_element()`), whose
 +    /// rules are matched against the node itself in normal mode: state pseudo-classes after the
@@ -9785,6 +9808,7 @@ diff -ruN a/stylist.rs b/stylist.rs
 +            MatchingForInvalidation::No,
 +        );
 +        matching_context.extra_data.originating_element_style = Some(originating_element_style);
++        matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || pseudo == PseudoElement::ScrollMarkerGroup;
 +        self.push_applicable_declarations(
 +            element,
 +            None,
@@ -9808,16 +9832,18 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        Some(self.compute_pseudo_element_style_with_inputs(
 +            inputs,
 +            &pseudo,
-+            guards,
-+            Some(originating_element_style),
-+            Some(element),
-+        ))
-+    }
-+
-     /// Computes a pseudo-element style lazily using the given CascadeInputs.
-     /// This can be used for truly lazy pseudo-elements or to avoid redoing
-     /// selector matching for eager pseudo-elements when we need to recompute
-@@ -1623,10 +1744,9 @@
+             guards,
+             Some(originating_element_style),
+             Some(element),
+@@ -1611,6 +1733,7 @@
+ 
+         matching_context.pseudo_element_matching_fn = matching_fn;
+         matching_context.extra_data.originating_element_style = Some(originating_element_style);
++        matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || *pseudo == PseudoElement::ScrollMarkerGroup;
+ 
+         self.push_applicable_declarations(
+             element,
+@@ -1623,10 +1746,9 @@
              &mut matching_context,
          );
  
@@ -9831,18 +9857,26 @@ diff -ruN a/stylist.rs b/stylist.rs
          let rules = self.rule_tree.compute_rule_node(&mut declarations, guards);
  
          let mut visited_rules = None;
-@@ -1665,6 +1785,10 @@
-                     visited_rules = Some(rule_node);
-                 }
+@@ -1645,6 +1767,7 @@
+             );
+             matching_context.pseudo_element_matching_fn = matching_fn;
+             matching_context.extra_data.originating_element_style = Some(originating_element_style);
++            matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || *pseudo == PseudoElement::ScrollMarkerGroup;
+ 
+             self.push_applicable_declarations(
+                 element,
+@@ -1667,6 +1790,10 @@
              }
-+        }
-+
-+        if unvisited_empty && is_probe && visited_rules.is_none() {
-+            return None;
          }
  
++        if unvisited_empty && is_probe && visited_rules.is_none() {
++            return None;
++        }
++
          Some(CascadeInputs {
-@@ -1686,6 +1810,12 @@
+             rules: Some(rules),
+             visited_rules,
+@@ -1686,6 +1813,12 @@
      /// Also, the device that arrives here may need to take the viewport rules
      /// into account.
      pub fn set_device(&mut self, device: Device, guards: &StylesheetGuards) -> OriginSet {
@@ -9855,7 +9889,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          self.device = device;
          self.media_features_change_changed_style(guards, &self.device)
      }
-@@ -1757,6 +1887,8 @@
+@@ -1757,6 +1890,8 @@
          let mut cur = element;
          let mut pseudos = SmallVec::<[_; 2]>::new();
          if let Some(pseudo) = pseudo_element {
@@ -9864,7 +9898,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              pseudos.push(pseudo.clone());
          }
          while let Some(p) = cur.implemented_pseudo_element() {
-@@ -1857,7 +1989,36 @@
+@@ -1857,7 +1992,36 @@
          self.lookup_element_dependent_at_rule(element, |data| data.animations.get(name))
      }
  
@@ -9902,7 +9936,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// <https://drafts.csswg.org/css-view-transitions-2/#resolve-view-transition-rule>
      #[inline]
      pub fn last_view_transition_rule(&self) -> Option<&Arc<ViewTransitionRule>> {
-@@ -1870,7 +2031,7 @@
+@@ -1870,7 +2034,7 @@
  
      /// Returns the registered `@position-try-rule` animation for the specified name.
      #[inline]
@@ -9911,7 +9945,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          &'a self,
          name: &Atom,
          scope: CascadeLevel,
-@@ -2408,6 +2569,9 @@
+@@ -2408,6 +2572,9 @@
      /// A list of effective font-palette-values rules.
      pub font_palette_values: LayerOrderedVec<Arc<FontPaletteValuesRule>>,
  
@@ -9921,7 +9955,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// A map of effective counter-style rules.
      pub counter_styles: LayerOrderedMap<Arc<Locked<CounterStyleRule>>>,
  
-@@ -2490,6 +2654,7 @@
+@@ -2490,6 +2657,7 @@
      fn sort_by_layer(&mut self, layers: &[CascadeLayer]) {
          self.font_faces.sort(layers);
          self.font_feature_values.sort(layers);
@@ -9929,7 +9963,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          self.font_palette_values.sort(layers);
          self.counter_styles.sort(layers);
          self.position_try_rules.sort(layers);
-@@ -2499,6 +2664,7 @@
+@@ -2499,6 +2667,7 @@
      fn clear(&mut self) {
          self.font_faces.clear();
          self.font_feature_values.clear();
@@ -9937,7 +9971,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          self.font_palette_values.clear();
          self.counter_styles.clear();
          self.position_try_rules.clear();
-@@ -2536,6 +2702,7 @@
+@@ -2536,6 +2705,7 @@
          let mut n = 0;
          n += self.font_faces.shallow_size_of(ops);
          n += self.font_feature_values.shallow_size_of(ops);
@@ -9945,7 +9979,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          n += self.font_palette_values.shallow_size_of(ops);
          n += self.counter_styles.shallow_size_of(ops);
          n += self.position_try_rules.shallow_size_of(ops);
-@@ -2645,7 +2812,7 @@
+@@ -2645,7 +2815,7 @@
  
  fn component_needs_revalidation(c: &Component<SelectorImpl>) -> bool {
      match *c {
@@ -9954,13 +9988,10 @@ diff -ruN a/stylist.rs b/stylist.rs
          | Component::AttributeInNoNamespace { .. }
          | Component::AttributeOther(_)
          | Component::Empty
-@@ -2863,6 +3030,82 @@
-     fn clear(&mut self) {
-         self.element_map.clear();
-         self.pseudos_map.clear();
-+    }
-+}
-+
+@@ -2866,6 +3036,82 @@
+     }
+ }
+ 
 +/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
 +/// `normal_rules`) whose declarations can make the pseudo-element generate a box: they declare
 +/// `content`, `display` or `animation-name`, looked up on the block's longhand set, so `all`,
@@ -10034,10 +10065,13 @@ diff -ruN a/stylist.rs b/stylist.rs
 +    fn shrink_if_needed(&mut self) {
 +        self.before.shrink_if_needed();
 +        self.after.shrink_if_needed();
-     }
- }
- 
-@@ -3361,6 +3604,10 @@
++    }
++}
++
+ /// The id of a given layer, a sequentially-increasing identifier.
+ #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
+ pub struct LayerId(u16);
+@@ -3361,6 +3607,10 @@
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
  
@@ -10048,7 +10082,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
      /// the featureless host.
-@@ -3522,10 +3769,22 @@
+@@ -3522,10 +3772,22 @@
  }
  
  impl CascadeData {
@@ -10071,7 +10105,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              featureless_host_rules: None,
              slotted_rules: None,
              part_rules: None,
-@@ -3732,6 +3991,25 @@
+@@ -3732,6 +3994,25 @@
          self.normal_rules.rules(pseudo_elements)
      }
  
@@ -10097,7 +10131,37 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the featureless pseudo rule map for a given pseudo-element.
      #[inline]
      pub fn featureless_host_rules(
-@@ -3850,6 +4128,7 @@
+@@ -3794,12 +4075,27 @@
+             if condition_ref.conditions.is_empty() {
+                 return true;
+             }
++            // pyro: a scroll pseudo-element's size container is found from the ancestors of its
++            // originating element, which is itself no candidate (Conditional 5 § 3.3).
++            let (start, originating_element_style) = match context.extra_data.originating_element_style {
++                Some(style) if context.extra_data.skip_originating_container => {
++                    // (The box of the pseudo-element is matched as itself: look from its originating element.)
++                    let origin = if element.implemented_pseudo_element().is_some() {
++                        selectors::Element::pseudo_element_originating_element(&element).unwrap_or(element)
++                    } else {
++                        element
++                    };
++                    // The root element has no ancestors: it is the container, as for its own children.
++                    if origin.traversal_parent().is_some() { (origin, None) } else { (origin, Some(style)) }
++                },
++                other => (element, other),
++            };
+             let matches = condition_ref.conditions.iter().any(|condition| {
+                 condition
+                     .matches(
+                         stylist,
+-                        element,
+-                        context.extra_data.originating_element_style,
++                        start,
++                        originating_element_style,
+                         &mut context.extra_data.cascade_input_flags,
+                     )
+                     .to_bool(/* unknown = */ false)
+@@ -3850,6 +4146,7 @@
  
      fn shrink_maps_if_needed(&mut self) {
          self.normal_rules.shrink_if_needed();
@@ -10105,7 +10169,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut host_rules) = self.featureless_host_rules {
              host_rules.shrink_if_needed();
          }
-@@ -3955,10 +4234,20 @@
+@@ -3955,10 +4252,20 @@
          quirks_mode: QuirksMode,
          mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
      ) -> Result<(), AllocErr> {
@@ -10127,7 +10191,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              let pseudo_elements = selector.pseudo_elements();
              let inner_pseudo_element = pseudo_elements.first();
              if let Some(pseudo) = inner_pseudo_element {
-@@ -4102,6 +4391,15 @@
+@@ -4102,6 +4409,15 @@
                  // :scope may match featureless shadow host if the scope
                  // root is the shadow root.
                  // See https://github.com/w3c/csswg-drafts/issues/9025
@@ -10143,7 +10207,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4249,6 +4547,9 @@
+@@ -4249,6 +4565,9 @@
                      self.extra_data
                          .add_font_face(rule, containing_rule_state.layer_id);
                  },
@@ -10153,7 +10217,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  CssRule::FontFeatureValues(ref rule) => {
                      self.extra_data
                          .add_font_feature_values(rule, containing_rule_state.layer_id);
-@@ -4476,7 +4777,14 @@
+@@ -4476,6 +4795,13 @@
                                  | ImplicitScopeRoot::DocumentElement => {
                                      StylistImplicitScopeRoot::Normal(root)
                                  },
@@ -10161,14 +10225,13 @@ diff -ruN a/stylist.rs b/stylist.rs
 +                                // owner's alone (Blitz parses it for that element: its cascade
 +                                // data is not shared between shadow trees).
 +                                #[cfg(feature = "servo")]
-                                 ImplicitScopeRoot::ShadowHost(_)
++                                ImplicitScopeRoot::ShadowHost(_)
 +                                | ImplicitScopeRoot::InShadowTree(_) => StylistImplicitScopeRoot::Normal(root),
 +                                #[cfg(not(feature = "servo"))]
-+                                ImplicitScopeRoot::ShadowHost(_)
+                                 ImplicitScopeRoot::ShadowHost(_)
                                  | ImplicitScopeRoot::InShadowTree(_) => {
                                      // Style data can be shared between shadow trees, so we must
-                                     // query the implicit root for that specific tree.
-@@ -4708,6 +5016,7 @@
+@@ -4708,6 +5034,7 @@
                  | CssRule::LayerBlock(..)
                  | CssRule::LayerStatement(..)
                  | CssRule::FontPaletteValues(..)
@@ -10176,7 +10239,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  | CssRule::FontFeatureValues(..)
                  | CssRule::Scope(..)
                  | CssRule::StartingStyle(..)
-@@ -4817,6 +5126,7 @@
+@@ -4817,6 +5144,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();
@@ -15404,7 +15467,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-27 21:31:57
++++ b/values/specified/box.rs	2026-11-27 21:47:02
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -15530,12 +15593,10 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const WebkitInlineBox: Self = Self(
          ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
      );
-@@ -368,8 +396,33 @@
-     #[inline]
-     pub fn is_inline_flow(&self) -> bool {
+@@ -370,6 +398,31 @@
          self.outside() == DisplayOutside::Inline && self.inside() == DisplayInside::Flow
-+    }
-+
+     }
+ 
 +    /// pyro: whether this is `display: run-in` (see [`Self::RUN_IN_MASK`]).
 +    #[inline]
 +    pub const fn is_run_in(&self) -> bool {
@@ -15546,8 +15607,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    #[inline]
 +    pub const fn is_pyro_ruby(&self) -> bool {
 +        (self.0 & Self::RUBY_MASK) != 0
-     }
- 
++    }
++
 +    /// pyro: whether this is `display: ruby-text` (see [`Self::RUBY_TEXT_MASK`]).
 +    #[inline]
 +    pub const fn is_pyro_ruby_text(&self) -> bool {
@@ -15730,7 +15791,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToShmem,
      ToComputedValue,
      ToResolvedValue,
-@@ -801,29 +916,96 @@
+@@ -801,31 +916,98 @@
      /// Use the text-under baseline.
      TextBottom,
      /// Use the alphabetic baseline.
@@ -15778,8 +15839,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    #[cfg(feature = "servo")]
 +    #[css(skip)]
 +    VerticalAlignTextTop,
-+}
-+
+ }
+ 
 +#[cfg(feature = "servo")]
 +impl AlignmentBaseline {
 +    /// pyro: the value `vertical-align` sets for a keyword of this longhand (see
@@ -15829,10 +15890,30 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +            Self::VerticalAlignTextBottom | Self::VerticalAlignMiddle | Self::VerticalAlignTextTop => unreachable!(),
 +        })
 +    }
++}
++
+ /// A specified value for the `baseline-source` property.
+ /// https://drafts.csswg.org/css-inline-3/#baseline-source
+ #[derive(
+@@ -889,6 +1071,8 @@
+     Block,
+     Inline,
+     Both,
++    /// pyro: CSS Scroll Snap 2: both axes snap together to one area aligned on both.
++    Pair,
  }
  
- /// A specified value for the `baseline-source` property.
-@@ -1093,6 +1275,35 @@
+ /// https://drafts.csswg.org/css-scroll-snap-1/#snap-strictness
+@@ -953,7 +1137,7 @@
+ }
+ 
+ impl Parse for ScrollSnapType {
+-    /// none | [ x | y | block | inline | both ] [ mandatory | proximity ]?
++    /// none | [ x | y | block | inline | both | pair ] [ mandatory | proximity ]?
+     fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+         if input
+             .try_parse(|input| input.expect_ident_matching("none"))
+@@ -1093,6 +1277,35 @@
  pub enum ScrollSnapStop {
      Normal,
      Always,
@@ -15868,7 +15949,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  #[allow(missing_docs)]
-@@ -1336,11 +1547,17 @@
+@@ -1336,11 +1549,17 @@
      ToShmem,
      ToTyped,
  )]
@@ -15889,7 +15970,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          /// `none` variant
          const NONE = 1 << 0;
          /// `auto` variant
-@@ -1353,10 +1570,25 @@
+@@ -1353,10 +1572,25 @@
          const MANIPULATION = 1 << 4;
          /// `pinch-zoom` variant
          const PINCH_ZOOM = 1 << 5;
@@ -15915,7 +15996,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      #[inline]
      /// Get default `touch-action` as `auto`
      pub fn auto() -> TouchAction {
-@@ -1373,7 +1605,6 @@
+@@ -1373,7 +1607,6 @@
      Parse,
      PartialEq,
      SpecifiedValueInfo,
@@ -15923,7 +16004,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToCss,
      ToResolvedValue,
      ToShmem,
-@@ -1381,7 +1612,7 @@
+@@ -1381,7 +1614,7 @@
  )]
  #[css(bitflags(
      single = "none,strict,content",
@@ -15932,13 +16013,10 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      overlapping_bits
  ))]
  #[repr(C)]
-@@ -1407,7 +1638,26 @@
-         const CONTENT = 1 << 6 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits();
-         /// `strict` variant, turns on all types of containment
-         const STRICT = 1 << 7 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits() | Contain::SIZE.bits();
-+    }
-+}
-+
+@@ -1410,6 +1643,25 @@
+     }
+ }
+ 
 +impl crate::values::computed::ToComputedValue for Contain {
 +    type ComputedValue = Self;
 +
@@ -15951,15 +16029,17 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        } else {
 +            *self
 +        }
-     }
++    }
 +
 +    fn from_computed_value(value: &Self) -> Self {
 +        *value
 +    }
- }
- 
++}
++
  impl Parse for ContainIntrinsicSize {
-@@ -1593,7 +1843,7 @@
+     /// none | <length> | auto <length>
+     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+@@ -1593,7 +1845,7 @@
  )]
  #[css(bitflags(
      single = "normal",
@@ -15968,7 +16048,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      validate_mixed = "Self::validate_mixed_flags",
  ))]
  #[repr(C)]
-@@ -1614,6 +1864,8 @@
+@@ -1614,6 +1866,8 @@
          const SIZE = 1 << 1;
          /// The `scroll-state` variant.
          const SCROLL_STATE = 1 << 2;
@@ -15977,7 +16057,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      }
  }
  
-@@ -2013,8 +2265,12 @@
+@@ -2013,8 +2267,12 @@
      Auto,
      Page,
      Avoid,
@@ -15990,7 +16070,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl BreakBetween {
-@@ -2030,7 +2286,9 @@
+@@ -2030,7 +2288,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -16001,7 +16081,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2047,7 +2305,7 @@
+@@ -2047,7 +2307,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),
@@ -16010,7 +16090,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2293,6 +2551,15 @@
+@@ -2293,6 +2553,15 @@
      Smooth,
  }
  
@@ -16026,7 +16106,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// https://drafts.fxtf.org/compositing/#isolation
  #[allow(missing_docs)]
  #[derive(
-@@ -2320,6 +2587,16 @@
+@@ -2320,6 +2589,16 @@
      Isolate,
  }
  
@@ -16043,7 +16123,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
  #[allow(missing_docs)]
  #[derive(
-@@ -2457,7 +2734,7 @@
+@@ -2457,7 +2736,7 @@
  pub enum TextOrientation {
      Mixed,
      Upright,
@@ -16052,7 +16132,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      Sideways,
  }
  
-@@ -2486,8 +2763,41 @@
+@@ -2486,8 +2765,41 @@
  pub enum ImageOrientation {
      FromImage,
      None,
@@ -16094,7 +16174,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)
  #[allow(missing_docs)]
  #[derive(
-@@ -2628,4 +2938,132 @@
+@@ -2628,4 +2940,132 @@
  pub enum DirectionProperty {
      Ltr,
      Rtl,
