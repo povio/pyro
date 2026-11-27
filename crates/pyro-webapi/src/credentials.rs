@@ -135,7 +135,8 @@ fn same_origin_with_ancestors(page: &Rc<PageDom>, own_origin: Option<&str>) -> b
 /// The facts about the calling document the client steps need, as JSON:
 /// `origin` (tuple origin or null), `host` (its host, null for an opaque origin or an IP address),
 /// `same` (same-origin with ancestors), `policyGet` / `policyCreate`
-/// (`publickey-credentials-get` / `-create`), `activation` (transient user activation).
+/// (`publickey-credentials-get` / `-create`: both default to `'self'`, checked in headless Chrome:
+/// a cross-origin frame without `allow` gets neither), `activation` (transient user activation).
 fn frame_info(s: &Scope<'_>, page: &Rc<PageDom>) -> serde_json::Value {
     let origin = crate::storage::tuple_origin(s, page);
     let host = origin.as_deref().and_then(|o| url::Url::parse(o).ok()).and_then(|u| match u.host() {
@@ -146,7 +147,7 @@ fn frame_info(s: &Scope<'_>, page: &Rc<PageDom>) -> serde_json::Value {
         "origin": origin,
         "host": host,
         "same": same_origin_with_ancestors(page, origin.as_deref()),
-        "policyGet": policy_allows(page, origin.as_deref(), "publickey-credentials-get", false),
+        "policyGet": policy_allows(page, origin.as_deref(), "publickey-credentials-get", true),
         "policyCreate": policy_allows(page, origin.as_deref(), "publickey-credentials-create", true),
         "activation": page.has_transient_activation(),
     })
@@ -156,7 +157,10 @@ fn frame_info(s: &Scope<'_>, page: &Rc<PageDom>) -> serde_json::Value {
 /// origin may use it ("is a registrable domain suffix of or is equal to the origin's effective
 /// domain"): a domain without a port, not a public suffix unless it is the host itself.
 fn valid_rp_id(host: &str, candidate: &str) -> Option<String> {
-    let candidate = candidate.to_ascii_lowercase();
+    // The candidate is compared with the origin's host as the URL parser holds it (IDNA ToASCII, so
+    // `bücher.example` is `xn--bcher-kva.example`); an IP address, a forbidden host code point or a
+    // port is no domain.
+    let Ok(url::Host::Domain(candidate)) = url::Host::parse(candidate) else { return None };
     let host = host.to_ascii_lowercase();
     let label_ok = |label: &str| !label.is_empty() && !label.starts_with('-') && !label.ends_with('-') && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
     if candidate.is_empty() || !candidate.split('.').all(label_ok) {
@@ -245,6 +249,10 @@ mod tests {
         assert_eq!(valid_rp_id("example.com", "invalid domain.com"), None);
         assert_eq!(valid_rp_id("example.com", "-example.com"), None);
         assert_eq!(valid_rp_id("example.com", ""), None);
+        // IDNA: a Unicode candidate names its punycode host (and a domain below it).
+        assert_eq!(valid_rp_id("xn--bcher-kva.example", "b\u{fc}cher.example").as_deref(), Some("xn--bcher-kva.example"));
+        assert_eq!(valid_rp_id("www.xn--bcher-kva.example", "B\u{dc}CHER.example").as_deref(), Some("xn--bcher-kva.example"));
+        assert_eq!(valid_rp_id("example.com", "127.0.0.1"), None);
         assert_eq!(valid_rp_id("example.com", "null"), None);
     }
 }

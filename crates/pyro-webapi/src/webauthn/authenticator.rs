@@ -229,6 +229,15 @@ impl Authenticator {
     }
 }
 
+/// A credential's signature counter from a CDP `signCount`: an unsigned 32-bit integer (the
+/// authenticator data holds four bytes), anything else an invalid argument.
+fn sign_count_of(value: &Value) -> Result<u32, CommandError> {
+    match value.as_u64().map(u32::try_from) {
+        Some(Ok(count)) => Ok(count),
+        _ => invalid("Invalid signCount: not an unsigned 32-bit integer"),
+    }
+}
+
 /// How a CDP / WebDriver command failed: an invalid argument, or a state it cannot act on.
 pub(crate) enum CommandError {
     Invalid(String),
@@ -307,14 +316,16 @@ impl State {
         let attachment = req["attachment"].as_str();
         let ext = &req["extensions"];
         let large_blob_required = ext["largeBlob"]["support"].as_str() == Some("required");
+        // No algorithm of the request is one the client can have signed (only ES256 is): a refusal
+        // at once, not a request left waiting for an authenticator (WebAuthn 6.3.2 step 18, Chrome).
+        if !algs.contains(&ES256) {
+            return error("NotSupportedError", "None of the algorithms in pubKeyCredParams is supported.");
+        }
         let mut pending = false;
         let mut denied = false;
         for index in 0..self.authenticators.len() {
             let a = &self.authenticators[index];
             if attachment.is_some_and(|wanted| (wanted == "platform") != a.platform()) {
-                continue;
-            }
-            if !algs.contains(&ES256) {
                 continue;
             }
             let ctap2 = a.protocol.ctap2();
@@ -511,8 +522,8 @@ impl State {
                 if let Some(v) = params["backupState"].as_bool() {
                     c.backup_state = v;
                 }
-                if let Some(v) = params["signCount"].as_u64() {
-                    c.sign_count = v as u32;
+                if !params["signCount"].is_null() {
+                    c.sign_count = sign_count_of(&params["signCount"])?;
                 }
                 Ok(json!({}))
             }
@@ -572,6 +583,7 @@ impl Authenticator {
         if resident && !self.protocol.ctap2() {
             return invalid("Resident credentials need a CTAP2 authenticator");
         }
+        let sign_count = if credential["signCount"].is_null() { 0 } else { sign_count_of(&credential["signCount"])? };
         let user_handle = bytes_of(&credential["userHandle"]);
         if resident && user_handle.is_none() {
             return invalid("A resident credential needs a userHandle");
@@ -585,7 +597,7 @@ impl Authenticator {
             private_key,
             user_handle,
             resident,
-            sign_count: credential["signCount"].as_u64().unwrap_or(0) as u32,
+            sign_count,
             user_name: credential["userName"].as_str().map(str::to_owned),
             user_display_name: credential["userDisplayName"].as_str().map(str::to_owned),
             large_blob: bytes_of(&credential["largeBlob"]),
@@ -883,7 +895,8 @@ mod tests {
         assert_eq!(empty.make_credential(&create_request(json!({})))["status"], "pending");
         let (mut s, id) = state(json!({ "protocol": "u2f", "transport": "usb" }));
         assert_eq!(s.make_credential(&create_request(json!({ "attachment": "platform" })))["status"], "pending");
-        assert_eq!(s.make_credential(&create_request(json!({ "algs": [-257] })))["status"], "pending");
+        let unsupported = s.make_credential(&create_request(json!({ "algs": [-257] })));
+        assert_eq!((unsupported["status"].as_str(), unsupported["name"].as_str()), (Some("error"), Some("NotSupportedError")));
         // A capability it lacks is refused at once.
         let refused = s.make_credential(&create_request(json!({ "residentKey": "required" })));
         assert_eq!(refused["name"], "NotAllowedError");
@@ -959,5 +972,12 @@ mod tests {
         s.command("removeCredential", &json!({ "authenticatorId": id, "credentialId": b64u(b"cred-1") })).ok().unwrap();
         assert!(s.command("getCredential", &json!({ "authenticatorId": id, "credentialId": b64u(b"cred-1") })).is_err());
         assert!(s.command("addCredential", &json!({ "authenticatorId": id, "credential": { "credentialId": "AA", "rpId": "a", "privateKey": "AAAA" } })).is_err());
+        // A signature counter above u32::MAX is refused, not truncated.
+        let big = json!({ "credentialId": b64u(b"cred-2"), "rpId": "example.com", "privateKey": private_key, "signCount": u64::from(u32::MAX) + 1 });
+        assert!(matches!(s.command("addCredential", &json!({ "authenticatorId": id, "credential": big })), Err(CommandError::Invalid(_))));
+        let max = json!({ "credentialId": b64u(b"cred-2"), "rpId": "example.com", "privateKey": private_key, "signCount": u32::MAX });
+        assert!(s.command("addCredential", &json!({ "authenticatorId": id, "credential": max })).is_ok());
+        let too_big = json!({ "authenticatorId": id, "credentialId": b64u(b"cred-2"), "signCount": u64::from(u32::MAX) + 1 });
+        assert!(matches!(s.command("setCredentialProperties", &too_big), Err(CommandError::Invalid(_))));
     }
 }

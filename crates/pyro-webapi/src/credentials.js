@@ -330,8 +330,11 @@
       throw notAllowed("The 'publickey-credentials-create' feature is not enabled in this document. Permissions Policy may be used to delegate Web Authentication capabilities to cross-origin child frames.");
     }
     const rpId = rpIdOf(pk.rp.id, f);
-    let algs = pk.params.filter((p) => p.type === 'public-key').map((p) => p.alg);
-    if (pk.params.length > 0 && algs.length === 0) throw dom('No pubKeyCredParams entry has the type "public-key".', 'NotSupportedError');
+    // WebAuthn 6.3.2 step 18 (Chrome): the entries of type "public-key" whose algorithm the client can
+    // have an authenticator sign with (ES256: the virtual authenticators sign with nothing else); none
+    // is a NotSupportedError at once, not a request that waits for its timeout.
+    let algs = pk.params.filter((p) => p.type === 'public-key' && p.alg === -7).map((p) => p.alg);
+    if (pk.params.length > 0 && algs.length === 0) throw dom('No pubKeyCredParams entry names a public-key algorithm this client supports.', 'NotSupportedError');
     if (pk.params.length === 0) algs = [-7, -257];
     const ext = pk.extensions || {};
     if (ext.appid !== undefined) throw dom("The 'appid' extension is only supported by get().", 'NotSupportedError');
