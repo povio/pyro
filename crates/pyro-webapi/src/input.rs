@@ -3140,6 +3140,24 @@ fn dispatch_boundary_events(
     }
 }
 
+/// The pointer is now over `target`, the node that captured it: boundary events from what was
+/// hovered (pointer capture §4.1.1; no-op when it already is).
+pub(crate) fn hover_capture_target(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
+    let prev = page.hovered();
+    if prev == Some(target) && !refresh_hover_trail(page) {
+        return;
+    }
+    if let Some(tkey) = key_of(page, target) {
+        dispatch_boundary_events(page, prev, target, tkey, m, None);
+    }
+}
+
+/// The pointer lost its capture: it is over whatever is under it again.
+pub(crate) fn hover_under_pointer(page: &Rc<PageDom>, m: &MouseInput) {
+    let Some(hit) = pointer_target(page, m.x, m.y, true) else { return };
+    hover_capture_target(page, hit, m);
+}
+
 /// Delay of the hover update after the hovered element is removed: Chromium
 /// updates hover for content that changed under a stationary pointer on its
 /// fake-mouse-move timer (~100 ms, measured 110 ms), not in the mutating task.
@@ -3742,6 +3760,9 @@ struct ActiveTouch {
     /// The touchstart target: the touch's events go there for the whole
     /// sequence (implicit pointer capture).
     target: NodeId,
+    /// The node the touch is "over" for boundary events: the touchstart target until pointer
+    /// capture moves it to the capturing node (and back when the capture is lost).
+    over: std::cell::Cell<NodeId>,
     /// A scroll took the touch over: no more pointer events for it.
     pointer_cancelled: bool,
 }
@@ -3921,9 +3942,47 @@ fn capture(page: &Rc<PageDom>, t: &ActiveTouch, p: &PointerState, modifiers: Mod
     let (lost, got) = crate::pointer_capture::touch_process_pending(page, t.pointer_id);
     if let Some(node) = lost {
         fire_touch_pointer_at(page, node, "lostpointercapture", t, p, modifiers);
+        // The touch is over whatever is under it again.
+        if got.is_none() {
+            let under = pointer_target(page, t.input.x, t.input.y, true).unwrap_or(t.target);
+            touch_hover(page, t, p, modifiers, under);
+        }
     }
     if let Some(node) = got {
+        // The capturing node is entered before it hears `gotpointercapture`.
+        touch_hover(page, t, p, modifiers, node);
         fire_touch_pointer_at(page, node, "gotpointercapture", t, p, modifiers);
+    }
+}
+
+/// Boundary events of touch `t` moving from the node it is over to `to` (out and leave inner to
+/// outer, then over and enter outer to inner), as the mouse's `dispatch_boundary_events`.
+fn touch_hover(page: &Rc<PageDom>, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers, to: NodeId) {
+    let from = t.over.get();
+    if from == to || !page.dom.borrow().is_connected(to).unwrap_or(false) {
+        return;
+    }
+    t.over.set(to);
+    let from_connected = page.dom.borrow().is_connected(from).unwrap_or(false);
+    let (left, entered) = boundary_chains(if from_connected { hover_chain(page, from) } else { Vec::new() }, hover_chain(page, to));
+    let (from_key, to_key) = (key_of(page, from), key_of(page, to));
+    if from_connected {
+        if let Some(k) = from_key {
+            fire(page, k, &touch_pointer_event(page, "pointerout", t, p, modifiers, to_key));
+        }
+    }
+    for n in left {
+        if let Some(k) = key_of(page, n) {
+            fire(page, k, &touch_pointer_event(page, "pointerleave", t, p, modifiers, to_key));
+        }
+    }
+    if let Some(k) = to_key {
+        fire(page, k, &touch_pointer_event(page, "pointerover", t, p, modifiers, from_key));
+    }
+    for n in entered.into_iter().rev() {
+        if let Some(k) = key_of(page, n) {
+            fire(page, k, &touch_pointer_event(page, "pointerenter", t, p, modifiers, from_key));
+        }
     }
 }
 
@@ -3947,8 +4006,9 @@ fn touch_leave(page: &Rc<PageDom>, last: &str, t: &mut ActiveTouch, p: &PointerS
         fire_touch_pointer_at(page, node, "lostpointercapture", t, p, modifiers);
     }
     crate::pointer_capture::touch_capture_end(page, t.pointer_id);
-    fire_touch_pointer(page, "pointerout", t, p, modifiers);
-    for n in hover_chain(page, t.target) {
+    let over = t.over.get();
+    fire_touch_pointer_at(page, over, "pointerout", t, p, modifiers);
+    for n in hover_chain(page, over) {
         if let Some(k) = key_of(page, n) {
             fire(page, k, &touch_pointer_event(page, "pointerleave", t, p, modifiers, None));
         }
@@ -4307,6 +4367,7 @@ pub fn dispatch_touch(
             pointer_id: seq.next_pointer_id,
             primary: seq.active.is_empty(),
             target,
+            over: std::cell::Cell::new(target),
             pointer_cancelled: false,
         };
         seq.next_pointer_id += 1;

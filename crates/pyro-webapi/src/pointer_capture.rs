@@ -97,6 +97,11 @@ fn fire_capture_event(page: &Rc<PageDom>, ty: &str, el: NodeId, m: &MouseInput) 
     }
 }
 
+/// Pointer Events §4.1.3.2 "process pending pointer capture" for the mouse, with the boundary
+/// events §4.1.1 puts around it (Chrome): a new capture target is entered (out/leave at what was
+/// hovered, over/enter at the target) before it hears `gotpointercapture`; after
+/// `lostpointercapture` the pointer is over whatever is under it again (out/leave at the old
+/// capture target, over/enter there).
 pub(crate) fn process_pending_capture(page: &Rc<PageDom>, m: &MouseInput) {
     let c = page.mouse_capture.get();
     if c.pending.is_none() && c.current.is_none() {
@@ -107,16 +112,27 @@ pub(crate) fn process_pending_capture(page: &Rc<PageDom>, m: &MouseInput) {
         page.mouse_capture.set(MouseCapture { pending: None, ..c });
     }
     let c = page.mouse_capture.get();
-    if let Some(cur) = c.current.filter(|&cur| Some(cur) != c.pending) {
+    // What the pending target was when this began: a `lostpointercapture` listener that sets
+    // another one gets it processed with the next pointer event, not now.
+    let pending = c.pending;
+    let mut lost = false;
+    if let Some(cur) = c.current.filter(|&cur| Some(cur) != pending) {
         page.mouse_capture.set(MouseCapture { current: None, ..c });
         // A capture target removed from the document: its document hears it.
         let at = if capture_connected(page, cur) { cur } else { page.document() };
         fire_capture_event(page, "lostpointercapture", at, m);
+        lost = true;
     }
+    // (That listener may have removed the pending target.)
     let c = page.mouse_capture.get();
-    if let Some(p) = c.pending.filter(|&p| Some(p) != c.current) {
-        page.mouse_capture.set(MouseCapture { current: Some(p), ..c });
-        fire_capture_event(page, "gotpointercapture", p, m);
+    match pending.filter(|&p| Some(p) != c.current && capture_connected(page, p)) {
+        Some(p) => {
+            page.mouse_capture.set(MouseCapture { current: Some(p), ..c });
+            crate::input::hover_capture_target(page, p, m);
+            fire_capture_event(page, "gotpointercapture", p, m);
+        }
+        None if lost => crate::input::hover_under_pointer(page, m),
+        None => {}
     }
 }
 
