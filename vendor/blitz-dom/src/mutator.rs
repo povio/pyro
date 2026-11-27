@@ -1154,6 +1154,23 @@ impl DocumentMutator<'_> {
                     | local_name!("srcdoc")
                     | local_name!("span")
             );
+        // pyro: attributes the MathML layout reads directly (`layout::math`): a fraction's bar, an
+        // operator's stretching and its limits.
+        let read_by_layout = read_by_layout
+            || (node.element_data().is_some_and(|element| element.name.ns == markup5ever::ns!(mathml))
+                && matches!(
+                    &**attr,
+                    "linethickness"
+                        | "stretchy"
+                        | "symmetric"
+                        | "largeop"
+                        | "movablelimits"
+                        | "minsize"
+                        | "maxsize"
+                        | "accent"
+                        | "accentunder"
+                        | "form"
+                ));
         // A table's `cellpadding` is a presentational hint on its cells, not on the table.
         let restyles_cells = *attr == local_name!("cellpadding")
             && node.data.is_element_with_tag_name(&local_name!("table"));

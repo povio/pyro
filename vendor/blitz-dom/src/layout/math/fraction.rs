@@ -14,8 +14,8 @@
 use markup5ever::{local_name, ns};
 use style::values::specified::box_::{DisplayInside, DisplayOutside};
 use taffy::{
-    AvailableSpace, CoreStyle as _, LayoutInput, LayoutOutput, LayoutPartialTree as _, Point, Rect, RequestedAxis,
-    ResolveOrZero as _, RunMode, ScrollableOverflow, Size, SizingMode,
+    AxisStaticEdge, AxisStaticPosition, CoreStyle as _, LayoutInput, LayoutOutput, LayoutPartialTree as _, OofCandidate,
+    OofPositioningArea, Point, ResolveOrZero as _, RunMode, Size,
 };
 
 use super::{MathConstant, MathFontParameters};
@@ -40,11 +40,13 @@ pub(crate) fn is_ordinary_fraction(doc: &BaseDocument, node: &Node) -> bool {
     fraction_children(doc, node).is_some()
 }
 
-/// The numerator and denominator of the fraction `node`: its two element children, when it has
-/// exactly two, each laid out in flow and holding no block box, and no other content (white
-/// space and comments aside).
-pub(crate) fn fraction_children(doc: &BaseDocument, node: &Node) -> Option<[NodeId; 2]> {
+/// The numerator and denominator of the fraction `node`: its two in-flow element children, when it
+/// has exactly two, each holding no block box, and no other content (white space and comments
+/// aside); and its out-of-flow children (positioned by the fraction's content box, MathML Core
+/// § 3.1: they do not take part in its layout, as the `display: none` ones that are left out).
+pub(crate) fn fraction_children(doc: &BaseDocument, node: &Node) -> Option<([NodeId; 2], Vec<NodeId>)> {
     let mut found = [NodeId::default(); 2];
+    let mut out_of_flow = Vec::new();
     let mut count = 0;
     for &child_id in node.children.iter() {
         let child = &doc.nodes[child_id];
@@ -57,12 +59,17 @@ pub(crate) fn fraction_children(doc: &BaseDocument, node: &Node) -> Option<[Node
             }
             NodeData::Element(_) => {
                 let display = child.display_style()?;
-                if display.is_none() || display.is_contents() || child.is_or_contains_block() {
+                if display.is_none() {
+                    continue;
+                }
+                if display.is_contents() || child.is_or_contains_block() {
                     return None;
                 }
-                let out_of_flow =
-                    child.primary_styles().is_none_or(|style| style.get_box().position.is_absolutely_positioned());
-                if out_of_flow || count == 2 {
+                if child.primary_styles().is_none_or(|style| style.get_box().position.is_absolutely_positioned()) {
+                    out_of_flow.push(child_id);
+                    continue;
+                }
+                if count == 2 {
                     return None;
                 }
                 found[count] = child_id;
@@ -71,7 +78,7 @@ pub(crate) fn fraction_children(doc: &BaseDocument, node: &Node) -> Option<[Node
             _ => return None,
         }
     }
-    (count == 2).then_some(found)
+    (count == 2).then_some((found, out_of_flow))
 }
 
 /// The `linethickness` attribute of a fraction (MathML Core § 3.3.2.1): a `<length-percentage>`,
@@ -148,8 +155,16 @@ impl FractionParameters {
         let x_height = font.x_height.unwrap_or(font_size * 0.5);
         let axis_height = font.constant(AxisHeight).unwrap_or(x_height / 2.0);
         let default_thickness = font.constant(FractionRuleThickness).unwrap_or(rule_fallback);
+        // A negative value is zero (Chromium, WPT `frac-linethickness-002`: "Negative"); any other
+        // invalid one is the default.
         let thickness = line_thickness
-            .and_then(|value| parse_line_thickness(value, default_thickness, font_size, x_height))
+            .and_then(|value| {
+                let value = value.trim_matches(|c: char| c.is_ascii_whitespace());
+                match value.strip_prefix('-') {
+                    Some(magnitude) => parse_line_thickness(magnitude, default_thickness, font_size, x_height).map(|_| 0.0),
+                    None => parse_line_thickness(value, default_thickness, font_size, x_height),
+                }
+            })
             .unwrap_or(default_thickness)
             .max(0.0);
         let pick = |display: MathConstant, inline: MathConstant| font.constant(if display_style { display } else { inline });
@@ -212,13 +227,17 @@ impl LayoutPassState<'_> {
     /// Lays out the ordinary fraction `node_id` (Chromium's `MathMLFractionLayoutAlgorithm`):
     /// its children at their max-content widths, the numerator's baseline raised and the
     /// denominator's lowered from the fraction's by `FractionParameters::shifts`, its baseline its
-    /// first and last. Records the bar (`ElementData::math_fraction_bar`) for paint.
+    /// first and last. The box takes its `width`, `height`, `min-*`, `max-*` from the style
+    /// around the content; out-of-flow children are positioned from the content box's start.
+    /// Records the bar (`ElementData::math_fraction_bar`) for paint.
     #[inline(never)]
     pub(crate) fn compute_math_fraction_layout(&mut self, node_id: taffy::NodeId, inputs: LayoutInput) -> LayoutOutput {
         let dom_id = dom_node_id(node_id);
-        let children: Vec<NodeId> = self.nodes[dom_id].layout_children.borrow().as_ref().map(|c| c.to_vec()).unwrap_or_default();
+        let listed: Vec<NodeId> = self.nodes[dom_id].layout_children.borrow().as_ref().map(|c| c.to_vec()).unwrap_or_default();
         let Some(params) = self.fraction_parameters(dom_id) else { return LayoutOutput::HIDDEN };
-        let [numerator, denominator] = children[..] else { return LayoutOutput::HIDDEN };
+        // The numerator and denominator, then the out-of-flow children (`construct_fraction`).
+        let [numerator, denominator, out_of_flow @ ..] = &listed[..] else { return LayoutOutput::HIDDEN };
+        let (numerator, denominator) = (*numerator, *denominator);
         let (padding, border) = {
             let style = self.nodes[dom_id].layout_style();
             let parent_width = inputs.parent_size.width;
@@ -229,86 +248,76 @@ impl LayoutPassState<'_> {
         };
         let inset = padding + border;
 
-        // Each child at its max-content size, as an independent formatting context.
-        let child_inputs = LayoutInput {
-            run_mode: RunMode::PerformLayout,
-            sizing_mode: SizingMode::InherentSize,
-            axis: RequestedAxis::Both,
-            known_dimensions: Size::NONE,
-            known_dimensions_are_definite: Size { width: false, height: false },
-            parent_size: Size::NONE,
-            available_space: Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
-            vertical_margins_are_collapsible: taffy::Line::FALSE,
-        };
-        let mut laid_out = [(Rect::<f32>::ZERO, Size::<f32>::ZERO, ScrollableOverflow::ZERO, 0.0f32, 0.0f32); 2];
-        for (slot, child) in laid_out.iter_mut().zip([numerator, denominator]) {
-            let margin = self.nodes[child].layout_style().margin().resolve_or_zero(None, resolve_calc_value);
-            let output = self.compute_child_layout(taffy_node_id(child), child_inputs);
-            // A child without a baseline has one at its bottom border edge (Chromium's
-            // `FirstBaselineOrSynthesize`).
-            let baseline = output.baselines.first.or(output.baselines.last).unwrap_or(output.size.height);
-            let ascent = margin.top + baseline;
-            let descent = output.size.height + margin.top + margin.bottom - ascent;
-            *slot = (margin, output.size, output.scrollable_overflow_rect, ascent, descent);
-        }
-        let [(num_margin, num_size, num_overflow, num_ascent, num_descent), (den_margin, den_size, den_overflow, den_ascent, den_descent)] =
-            laid_out;
-        let (up, down) = params.shifts((num_ascent, num_descent), (den_ascent, den_descent));
-        let ascent = (up + num_ascent).max(den_ascent - down) + inset.top;
-        let descent = (num_descent - up).max(down + den_descent) + inset.bottom;
-        let num_width = num_size.width + num_margin.left + num_margin.right;
-        let den_width = den_size.width + den_margin.left + den_margin.right;
-        let content_width = num_width.max(den_width);
-        let size = Size {
-            width: inputs.known_dimensions.width.unwrap_or(content_width + inset.left + inset.right),
-            height: inputs.known_dimensions.height.unwrap_or(ascent + descent),
-        };
+        // Each child at its max-content size, as an independent formatting context (an `mspace`'s
+        // depth lowers its baseline: `measure_math_child`).
+        let num = self.measure_math_child(numerator, Size::NONE);
+        let den = self.measure_math_child(denominator, Size::NONE);
+        let (up, down) = params.shifts((num.ascent, num.descent), (den.ascent, den.descent));
+        let ascent = (up + num.ascent).max(den.ascent - down);
+        let descent = (num.descent - up).max(down + den.descent);
+        let content_width = num.margin_box_width().max(den.margin_box_width());
 
-        if inputs.run_mode == RunMode::PerformLayout {
-            let place = [
-                (numerator, num_margin, num_size, num_overflow, num_width, ascent - up - num_ascent),
-                (denominator, den_margin, den_size, den_overflow, den_width, ascent + down - den_ascent),
-            ];
-            for (order, (child, margin, child_size, overflow, width, top)) in place.into_iter().enumerate() {
-                let (child_padding, child_border) = {
-                    let style = self.nodes[child].layout_style();
-                    (
-                        style.padding().resolve_or_zero(None, resolve_calc_value),
-                        style.border().resolve_or_zero(None, resolve_calc_value),
-                    )
-                };
-                let layout = taffy::Layout {
-                    order: order as u32,
-                    location: Point {
-                        x: inset.left + (content_width - width) / 2.0 + margin.left,
-                        y: top + margin.top,
-                    },
-                    size: child_size,
-                    scrollable_overflow_rect: overflow,
-                    scrollbar_size: Size::ZERO,
-                    border: child_border,
-                    padding: child_padding,
-                    margin,
-                };
-                self.set_unrounded_layout(taffy_node_id(child), &layout);
-            }
-            // The bar, centred on the math axis (Chromium's `MathMLPainter::PaintFractionBar`).
-            let bar = (params.thickness > 0.0).then(|| [ascent - params.axis_height - params.thickness / 2.0, params.thickness]);
-            if let Some(element) = self.nodes[dom_id].element_data_mut() {
-                element.math_fraction_bar = bar;
-            }
+        // The box: `width`, `height`, `min-*`, `max-*` and `box-sizing` resolved against the content.
+        let mut output = {
+            let style = self.nodes[dom_id].layout_style();
+            let content = Size { width: content_width, height: ascent + descent };
+            taffy::compute_leaf_layout(inputs, &style, resolve_calc_value, |_, _| content)
+        };
+        let baseline = inset.top + ascent;
+        output.baselines = taffy::Baselines::new(Some(baseline), Some(baseline));
+        if inputs.run_mode != RunMode::PerformLayout {
+            return output;
         }
 
-        let overflow = ScrollableOverflow::new(
-            Rect {
-                left: 0.0,
-                top: 0.0,
-                right: (size.width - border.left - border.right).max(0.0),
-                bottom: (size.height - border.top - border.bottom).max(0.0),
-            },
-            Point { x: false, y: false },
-        );
-        LayoutOutput::from_sizes_and_baselines(size, overflow, taffy::Baselines::new(Some(ascent), Some(ascent)))
+        let place = [(numerator, num, baseline - up - num.ascent), (denominator, den, baseline + down - den.ascent)];
+        for (order, (child, metrics, top)) in place.into_iter().enumerate() {
+            let (child_padding, child_border) = {
+                let style = self.nodes[child].layout_style();
+                (
+                    style.padding().resolve_or_zero(None, resolve_calc_value),
+                    style.border().resolve_or_zero(None, resolve_calc_value),
+                )
+            };
+            let layout = taffy::Layout {
+                order: order as u32,
+                location: Point {
+                    x: inset.left + (content_width - metrics.margin_box_width()) / 2.0 + metrics.margin.left,
+                    y: top + metrics.margin.top,
+                },
+                size: metrics.size,
+                scrollable_overflow_rect: metrics.overflow,
+                scrollbar_size: Size::ZERO,
+                border: child_border,
+                padding: child_padding,
+                margin: metrics.margin,
+            };
+            self.set_unrounded_layout(taffy_node_id(child), &layout);
+        }
+        // The bar, centred on the math axis (Chromium's `MathMLPainter::PaintFractionBar`).
+        let bar = (params.thickness > 0.0).then(|| [baseline - params.axis_height - params.thickness / 2.0, params.thickness]);
+        if let Some(element) = self.nodes[dom_id].element_data_mut() {
+            element.math_fraction_bar = bar;
+        }
+
+        // Out-of-flow children are positioned by their containing block: their static position is
+        // the content box's start.
+        if !out_of_flow.is_empty() {
+            let static_position = Point { x: inset.left, y: inset.top }.map(|at| AxisStaticPosition::from_edge(at, AxisStaticEdge::Start));
+            for (index, &child) in out_of_flow.iter().enumerate() {
+                output.oof_candidates.push(OofCandidate {
+                    containing_block: None,
+                    node: taffy_node_id(child),
+                    order: (2 + index) as u32,
+                    position: self.nodes[child].taffy_position(),
+                    static_position,
+                });
+            }
+            output.oof_positioning_area = Some(OofPositioningArea {
+                size: output.size - border.sum_axes(),
+                offset: Point { x: border.left, y: border.top },
+            });
+        }
+        output
     }
 }
 
@@ -326,9 +335,10 @@ pub(crate) fn construct_fraction(doc: &mut BaseDocument, node_id: NodeId, childr
     if !is_ordinary_fraction(doc, node) {
         return false;
     }
-    let pair = fraction_children(doc, node).unwrap();
+    let (pair, out_of_flow) = fraction_children(doc, node).unwrap();
     doc.nodes[node_id].flags.insert(NodeFlags::IS_MATH_FRACTION);
     children.extend(pair);
+    children.extend(out_of_flow);
     true
 }
 
@@ -362,6 +372,9 @@ mod tests {
         assert_eq!((p.axis_height, p.thickness, p.numerator_gap_min), (5.0, 1.0, 1.0));
         // Numerator descent 4: its baseline 5 + 0.5 + 1 + 4 up; denominator ascent 15: 0.5 + 1 + 15 - 5 down.
         assert_eq!(p.shifts((15.0, 4.0), (15.0, 4.0)), (10.5, 11.5));
+        // A negative thickness is zero, any other invalid one the default.
+        assert_eq!(FractionParameters::new(&font, 20.0, false, Some("-1.5em")).thickness, 0.0);
+        assert_eq!(FractionParameters::new(&font, 20.0, false, Some("thick")).thickness, 1.0);
         // Display style: three bars of gap.
         let p = FractionParameters::new(&font, 20.0, true, None);
         assert_eq!(p.numerator_gap_min, 3.0);

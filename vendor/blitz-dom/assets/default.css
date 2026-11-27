@@ -1685,6 +1685,9 @@ m|math { math-style: compact; }
 m|math[display="block" i] { math-style: normal; display: block; }
 m|mfrac { padding-inline: 1px; }
 m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }
+/* A token's text takes one line whatever the token's width (Chromium: width-height-005, a token
+ * narrower than its text overflows it instead of wrapping). */
+m|mi, m|mn, m|mo, m|ms, m|mtext { text-wrap-mode: nowrap; }
 
 /* pyro: MathML attribute-independent UA rules (MathML Core Appendix A, user agent stylesheet; Chromium's
  * mathml.css). The `m|math` and `m|mfrac` rules above belong to the layout; the attribute mappings

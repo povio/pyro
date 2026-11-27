@@ -250,7 +250,13 @@ pub(crate) fn math_kind(doc: &BaseDocument, node_id: NodeId) -> Option<MathKind>
         .children
         .iter()
         .map(|&child| &doc.nodes[child])
-        .filter(|child| matches!(child.data, NodeData::Element(_)) && !child.display_style().is_some_and(|display| display.is_none()))
+        .filter(|child| {
+            matches!(child.data, NodeData::Element(_))
+                && !child.display_style().is_some_and(|display| display.is_none())
+                // An out-of-flow child takes no part in the layout (Core § 3.1): the markup is as
+                // valid as without it (WPT `not-participating-to-parent-layout`).
+                && !child.is_out_of_flow()
+        })
         .collect();
     let valid = required.contains(&in_flow.len()) && (kind != MathKind::Multiscripts || valid_multiscripts(&in_flow));
     Some(if valid { kind } else { MathKind::Row })
