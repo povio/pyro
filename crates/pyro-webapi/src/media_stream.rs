@@ -51,6 +51,9 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     native.set_atom("policy", policy.value())?;
     let kinds = s.function("elementKinds", |s, _, a| crate::media::capture_kinds(s, a.get(0)))?;
     native.set_atom("elementKinds", kinds.value())?;
+    // setStreamFrame(el, width, height, rgba): the frame of the element's srcObject stream (media.rs).
+    let frame = s.function("setStreamFrame", |s, _, a| crate::media::set_stream_frame(s, a.get(0), a.get(1), a.get(2), a.get(3)))?;
+    native.set_atom("setStreamFrame", frame.value())?;
     Ok(native)
 }
 

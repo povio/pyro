@@ -1299,6 +1299,87 @@
   }
   idl(ImageCapture, 'ImageCapture');
 
+  // ---- <video srcObject=MediaStream>: the element's frames -------------------------------------
+  // While such an element plays (and until its first frame, which gives it its data), one frame of
+  // the stream's first live video track is pulled per rendering update and handed to the element
+  // (`native.setStreamFrame`): what screenshots, drawImage, createImageBitmap, VideoFrame and
+  // requestVideoFrameCallback show. A muted track delivers none; a disabled one delivers black.
+  const attached = new WeakMap(); // element -> { stream, have, busy, dead }
+  const streamFrame = (stream) => {
+    for (const t of streams.get(stream).tracks) {
+      const st = tracks.get(t);
+      if (st.kind !== 'video' || st.readyState !== 'live' || st.muted || !st.source.pullFrame) continue;
+      if (!st.enabled) return blackFrame(st.settings.width || 1, st.settings.height || 1);
+      return st.source.pullFrame(st.settings);
+    }
+    return null;
+  };
+  const toRGBA = (bitmap) => {
+    const w = bitmap.width;
+    const h = bitmap.height;
+    if (!w || !h) return null;
+    const c = new OffscreenCanvas(w, h);
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bitmap, 0, 0);
+    return ctx.getImageData(0, 0, w, h);
+  };
+  const pumpFrames = (el, rec) => {
+    if (rec.busy || rec.dead) return;
+    rec.busy = true;
+    const win = (el.ownerDocument && el.ownerDocument.defaultView) || globalThis;
+    const stop = () => {
+      rec.busy = false;
+    };
+    const step = () => {
+      let stream = null;
+      try {
+        stream = el.srcObject;
+      } catch (e) {
+        /* detached realm */
+      }
+      if (rec.dead || stream !== rec.stream || !native.active()) return stop();
+      // Once it has shown a frame a paused element keeps it; play() resumes the pulls.
+      if (rec.have && el.paused) return stop();
+      let p = null;
+      try {
+        p = streamFrame(stream);
+      } catch (e) {
+        p = null;
+      }
+      if (!p) return win.requestAnimationFrame(step);
+      p.then(
+        (bitmap) => {
+          try {
+            const data = bitmap && toRGBA(bitmap);
+            if (bitmap && bitmap.close) bitmap.close();
+            if (data && !rec.dead && el.srcObject === rec.stream && native.setStreamFrame(el, data.width, data.height, data.data)) rec.have = true;
+          } catch (e) {
+            /* no frame this time */
+          }
+          win.requestAnimationFrame(step);
+        },
+        () => win.requestAnimationFrame(step),
+      );
+    };
+    win.requestAnimationFrame(step);
+  };
+  const resumeFrames = (e) => {
+    const rec = attached.get(e.currentTarget);
+    if (rec && !rec.busy) pumpFrames(e.currentTarget, rec);
+  };
+  const attachElement = (el, stream) => {
+    if (!isStream(stream)) return;
+    const old = attached.get(el);
+    if (old) old.dead = true;
+    else {
+      el.addEventListener('play', resumeFrames);
+      el.addEventListener('playing', resumeFrames);
+    }
+    const rec = { stream, have: false, busy: false, dead: false };
+    attached.set(el, rec);
+    pumpFrames(el, rec);
+  };
+
   // Info for HTMLMediaElement.srcObject (media.rs): [audio tracks, video tracks, width, height] of
   // a MediaStream's live tracks, or null for another object.
   const streamInfo = (obj) => {
@@ -1326,7 +1407,7 @@
     MediaStream, MediaStreamTrack, MediaStreamTrackEvent, CanvasCaptureMediaStreamTrack, OverconstrainedError,
     MediaStreamTrackVideoStats, MediaStreamTrackAudioStats,
     MediaDeviceInfo, InputDeviceInfo, ImageCapture,
-    captureCanvas, captureElement, getUserMedia, enumerate, supportedConstraints, streamInfo,
+    captureCanvas, captureElement, getUserMedia, enumerate, supportedConstraints, streamInfo, attachElement,
     makeTrack, trackSource,
   };
 });

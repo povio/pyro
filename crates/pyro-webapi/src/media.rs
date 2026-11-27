@@ -175,6 +175,12 @@ struct MediaState {
     blocked_on_tracks: Option<u32>,
     /// EME: the `MediaKeys` set on this element (`setMediaKeys`), whose sessions' keys decrypt its samples.
     keys: Option<crate::eme::SharedKeys>,
+    /// A `srcObject` MediaStream's video: the frame its first live video track last delivered
+    /// (media_stream.js pulls one per rendering update while the element plays), and how many came.
+    stream_frame: Option<pyro_media::video::Frame>,
+    stream_frames: usize,
+    /// The load (generation) whose HAVE_CURRENT_DATA waits for the stream's first frame.
+    stream_wait: Option<u32>,
 }
 
 /// A `<video>`'s resource, kept to decode frames from: the bytes until the
@@ -243,6 +249,9 @@ impl Default for MediaState {
             presented_frames: 0,
             blocked_on_tracks: None,
             keys: None,
+            stream_frame: None,
+            stream_frames: 0,
+            stream_wait: None,
         }
     }
 }
@@ -999,6 +1008,8 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
         st.show_poster = true;
         st.frames = None;
         st.presented = None;
+        st.stream_frame = None;
+        st.stream_wait = None;
     });
     update_pin(page, node);
     // The show poster flag is set again: no cue stays active.
@@ -1423,14 +1434,75 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
         seek(page, node, start);
     }
     queue(page, node, generation, move |page| {
-        // A MediaStream has no buffering: it has enough data as soon as it has any.
-        with(page, node, |st| st.ready = if st.stream.is_some() { HAVE_ENOUGH_DATA } else { HAVE_CURRENT_DATA });
-        set_delaying(page, node, false);
-        want_frame(page, node);
-        if fire(page, node, generation, "loadeddata") {
-            past_current_data(page, node, generation);
+        // A MediaStream with a video track has no data before that track's first frame
+        // arrived ([`set_stream_frame`] goes on from here). The load event is not held for it.
+        if peek(page, node, |st| st.stream.is_some_and(|i| i.video.is_some()) && st.stream_frame.is_none()) {
+            with(page, node, |st| st.stream_wait = Some(generation));
+            set_delaying(page, node, false);
+            return;
         }
+        loaded_data(page, node, generation);
     });
+}
+
+/// HAVE_CURRENT_DATA: `loadeddata`, then the later ready states.
+fn loaded_data(page: &Rc<PageDom>, node: NodeId, generation: u32) {
+    // A MediaStream has no buffering: it has enough data as soon as it has any.
+    with(page, node, |st| st.ready = if st.stream.is_some() { HAVE_ENOUGH_DATA } else { HAVE_CURRENT_DATA });
+    set_delaying(page, node, false);
+    want_frame(page, node);
+    if fire(page, node, generation, "loadeddata") {
+        past_current_data(page, node, generation);
+    }
+}
+
+/// media_stream.js: the frame (straight RGBA, `w` x `h`) the element's `srcObject` MediaStream
+/// shows now. It is the element's current frame (`drawImage`, screenshots, `requestVideoFrameCallback`);
+/// the first one gives the element its data. False when the element no longer plays a stream with video.
+pub(crate) fn set_stream_frame<'s>(
+    s: &Scope<'s>,
+    element: Value<'s>,
+    w: Value<'s>,
+    h: Value<'s>,
+    data: Value<'s>,
+) -> JsResult<Value<'s>> {
+    let n = s.unwrap::<crate::node::Node>(element).ok_or_else(|| JsError::Type("The provided value is not of type 'HTMLMediaElement'.".into()))?;
+    let (w, h) = (w.to_number()? as u32, h.to_number()? as u32);
+    let rgba = crate::encoding::buffer_source_bytes(s, data)?.unwrap_or_default();
+    if w == 0 || h == 0 || rgba.len() != w as usize * h as usize * 4 {
+        return Ok(s.boolean(false));
+    }
+    let page = n.page().clone();
+    let node = n.id;
+    if !is_video(&page, node) {
+        return Ok(s.boolean(false));
+    }
+    let t = now(&page);
+    let stored = with(&page, node, |st| {
+        if !st.stream.is_some_and(|i| i.video.is_some()) {
+            return None;
+        }
+        st.stream_frames += 1;
+        let time = st.position_at(t);
+        st.stream_frame =
+            Some(pyro_media::video::Frame { index: st.stream_frames, time, width: w, height: h, rgba: std::sync::Arc::new(rgba) });
+        // The track's size changed: `videoWidth`/`videoHeight` follow (and `resize`).
+        let resized = st.ready >= HAVE_METADATA && st.video != (w, h);
+        if resized {
+            st.video = (w, h);
+        }
+        Some((resized, st.stream_wait.take(), st.generation))
+    });
+    let Some((resized, waiting, generation)) = stored else { return Ok(s.boolean(false)) };
+    if resized {
+        page.dom.borrow_mut().set_natural_size(node, Some((f64::from(w), f64::from(h))));
+        queue_event(&page, node, generation, "resize");
+    }
+    if waiting == Some(generation) {
+        queue(&page, node, generation, move |page| loaded_data(page, node, generation));
+    }
+    want_frame(&page, node);
+    Ok(s.boolean(true))
 }
 
 /// The start of a Media Fragments URI temporal dimension in `url`'s fragment (`t=[npt:]start[,end]`,
@@ -1618,6 +1690,10 @@ pub(crate) fn current_frame(page: &PageDom, node: NodeId) -> Option<(pyro_media:
         return None;
     }
     let position = st.position_at(t);
+    // A MediaStream shows the frame its video track delivered last.
+    if st.stream.is_some() {
+        return st.stream_frame.clone().map(|f| (f, true));
+    }
     if let Some(m) = st.mse.as_mut() {
         return m.video_frame(position, st.duration).map(|f| (f, true));
     }
@@ -1647,7 +1723,8 @@ impl PageDom {
             elements
                 .iter()
                 .filter(|(_, st)| {
-                    (st.frames.is_some() || st.mse.is_some() && st.video.0 > 0) && st.ready >= HAVE_CURRENT_DATA
+                    (st.frames.is_some() || st.mse.is_some() && st.video.0 > 0 || st.stream_frame.is_some())
+                        && st.ready >= HAVE_CURRENT_DATA
                 })
                 .map(|(&node, st)| (node, st.show_poster))
                 .collect()
@@ -1696,6 +1773,10 @@ fn presented_frame(page: &PageDom, node: NodeId, t: f64) -> Option<(f64, f64, (u
     }
     let position = st.position_at(t);
     let size = st.video;
+    // A MediaStream presents a frame each time its track delivered one.
+    if st.stream.is_some() {
+        return st.stream_frame.as_ref().map(|f| (f.index as f64, f.time, (f.width, f.height)));
+    }
     if let Some(m) = st.mse.as_mut() {
         return m.video_frame(position, st.duration).map(|f| (f.time, f.time, (f.width, f.height)));
     }
@@ -2040,11 +2121,16 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
                     });
                 }
             }
+            let plays_video = stream.is_some_and(|i| i.video.is_some());
             with(n.page(), n.id, |st| {
                 st.src_object = object;
                 st.stream = stream;
             });
             load(&page_rc(n), n.id);
+            // The element pulls its video track's frames, one per rendering update, while it plays.
+            if plays_video {
+                crate::media_stream::stream_helper(s, n.page(), "attachElement", &[wrapper.value(), value])?;
+            }
             Ok(())
         },
     );
