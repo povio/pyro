@@ -523,7 +523,20 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             }
         });
     }
-    fn associate_with_form(&self, _target: &u32, _form: &u32, _nodes: (&u32, Option<&u32>)) {}
+    /// HTML "create an element for the token" step: the element takes the form element pointer's
+    /// form as its owner when the intended parent is in the form's tree, even where the form was
+    /// popped at once (a `<form>` in `<table>`), so the ancestor walk of `form_owner_idx` misses it.
+    fn associate_with_form(&self, target: &u32, form: &u32, nodes: (&u32, Option<&u32>)) {
+        if self.stream_invalid() { return; }
+        self.dom.with(|d| {
+            if d.root_idx(*nodes.0) != d.root_idx(*form) {
+                return;
+            }
+            if let Some(e) = d.n_mut(*target).element_mut() {
+                e.parser_form = *form;
+            }
+        });
+    }
     fn remove_from_parent(&self, target: &u32) {
         if self.stream_invalid() { return; }
         self.dom.with(|d| {

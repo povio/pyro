@@ -425,6 +425,11 @@ pub struct ElementData {
     pub(crate) template_contents: u32,
     pub(crate) shadow_root: u32,
     pub(crate) control: Option<Box<ControlState>>,
+    /// HTML parser "form element pointer" association: the form the tree builder gave this
+    /// form-associated element although it is no descendant of it (`<table><form><tr><td><input>`);
+    /// NIL for none. It stays while the element and the form share a tree and ends when the element
+    /// itself is removed (the "reset the form owner" of an ancestor chain change of the element).
+    pub(crate) parser_form: u32,
     /// `element_flags` bits.
     pub flags: u8,
     /// An HTML `<style>`: the `Dom::style_text_revision` at which its child
@@ -476,6 +481,7 @@ impl ElementData {
             template_contents: NIL,
             shadow_root: NIL,
             control: None,
+            parser_form: NIL,
             flags: 0,
             style_text_revision: 0,
             is_value: None,

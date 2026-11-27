@@ -1062,6 +1062,12 @@ impl Dom {
             }
             p = self.n(p).parent;
         }
+        // The parser's form element pointer gave it a form it is not inside of: valid while both
+        // are in one tree.
+        let pf = e.parser_form;
+        if pf != NIL && self.html_local(pf) == Some(&local_name!("form")) && self.root_idx(pf) == self.root_idx(idx) {
+            return pf;
+        }
         NIL
     }
     pub fn form_owner(&self, id: NodeId) -> DomResult<Option<NodeId>> {
