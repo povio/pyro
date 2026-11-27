@@ -41,6 +41,7 @@ mod network_delivery;
 mod network_idle;
 mod node_realms;
 mod own_names_review;
+mod paint_timing;
 mod performance_timeline;
 mod popups;
 mod preload_scanner;
