@@ -2836,6 +2836,11 @@ impl Io {
                     if req.csp.as_ref().is_some_and(|csp| !csp.allows_redirect(&target)) {
                         return Err(NetError::Blocked(crate::csp::BLOCKED_BY_CSP.into()));
                     }
+                    // A prefetch's hop into a service worker's scope: its fetch event cannot see the
+                    // hops, so the prefetch fails here (the navigation fetches normally later).
+                    if req.prefetch_redirect_stop.as_ref().is_some_and(|stop| stop.stops_at(&target)) {
+                        return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                    }
                     let cross_origin = !cors::same_origin(&url, &target);
                     crate::timing::note(|t| {
                         t.redirect_end = Some(Instant::now());

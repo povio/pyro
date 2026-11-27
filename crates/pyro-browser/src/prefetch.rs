@@ -26,8 +26,18 @@
 //! - the URL is cross-site and the effective referrer policy (the rule's, else the document's) is
 //!   not `strict-origin-when-cross-origin` or stricter (`no-referrer`, `same-origin`,
 //!   `strict-origin`): a cross-site request must not leak a path;
-//! - a service worker would handle a navigation to it (its fetch event belongs to the
-//!   service-worker lane); or the same document already has it (prefetched or in flight).
+//! - the URL is cross-site and a service worker would handle a navigation to it (a same-site
+//!   one goes through the worker's `fetch` event, see below); or the same document already has
+//!   it (prefetched or in flight).
+//!
+//! # Service workers
+//! A same-site prefetch of a URL in a service worker's scope is a navigation-kind request that
+//! goes through the worker's `fetch` event (`loader`): `Sec-Purpose` is in the request's headers,
+//! `clientId` is the initiating document's client and `resultingClientId` is empty (the prefetch
+//! makes no client). The worker sees `redirect: "manual"`, so a redirect response (the network's
+//! or a synthetic one) makes the prefetch fail; a redirect of an unrouted prefetch into a worker's
+//! scope fails it too (`PrefetchRedirectStop`). A navigation to such a URL claims a same-site
+//! prefetch without reaching the worker again.
 //!
 //! # The request
 //! A [`ResourceKind::Document`] navigation request carrying [`Purpose::Prefetch`]: `Sec-Purpose:
@@ -284,7 +294,10 @@ impl Browser {
         if cross_site && !cross_site_policy_ok(policy) {
             return;
         }
-        if self.navigation_service_worker_controls(page.page, &url) {
+        // A same-site prefetch of a URL a service worker controls goes through its `fetch` event
+        // (`loader`); a cross-site one is not made (Chrome: it would reach the worker without
+        // the initiator's credentials context).
+        if cross_site && self.navigation_service_worker_controls(page.page, &url) {
             return;
         }
         self.sweep_prefetches();
@@ -431,10 +444,20 @@ impl Browser {
         })?;
         let initiator = without_fragment(Url::parse(&source).ok()?);
         let target = without_fragment(Url::parse(&opts.url).ok()?);
-        if !pyro_net::cookies::is_trustworthy(&target) || self.navigation_service_worker_controls(page.page, &target) {
+        if !pyro_net::cookies::is_trustworthy(&target) {
             return None;
         }
-        let matching = |e: &Entry| e.context == context && e.initiator == initiator && !e.state.claimed() && e.nvs.equivalent(&e.url, &target);
+        // A service worker that controls the URL answers a navigation for itself, but only a
+        // same-site prefetch (made through the worker) may stand in for that.
+        let controlled = self.navigation_service_worker_controls(page.page, &target);
+        let site = |u: &Url| pyro_net::cookies::partition_key(u);
+        let matching = |e: &Entry| {
+            e.context == context
+                && e.initiator == initiator
+                && !e.state.claimed()
+                && e.nvs.equivalent(&e.url, &target)
+                && (!controlled || site(&e.initiator) == site(&e.url))
+        };
         // The entry of exactly this URL first, else one the variance makes equivalent.
         let at = self
             .prefetches

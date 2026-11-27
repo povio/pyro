@@ -610,7 +610,26 @@ impl ResourceLoader for NetLoader {
         let document = matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe);
         // A service worker's `fetch` event first, in a context with
         // registrations; one emptiness test otherwise.
-        let service_worker = service_worker_route(browser, request.page, &req, document);
+        let mut service_worker = service_worker_route(browser, request.page, &req, document);
+        if matches!(request.purpose, Some(Purpose::Prefetch { .. })) {
+            // A speculation-rules prefetch goes through the worker's `fetch` event as a navigation
+            // does, with the document that asked as its client; its redirects are not followed (the
+            // worker sees `redirect: "manual"`) and none may enter another worker's scope.
+            if let Some(route) = service_worker.take() {
+                let initiator = browser.doc(crate::frames::FrameKey::from(request.page)).and_then(|d| d.main_frame.page_dom.clone());
+                service_worker = Some(match initiator {
+                    Some(initiator) => route.for_prefetch(&initiator),
+                    None => route,
+                });
+                req.redirect = pyro_net::RedirectMode::Manual;
+            } else if let Some(page) = browser.page(request.page) {
+                let settings = page.frames.settings.borrow();
+                if settings.services.may_route_loads() && !page.bypass_service_worker {
+                    let stop = pyro_webapi::prefetch_redirect_stop(&settings.services);
+                    req.prefetch_redirect_stop = (!stop.scopes.is_empty()).then(|| std::sync::Arc::new(stop));
+                }
+            }
+        }
         // A preloaded static file: answered here, on the browser thread, with
         // no I/O-thread round trip. Observers still get the Network events.
         if let Some(hit) = self.client.static_direct(&req).filter(|_| service_worker.is_none()) {

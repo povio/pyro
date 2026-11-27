@@ -233,6 +233,26 @@ pub struct Request {
     /// "prefetch"; Chrome fetches it in an isolated context): it sends no cookies and no
     /// non-default client hints. The cookies its response sets are still stored.
     pub cross_site_prefetch: bool,
+    /// A speculation-rules prefetch whose redirects may not enter a service worker's scope: the
+    /// prefetch fails (as a network error) at a redirect to such a URL, as a service worker
+    /// cannot see the hops of a prefetch (Chrome fails these prefetches too).
+    pub prefetch_redirect_stop: Option<std::sync::Arc<PrefetchRedirectStop>>,
+}
+
+/// The service worker scopes (with the cookie partition key their registrations have) a
+/// prefetch's redirects must not enter: see [`Request::prefetch_redirect_stop`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PrefetchRedirectStop {
+    pub scopes: Vec<(Option<String>, String)>,
+}
+
+impl PrefetchRedirectStop {
+    /// Whether a navigation to `target` would go through a worker of one of the scopes.
+    pub fn stops_at(&self, target: &Url) -> bool {
+        let partition = crate::cookies::partition_key(target);
+        let text = target.as_str().split('#').next().unwrap_or("");
+        self.scopes.iter().any(|(p, scope)| *p == partition && text.starts_with(scope.as_str()))
+    }
 }
 
 /// A `Blob` served for a `blob:` URL: its bytes and its `type`.
@@ -304,6 +324,7 @@ impl Request {
             body_from_stream: false,
             csp: None,
             cross_site_prefetch: false,
+            prefetch_redirect_stop: None,
         }
     }
 }

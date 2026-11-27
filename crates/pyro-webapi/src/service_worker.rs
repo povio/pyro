@@ -664,6 +664,28 @@ impl LoadRoute {
     }
 }
 
+impl LoadRoute {
+    /// The route of a speculation-rules prefetch: its `fetch` event has the document that asked
+    /// as `clientId` and no `resultingClientId` (the prefetch creates no client).
+    pub fn for_prefetch(mut self, initiator: &Rc<PageDom>) -> Self {
+        self.client_id = client_id(initiator).unwrap_or_default();
+        self.resulting_client_id = String::new();
+        self
+    }
+}
+
+/// The scopes of the context's registrations with an active worker that a navigation to a URL
+/// of their own site reaches (see `PrefetchRedirectStop`), for the redirects of a prefetch.
+pub fn prefetch_redirect_stop(services: &ContextServices) -> pyro_net::PrefetchRedirectStop {
+    let registrations = services.service_workers.registrations.borrow();
+    let scopes = registrations
+        .iter()
+        .filter(|r| !r.uninstalling.get() && r.site == SiteContext::SameSite && r.active.borrow().is_some())
+        .map(|r| (r.partition.clone(), r.scope.clone()))
+        .collect();
+    pyro_net::PrefetchRedirectStop { scopes }
+}
+
 /// A request `document` makes (its `fetch()`, XHR, scripts, stylesheets,
 /// images, ...): its controller's route, if any. One flag test for a
 /// document that no worker controls.
