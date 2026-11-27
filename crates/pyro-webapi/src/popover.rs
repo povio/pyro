@@ -207,8 +207,13 @@ fn focused(page: &PageDom) -> Option<NodeId> {
 /// Focuses `el` even when it is not a focusable area (the dialog focusing
 /// steps' fallback to the dialog itself).
 fn focus_forced(page: &Rc<PageDom>, el: NodeId) {
+    focus_forced_with(page, el, false);
+}
+
+/// [`focus_forced`] with `preventScroll`.
+fn focus_forced_with(page: &Rc<PageDom>, el: NodeId, prevent_scroll: bool) {
     let previous = page.popover.forced_focus.replace(Some(el));
-    crate::input::focus_element(page, el);
+    crate::input::focus_element_with_options(page, el, prevent_scroll);
     page.popover.forced_focus.set(previous);
 }
 
@@ -729,13 +734,32 @@ pub(crate) fn show_select_picker(page: &Rc<PageDom>, select: NodeId) {
     }
     let option = page.dom.borrow().selected_options(select).ok().and_then(|o| o.first().copied());
     if let Some(option) = option {
-        focus_forced(page, option);
+        // (Focusing an option never scrolls the document: the picker is a popover of the top layer
+        // that scrolls inside itself, and the document under it stays where it is; here the
+        // options are laid out below the select, where a scroll would also carry the press that
+        // opened the picker onto an option.)
+        focus_forced_with(page, option, true);
     }
 }
 
 /// Focuses an option of an open picker (one without a box of its own yet is focused too).
 pub(crate) fn focus_picker_option(page: &Rc<PageDom>, option: NodeId) {
-    focus_forced(page, option);
+    // (Of an open picker, without scrolling the document, as when the picker opens:
+    // `show_select_picker`. An option of an in-flow listbox scrolls into view as any focus does.)
+    let in_picker = {
+        let dom = page.dom.borrow();
+        let mut cur = Some(option);
+        let mut picker = false;
+        while let Some(n) = cur {
+            if is_html(&dom, n, "select") {
+                picker = dom.is_select_picker_open(n);
+                break;
+            }
+            cur = parent_or_host(&dom, n);
+        }
+        picker
+    };
+    focus_forced_with(page, option, in_picker);
 }
 
 /// Closes a select's picker. With `focus_select`, focus inside the select goes back to it.
