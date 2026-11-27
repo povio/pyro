@@ -2935,7 +2935,7 @@ fn fire_pointer_move(
     // `pointerrawupdate` (secure contexts only) comes first, unfiltered and not cancelable, and
     // is not held back by what the pointermove's listeners do.
     for (ty, cancelable) in [("pointerrawupdate", false), ("pointermove", true)] {
-        if (ty == "pointerrawupdate" && !crate::secure_context::secure_page(page)) || crate::target::unheard(page, ty) {
+        if crate::target::unheard(page, ty) || (ty == "pointerrawupdate" && !crate::secure_context::secure_page(page)) {
             continue;
         }
         let ev = mouse_event(page, EventInterface::PointerEvent, ty, m, cancelable);
@@ -3643,7 +3643,7 @@ fn dispatch_mouse_inner(
             // A release while another button stays down is a `pointermove` carrying the released
             // button: no `pointerup`, the pointer capture stays, and the click goes with the last
             // release.
-            let chorded = touch.is_none() && m.buttons != 0;
+            let chorded = touch.is_none() && m.buttons & !m.button.mask() != 0;
             if !chorded {
                 set_active(page, page.document(), None);
             }
@@ -4338,7 +4338,7 @@ pub fn dispatch_touch(
             }
             let state = PointerState::moved(&t.input, movement);
             capture(page, t, &state, modifiers);
-            if crate::secure_context::secure_page(page) && !crate::target::unheard(page, "pointerrawupdate") {
+            if !crate::target::unheard(page, "pointerrawupdate") && crate::secure_context::secure_page(page) {
                 fire_touch_pointer_routed(page, "pointerrawupdate", t, &state, modifiers);
             }
             fire_touch_pointer_routed(page, "pointermove", t, &state, modifiers);
