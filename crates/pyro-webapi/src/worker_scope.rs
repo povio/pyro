@@ -1612,7 +1612,9 @@ impl JsClass for WorkerGlobalScope {
                         ));
                     }
                     // A script whose response ended cross-origin has muted errors.
-                    muted = !pyro_net::cors::same_origin(final_url, &g.url);
+                    // (Only a response from another http(s) origin: a `data:` or `blob:` script is
+                    // CORS-same-origin, its errors are the script's own; WPT importScripts/004, 006.)
+                    muted = matches!(final_url.scheme(), "http" | "https") && !pyro_net::cors::same_origin(final_url, &g.url);
                 }
                 scripts.push((script_text(&bytes), name, muted));
             }
