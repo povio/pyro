@@ -276,6 +276,12 @@ fn make_convolver<'s>(s: &Scope<'s>, _this: Value<'s>, args: pyro_js::Args<'s>) 
 
 fn decode(bytes: &[u8], rate: u32) -> Decoded {
     let decoded = pyro_media::audio::decode(bytes)?;
+    // A result longer than an AudioBuffer can be (its length is an unsigned long) is a decode error,
+    // found before the resampler allocates it.
+    let frames = decoded.len() as u128;
+    if decoded.sample_rate != rate && frames * u128::from(rate) / u128::from(decoded.sample_rate.max(1)) > u128::from(u32::MAX) {
+        return Err("the resampled audio is longer than an AudioBuffer can be".into());
+    }
     let channels = if decoded.sample_rate == rate {
         decoded.channels
     } else {
