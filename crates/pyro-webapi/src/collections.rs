@@ -1437,16 +1437,21 @@ pub(crate) fn set_attribute_node<'s>(
     // in-use check and the same-attribute early return; a default policy's result becomes the
     // Attr's value. The policy can run script that gives the Attr an owner: the DOM's in-use
     // check below then sees it (`modify-attributes-in-callback`). No borrow is held across it.
-    let (local, ns, value) = {
-        let dom = page.dom.borrow();
-        let data = dom.attr_node_data(a.id).js()?;
-        (data.name.local.to_string(), data.name.ns.to_string(), dom.attr_node_value(a.id).js()?.to_owned())
-    };
-    if let Some(compliant) = crate::trusted_types::attribute_value(s, page, el, &local, Some(ns.as_str()), s.string(&value))? {
-        // An Attr some element owns by now is that element's attribute: left alone.
-        let unowned = page.dom.borrow().attr_owner_element(a.id).js()?.is_none();
-        if unowned && compliant != value {
-            page.dom.borrow_mut().set_attr_node_value(a.id, &compliant).js()?;
+    // Only a document that requires Trusted Types has anything to check (the cheap test
+    // `attribute_value` makes first): nothing is copied out of the DOM otherwise.
+    let requires = page.dom.borrow().node_document(el).is_ok_and(|doc| crate::trusted_types::requires_for_script_in(page, doc));
+    if requires {
+        let (local, ns, value) = {
+            let dom = page.dom.borrow();
+            let data = dom.attr_node_data(a.id).js()?;
+            (data.name.local.to_string(), data.name.ns.to_string(), dom.attr_node_value(a.id).js()?.to_owned())
+        };
+        if let Some(compliant) = crate::trusted_types::attribute_value(s, page, el, &local, Some(ns.as_str()), s.string(&value))? {
+            // An Attr some element owns by now is that element's attribute: left alone.
+            let unowned = page.dom.borrow().attr_owner_element(a.id).js()?.is_none();
+            if unowned && compliant != value {
+                page.dom.borrow_mut().set_attr_node_value(a.id, &compliant).js()?;
+            }
         }
     }
     let replaced = page.dom.borrow_mut().set_attribute_node(el, a.id).js()?;
