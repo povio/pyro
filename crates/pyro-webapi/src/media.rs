@@ -91,9 +91,11 @@ const TIMEUPDATE_MS: f64 = 250.0;
 enum Resource {
     Url(String),
     Bytes(Bytes),
-    /// A `srcObject` that is not a Blob (MediaStream, MediaSource): nothing
-    /// can be read from it.
+    /// A `srcObject` that is not a Blob (MediaSource): nothing can be read from it.
     Unreadable,
+    /// A `srcObject` MediaStream: no fetch, the element is ready with the tracks it has now
+    /// (media_stream.js `streamInfo`; the duration is infinite).
+    Stream(MediaInfo),
 }
 
 struct MediaState {
@@ -133,6 +135,8 @@ struct MediaState {
     current_src: String,
     /// `srcObject`: `Some(Some(bytes))` for a Blob, `Some(None)` for another object.
     src_object: Option<Option<Bytes>>,
+    /// The `srcObject` MediaStream's tracks when it is one.
+    stream: Option<MediaInfo>,
     pending_play: Vec<(WeakRealm, Deferred)>,
     /// HTML "can autoplay flag".
     can_autoplay: bool,
@@ -216,6 +220,7 @@ impl Default for MediaState {
             pointer: None,
             current_src: String::new(),
             src_object: None,
+            stream: None,
             pending_play: Vec::new(),
             can_autoplay: true,
             lazy_approved: false,
@@ -1093,7 +1098,10 @@ fn select(page: &Rc<PageDom>, node: NodeId, generation: u32) {
     if let Some(object) = object {
         let resource = match object {
             Some(bytes) => Resource::Bytes(bytes),
-            None => Resource::Unreadable,
+            None => match peek(page, node, |st| st.stream) {
+                Some(info) => Resource::Stream(info),
+                None => Resource::Unreadable,
+            },
         };
         fetch_resource(page, node, generation, resource, None);
         return;
@@ -1198,6 +1206,11 @@ fn fetch_resource(page: &Rc<PageDom>, node: NodeId, generation: u32, resource: R
             }
         }
     }
+    // HTML: the deferred load steps of `preload=none` do not apply to a MediaStream.
+    if matches!(resource, Resource::Stream(_)) {
+        start_fetch(page, node, generation, resource, source, Seek::default());
+        return;
+    }
     let preload_none =
         page.dom.borrow().get_attribute(node, "preload").ok().flatten().is_some_and(|p| p.eq_ignore_ascii_case("none"));
     if preload_none && !attr(page, node, "autoplay") && peek(page, node, |st| st.paused) {
@@ -1248,6 +1261,18 @@ fn start_fetch(
             page.post_task(Box::new(move || done(Ok(response))));
         }
         Resource::Unreadable => page.post_task(Box::new(move || done(Err("unreadable srcObject".into())))),
+        Resource::Stream(info) => {
+            let weak = Rc::downgrade(page);
+            page.post_task(Box::new(move || {
+                let Some(page) = weak.upgrade() else { return };
+                if page.is_disposed() || peek(&page, node, |st| st.generation) != generation {
+                    return;
+                }
+                with(&page, node, |st| st.fetching = false);
+                update_pin(&page, node);
+                media_ready(&page, node, generation, info);
+            }));
+        }
         Resource::Url(url) if url.starts_with("blob:") => {
             let result = page
                 .blob_url(&url)
@@ -1383,7 +1408,8 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
         seek(page, node, start);
     }
     queue(page, node, generation, move |page| {
-        with(page, node, |st| st.ready = HAVE_CURRENT_DATA);
+        // A MediaStream has no buffering: it has enough data as soon as it has any.
+        with(page, node, |st| st.ready = if st.stream.is_some() { HAVE_ENOUGH_DATA } else { HAVE_CURRENT_DATA });
         set_delaying(page, node, false);
         want_frame(page, node);
         if fire(page, node, generation, "loadeddata") {
@@ -1426,7 +1452,7 @@ fn past_current_data(page: &Rc<PageDom>, node: NodeId, generation: u32) {
     }
     queue(page, node, generation, move |page| {
         let playing = with(page, node, |st| {
-            st.ready = HAVE_FUTURE_DATA;
+            st.ready = st.ready.max(HAVE_FUTURE_DATA);
             !st.paused
         });
         update_pin(page, node);
@@ -1459,6 +1485,10 @@ fn past_current_data(page: &Rc<PageDom>, node: NodeId, generation: u32) {
         }
     });
     queue(page, node, generation, move |page| {
+        // A MediaStream is never fully fetched: the element keeps loading and does not suspend.
+        if peek(page, node, |st| st.stream.is_some()) {
+            return;
+        }
         with(page, node, |st| st.network = NETWORK_IDLE);
         fire(page, node, generation, "suspend");
     });
@@ -1942,7 +1972,24 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
             s.set_hidden(wrapper, "__lpSrcObject", value)?;
             // A Blob is read as it is now (a Blob is immutable).
             let object = (!value.is_null()).then(|| crate::file::blob_parts_of(s, value).map(|(bytes, _, _)| bytes));
-            with(n.page(), n.id, |st| st.src_object = object);
+            // A MediaStream plays the tracks it has now: [audio tracks, video tracks, width, height].
+            let mut stream = None;
+            if matches!(object, Some(None)) {
+                let info = crate::media_stream::stream_helper(s, n.page(), "streamInfo", &[value])?;
+                if let Some(list) = info.as_object() {
+                    let num = |i: u32| -> JsResult<f64> { list.get_index(i)?.to_number() };
+                    let (audio, video, w, h) = (num(0)?, num(1)?, num(2)? as u32, num(3)? as u32);
+                    stream = Some(MediaInfo {
+                        duration: f64::INFINITY,
+                        video: (video > 0.0).then_some((w, h)),
+                        audio: audio > 0.0,
+                    });
+                }
+            }
+            with(n.page(), n.id, |st| {
+                st.src_object = object;
+                st.stream = stream;
+            });
             load(&page_rc(n), n.id);
             Ok(())
         },
