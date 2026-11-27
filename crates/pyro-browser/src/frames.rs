@@ -1740,10 +1740,26 @@ impl FrameHost {
     ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
         // HTML `parent`/`top`: null once the window's navigable is gone (its container, or an
         // ancestor's, was removed: `detach` dropped the frame and its descendants).
-        if self.with_frame(key, |_| ()).is_none() {
+        if self.with_frame(key, |_| ()).is_none() || self.container_removed(key) {
             return Ok(s.null());
         }
         self.window_value(s, key, if top { self.page.into() } else { self.parent_key(key) })
+    }
+    /// Whether the container element of frame `key`, or of one of its ancestors, is no longer
+    /// connected: the navigable is being removed (its `load` handler removed the iframe before the
+    /// removal's post-flush `detach` ran), so its window has no parent, top or browsing context.
+    pub(crate) fn container_removed(&self, key: FrameKey) -> bool {
+        let mut key = key;
+        loop {
+            let Some((owner, parent)) = self.with_frame(key, |f| (f.owner, f.parent.clone())) else { return true };
+            let (Some(owner), Some(parent)) = (owner, parent.and_then(|id| self.key(&id))) else { return false };
+            let Some(dom) = self.page_dom(parent) else { return false };
+            let connected = dom.dom.try_borrow().ok().and_then(|d| d.is_connected(owner).ok());
+            if connected == Some(false) {
+                return true;
+            }
+            key = parent;
+        }
     }
     pub fn frame_element<'s>(
         self: &Rc<Self>,
@@ -2099,7 +2115,7 @@ impl pyro_js::JsClass for CrossWindow {
                 ("parent", Some(source)) => host.window_value(s, source, host.parent_key(w.target))?,
                 ("top", Some(source)) => host.window_value(s, source, host.page.into())?,
                 ("length", _) => s.number(host.child_keys(w.target).len() as f64),
-                ("closed", _) => s.boolean(host.frame(w.target).is_none()),
+                ("closed", _) => s.boolean(host.frame(w.target).is_none() || host.container_removed(w.target)),
                 // Not tracked across origins: a frame's window has none.
                 ("opener", _) => s.null(),
                 ("focus", _) => {

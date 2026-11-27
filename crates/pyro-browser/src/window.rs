@@ -439,7 +439,7 @@ impl JsClass for Window {
         // ancestor's, was removed and the frame detached; or its document was detached).
         def.getter("closed", |s, w| {
             let gone = match (w.frames.upgrade(), w.frame) {
-                (Some(host), Some(key)) => host.with_frame(key, |_| ()).is_none(),
+                (Some(host), Some(key)) => host.with_frame(key, |_| ()).is_none() || host.container_removed(key),
                 _ => false,
             };
             Ok(s.boolean(gone || w.target.page.is_detached() || w.target.page.is_disposed()))

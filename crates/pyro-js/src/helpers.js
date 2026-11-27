@@ -680,7 +680,7 @@
     // hooks (species, spreading, iteration).
     windowProxy(standIn, target, child, deny) {
       const ALWAYS = { __proto__: null, closed: 1, close: 1, focus: 1, blur: 1 };
-      const SELF = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1 };
+      const SELF = { __proto__: null, window: 1, self: 1, frames: 1, globalThis: 1, top: 1, parent: 1 };
       const CROSS_GETTERS = { __proto__: null, window: 1, self: 1, frames: 1, top: 1, parent: 1, location: 1, opener: 1, closed: 1, length: 1 };
       const CROSS_METHODS = { __proto__: null, close: 1, focus: 1, blur: 1, postMessage: 1 };
       const CROSS_NAMES = ['window', 'self', 'location', 'close', 'closed', 'focus', 'blur', 'frames', 'length', 'top', 'opener', 'parent', 'postMessage', 'then'];
@@ -804,6 +804,8 @@
           const w = target();
           if (isCross(w)) return crossGet(w, k);
           if (ALWAYS[k]) return fromStandIn(k);
+          // A discarded popup has no parent or top (the stand-in answers null).
+          if (k === 'top' || k === 'parent') return reflectGet(standIn, k, standIn);
           if (SELF[k]) return proxy;
           if (w === null) return k in expandos ? expandos[k] : fromStandIn(k);
           if (k === 'opener') return fromStandIn(k);

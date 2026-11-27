@@ -53,6 +53,8 @@ pub struct PopupState {
     session: StorageNamespace,
     /// The popup's current document, once the embedder created the page.
     page: RefCell<Weak<PageDom>>,
+    /// The embedder attached a document to the popup at some point (`PopupTicket::attach_page`).
+    attached: Cell<bool>,
     /// The opener set the popup's `opener` to null (`popup.opener = null`,
     /// before the popup's page existed or since): it reads null on both sides.
     opener_cleared: Cell<bool>,
@@ -89,6 +91,13 @@ impl PopupState {
         self.closed.get() || self.severed.get()
     }
 
+    /// HTML "discard a browsing context" has run: the popup was closed and its document is gone.
+    /// Until then (`window.close()` only queues the discard) the window still has its opener,
+    /// parent and top; afterwards `opener`, `parent` and `top` read null.
+    pub(crate) fn is_discarded(&self) -> bool {
+        self.is_closed() && self.attached.get() && self.page().is_none()
+    }
+
     /// The popup's live document, if the page exists (and the opener may still reach it).
     fn page(&self) -> Option<Rc<PageDom>> {
         if self.severed.get() {
@@ -110,6 +119,7 @@ impl PopupTicket {
             name,
             session,
             page: RefCell::new(Weak::new()),
+            attached: Cell::new(false),
             opener_cleared: Cell::new(false),
             severed: Cell::new(false),
             prebuilt: RefCell::new(None),
@@ -176,6 +186,7 @@ impl PopupTicket {
     /// one), through which the opener's stand-in reaches the popup.
     pub fn attach_page(&self, page: &Rc<PageDom>) {
         *self.0.page.borrow_mut() = Rc::downgrade(page);
+        self.0.attached.set(true);
     }
 
     /// Keeps the embedder's popup page made ahead of its creation (its
@@ -495,8 +506,12 @@ impl JsClass for PopupWindow {
             },
             |_s, d, v| d.navigate(&v.to_string()?),
         );
-        for name in ["window", "self", "frames", "top", "parent"] {
+        for name in ["window", "self", "frames", "globalThis"] {
             def.getter(name, |s, d| wrap_popup(s, &d.page, &d.popup));
+        }
+        // A discarded popup has no browsing context: no parent, no top.
+        for name in ["top", "parent"] {
+            def.getter(name, |s, d| if d.popup.is_discarded() { Ok(s.null()) } else { wrap_popup(s, &d.page, &d.popup) });
         }
         // [Replaceable]: `popup.opener = null` (a common way to cut the
         // popup off from its opener before navigating it) must not throw in
@@ -504,7 +519,7 @@ impl JsClass for PopupWindow {
         def.accessor(
             "opener",
             |s, d| {
-                if d.popup.opener_cleared.get() || d.popup.severed.get() {
+                if d.popup.opener_cleared.get() || d.popup.severed.get() || d.popup.is_discarded() {
                     return Ok(s.null());
                 }
                 // Cross origin (readable there): the popup's opener is this
