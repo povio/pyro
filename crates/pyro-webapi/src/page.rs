@@ -611,6 +611,8 @@ pub struct PageDom {
     /// viewport's size was last read with, and whether they changed since its `resize` fired.
     visual_gutters: Cell<(f64, f64)>,
     visual_resize_due: Cell<bool>,
+    /// A task for the visual viewport's due `resize` is queued ([`PageDom::visual_viewport_after_task`]).
+    visual_resize_queued: Cell<bool>,
     /// The emulated viewport is `mobile` (a top document): the layout
     /// follows the document's viewport `<meta>` ([`PageDom::layout`]), the
     /// Dom's viewport-`<meta>` version it last took, and the viewport metrics
@@ -1144,6 +1146,7 @@ impl PageDom {
             frame_resize_wake: Cell::new(false),
             visual_gutters: Cell::new((0.0, 0.0)),
             visual_resize_due: Cell::new(false),
+            visual_resize_queued: Cell::new(false),
             mobile: Cell::new(false),
             viewport_meta_seen: Cell::new(None),
             meta_resize_from: Cell::new(None),
@@ -2563,6 +2566,29 @@ impl PageDom {
         }
     }
 
+    /// After a task: a document whose visual viewport has a listener lays out and notes whether
+    /// its classic scrollbars changed; a change queues the `resize` as a task, so a frame with no
+    /// animation frame callback of its own (an iframe whose script ran from its parent) fires it
+    /// too (Chromium queues it at the layout that changed the scrollbars; WPT visual-viewport
+    /// `viewport-scrollbars-cause-resize-in-iframe`). The rendering update's steps fire it first
+    /// when they come before the task.
+    fn visual_viewport_after_task(self: &Rc<Self>) {
+        if self.is_disposed() || self.mobile.get() || self.viewport_targets(crate::window::ViewportTarget::VisualViewport).is_empty() {
+            return;
+        }
+        self.note_visual_viewport();
+        if !self.visual_resize_due.get() || self.visual_resize_queued.replace(true) {
+            return;
+        }
+        let page = self.this.clone();
+        self.post_task(Box::new(move || {
+            if let Some(page) = page.upgrade() {
+                page.visual_resize_queued.set(false);
+                page.fire_visual_viewport_resize();
+            }
+        }));
+    }
+
     /// After a task: a child frame whose window listens for events re-reads
     /// its iframe's box, so a parent restyle fires `resize` without a read
     /// in the child. At most every max(16 ms, twice the re-read's cost), as
@@ -2957,6 +2983,7 @@ impl PageDom {
         self.sync_responsive_frames();
         crate::resize_observer::after_task(self);
         self.frame_resize_after_task();
+        self.visual_viewport_after_task();
         crate::layout_api::schedule_scroll_clamp(self);
         crate::animation_events::after_task(self);
         crate::smil::after_task(self);
