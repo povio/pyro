@@ -631,6 +631,14 @@ fn create(dom: &mut Dom, kind: NodeKind, owner: u32) -> (u32, u32) {
             dom.base_seen |= &*e.name.local == "base";
             &*e.name.local == "template"
         }
+        // pyro: SMIL animations to look for (`Dom::smil_seen`, which the HTML parser and
+        // `create_element_raw` set): without it a standalone `.svg` document's timeline never ran.
+        NodeKind::Element(e) => {
+            if e.name.ns == markup5ever::ns!(svg) && matches!(&*e.name.local, "animate" | "animateTransform" | "set" | "animateMotion") {
+                dom.smil_seen = true;
+            }
+            false
+        }
         _ => false,
     };
     let id = dom.alloc_raw(kind, owner);
