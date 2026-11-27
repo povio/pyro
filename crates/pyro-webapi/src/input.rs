@@ -47,7 +47,7 @@ fn fire_input_event(
     cancelable: bool,
 ) -> bool {
     let Some(key) = key_of(page, node) else { return true };
-    if crate::target::unheard(page, ty) {
+    if crate::target::unheard_input(page, ty, key, cancelable, None) {
         return true;
     }
     let ev = EventCore::trusted(page, EventInterface::InputEvent, ty, true, cancelable);
@@ -1409,7 +1409,7 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 page.pointer_modality.set(false);
                 let _ = page.dom.borrow_mut().set_focus_visible(doc, true);
             }
-            let ok = crate::target::unheard(page, "keydown") || fire(page, tkey, &key_event(page, "keydown", k, 0));
+            let ok = crate::target::unheard_input(page, "keydown", tkey, true, Some(k.code.as_str())) || fire(page, tkey, &key_event(page, "keydown", k, 0));
             if !ok || page.document() != doc || !accepts_keyboard(page) {
                 return;
             }
@@ -1456,7 +1456,7 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
         }
         KeyKind::Char => press_char(page, target, k),
         KeyKind::KeyUp => {
-            let ok = crate::target::unheard(page, "keyup") || fire(page, tkey, &key_event(page, "keyup", k, 0));
+            let ok = crate::target::unheard_input(page, "keyup", tkey, true, Some(k.code.as_str())) || fire(page, tkey, &key_event(page, "keyup", k, 0));
             if k.key == " " && page.space_target.get().is_some() {
                 set_active(page, doc, None);
             }
@@ -2864,7 +2864,7 @@ fn fire_mouse(
     cancelable: bool,
     hit: Option<pyro_dom::geometry::GeneratedHit>,
 ) -> bool {
-    if crate::target::unheard(page, ty) { return true; }
+    if crate::target::unheard_input(page, ty, target, cancelable, None) { return true; }
     let ev = mouse_event(page, iface, ty, m, cancelable);
     ev.fields.borrow_mut().pseudo_hit = hit.map(|hit| (target, hit));
     fire(page, target, &ev)
@@ -2981,7 +2981,7 @@ fn dispatch_boundary_events(
     page.set_hovered(Some(target));
     // An event nobody listens for is not made (see `fire_mouse`).
     let boundary = |iface: EventInterface, ty: &str, at: TargetKey, cancelable: bool, related: Option<TargetKey>| {
-        if crate::target::unheard(page, ty) {
+        if crate::target::unheard_input(page, ty, at, cancelable, None) {
             return;
         }
         let ev = mouse_event(page, iface, ty, m, cancelable);

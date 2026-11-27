@@ -30,6 +30,10 @@ pub fn dispatch_begin(_page: &PageDom, _event: &crate::event::EventData) -> Opti
 /// The listeners of the event ran; called when ENABLED.
 pub fn dispatch_end(_page: &PageDom, _event: &crate::event::EventData, _token: DispatchToken) {}
 
+/// A trusted input event nobody listens for was not made (`perf::note_unheard`); called when
+/// ENABLED. It counts like a dispatched one (`eventCounts`, entries, `interactionId`).
+pub fn note_unheard(_page: &PageDom, _event: &super::UnheardEvent<'_>) {}
+
 /// `performance.eventCounts` (an `EventCounts` object of `s`'s realm); read when ENABLED.
 pub fn event_counts<'s>(s: &pyro_js::Scope<'s>, _page: &PageDom) -> pyro_js::JsResult<pyro_js::Value<'s>> {
     Ok(s.undefined())

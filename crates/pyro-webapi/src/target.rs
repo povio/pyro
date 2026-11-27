@@ -782,6 +782,21 @@ pub(crate) fn unheard(page: &PageDom, ty: &str) -> bool {
     !page.dom.borrow().listens_for(ty)
 }
 
+/// [`unheard`] for a trusted input event the caller would otherwise make and
+/// dispatch at `target`: when nobody listens, the event is still an input the
+/// performance timeline sees (Event Timing counts it in `eventCounts` and
+/// makes its entries; the last user input time moves), so the caller says what
+/// it would have made. One const-folded branch when no `perf` module that reads
+/// input is enabled. `key_code`: `KeyboardEvent.code` of key events.
+pub(crate) fn unheard_input(page: &PageDom, ty: &str, target: TargetKey, cancelable: bool, key_code: Option<&str>) -> bool {
+    let unheard = unheard(page, ty);
+    if unheard && crate::perf::TRACK_INPUT {
+        let time_stamp = crate::event::page_now_ms(page);
+        crate::perf::note_unheard(page, &crate::perf::UnheardEvent { ty, time_stamp, cancelable, target, key_code });
+    }
+    unheard
+}
+
 /// Dispatches `event` at `target` (DOM "dispatch"). Returns false if canceled.
 pub fn fire(page: &PageDom, target: TargetKey, event: &EventData) -> bool {
     fire_with(page, target, event, &mut |_| {})

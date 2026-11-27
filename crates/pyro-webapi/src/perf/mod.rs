@@ -51,7 +51,7 @@
 //! |---|---|---|
 //! | `<m>::on_frame(page, &FrameInfo)` | [`rendering_update`], from `run_animation_frame` (`pyro-browser/src/window.rs`) | at the end of every rendering update (animation frame) of the document's window, after rAF callbacks, the style updates, ResizeObserver step, focus fixup and the canvas paint step; order: shift, paint, element, lcp, event, loaf, softnav. Frames only run when something asked for one (rAF, an animation, a client command, or `timeline::request_rendering`); a render-blocked document runs none |
 //! | `longtask::on_task(page, &TaskInfo)`, `loaf::on_task(page, &TaskInfo)` | [`task_finished`], from `Browser::task_finished` (`LoopState::task_finished`, `pyro-runtime`) | after every event-loop task (also frame timers, idle timers), before the checkpoint (`after_task`). Called for EVERY document (every frame of every page) of the browser, not only those whose script ran; times are in that document's clock. Filter on duration yourself (core does nothing but the `ENABLED` check). Cost when disabled: two `Instant::now()` per task |
-//! | `event::dispatch_begin(page, &EventData) -> Option<DispatchToken>`, `event::dispatch_end(page, &EventData, DispatchToken)`; `softnav::dispatch_begin/end` the same | [`dispatch_begin`] / [`dispatch_end`], from `target.rs dispatch_at` | around the listeners of every TRUSTED event (not synthetic `dispatchEvent` ones: `event.state.is_trusted`), every type: the module decides which types matter. The token is yours to carry between the two calls. Callers that skip dispatching for an event nobody listens to (`target::unheard`) never reach it: `eventCounts` must not rely on them, see below |
+//! | `event::dispatch_begin(page, &EventData) -> Option<DispatchToken>`, `event::dispatch_end(page, &EventData, DispatchToken)`; `softnav::dispatch_begin/end` the same | [`dispatch_begin`] / [`dispatch_end`], from `target.rs dispatch_at` | around the listeners of every TRUSTED event (not synthetic `dispatchEvent` ones: `event.state.is_trusted`), every type: the module decides which types matter. The token is yours to carry between the two calls. Callers that skip dispatching for an event nobody listens to (`target::unheard`) never reach it: the module also gets them through `event::note_unheard(page, &UnheardEvent)` (see [`note_unheard`]), so `eventCounts` and the entries count every trusted input event, heard or not |
 //! | `event::event_counts(s, page) -> JsResult<Value>`, `event::interaction_count(page) -> u32` | `performance.eventCounts` / `performance.interactionCount` getters of the window's `Performance` (`pyro-browser/src/nav.rs`), defined only when `event::ENABLED` | on property read |
 //!
 //! `FrameInfo` (document-clock ms, `performance.now()`'s clock): `start` is the
@@ -283,6 +283,33 @@ pub(crate) fn note_input(page: &PageDom, ty: &str, time: f64) {
         "mousedown" | "pointerdown" | "pointerup" | "keydown" | "touchstart" | "touchend" => page.timeline().set_last_input(time),
         "wheel" => page.timeline().set_last_wheel(time),
         _ => {}
+    }
+}
+
+/// A trusted input event that was not made because nobody listens for its type
+/// (`target::unheard`): what `input.rs` would have fired.
+pub struct UnheardEvent<'a> {
+    pub ty: &'a str,
+    /// The `timeStamp` the event would have (document clock).
+    pub time_stamp: f64,
+    pub cancelable: bool,
+    /// Where it would have been dispatched (the entry's `target`).
+    pub target: pyro_dom::events::TargetKey,
+    /// `KeyboardEvent.code` of key events (the `interactionId` key), else `None`.
+    pub key_code: Option<&'a str>,
+}
+
+/// A trusted input event nobody listens for was skipped (`target::unheard_input`,
+/// called from `input.rs` for mouse/pointer, key and input events): Event Timing
+/// still counts it (`eventCounts`, `interactionCount`, entries over the duration
+/// threshold, `first-input`), and the last-input time moves. Only called while
+/// [`TRACK_INPUT`]; `event::note_unheard` only while `event::ENABLED`. The event
+/// is not dispatched, so `dispatch_begin`/`dispatch_end` do not run for it: the
+/// module makes `processingStart == processingEnd` (the time of the call).
+pub(crate) fn note_unheard(page: &PageDom, event: &UnheardEvent<'_>) {
+    note_input(page, event.ty, event.time_stamp);
+    if event::ENABLED {
+        event::note_unheard(page, event);
     }
 }
 
