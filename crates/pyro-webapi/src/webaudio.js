@@ -1804,8 +1804,8 @@
       }
       if (v !== null) n.bufferSet = true;
       n.buffer = v;
-      // A buffer set after start() is acquired now.
-      if (n.start >= 0) n.data = v === null ? null : acquire(v);
+      // A buffer set after start() is acquired now, unless the source already ended for having none.
+      if (n.start >= 0 && !n.ended) n.data = v === null ? null : acquire(v);
       ctxOf(n.ctx).scheduleEnds();
     }
     get playbackRate() { return nodeOf(this).playbackRate; }
@@ -1838,6 +1838,12 @@
     const c = ctxOf(n.ctx);
     const rate = c.rate;
     const data = n.data;
+    // Started with no buffer (still none when it first renders): it is finished at once, whatever
+    // its start time, and a buffer set later is not heard.
+    if (!data && n.start >= 0 && !n.ended) {
+      end(n);
+      return silentBus(n.blockSize);
+    }
     const range = activeRange(n, rate, f0);
     if (!range || !data) {
       if (range && range[2]) end(n);
