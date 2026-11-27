@@ -47,8 +47,8 @@ fn b64_std(bytes: &[u8]) -> String {
 
 fn random(len: usize) -> Vec<u8> {
     let mut bytes = vec![0u8; len];
-    // (A failing system random source leaves zeroes: only the identifiers lose.)
-    let _ = getrandom::fill(&mut bytes);
+    // Credential ids and PRF secrets come from here: without a random source there is no authenticator.
+    getrandom::fill(&mut bytes).expect("system random source");
     bytes
 }
 

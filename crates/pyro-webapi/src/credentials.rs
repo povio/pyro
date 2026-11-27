@@ -207,7 +207,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     // authenticate(requestJson) -> responseJSON: one authenticator operation (create or get).
     let authenticate = s.function("authenticate", |s, _, a| {
         let page = crate::target::page_of(s)?;
-        let request: serde_json::Value = serde_json::from_str(&a.get(0).to_string()?).map_err(|e| JsError::Type(e.to_string()))?;
+        let request: serde_json::Value = serde_json::from_str(&a.get(0).to_string()?).map_err(|e| JsError::Type(e.to_string().into()))?;
         Ok(s.string(&crate::webauthn::authenticate(&page, &request).to_string()))
     })?;
     native.set_atom("authenticate", authenticate.value())?;
@@ -220,7 +220,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     // signal(requestJson) -> responseJSON: the Signal API calls on the context's authenticators.
     let signal = s.function("signal", |s, _, a| {
         let page = crate::target::page_of(s)?;
-        let request: serde_json::Value = serde_json::from_str(&a.get(0).to_string()?).map_err(|e| JsError::Type(e.to_string()))?;
+        let request: serde_json::Value = serde_json::from_str(&a.get(0).to_string()?).map_err(|e| JsError::Type(e.to_string().into()))?;
         Ok(s.string(&crate::webauthn::signal(&page, &request).to_string()))
     })?;
     native.set_atom("signal", signal.value())?;
