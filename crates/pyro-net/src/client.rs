@@ -321,6 +321,10 @@ struct Inner {
     /// Requests paused at the request stage off the I/O thread
     /// ([`LocalPause`]), until their decision arrives.
     local: Mutex<HashMap<RequestId, Arc<LocalPause>>>,
+    /// Hooks of requests something other than the network answers (a service worker streaming a
+    /// response): [`NetClient::cancel`] runs the request's, so the answerer learns that the
+    /// consumer is gone.
+    cancel_hooks: Mutex<HashMap<RequestId, Box<dyn FnOnce() + Send>>>,
 }
 
 /// Request activity of one loader (document) on this client: requests started
@@ -840,6 +844,7 @@ impl NetClient {
             thread: Mutex::new(Some(thread)),
             activity: Arc::default(),
             local: Mutex::default(),
+            cancel_hooks: Mutex::default(),
         });
         let mut clients = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
         clients.retain(|c| c.strong_count() > 0);
@@ -1036,11 +1041,27 @@ impl NetClient {
     /// Aborts a request; its sink receives `Failed(Aborted)` unless it
     /// already finished.
     pub fn cancel(&self, id: RequestId) {
+        let hook = self.inner.cancel_hooks.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        if let Some(hook) = hook {
+            hook();
+        }
         let local = self.inner.local.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         if local.is_some_and(|pause| pause.abort(&self.inner.shared)) {
             return;
         }
         let _ = self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Cancel(id));
+    }
+
+    /// Runs `hook` (once, on the cancelling thread) if `id` is cancelled before [`NetClient::forget_cancel`]:
+    /// for a request another party answers, which the network's cancellation does not reach.
+    pub fn on_cancel(&self, id: RequestId, hook: Box<dyn FnOnce() + Send>) {
+        self.inner.cancel_hooks.lock().unwrap_or_else(|e| e.into_inner()).insert(id, hook);
+    }
+
+    /// The answer of `id` ended: its [`NetClient::on_cancel`] hook, if any, goes.
+    pub fn forget_cancel(&self, id: RequestId) {
+        let hook = self.inner.cancel_hooks.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        drop(hook);
     }
 
     /// [`NetClient::cancel`] for a request's own sink (see [`RequestCanceller`]).

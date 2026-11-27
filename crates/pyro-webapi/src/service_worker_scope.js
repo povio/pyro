@@ -32,7 +32,10 @@
   const RequestC = Request;
   const URLPatternC = typeof URLPattern === 'function' ? URLPattern : undefined;
   const isResponse = (v) => v instanceof ResponseC;
-  const arrayBuffer = ResponseC.prototype.arrayBuffer;
+  const responseBody = O.getOwnPropertyDescriptor(ResponseC.prototype, 'body').get;
+  const getReader = ReadableStream.prototype.getReader;
+  const readerRead = ReadableStreamDefaultReader.prototype.read;
+  const readerCancel = ReadableStreamDefaultReader.prototype.cancel;
   const headersEntries = Headers.prototype.entries;
   const responseHeaders = O.getOwnPropertyDescriptor(ResponseC.prototype, 'headers').get;
   const illegal = (name) => new TypeErrorC(`Failed to construct '${name}': Illegal constructor`);
@@ -494,13 +497,55 @@
   //                       and failFetch after the head means a truncated body: Rust's Drop of the job)
   // The browser-side half is `LoadRoute::dispatch` (service_worker.rs), which builds the
   // native `FetchJob`; sw-3 adds `preload` to `LoadRoute`/`FetchJob` there.
-  const respondWhole = (id, response, body) => {
+  const sendHead = (id, response) => {
     const headers = [];
     for (const pair of headersEntries.call(responseHeaders.call(response))) headers.push(pair[0], pair[1]);
     native.respondHead(id, response.status, response.statusText, headers, response.url, response.type);
-    native.respondChunk(id, body);
-    native.respondEnd(id);
   };
+
+  // Response bodies being streamed to the page, by fetch id: the page cancelling its side
+  // (`cancelFetch`, from the browser thread) cancels the body's reader here.
+  const streaming = new Map();
+  function cancelFetch(id) {
+    const entry = streaming.get(id);
+    if (entry === undefined) return;
+    streaming.delete(id);
+    entry.cancelled = true;
+    try { readerCancel.call(entry.reader).then(undefined, () => {}); } catch (e) { /* already released */ }
+  }
+
+  // The body, chunk by chunk as the Response's reader yields: head first, then each Uint8Array,
+  // then the end. A chunk of another type errors the page's body (`failFetch` after the head is
+  // a truncated body, not a network error before it). The reader is taken before the head goes,
+  // so a locked body is the network error `respondWith` wants.
+  function stream(id, response) {
+    const body = responseBody.call(response);
+    const reader = body === null ? null : getReader.call(body);
+    sendHead(id, response);
+    if (reader === null) {
+      native.respondEnd(id);
+      return;
+    }
+    const entry = { reader, cancelled: false };
+    streaming.set(id, entry);
+    (async () => {
+      for (;;) {
+        const result = await readerRead.call(reader);
+        if (entry.cancelled) return;
+        if (result.done) break;
+        const chunk = result.value;
+        if (!(chunk instanceof Uint8Array)) throw new TypeErrorC('respondWith() was given a Response whose body has a chunk that is not a Uint8Array');
+        if (chunk.byteLength > 0) native.respondChunk(id, chunk);
+      }
+      streaming.delete(id);
+      native.respondEnd(id);
+    })().then(undefined, (error) => {
+      if (entry.cancelled) return;
+      streaming.delete(id);
+      try { readerCancel.call(reader, error).then(undefined, () => {}); } catch (e) { /* released */ }
+      native.failFetch(id, String(error && error.message || error));
+    });
+  }
 
   // Which source answers `job`: the first static router rule (addRoutes) its request matches, in
   // registration order; without one, the fetch handlers. Always evaluated here, with or without a
@@ -555,7 +600,7 @@
         if (response.type === 'error') throw new TypeErrorC('respondWith() was given a network error');
         if (response.bodyUsed) throw new TypeErrorC('respondWith() was given a Response whose body was used');
         handledSettled(d);
-        return arrayBuffer.call(response).then((body) => respondWhole(id, response, body));
+        stream(id, response);
       },
     ).then(undefined, (error) => {
       handledSettled(d, error);
@@ -637,6 +682,7 @@
     activate: () => lifecycle('activate'),
     dispatchFetch,
     closeDispatch,
+    cancelFetch,
     dispatchMessage,
     dispatchMessageError,
     reply,

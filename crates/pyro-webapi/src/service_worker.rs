@@ -50,8 +50,7 @@
 //!
 //! Gaps (explicit): no persistence (registrations live as long as the
 //! context); requests of workers a controlled page starts do not go through
-//! the worker; responses are read whole before the page sees them (no
-//! streaming); no Push, Background Sync, navigation preload or
+//! the worker; no Push, Background Sync, navigation preload or
 //! `Clients.openWindow`; a worker does not stop when idle;
 //! `clients.matchAll` and `claim` see the context's documents that are
 //! clients (above), not every document; templates of `serve --fork` refuse
@@ -127,6 +126,8 @@ pub(crate) enum SwUp {
         id: u64,
         kind: QueryKind,
     },
+    /// The page cancelled the response a `fetch` event streams (the worker's job key).
+    CancelFetch(u64),
     PostToClient {
         client: String,
         message: WireMessage,
@@ -752,6 +753,7 @@ pub(crate) fn deliver(version: u64, up: SwUp) {
             version.run(move |s, _| crate::service_worker_scope::reply(s, id, result));
         }
         SwUp::PostToClient { client, message, queued } => post_to_client(&version, &client, message, queued),
+        SwUp::CancelFetch(key) => version.run(move |s, _| crate::service_worker_scope::fetch_cancelled(s, key)),
     }
 }
 

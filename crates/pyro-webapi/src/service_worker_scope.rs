@@ -8,8 +8,9 @@
 //!
 //! Intercepted requests: the page's `fetch()`/XHR hand their `pyro_net::Request`
 //! and response sink here ([`FetchJob`]). The `fetch` event gets a `Request`
-//! made from it. `respondWith(response)` reads the response's body whole and
-//! answers the sink as the network would (status, headers, one data chunk);
+//! made from it. `respondWith(response)` streams the response to the sink as the
+//! network would (status, headers, a data event per chunk its body yields, the end; a page that
+//! cancels reaches the worker through `NetClient::on_cancel`);
 //! no `respondWith` sends the request on to the network with the sink, so
 //! Playwright's routing and the Network domain see it as any other request;
 //! a rejected or invalid response is a network error. A job the worker never
@@ -158,6 +159,8 @@ impl Race {
 
 impl Drop for FetchJob {
     fn drop(&mut self) {
+        // Its answer ends here: a cancellation of the request is no longer news to the worker.
+        self.net.forget_cancel(self.id);
         if self.head_sent {
             if let Some(mut sink) = self.sink.take() {
                 sink(ResponseEvent::Failed(NetError::Other("The service worker stopped before it finished its response".into())));
@@ -366,11 +369,16 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         Ok(s.undefined())
     })?;
     native.set_atom("observeFetch", observe.value())?;
-    let head_fn = s.function("respondHead", |s, _, a| {
+    let p = poster.clone();
+    let head_fn = s.function("respondHead", move |s, _, a| {
         let key = a.get(0).to_number()? as u64;
         let Some(mut job) = PENDING.with(|p| p.borrow_mut().remove(&key)) else { return Ok(s.undefined()) };
         // Kept for the chunks and the end when the head went out; a refused head dropped the job.
         if respond_head(s, &mut job, &a)? {
+            // The page cancelling the response (its body's `cancel()`, an abort) reaches the
+            // worker, which cancels the body it streams.
+            let poster = p.clone();
+            job.net.on_cancel(job.id, Box::new(move || poster(Box::new(move || deliver(version, SwUp::CancelFetch(key))))));
             PENDING.with(|p| p.borrow_mut().insert(key, job));
         }
         Ok(s.undefined())
@@ -466,6 +474,18 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
     let glue = factory.call(None, &[roots.0.get(s), roots.1.get(s)])?;
     GLUE.with(|g| *g.borrow_mut() = Some(Persistent::new(s, glue)));
     Ok(())
+}
+
+/// The page cancelled the response job `key` streams: the job goes (its sink hears an abort) and
+/// the glue cancels the body's reader.
+pub(crate) fn fetch_cancelled(s: &Scope<'_>, key: u64) {
+    let removed = PENDING.with(|p| p.borrow_mut().remove(&key));
+    if let Some(mut job) = removed {
+        if let Some(mut sink) = job.sink.take() {
+            sink(ResponseEvent::Failed(NetError::Aborted));
+        }
+    }
+    call(s, "cancelFetch", &[s.number(key as f64)]);
 }
 
 /// The head of the `respondWith` response, as the network would have given it
