@@ -322,10 +322,22 @@
                     // through the interface's own getters (the realm's ImageData).
                     const IDC = globalThis.ImageData, P = IDC && IDC.prototype;
                     let width, height, data, colorSpace, pixelFormat;
-                    try {
-                        const get = (k) => call(descriptor(P, k).get, source);
+                    const read = (proto) => {
+                        const get = (k) => call(descriptor(proto, k).get, source);
                         width = get('width'); height = get('height'); data = get('data'); colorSpace = get('colorSpace'); pixelFormat = get('pixelFormat');
-                    } catch (_) { fail('Object type is not supported'); }
+                    };
+                    try { read(P); }
+                    catch (_) {
+                        // An ImageData of another realm (a parent's, cloned into an iframe by its
+                        // history.pushState): this realm's getters reject it (illegal invocation),
+                        // so use the ImageData prototype the object itself inherits.
+                        try {
+                            let proto = prototype(source);
+                            while (proto !== null && !descriptor(proto, 'width')?.get) proto = prototype(proto);
+                            if (proto === null) throw 0;
+                            read(proto);
+                        } catch (_) { fail('Object type is not supported'); }
+                    }
                     bytes += data.length;
                     if (bytes > 64 * 1024 * 1024) fail('Clone buffer limit exceeded', true);
                     return remember(source, new IDC(copy(data, depth + 1), width, height, {colorSpace, pixelFormat}));
