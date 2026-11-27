@@ -128,9 +128,12 @@ fn end_state(dur_ms: f64, length: f64) -> (f64, f64) {
         return (0.0, 0.0);
     }
     let iterations = length / dur_ms;
-    let fraction = iterations.fract();
+    // An end that is a whole number of simple durations up to float noise (begin + dur - begin is
+    // not dur: 1.0000000000000002 iterations) ends on the last iteration's last fraction.
+    let whole = iterations.round();
+    let fraction = if whole >= 1.0 && (iterations - whole).abs() <= 1e-9 * whole { 0.0 } else { iterations.fract() };
     if fraction == 0.0 {
-        (1.0, iterations - 1.0)
+        (1.0, whole - 1.0)
     } else {
         (fraction, iterations.floor())
     }
