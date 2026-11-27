@@ -5040,19 +5040,25 @@ impl Browser {
         let counted = self.load_mut(page).is_some();
         // Ends the script in a task, after it ran: the element's event
         // (`Some(true)` load, `Some(false)` error), then what waits for it.
+        // The element's `load` is fired where the module's evaluation error was reported, in the
+        // same turn (HTML "execute the script element": the event follows the run, nothing
+        // between): the task below then finds it fired.
+        let fired = Rc::new(std::cell::Cell::new(false));
         let finish = {
             let element = element.clone();
+            let fired = fired.clone();
             Rc::new(move |event: Option<bool>| {
                 let loader_id = loader_id.clone();
                 let element = element.clone();
                 let after = after.clone();
+                let fired = fired.clone();
                 sched.post(TaskSource::Networking, move |b| {
                     let complete = || {
                     if b.frame_loader(page) != loader_id {
                         return;
                     }
                     if let Some(element) = &element {
-                        b.script_ran(page, element, event);
+                        b.script_ran(page, element, event.filter(|_| !fired.get()));
                     }
                     // The handler may have replaced the document.
                     if b.frame_loader(page) != loader_id {
@@ -5085,13 +5091,28 @@ impl Browser {
                 let (fetched, failed) = (finish.clone(), finish.clone());
                 let url = url.to_owned();
                 let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+                // `load` at the element, right after the error report (see `fired`).
+                let fire = {
+                    let (element, bindings, fired) = (element.clone(), bindings.clone(), fired.clone());
+                    Rc::new(move || {
+                        if let (Some(element), Some(bindings)) = (&element, &bindings) {
+                            if !fired.replace(true) {
+                                bindings.unblock_rendering(element.node);
+                                if let Some(ok) = ran {
+                                    pyro_webapi::lifecycle::resource_loaded(bindings, element.node, ok);
+                                }
+                            }
+                        }
+                    })
+                };
+                let fire_parse_error = fire.clone();
                 // The script runs as soon as its graph is ready, with no task
                 // in between (one could deliver an event, an <object>'s load,
                 // before the script's listener for it exists).
                 scope.then(
                     loaded,
                     move |s, _v| {
-                        run_module_graph(s, bindings.as_ref(), &url);
+                        run_module_graph(s, bindings.as_ref(), &url, fire);
                         fetched(ran)
                     },
                     move |s, e| {
@@ -5099,6 +5120,7 @@ impl Browser {
                         // reports the error; one a fetch failed has no result.
                         if module_graph_has_script(s, e) {
                             s.report_exception(&JsError::thrown(Persistent::new(s, e)));
+                            fire_parse_error();
                             failed(ran);
                         } else {
                             failed(Some(false));
@@ -5229,14 +5251,18 @@ impl Browser {
 /// a link error and an evaluation error are reported upon the evaluation
 /// promise's rejection, so after the microtasks the evaluation queued (it
 /// runs inside a microtask, where they do not drain on return).
-fn run_module_graph(scope: &pyro_js::Scope<'_>, bindings: Option<&Rc<pyro_webapi::PageDom>>, url: &str) {
+fn run_module_graph(scope: &pyro_js::Scope<'_>, bindings: Option<&Rc<pyro_webapi::PageDom>>, url: &str, reported_error: Rc<dyn Fn()>) {
     let evaluated = match bindings {
         Some(dom) => dom.with_destructive_writes_ignored(|| scope.link_and_evaluate_module(url)),
         None => scope.link_and_evaluate_module(url),
     };
-    let report = |s: &pyro_js::Scope<'_>, e: pyro_js::Value<'_>| {
+    // `reported_error` (the script element's `load`) follows the report at once: another
+    // script's report must not come between them.
+    let thrown = reported_error.clone();
+    let report = move |s: &pyro_js::Scope<'_>, e: pyro_js::Value<'_>| {
         s.note_module_evaluation_error(e);
-        s.report_exception(&JsError::thrown(Persistent::new(s, e)))
+        s.report_exception(&JsError::thrown(Persistent::new(s, e)));
+        reported_error();
     };
     let reported = match evaluated {
         Ok(promise) => scope.then(promise, |_s, _v| {}, report),
@@ -5246,7 +5272,8 @@ fn run_module_graph(scope: &pyro_js::Scope<'_>, bindings: Option<&Rc<pyro_webapi
                 scope.undefined(),
                 move |s, _v| {
                     s.note_module_evaluation_error(error.get(s));
-                    s.report_exception(&JsError::Thrown(error))
+                    s.report_exception(&JsError::Thrown(error));
+                    thrown();
                 },
                 |_s, _v| {},
             )
