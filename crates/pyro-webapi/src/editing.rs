@@ -2628,6 +2628,23 @@ pub fn caret_on_press(page: &Rc<PageDom>, target: NodeId) {
     set_selection(page, p, p);
 }
 
+/// Shift + press in editable content extends the selection from its anchor to where a plain press would put the caret
+/// (the end of the pressed element's content); false (nothing done) when the selection is not in the pressed
+/// element's editing host, so the press places a caret instead.
+pub fn extend_on_press(page: &Rc<PageDom>, target: NodeId) -> bool {
+    let Some((anchor, _)) = selection(page) else { return false };
+    let focus = {
+        let dom = page.dom.borrow();
+        let Some(host) = editing_host(&dom, target) else { return false };
+        if editing_host(&dom, anchor.0) != Some(host) {
+            return false;
+        }
+        deep_backward(&dom, (target, len(&dom, target)))
+    };
+    set_selection(page, anchor, focus);
+    true
+}
+
 /// The caret a press at viewport (x, y) puts in editable content: the
 /// character boundary nearest to the point in the pressed element's laid-out
 /// text, else the end of its content.

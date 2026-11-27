@@ -3956,6 +3956,9 @@ fn dispatch_mouse_inner(
             page.pressed_pseudo.set(pseudo);
             note_buttons(page, m);
             let place_caret = m.button == MouseButton::Left && pd && md;
+            // A middle or secondary press moves the caret in editable content too (Chrome), without starting a
+            // selection drag, and with Shift extends the selection; on a link Shift does not extend.
+            let caret_only = matches!(m.button, MouseButton::Middle | MouseButton::Right) && pd && md;
             // A canceled mousedown prevents dragging, as in Chrome.
             let source =
                 (m.button == MouseButton::Left && pd && md).then(|| drag_source(&page.dom.borrow(), target)).flatten();
@@ -4031,8 +4034,13 @@ fn dispatch_mouse_inner(
                     fire(page, k, &ev);
                 }
             }
+            if place_caret || caret_only {
+                let extended = m.modifiers.shift && closest_link(page, target).is_none() && crate::editing::extend_on_press(page, target);
+                if !extended {
+                    crate::editing::caret_on_press(page, target);
+                }
+            }
             if place_caret {
-                crate::editing::caret_on_press(page, target);
                 range_press(page, target, m);
                 number_spin_press(page, target, m);
             }

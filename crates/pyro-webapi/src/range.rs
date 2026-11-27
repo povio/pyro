@@ -1244,14 +1244,21 @@ impl JsClass for Selection {
             let dom = sel.page.dom.borrow();
             Ok(s.boolean(dom.contains(sn, node).js()? || dom.contains(en, node).js()?))
         });
-        def.method("toString", 0, |s, sel, _a| match editing::selection_range(&sel.page) {
-            Some((start, end)) => {
-                let r = RangeData::new(&sel.page, start.0)?;
-                set_point(&r, start.0, start.1, true)?;
-                set_point(&r, end.0, end.1, false)?;
-                Ok(s.string(&range_text(&r, true)?))
+        def.method("toString", 0, |s, sel, _a| {
+            // Text selected inside a focused text control is what the selection reports (Chrome): the control's own
+            // selection is not part of the document's.
+            if let Some(text) = crate::clipboard::focused_control_selection(&sel.page) {
+                return Ok(s.string(&text));
             }
-            None => Ok(s.string("")),
+            match editing::selection_range(&sel.page) {
+                Some((start, end)) => {
+                    let r = RangeData::new(&sel.page, start.0)?;
+                    set_point(&r, start.0, start.1, true)?;
+                    set_point(&r, end.0, end.1, false)?;
+                    Ok(s.string(&range_text(&r, true)?))
+                }
+                None => Ok(s.string("")),
+            }
         });
         def.method("deleteFromDocument", 0, |s, sel, _a| {
             if let Some((anchor, focus)) = editing::legacy_endpoints(&sel.page) {
