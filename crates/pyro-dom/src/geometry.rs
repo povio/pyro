@@ -732,6 +732,9 @@ pub trait GeometrySource {
     /// The direction of each scroll container's last scroll on each axis (-1 towards the start, 1
     /// towards the end) by key (`u64::MAX`: the viewport), which `scroll-state(scrolled)` follows.
     fn set_scroll_directions(&self, _directions: Vec<(u64, (i8, i8))>) {}
+    /// The pointer's client position (`None`: it left the page), which `:hover` on the boxes of
+    /// scroll pseudo-elements follows (they are no element for the DOM's hover to name).
+    fn set_pointer(&self, _point: Option<(f64, f64)>) {}
     /// The elements that are a scroll container's snap target now, by key, with the axes (x, y)
     /// they are snapped on, which `scroll-state(snapped)` follows.
     fn set_snapped(&self, _snapped: Vec<(u64, (bool, bool))>) {}

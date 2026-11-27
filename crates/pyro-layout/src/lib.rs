@@ -970,6 +970,17 @@ impl GeometrySource for BlitzGeometry {
         });
     }
 
+    fn set_pointer(&self, point: Option<(f64, f64)>) {
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                let Some(r) = r.as_mut() else { return };
+                if r.set_pointer(self.page, point) {
+                    self.scroll_stale.set(true);
+                }
+            }
+        });
+    }
+
     fn set_scroll_directions(&self, directions: Vec<(u64, (i8, i8))>) {
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {

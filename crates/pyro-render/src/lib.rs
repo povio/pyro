@@ -873,6 +873,8 @@ pub struct Renderer {
     /// at its first sync. (The page tells them once per change, so a document that lost them
     /// would sample its scroll timelines at offset 0 until the next scroll.)
     timeline_scroll: HashMap<u64, TimelineScroll>,
+    /// pyro: each page's pointer (client position) as last told ([`Renderer::set_pointer`]).
+    pointer: HashMap<u64, (f64, f64)>,
     /// pyro: each page's scroll directions as last told ([`Renderer::set_scroll_directions`]),
     /// which a document built again takes at its next sync.
     scroll_directions: HashMap<u64, Vec<(u64, (i8, i8))>>,
@@ -1048,6 +1050,7 @@ impl Renderer {
             mirrors: HashMap::new(),
             animations: HashMap::new(),
             timeline_scroll: HashMap::new(),
+            pointer: HashMap::new(),
             scroll_directions: HashMap::new(),
             snapped: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
@@ -1072,6 +1075,7 @@ impl Renderer {
     pub fn forget(&mut self, page: u64) {
         self.forget_document(page);
         self.timeline_scroll.remove(&page);
+        self.pointer.remove(&page);
         self.scroll_directions.remove(&page);
         self.snapped.remove(&page);
     }
@@ -1166,9 +1170,9 @@ impl Renderer {
     /// between captures, then puts those back. A hit test between captures (a click after a
     /// script or button scroll) is where the page is, and a button's enabled state is that of
     /// its scroller's current offset.
-    /// Nothing runs on a page without scroll buttons (`None`).
+    /// Nothing runs on a page without scroll pseudo-elements (`None`).
     fn at_page_scroll<R>(&mut self, page: u64, f: impl FnOnce(&mut mirror::Mirror) -> R) -> Option<R> {
-        if !self.mirrors.get(&page)?.doc.has_scroll_buttons() {
+        if !self.mirrors.get(&page)?.doc.uses_scroll_markers() {
             return None;
         }
         self.unforce_hidden_contents(page);
@@ -1225,6 +1229,16 @@ impl Renderer {
     /// scroll offsets).
     pub fn uses_scroll_markers(&self, page: u64) -> bool {
         self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_markers())
+    }
+
+    /// pyro: the pointer's client position on `page` (`None`: it left): whether the scroll
+    /// pseudo-element boxes it is over may change with it, which the caller syncs for.
+    pub fn set_pointer(&mut self, page: u64, point: Option<(f64, f64)>) -> bool {
+        let old = match point {
+            Some(point) => self.pointer.insert(page, point),
+            None => self.pointer.remove(&page),
+        };
+        old != point && self.uses_scroll_markers(page)
     }
 
     pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) -> bool {
@@ -1941,10 +1955,18 @@ impl Renderer {
 
     /// [`Renderer::set_interaction`] without the restyle: whether anything changed.
     fn mark_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>) -> bool {
+        // pyro: the pointer over a scroll pseudo-element's box hovers it and its originating element.
+        let pointer = self.pointer.get(&page).copied();
+        let pseudo_hover = self.at_page_scroll(page, |m| {
+            let scroll = m.doc.viewport_scroll();
+            m.doc.hover_scroll_pseudos(pointer.map(|(x, y)| ((x + scroll.x) as f32, (y + scroll.y) as f32)))
+        });
         let Some(m) = self.mirrors.get_mut(&page) else { return false };
         let hover = hovered.and_then(|k| m.node(k));
         let focus = focused.and_then(|k| m.node(k));
-        let mut changed = m.doc.set_hover_node(hover);
+        let (pseudo_changed, pseudo_origin) = pseudo_hover.unwrap_or((false, None));
+        let hover = pseudo_origin.or(hover);
+        let mut changed = m.doc.set_hover_node(hover) || pseudo_changed;
         if m.doc.focused_node() != focus {
             match focus {
                 Some(id) => {

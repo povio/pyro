@@ -699,6 +699,13 @@ impl Layout {
 
     /// The geometry source, brought up to the document (synced when
     /// anything it lays out changed since the last query).
+    /// pyro: tells the engine where the pointer is ([`GeometrySource::set_pointer`]).
+    pub fn set_pointer(&self, point: Option<(f64, f64)>) {
+        if let Some(source) = self.external.as_ref() {
+            source.set_pointer(point);
+        }
+    }
+
     pub fn synced_geometry_source(&self, dom: &Dom) -> Option<&Rc<dyn GeometrySource>> {
         let source = self.external.as_ref().filter(|s| s.active())?;
         let key = self.sync_key(dom);

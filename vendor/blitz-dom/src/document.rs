@@ -701,6 +701,9 @@ pub struct BaseDocument {
     /// pyro: the scroll pseudo-element boxes may be out of date: a style traversal ran or the
     /// tree changed since `resolve_scroll_markers` (`layout::scroll_markers`).
     pub(crate) scroll_markers_dirty: bool,
+    /// pyro: the scroll pseudo-element boxes the pointer is over (`:hover`), innermost first
+    /// (`layout::scroll_markers::hover_scroll_pseudos`).
+    pub(crate) scroll_pseudo_hover: Vec<NodeId>,
     pub(crate) named_anchor_nodes: HashMap<(Option<NodeId>, style::values::DashedIdent), HashSet<NodeId>>,
     pub(crate) popover_anchors: HashMap<NodeId, NodeId>,
     anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
@@ -1077,6 +1080,7 @@ impl BaseDocument {
             first_letter_changed: Vec::new(),
             marker_items_restyled: Vec::new(),
             scroll_markers_dirty: true,
+            scroll_pseudo_hover: Vec::new(),
             named_anchor_nodes: HashMap::new(),
             popover_anchors: HashMap::new(),
             anchor_node_names: HashMap::new(),

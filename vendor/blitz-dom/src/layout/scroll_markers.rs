@@ -1447,20 +1447,21 @@ impl BaseDocument {
         })
     }
 
-    /// pyro: the originating element of the `::scroll-button()` that the painted hit test (`hit`)
-    /// finds at the document point (`x`, `y`): the hit box is the button's or inside it (its
+    /// pyro: the originating element of the `::scroll-button()` (or `::scroll-marker`, or
+    /// `::scroll-marker-group`) that the painted hit test (`hit`) finds at the document point (`x`, `y`): the hit box is the button's or inside it (its
     /// text). A hit test answers a button's originating element (CSS Overflow 5 § 2.2; WPT
     /// css-overflow `scroll-button-elementFromPoint`), which pyro's element-box hit test cannot
     /// see when the button is painted over the element's content or another element. `None` on
     /// a page without buttons (no hit test then) or when anything else is on top.
     pub fn scroll_button_owner_at(&mut self, x: f32, y: f32) -> Option<NodeId> {
-        if !self.has_scroll_buttons() {
+        if !self.uses_scroll_markers() {
             return None;
         }
         let mut id = self.hit(x, y)?.node_id;
         loop {
             let node = self.nodes.get(id)?;
-            if let Some((PseudoElement::ScrollButtonAll, origin)) = node.scroll_pseudo() {
+            // (A marker or a group answers its originating element as a button does, Chromium.)
+            if let Some((_, origin)) = node.scroll_pseudo() {
                 return Some(origin);
             }
             // An element's own box (or one inside it) is no button's.
@@ -1469,6 +1470,64 @@ impl BaseDocument {
             }
             id = node.parent?;
         }
+    }
+
+    /// pyro: puts `:hover` on the scroll pseudo-element box under the document point `point` (the
+    /// topmost box of the painted hit test, as `scroll_button_owner_at`) and on the boxes around
+    /// it (a marker's group), and takes it from the boxes it was on. Returns whether a box
+    /// changed (its style is recomputed, the caller resolves) and the originating element of the
+    /// box hit: the element the pointer is over for `:hover` (CSS Overflow 5 § 2: a box under the
+    /// pointer hovers its originating element, as in Chromium; WPT css-overflow
+    /// `scroll-marker-hover-remove`, `scroll-button-hover-remove`).
+    pub fn hover_scroll_pseudos(&mut self, point: Option<(f32, f32)>) -> (bool, Option<NodeId>) {
+        use style_dom::ElementState;
+        if self.scroll_pseudo_owners.is_empty() && self.scroll_pseudo_hover.is_empty() {
+            return (false, None);
+        }
+        let mut chain: Vec<NodeId> = Vec::new();
+        if let Some((x, y)) = point
+            && !self.scroll_pseudo_owners.is_empty()
+            && let Some(hit) = self.hit(x, y)
+        {
+            let mut id = hit.node_id;
+            loop {
+                let Some(node) = self.nodes.get(id) else { break };
+                let pseudo = node.scroll_pseudo().is_some();
+                if pseudo {
+                    chain.push(id);
+                } else if !chain.is_empty() || node.is_element() {
+                    break;
+                }
+                match node.parent {
+                    Some(parent) => id = parent,
+                    None => break,
+                }
+            }
+        }
+        let origin = chain.first().and_then(|&id| {
+            let (_, mut origin) = self.nodes.get(id)?.scroll_pseudo()?;
+            while let Some((_, next)) = self.nodes.get(origin)?.scroll_pseudo() {
+                origin = next;
+            }
+            Some(origin)
+        });
+        let old = std::mem::take(&mut self.scroll_pseudo_hover);
+        let mut changed = false;
+        for &id in old.iter().filter(|id| !chain.contains(id)).chain(chain.iter().filter(|id| !old.contains(id))) {
+            let hovered = chain.contains(&id);
+            let Some(data) = self.nodes.get_mut(id).and_then(|node| node.element_data_mut()) else { continue };
+            if hovered {
+                data.element_state.insert(ElementState::HOVER);
+            } else {
+                data.element_state.remove(ElementState::HOVER);
+            }
+            if let Some(style) = self.pseudo_node_style(id) {
+                self.set_scroll_pseudo_style(id, style);
+            }
+            changed = true;
+        }
+        self.scroll_pseudo_hover = chain;
+        (changed, origin)
     }
 
     /// pyro: whether an element of the document was ever styled with a `scroll-snap-type`.

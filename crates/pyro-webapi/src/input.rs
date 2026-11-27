@@ -3506,6 +3506,7 @@ fn dispatch_mouse_inner(
     }
     if matches!(kind, MouseKind::Moved | MouseKind::Pressed | MouseKind::Released) {
         *page.pointer.borrow_mut() = Some(m.clone());
+        page.layout().set_pointer(Some((m.x, m.y)));
         let prev = page.hovered();
         // (A hovered node that was removed, even if inserted again, is entered anew.)
         if prev != Some(target) || refresh_hover_trail(page) {
