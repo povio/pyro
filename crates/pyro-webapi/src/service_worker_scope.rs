@@ -597,7 +597,9 @@ pub(crate) fn preload_ready(s: &Scope<'_>, key: u64) {
             .collect()
     };
     let body = (!matches!(head.kind, ResponseKind::OpaqueRedirect)).then_some(body);
-    match crate::response::stored(s, kind, head.url.as_str(), head.status.as_u16(), head.status_text.clone(), headers, head.redirected, body) {
+    // The preload response's own Cross-Origin-Resource-Policy travels with it (checked where it is used).
+    let corp = head.headers.get("cross-origin-resource-policy").and_then(|v| v.to_str().ok()).map(str::to_owned);
+    match crate::response::stored(s, corp.as_deref(), kind, head.url.as_str(), head.status.as_u16(), head.status_text.clone(), headers, head.redirected, body) {
         Ok(response) => call(s, "preloadDone", &[s.number(key as f64), response]),
         Err(_) => failure("The service worker navigation preload response could not be made"),
     }
