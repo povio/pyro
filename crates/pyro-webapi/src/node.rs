@@ -2075,7 +2075,7 @@ impl JsClass for Document {
             node_value(s, n.page(), f)
         });
         def.pure_method("hasFocus", 0, |s, n, _a| Ok(s.boolean(n.page().document() == n.id && !n.page().is_detached())));
-        def.getter("currentScript", |s, n| node_value(s, n.page(), n.page().current_script()));
+        def.getter("currentScript", |s, n| node_value(s, n.page(), n.page().current_script_of(n.id)));
         def.getter("implementation", |s, n| Ok(crate::html::dom_implementation(s, n)?.value()));
         def.getter("forms", |s, n| {
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName("form".into()))?.value())

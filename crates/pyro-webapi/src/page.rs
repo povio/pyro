@@ -157,6 +157,10 @@ pub struct PageDom {
     /// in one task agree. Cleared at each task checkpoint.
     timeline_time: Cell<Option<f64>>,
     current_script: Cell<Option<NodeId>>,
+    /// The document `current_script` belongs to: the script's node document when it started
+    /// (HTML "execute the script element" sets that Document's `currentScript`), which stays
+    /// the owner of the setting if the script is moved to another document meanwhile.
+    current_script_document: Cell<Option<NodeId>>,
     pub(crate) realms: RefCell<FxHashMap<RealmId, WeakRealm>>,
     /// The main-world realm (`main_world_realm`): of `realms`, the earliest
     /// without a world name, kept as realms register (`register_realm`) and
@@ -1082,6 +1086,7 @@ impl PageDom {
             after_task_stamp: Cell::new(None),
             timeline_time: Cell::new(None),
             current_script: Cell::new(None),
+            current_script_document: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
             main_world: RefCell::new(None),
             encoding_helpers: RefCell::new(FxHashMap::default()),
@@ -2485,10 +2490,19 @@ impl PageDom {
         let dom = self.dom.borrow();
         let in_shadow = dom.root_node(script, false).and_then(|root| dom.is_shadow_root(root)).unwrap_or(false);
         self.current_script.set((!in_shadow).then_some(script));
+        self.current_script_document.set(dom.node_document(script).ok());
     }
 
     pub fn set_current_script(&self, script: Option<NodeId>) {
         self.current_script.set(script);
+        let document = script.and_then(|s| self.dom.borrow().node_document(s).ok());
+        self.current_script_document.set(document);
+    }
+
+    /// `document.currentScript` of `document`: the script running for it, none for another
+    /// document of the page (one a script was moved to).
+    pub fn current_script_of(&self, document: NodeId) -> Option<NodeId> {
+        self.current_script.get().filter(|_| self.current_script_document.get().is_none_or(|d| d == document))
     }
 
     /// Lends the network parser for one script it reached: the script's
