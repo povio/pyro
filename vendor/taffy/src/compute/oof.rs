@@ -899,6 +899,38 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
         }
     }
 
+    // pyro: the `width` and `height` of an absolutely positioned table are minimums, as in flow: it is
+    // never narrower than its min-content width nor shorter than its rows at that width (CSS Tables 3
+    // § 3.9.2, § 3.9.4 and the abspos section; WPT css-tables `absolute-tables-002`, `-004`,
+    // `-height-quirks-001`, css-position `position-absolute-table-001`). A width or height the table
+    // takes from stretching is a minimum already (`min_size` above).
+    if is_table {
+        if let Some(width) = known_dimensions.width {
+            let content = tree.measure_child_size(
+                candidate.node,
+                Size::NONE,
+                area_size.map(Some),
+                Size { width: AvailableSpace::MinContent, height: AvailableSpace::MaxContent },
+                SizingMode::ContentSize,
+                AbsoluteAxis::Horizontal,
+                Line::FALSE,
+            );
+            known_dimensions.width = Some(width.max(content));
+        }
+        if let (Some(width), Some(height)) = (known_dimensions.width, known_dimensions.height) {
+            let content = tree.measure_child_size(
+                candidate.node,
+                Size { width: Some(width), height: None },
+                area_size.map(Some),
+                Size { width: AvailableSpace::Definite(width), height: available_space.height },
+                SizingMode::ContentSize,
+                AbsoluteAxis::Vertical,
+                Line::FALSE,
+            );
+            known_dimensions.height = Some(height.max(content));
+        }
+    }
+
     // pyro: a height known before the box's content is measured (its `height`, both insets, a ratio)
     // is definite; one its content gives is not, so its children's percentage heights behave as
     // `auto` (CSS 2.1 § 10.5; WPT CSS2 `normal-flow/blocks-025`).
@@ -953,7 +985,15 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
                 SizingMode::ContentSize,
                 Line::FALSE,
             );
-            known_dimensions.unwrap_or(measured_size)
+            if is_table {
+                // pyro: a table's `height` is a minimum (its rows make it taller; grid.rs lays it out so)
+                Size {
+                    width: known_dimensions.width.map_or(measured_size.width, |width| width.max(measured_size.width)),
+                    height: known_dimensions.height.map_or(measured_size.height, |height| height.max(measured_size.height)),
+                }
+            } else {
+                known_dimensions.unwrap_or(measured_size)
+            }
         }
     }
     .maybe_clamp(min_size, max_size);
