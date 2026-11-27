@@ -369,6 +369,10 @@
   // ----- keyframes ----------------------------------------------------------
 
   const COMPOSITES = ['replace', 'add', 'accumulate'];
+  // Properties no animation type is defined for (CSS Animations / Transitions, contain, writing
+  // mode and the like): members naming them are not read when processing keyframes.
+  const NOT_ANIMATABLE = /^(?:animation|transition|scroll-timeline|view-timeline|timeline-scope)(?:-|$)|^(?:contain|direction|text-combine-upright|text-orientation|unicode-bidi|will-change|writing-mode)$/;
+
   // A keyframe member name to its CSS property, or null for anything that is
   // not an animatable property.
   function propertyOf(member) {
@@ -378,7 +382,8 @@
     if (member === 'float' || member === 'offset') return null;
     if (member.startsWith('--')) return member;
     if (/[A-Z]/.test(member[0]) || member.includes('-')) return null;
-    return cssName(member);
+    const name = cssName(member);
+    return name !== null && NOT_ANIMATABLE.test(name) ? null : name;
   }
   function stringValue(v) {
     if (typeof v === 'symbol') throw new TypeError('Cannot convert a Symbol value to a string');
@@ -426,11 +431,12 @@
         }
         const obj = kf || {};
         const values = new Map();
-        const offset = offsetValue(obj.offset);
+        // Dictionary members are read in lexicographic order: composite, easing, offset.
+        const composite = compositeValue(obj.composite);
         // An invalid easing is reported only after every keyframe and property was read.
         let easing = LINEAR;
-        try { easing = parseEasing(obj.easing === undefined ? 'linear' : obj.easing); } catch (e) { easingError ??= e; }
-        const composite = compositeValue(obj.composite);
+        try { const rawEasing = obj.easing; easing = parseEasing(rawEasing === undefined ? 'linear' : rawEasing); } catch (e) { easingError ??= e; }
+        const offset = offsetValue(obj.offset);
         for (const { key, prop } of propertyMembers(obj)) {
           values.set(key, { prop, value: stringValue(obj[key]) });
         }
@@ -446,7 +452,7 @@
     } else {
       // A property-indexed keyframe.
       const list = v => (isObject(v) && typeof v[Symbol.iterator] === 'function' ? Array.from(v) : [v]);
-      const rawOffset = input.offset, rawEasing = input.easing, rawComposite = input.composite;
+      const rawComposite = input.composite, rawEasing = input.easing, rawOffset = input.offset;
       const byOffset = new Map();
       for (const { key, prop } of propertyMembers(input)) {
         const values = list(input[key]).map(stringValue);
@@ -2419,6 +2425,16 @@
 
   function rootAnimations(root) {
     return relevant(target => isConnected(target) && apply(getRootNode, target, []) === root);
+  }
+
+  // WebIDL: the attributes and operations of an interface are enumerable properties of its prototype.
+  for (const C of [Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent,
+    ScrollTimeline, ViewTimeline, CSSAnimation, CSSTransition]) {
+    for (const key of Reflect.ownKeys(C.prototype)) {
+      if (key === 'constructor' || typeof key === 'symbol') continue;
+      const d = Object.getOwnPropertyDescriptor(C.prototype, key);
+      if (d && d.configurable && !d.enumerable) Object.defineProperty(C.prototype, key, { enumerable: true });
+    }
   }
 
   return {
