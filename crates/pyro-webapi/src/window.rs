@@ -1085,6 +1085,7 @@ pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Ar
                     source: None,
                     form_entries: None,
                     replace: false,
+                    user_initiated: false,
                 });
             }
             return Ok(window);
@@ -1133,6 +1134,7 @@ pub(crate) fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &pyro_js::Ar
         source: None,
         form_entries: None,
         replace: false,
+        user_initiated: false,
     });
     if sandboxed {
         return Ok(s.null());

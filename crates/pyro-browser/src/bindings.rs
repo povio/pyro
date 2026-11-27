@@ -1097,6 +1097,8 @@ fn before_navigation(
         form_entries: request.form_entries.take(),
         replace: request.replace,
         cross_origin: cross_origin_target,
+        user_initiated: request.user_initiated,
+        history_api: false,
     };
     if get && nav.as_ref().is_some_and(|nav| nav.navigate_to_fragment_from(&request.url, &source)) {
         return None;

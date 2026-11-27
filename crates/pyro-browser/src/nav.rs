@@ -314,6 +314,12 @@ pub(crate) struct NavigateSource {
     /// document's own URL is not made a "replace" (HTML navigate: the URL comparison is only
     /// for a same-origin initiator, which can see it).
     pub cross_origin: bool,
+    /// `NavigateEvent.userInitiated`: the activation behavior of a trusted click (a followed
+    /// link, a submitted form).
+    pub user_initiated: bool,
+    /// `history.pushState` / `replaceState`: HTML's "URL and history update steps" fire a
+    /// `navigate` event that is never a `hashChange`.
+    pub history_api: bool,
 }
 
 impl PageNav {
@@ -1490,9 +1496,20 @@ impl PageNav {
             let st = self.state.borrow();
             st.entries.iter().any(|e| e.key == k && e.doc == st.doc_seq)
         });
+        // `destination.sameDocument` of a push or replace: the history API, or a fragment
+        // navigation (a traversal's comes from its entry).
+        let same_document = match (&current, &target) {
+            (Some(c), Some(t)) => source.history_api || (t.fragment().is_some() && same_document_except_fragment(c, t)),
+            _ => source.history_api,
+        };
         let (hash_change, can_intercept) = match (&current, &target) {
             (Some(c), Some(t)) => (
-                t.fragment().is_some() && c.fragment() != t.fragment() && same_document_except_fragment(c, t),
+                // A traversal is a hash change whenever only the fragment differs (a back to the
+                // URL without one included), a push or replace only when the target has one.
+                !source.history_api
+                    && c.fragment() != t.fragment()
+                    && same_document_except_fragment(c, t)
+                    && if navigation_type == "traverse" { traversal_stays } else { t.fragment().is_some() },
                 // A traversal to another document cannot be intercepted (a same-document one of a
                 // child frame can, though its event is not cancelable).
                 can_rewrite_url(c, t) && (navigation_type != "traverse" || traversal_stays),
@@ -1527,6 +1544,8 @@ impl PageNav {
                 s.string(&key.map(|k| k.to_string()).unwrap_or_default()),
                 form_data,
                 element,
+                s.boolean(source.user_initiated),
+                s.boolean(same_document),
             ];
             match f.call(None, &args).and_then(|v| v.to_string()) {
                 Ok(answer) if answer == "cancel" => decision = NavigateDecision::Cancel,
@@ -2349,10 +2368,14 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: pyro_js::Args<'s>, kind: Same
         return Ok(s.undefined());
     }
     let navigation_type = if kind == SameDocumentKind::Push { "push" } else { "replace" };
-    if n.navigate_event(navigation_type, &url, true) == NavigateDecision::Cancel {
+    let source = NavigateSource { history_api: true, ..Default::default() };
+    if n.navigate_event_to(navigation_type, &url, true, None, &source) == NavigateDecision::Cancel {
         return Ok(s.undefined());
     }
     n.same_document(&url, state, kind);
+    // The Navigation API state is separate from `history.state`: the entry a pushState or
+    // replaceState makes has none (`entry.getState()` is undefined), whatever the entry had.
+    n.set_navigation_state(None);
     n.navigation_committed(navigation_type);
     Ok(s.undefined())
 }
@@ -2900,6 +2923,11 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         let page = nav.page_dom.borrow().upgrade();
         let (x, y) = page.map(|p| pyro_webapi::layout_api::viewport_scroll(&p)).unwrap_or_default();
         Ok(s.string(&format!("{x},{y}")))
+    });
+    // dispatchTrusted(target, event): the user agent's own event, `isTrusted` true.
+    native!("dispatchTrusted", |s, _nav, a| {
+        pyro_webapi::dispatch_trusted_event(s, a.get(0), a.get(1))?;
+        Ok(s.undefined())
     });
     native!("updateState", |s, nav, a| {
         let state = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;

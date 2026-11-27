@@ -816,8 +816,23 @@ fn dispatch_click(page: &Rc<PageDom>, target: NodeId, ev: &EventData, handled: b
         legacy_canceled_activation(page, el, legacy);
         return false;
     }
+    // The navigation the activation behavior starts is user-initiated (`NavigateEvent.userInitiated`)
+    // when the click is the user's (trusted), not script's (`a.click()`).
+    let outer = TRUSTED_ACTIVATION.with(|flag| flag.replace(trusted));
     run_activation_behavior(page, el, legacy, target, ev, &rest);
+    TRUSTED_ACTIVATION.with(|flag| flag.set(outer));
     true
+}
+
+thread_local! {
+    /// Whether the activation behavior now running is that of a trusted click.
+    static TRUSTED_ACTIVATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a navigation requested now comes from a trusted click's activation behavior (a
+/// followed link, a submitted form): HTML "user involvement" is "activation".
+pub(crate) fn user_initiated_navigation() -> bool {
+    TRUSTED_ACTIVATION.with(std::cell::Cell::get)
 }
 
 /// HTML activation behavior of `el`, the activation target of the click
@@ -1183,6 +1198,7 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         source: Some(el),
         form_entries: None,
         replace: false,
+        user_initiated: user_initiated_navigation(),
     });
 }
 

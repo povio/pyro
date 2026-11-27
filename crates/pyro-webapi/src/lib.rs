@@ -166,6 +166,12 @@ use std::rc::Rc;
 use pyro_js::{JsResult, Object, Scope, Value};
 
 pub use event::{EventCore, EventData, EventInterface};
+
+/// Delivers `event` at `receiver` (an EventTarget or the global) as a trusted event
+/// (`isTrusted`), bypassing `dispatchEvent`'s untrusting: the Navigation API's own events.
+pub fn dispatch_trusted_event(s: &Scope<'_>, receiver: Value<'_>, event: Value<'_>) -> JsResult<()> {
+    cookie_store::events::dispatch_trusted(s, receiver, event)
+}
 pub use fetch::{FetchLimits, RequestContext};
 pub use file_reader::FileReaderLimits;
 pub use scheduler::with_idle_scheduling_state;

@@ -701,6 +701,9 @@ pub struct NavigationRequest {
     /// The navigation replaces the document's history entry (HTML history
     /// handling "replace"): see [`PageDom::navigates_by_replacing`].
     pub replace: bool,
+    /// The navigation is the activation behavior of a trusted click (a followed link, a
+    /// submitted form): `NavigateEvent.userInitiated`.
+    pub user_initiated: bool,
 }
 
 /// Whether `url` parses as a `javascript:` URL (HTML "navigate to a javascript: URL").

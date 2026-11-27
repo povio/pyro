@@ -1,7 +1,7 @@
 // The Navigation API (`window.navigation`) for one realm, made on its first
 // use. `native` reaches the frame's session history (nav.rs):
 //   watch(hook): hook('navigate', type, url, hashChange, cancelable,
-//     canIntercept, destinationKey, formData, sourceElement) fires
+//     canIntercept, destinationKey, formData, sourceElement, userInitiated, sameDocument) fires
 //     `navigate` for a navigation the
 //     page started some other way (link, location, history, traversal) and
 //     returns 'proceed', 'cancel' or 'intercept'; hook('commit', type) follows
@@ -14,11 +14,12 @@
 //     answers 'cancel' so that nothing happens natively, and this commits when the handlers
 //     fulfilled; a traversal is queued again with traverse(key) and its hook answers 'intercept')
 //   hook('stop') follows window.stop().
+//   dispatchTrusted(target, event): delivers an event of this script's making as a trusted one.
 //   reload(); traverse(key) -> 'missing' | 'current' | 'queued';
 //   updateState(stateJSON); reportException(error);
 //   activation() -> null | [type, entryKey, entryId, entryUrl, null | [key, id, url, stateJSON]].
 // Navigation API state is kept as JSON, as history.state is. Events are made
-// by this script, so their isTrusted is false.
+// by this script and delivered by `native.dispatchTrusted` (their isTrusted is true).
 (function (native) {
   'use strict';
   const token = Symbol('pyro');
@@ -37,7 +38,9 @@
   const ArrayFromKeys = (map) => Array.from(map.keys());
   const stringify = JSON.stringify;
   const addListener = EventTargetC.prototype.addEventListener;
-  const dispatch = EventTargetC.prototype.dispatchEvent;
+  // The user agent's own events (`navigate`, `navigatesuccess`, ...) are trusted: not
+  // `EventTarget.prototype.dispatchEvent`, which untrusts them.
+  const dispatch = (target, event) => native.dispatchTrusted(target, event);
   const illegal = (name) => new TypeErrorC(`Failed to construct '${name}': Illegal constructor`);
   const tag = (C, name) => defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
   const ownTag = (o, name) => defineProperty(o, Symbol.toStringTag, { value: name, configurable: true });
@@ -164,8 +167,12 @@
     get id() {
       return native.active() ? destinationData.get(this).id : '';
     }
+    // The index of the destination entry in the entries list, -1 once that entry is gone (a
+    // replace or a push removed it): read when asked.
     get index() {
-      return native.active() ? destinationData.get(this).index : -1;
+      if (!native.active()) return -1;
+      const { id } = destinationData.get(this);
+      return id === '' ? -1 : snapshot().list.findIndex((e) => entryData.get(e).row.id === id);
     }
     get sameDocument() {
       return destinationData.get(this).sameDocument;
@@ -233,6 +240,10 @@
       if (d === undefined) throw new TypeErrorC('Illegal invocation');
       if (!native.active()) {
         throw invalidState("Failed to execute 'intercept' on 'NavigateEvent': The document is not fully active.");
+      }
+      // HTML "intercept": a synthetic event (one the page made) is a SecurityError first.
+      if (!d.trusted) {
+        throw new DOMExceptionC("Failed to execute 'intercept' on 'NavigateEvent': intercept() may only be called on a trusted event.", 'SecurityError');
       }
       if (!d.dispatching) {
         throw invalidState("Failed to execute 'intercept' on 'NavigateEvent': intercept() may only be called while the navigate event is being dispatched.");
@@ -418,7 +429,7 @@
     // `filename` is the document's URL when the navigation began; Chrome reports the throw site
     // as the position, here any position (1:1) stands for it.
     const ev = new ErrorEventC('navigateerror', { error, message: errorMessage(error), filename: o.href, lineno: 1, colno: 1 });
-    dispatch.call(navigation, ev);
+    dispatch(navigation, ev);
     if (o.result !== null) {
       o.result.committed.reject(error);
       o.result.finished.reject(error);
@@ -548,7 +559,7 @@
     }
   };
 
-  const fireNavigate = (type, url, hashChange, cancelable, canIntercept, key, result, info, state, formData, sourceElement) => {
+  const fireNavigate = (type, url, hashChange, cancelable, canIntercept, key, result, info, state, formData, sourceElement, userInitiated, sameDocument) => {
     if (ongoing !== null) fail(ongoing, abortError('The navigation was aborted by a new navigation.'));
     const from = current();
     let destination;
@@ -567,11 +578,13 @@
         info = p.info;
       }
     } else {
-      destination = new NavigationDestination(token, { url, key: '', id: '', index: -1, sameDocument: hashChange, state });
+      // A reload's destination state is the current entry's unless the page gave one.
+      if (type === 'reload' && state === undefined && from !== null) state = entryData.get(from).row.state;
+      destination = new NavigationDestination(token, { url, key: '', id: '', index: -1, sameDocument, state });
     }
     const controller = new AbortControllerC();
     const event = new NavigateEvent('navigate', {
-      navigationType: type, destination, canIntercept, userInitiated: false, hashChange, signal: controller.signal,
+      navigationType: type, destination, canIntercept, userInitiated, hashChange, signal: controller.signal,
       info, cancelable, formData, sourceElement,
     });
     const d = eventData.get(event);
@@ -584,7 +597,7 @@
     ongoing = o;
     d.dispatching = true;
     try {
-      dispatch.call(navigation, event);
+      dispatch(navigation, event);
     } finally {
       d.dispatching = false;
     }
@@ -615,7 +628,7 @@
     const from = o !== null && o.from !== null ? o.from : lastEntry;
     lastEntry = entry;
     if (type !== 'reload' && from !== null) {
-      dispatch.call(navigation, new NavigationCurrentEntryChangeEvent('currententrychange', { navigationType: type, from }));
+      dispatch(navigation, new NavigationCurrentEntryChangeEvent('currententrychange', { navigationType: type, from }));
     }
     if (o === null) return;
     if (o.result !== null) o.result.committed.resolve(entry);
@@ -645,7 +658,7 @@
         // HTML: `navigatesuccess` fires with `navigation.transition` still
         // set; then the method's and the transition's `finished` resolve and
         // the transition is cleared.
-        dispatch.call(navigation, new EventC('navigatesuccess'));
+        dispatch(navigation, new EventC('navigatesuccess'));
         if (o.result !== null) o.result.finished.resolve(entry);
         if (o.transitionFinished !== null) o.transitionFinished.resolve();
         if (o.transition !== null && transition === o.transition) transition = null;
@@ -676,7 +689,7 @@
     }
   };
 
-  native.watch((kind, a, b, c, d, e, f, formData, sourceElement) => {
+  native.watch((kind, a, b, c, d, e, f, formData, sourceElement, userInitiated, sameDocument) => {
     if (kind === 'navigate') {
       // The queued-again traversal of a navigation whose precommit handlers fulfilled: it commits.
       if (resume !== null && a === 'traverse' && f === resume.key) {
@@ -684,7 +697,7 @@
         resume = null;
         if (ongoing === r.o) return 'intercept';
       }
-      const decision = fireNavigate(a, b, c, d, e, f, null, undefined, undefined, formData, sourceElement);
+      const decision = fireNavigate(a, b, c, d, e, f, null, undefined, undefined, formData, sourceElement, userInitiated, sameDocument);
       // Nothing happens natively until the precommit handlers fulfilled: the navigation is
       // canceled there and committed from `commitDeferred`.
       if (decision === 'defer') {
@@ -707,7 +720,8 @@
     const hashChange = type !== 'reload' && target.hash !== '' && target.hash !== here.hash
       && target.href.split('#')[0] === here.href.split('#')[0];
     const canIntercept = target.origin === here.origin && target.protocol === here.protocol;
-    const decision = fireNavigate(type, url, hashChange, true, canIntercept, '', result, info, state);
+    const sameDocument = type !== 'reload' && target.href.includes('#') && target.href.split('#')[0] === here.href.split('#')[0];
+    const decision = fireNavigate(type, url, hashChange, true, canIntercept, '', result, info, state, undefined, undefined, false, sameDocument);
     if (decision === 'cancel') return apiResult(result);
     if (decision === 'defer') {
       runPrecommit(ongoing);
@@ -805,7 +819,7 @@
       native.updateState(serialize(options.state));
       const from = lastEntry ?? current();
       lastEntry = current();
-      dispatch.call(this, new NavigationCurrentEntryChangeEvent('currententrychange', { navigationType: null, from }));
+      dispatch(this, new NavigationCurrentEntryChangeEvent('currententrychange', { navigationType: null, from }));
     }
     navigate(url, options) {
       if (arguments.length === 0) {
