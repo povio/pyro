@@ -46,6 +46,28 @@ impl std::fmt::Debug for HistoryState {
     }
 }
 
+/// What the Navigation API needs to know of an entry's document once it is not the active one:
+/// its origin (an `about:blank`, `srcdoc` or `blob:` document inherits one its URL does not show)
+/// and whether its referrer policy was `no-referrer` when it was left (`NavigationHistoryEntry.url`
+/// reads null then). Recorded while the document is alive; never part of an entry's identity.
+#[derive(Debug, Clone, Default)]
+struct DocFacts {
+    origin: Option<String>,
+    no_referrer: bool,
+}
+impl PartialEq for DocFacts {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+impl Eq for DocFacts {}
+
+/// The Navigation API's key or id of an entry: a version 4 (variant 1) UUID shaped string, unique
+/// per counter value (the counter is in the last group and the third one's low digits).
+fn uuid_of(n: u64) -> String {
+    format!("70797230-4e41-4{:03x}-8000-{:012x}", (n >> 48) & 0xfff, n & 0xffff_ffff_ffff)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
     url: String,
@@ -69,6 +91,8 @@ struct Entry {
     /// when true. A new document's entry starts "auto"; pushState and replaceState keep the
     /// current entry's.
     scroll_manual: bool,
+    /// See [`DocFacts`].
+    facts: DocFacts,
 }
 
 /// The ids [`PageNav::history_entries`] gives the steps only a child frame
@@ -193,7 +217,8 @@ struct NavState {
 struct Activation {
     ty: &'static str,
     entry: (u64, u64, String),
-    from: Option<(u64, u64, String, Option<String>)>,
+    /// The url is `None` when the left document's referrer policy was `no-referrer`.
+    from: Option<(u64, u64, Option<String>, Option<String>)>,
 }
 
 impl NavState {
@@ -544,7 +569,18 @@ impl PageNav {
         let traversal_from = self.traversal_from.take();
         self.container_policy.set(self.container_policy_pending.take());
         self.ancestor_origins.borrow_mut().clear();
+        // The document this navigation leaves is still the frame's: what its entries need later.
+        let leaving = self.page_dom.borrow().upgrade().filter(|p| p.dom.try_borrow().is_ok()).map(|p| {
+            let origin = Some(p.origin_key()).filter(|k| !k.starts_with("opaque"));
+            (origin, matches!(p.referrer_policy(), pyro_net::ReferrerPolicy::NoReferrer))
+        });
         let mut st = self.state.borrow_mut();
+        if let Some((origin, no_referrer)) = leaving {
+            let doc = st.doc_seq;
+            for e in st.entries.iter_mut().filter(|e| e.doc == doc) {
+                e.facts = DocFacts { origin: origin.clone().or_else(|| e.facts.origin.take()), no_referrer };
+            }
+        }
         // The entry this navigation leaves (HTML `navigation.activation.from`): a traversal's is
         // the one it started from (the index is already the target's), any other the current one.
         // The initial about:blank document has none.
@@ -577,6 +613,7 @@ impl PageNav {
             nav_state: None,
             step: current_step,
             scroll_manual: false,
+            facts: DocFacts::default(),
         };
         let initial = std::mem::take(&mut st.initial);
         st.first_blank = false;
@@ -595,10 +632,15 @@ impl PageNav {
             HistoryHandling::Traverse | HistoryHandling::Reload => {
                 // The entry at the index (set by traverse() for traversals)
                 // keeps its id and state; a redirect updates its URL.
+                // The entries that shared the restored entry's document share the new one
+                // (`entry.sameDocument` of the entries around it holds again).
                 let (i, doc) = (st.index, st.doc_seq);
-                let e = &mut st.entries[i];
-                e.doc = doc;
-                e.url = entry_url.to_string();
+                let shared = st.entries[i].doc;
+                for e in st.entries.iter_mut().filter(|e| e.doc == shared) {
+                    e.doc = doc;
+                    e.facts = DocFacts::default();
+                }
+                st.entries[i].url = entry_url.to_string();
             }
             HistoryHandling::Replace => {
                 let i = st.index;
@@ -635,6 +677,7 @@ impl PageNav {
             let from = left.as_ref().filter(|left| {
                 here.as_ref().is_some_and(|o| o.is_tuple()) && origin(&left.url) == here
             });
+            // An entry of a no-referrer document shows no URL once that document was left.
             // The frame's own initial about:blank document is not a navigation's result.
             if left.is_none() && url == "about:blank" {
                 return None;
@@ -642,7 +685,9 @@ impl PageNav {
             Some(Activation {
                 ty,
                 entry: (entry.key, entry.id, entry.url.clone()),
-                from: from.map(|left| (left.key, left.id, left.url.clone(), left.nav_state.clone())),
+                from: from.map(|left| {
+                    (left.key, left.id, Some(left.url.clone()).filter(|_| !left.facts.no_referrer), left.nav_state.clone())
+                }),
             })
         });
         st.activation = activation;
@@ -801,11 +846,12 @@ impl PageNav {
             let replace_key = current.filter(|_| kind == SameDocumentKind::Replace).map(|e| e.key);
             let step = current.map_or(self.joint.current.get(), |e| e.step);
             let scroll_manual = current.is_some_and(|e| e.scroll_manual);
+            let facts = current.map(|e| e.facts.clone()).unwrap_or_default();
             let key = match replace_key {
                 Some(key) => key,
                 None => st.next_entry_id(),
             };
-            let mut entry = Entry { url: url.to_string(), state, doc, id, key, nav_state, step, scroll_manual };
+            let mut entry = Entry { url: url.to_string(), state, doc, id, key, nav_state, step, scroll_manual, facts };
             if kind != SameDocumentKind::Replace {
                 st.initial = false;
             }
@@ -1541,7 +1587,7 @@ impl PageNav {
                 s.boolean(hash_change),
                 s.boolean(cancelable),
                 s.boolean(can_intercept),
-                s.string(&key.map(|k| k.to_string()).unwrap_or_default()),
+                s.string(&key.map(uuid_of).unwrap_or_default()),
                 form_data,
                 element,
                 s.boolean(source.user_initiated),
@@ -2775,12 +2821,25 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
     // entries() -> [index, [key, id, url, sameDocument, stateJSON]...]: the
     // same-origin entries around the current one.
     native!("entries", |s, nav, _a| {
+        // The live document's origin (an `about:blank` or `srcdoc` document has its creator's).
+        let live = nav.page_dom.borrow().upgrade().map(|p| p.origin_key());
         let st = nav.state.borrow();
-        let origin = |url: &str| Url::parse(url).ok().map(|u| u.origin());
         let Some(current) = st.entries.get(st.index) else { return Ok(s.array(&[s.number(-1.0)])?.value()) };
-        let here = origin(&current.url);
-        let same =
-            |e: &Entry| (here.as_ref().is_some_and(|o| o.is_tuple()) && origin(&e.url) == here) || e.doc == current.doc;
+        let here = live.clone().or_else(|| Url::parse(&current.url).ok().map(|u| u.origin().ascii_serialization()));
+        let here = here.filter(|o| !o.starts_with("opaque") && o != "null");
+        // An entry's document origin: what was recorded when it was left (an `about:blank`,
+        // `srcdoc` or `blob:` document has its creator's, which its URL does not show); for the
+        // entries of the live document its own; else the URL's.
+        let origin_of = |e: &Entry| -> Option<String> {
+            if e.doc == current.doc {
+                return here.clone();
+            }
+            if let Some(o) = &e.facts.origin {
+                return Some(o.clone());
+            }
+            Url::parse(&e.url).ok().map(|u| u.origin()).filter(|o| o.is_tuple()).map(|o| o.ascii_serialization())
+        };
+        let same = |e: &Entry| e.doc == current.doc || (here.is_some() && origin_of(e) == here);
         let mut start = st.index;
         while start > 0 && same(&st.entries[start - 1]) {
             start -= 1;
@@ -2792,13 +2851,9 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         let mut values = vec![s.number((st.index - start) as f64)];
         for e in &st.entries[start..end] {
             let state = e.nav_state.as_deref().map_or(s.undefined(), |j| s.string(j));
-            let row = [
-                s.string(&e.key.to_string()),
-                s.string(&e.id.to_string()),
-                s.string(&e.url),
-                s.boolean(e.doc == current.doc),
-                state,
-            ];
+            // The URL of a no-referrer document's entry is hidden once that document was left.
+            let url = if e.facts.no_referrer && e.doc != current.doc { s.null() } else { s.string(&e.url) };
+            let row = [s.string(&uuid_of(e.key)), s.string(&uuid_of(e.id)), url, s.boolean(e.doc == current.doc), state];
             values.push(s.array(&row)?.value());
         }
         Ok(s.array(&values)?.value())
@@ -2812,13 +2867,14 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
             None => s.null(),
             Some((key, id, url, state)) => {
                 let state = state.as_deref().map_or(s.undefined(), |j| s.string(j));
-                s.array(&[s.string(&key.to_string()), s.string(&id.to_string()), s.string(url), state])?.value()
+                let url = url.as_deref().map_or(s.null(), |u| s.string(u));
+                s.array(&[s.string(&uuid_of(*key)), s.string(&uuid_of(*id)), url, state])?.value()
             }
         };
         let row = [
             s.string(act.ty),
-            s.string(&act.entry.0.to_string()),
-            s.string(&act.entry.1.to_string()),
+            s.string(&uuid_of(act.entry.0)),
+            s.string(&uuid_of(act.entry.1)),
             s.string(&act.entry.2),
             from,
         ];
@@ -2830,8 +2886,15 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
     {
         let with_nav = with_nav.clone();
         let f = s.function("active", move |s, _this, _a| {
-            let active =
-                with_nav().ok().is_some_and(|nav| nav.page_dom.borrow().upgrade().is_some_and(|p| p.is_fully_active()));
+            // The frame's current document must be this realm's own: the session history belongs to
+            // the frame, so a document navigated away from would otherwise read the next one's.
+            let own = pyro_webapi::target::page_of(s).ok();
+            let active = with_nav().ok().is_some_and(|nav| {
+                nav.page_dom
+                    .borrow()
+                    .upgrade()
+                    .is_some_and(|p| p.is_fully_active() && own.as_ref().is_none_or(|own| Rc::ptr_eq(own, &p)))
+            });
             Ok(s.boolean(active))
         })?;
         natives.set_atom("active", f.value())?;
@@ -2886,7 +2949,7 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         let key = a.get(0).to_string()?;
         let delta = {
             let st = nav.state.borrow();
-            st.entries.iter().position(|e| e.key.to_string() == key).map(|i| i as i64 - st.index as i64)
+            st.entries.iter().position(|e| uuid_of(e.key) == key).map(|i| i as i64 - st.index as i64)
         };
         Ok(s.string(match delta {
             None => "missing",
