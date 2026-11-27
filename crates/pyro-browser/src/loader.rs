@@ -823,12 +823,13 @@ impl ResourceLoader for NetLoader {
                 }
             }
             pyro_net::ResponseEvent::Response(h) => {
-                let attachment = downloads_blocked
-                    && h.status.is_success()
-                    && h.headers.get(http::header::CONTENT_DISPOSITION).and_then(|v| v.to_str().ok()).filter(|v| is_attachment(v)).map(str::to_owned);
+                let attachment = (downloads_blocked && h.status.is_success())
+                    .then(|| h.headers.get(http::header::CONTENT_DISPOSITION).and_then(|v| v.to_str().ok()).filter(|v| is_attachment(v)).map(str::to_owned))
+                    .flatten();
                 if let Some(disposition) = attachment {
                     cut = true;
                     let resource = Resource {
+                        embedder_reporting: Default::default(),
                         url: h.url.to_string(),
                         status: h.status.as_u16(),
                         mime: h.mime,
