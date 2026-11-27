@@ -870,9 +870,9 @@ fn collect_layout_children_with_wrap(
         return;
     }
 
-    // pyro: an ordinary MathML fraction: its numerator and denominator are its layout children
-    // (`layout::math`).
-    if super::math::construct_fraction(doc, container_node_id, &mut out.children) {
+    // pyro: a MathML element with a layout algorithm of its own (an ordinary fraction, a row, ...)
+    // has its element children as its layout children (`layout::math`).
+    if super::math::construct_math(doc, container_node_id, &mut out.children) {
         return;
     }
 
@@ -2338,6 +2338,9 @@ pub(crate) fn find_inline_layout_embedded_boxes(
                             if !node.flags.contains(NodeFlags::IS_INITIAL_LETTER_BOX) {
                                 node.flags.remove(NodeFlags::IS_INLINE_ROOT);
                             }
+                            // pyro: nor a math box (`layout::math`) once it is flattened into its
+                            // container's inline layout.
+                            node.flags.remove(NodeFlags::IS_MATH_BOX);
                             iter_children_and_pseudos!(nodes[node_id], |child_id| {
                                 crate::util::ensure_stack(|| find_inline_layout_embedded_boxes_recursive(
                                     nodes,

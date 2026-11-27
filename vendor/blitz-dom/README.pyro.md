@@ -2982,7 +2982,22 @@ document made with `DocumentConfig::quirks_mode` gives its `Stylist` `QuirksMode
 selectors match ASCII case-insensitively there, as in every browser (HTML "case-sensitivity of selectors"). Its
 author sheets already parsed in quirks mode (`BaseDocument::sheet_quirks_mode`); style attributes and CSSOM edits
 still parse in no-quirks mode. WPT css/selectors/invalidation `quirks-mode-stylesheet-dynamic-add-001`.
-## MathML fractions (`layout/math.rs`)
+## MathML boxes (`layout/math/`)
+
+`layout/math/mod.rs` documents the interface of the MathML layout classes: `MathKind` (`math_kind`: the element's
+class, a `Row` for invalid markup), `construct_math` (the one hook in `construct.rs`), `NodeFlags::IS_MATH_BOX` with
+`ElementData::math_kind`, and `LayoutPassState::compute_math_layout` (the driver: it measures the in-flow layout
+children at max-content, calls the class's `layout`, resolves `width`/`height`/`min-*`/`max-*`/`box-sizing` with
+`taffy::compute_leaf_layout`, places the children (mirrored for `direction: rtl`, centred in a `display: block`
+`math`), and positions out-of-flow children). `row.rs` is the row (`math`, `mrow`, `mstyle`, `merror`, `mphantom`,
+`maction`, `semantics`, `a`, unknown elements, invalid markup; Chromium's `MathMLRowLayoutAlgorithm`); `underover.rs`,
+`scripts.rs`, `radical.rs`, `padded.rs`, `table.rs` and `operator.rs` are empty (their `construct` returns `false`:
+those elements are built and laid out as before) for the lanes that fill them. `types.rs` also reads the MATH table's
+italic corrections, top accent attachments and `MathVariants` (size variants, glyph assembly); `mod.rs` the 56 MATH
+constants. The `math` root and `mfrac` are atomic inlines (`replaced::is_inline_box`); `m|math[display=block]` is
+`display: block`.
+
+## MathML fractions (`layout/math/fraction.rs`)
 
 An ordinary `<mfrac>` (MathML namespace, `display: inline`, exactly two element children that are in flow
 and hold no block box, no `::before`/`::after`, no text beside them) is built with its numerator and
@@ -2998,7 +3013,7 @@ ordinary holds its children's inline layout. `assets/default.css` gets MathML Co
 (`math-style`, `padding-inline: 1px`, `math-depth: auto-add; font-size: math` on its children). Not done: operator
 spacing, `numalign`/`denomalign`/`bevelled`, `math-shift`, vertical or right-to-left math, the `math` root's own
 layout (display centring, `font-family: math`). Tests: `crates/pyro-render/tests/mathml_fraction.rs`, unit tests in
-`layout/math.rs`.
+`layout/math/fraction.rs`.
 
 ## A scroll container's in-flow bounds take boxes empty in one axis
 

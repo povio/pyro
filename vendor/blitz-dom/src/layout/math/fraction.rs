@@ -18,67 +18,10 @@ use taffy::{
     ResolveOrZero as _, RunMode, ScrollableOverflow, Size, SizingMode,
 };
 
-use super::{LayoutPassState, resolve_calc_value};
+use super::{MathConstant, MathFontParameters};
+use crate::layout::{LayoutPassState, resolve_calc_value};
 use crate::node::{NodeData, NodeFlags};
 use crate::{BaseDocument, Node, NodeId, dom_node_id, taffy_node_id};
-
-/// The MATH table's `MathConstants` records the fraction reads (OpenType § MATH, the index of
-/// each `MathValueRecord` after the table's four leading 16-bit fields).
-#[derive(Clone, Copy)]
-pub(crate) enum MathConstant {
-    AxisHeight = 1,
-    StackTopShiftUp = 18,
-    StackTopDisplayStyleShiftUp = 19,
-    StackBottomShiftDown = 20,
-    StackBottomDisplayStyleShiftDown = 21,
-    StackGapMin = 22,
-    StackDisplayStyleGapMin = 23,
-    FractionNumeratorShiftUp = 28,
-    FractionNumeratorDisplayStyleShiftUp = 29,
-    FractionDenominatorShiftDown = 30,
-    FractionDenominatorDisplayStyleShiftDown = 31,
-    FractionNumeratorGapMin = 32,
-    FractionNumDisplayStyleGapMin = 33,
-    FractionRuleThickness = 34,
-    FractionDenominatorGapMin = 35,
-    FractionDenomDisplayStyleGapMin = 36,
-}
-
-/// The highest record index [`MathConstant`] names, plus one.
-pub(crate) const MATH_CONSTANT_COUNT: usize = 37;
-
-/// The math parameters of a font at a size (CSS px): its MATH constants, when it has a MATH
-/// table, and its x-height.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct MathFontParameters {
-    pub(crate) constants: Option<[f32; MATH_CONSTANT_COUNT]>,
-    pub(crate) x_height: Option<f32>,
-}
-
-impl MathFontParameters {
-    pub(crate) fn constant(&self, constant: MathConstant) -> Option<f32> {
-        self.constants.map(|values| values[constant as usize])
-    }
-}
-
-/// Reads the `MathConstants` records of a MATH table (`data`), in font units.
-pub(crate) fn read_math_constants(data: &[u8]) -> Option<[i16; MATH_CONSTANT_COUNT]> {
-    let u16_at = |offset: usize| data.get(offset..offset + 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
-    // MATH header: majorVersion, minorVersion, mathConstantsOffset (from the table's start).
-    if u16_at(0)? != 1 {
-        return None;
-    }
-    let constants = u16_at(4)? as usize;
-    if constants == 0 {
-        return None;
-    }
-    let mut values = [0i16; MATH_CONSTANT_COUNT];
-    for (index, value) in values.iter_mut().enumerate() {
-        // Four 16-bit fields, then the 4-byte records (a value and a device table offset).
-        *value = u16_at(constants + 8 + 4 * index)? as i16;
-    }
-    Some(values)
-}
 
 /// Whether `node` is an ordinary MathML fraction (see the module's documentation), from its
 /// style, children and pseudo-elements as they are now.
@@ -427,20 +370,5 @@ mod tests {
         assert_eq!(p.thickness, 0.0);
         let (up, down) = p.shifts((15.0, 4.0), (15.0, 4.0));
         assert_eq!((up, down), (11.0, 11.0));
-    }
-
-    #[test]
-    fn math_constants_header() {
-        // Version 1.0, constants at offset 10, every record's value its index.
-        let mut table = vec![0u8, 1, 0, 0, 0, 10, 0, 0, 0, 0];
-        table.extend([0u8; 8]);
-        for index in 0..MATH_CONSTANT_COUNT as i16 {
-            table.extend(index.to_be_bytes());
-            table.extend([0u8, 0]);
-        }
-        let values = read_math_constants(&table).unwrap();
-        assert_eq!(values[MathConstant::AxisHeight as usize], 1);
-        assert_eq!(values[MathConstant::FractionRuleThickness as usize], 34);
-        assert_eq!(read_math_constants(&table[..20]), None);
     }
 }

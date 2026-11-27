@@ -1654,6 +1654,6 @@ geolocation, install, usermedia, camera, microphone {
  * script level deeper in compact math (their font 0.71 times smaller), and a fraction has 1px
  * of padding beside its bar. Its layout is `layout::math`. */
 m|math { math-style: compact; }
-m|math[display="block" i] { math-style: normal; }
+m|math[display="block" i] { math-style: normal; display: block; }
 m|mfrac { padding-inline: 1px; }
 m|mfrac > m|* { math-depth: auto-add; math-style: compact; font-size: math; }

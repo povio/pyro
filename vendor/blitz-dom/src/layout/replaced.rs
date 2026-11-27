@@ -181,9 +181,9 @@ pub(crate) fn is_inline_box(element: &ElementData) -> bool {
     is_inline_box_element(&element.name.local)
         || is_image_object(element)
         || is_document_object(element)
-        // pyro: a MathML fraction is an atomic inline (`layout::math`; one that is not an
-        // ordinary fraction holds its children's inline layout, as an inline-block would).
-        || (element.name.ns == markup5ever::ns!(mathml) && element.name.local == markup5ever::local_name!("mfrac"))
+        // pyro: a MathML `math` root and fraction are atomic inlines (`layout::math`; one that is
+        // not built as a box holds its children's inline layout, as an inline-block would).
+        || crate::layout::math::is_atomic_inline(element)
 }
 
 /// The intrinsic dimensions of a replaced element per CSS Images 3

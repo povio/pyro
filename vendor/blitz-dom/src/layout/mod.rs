@@ -1015,6 +1015,7 @@ impl LayoutPassState<'_> {
             ChildLayout::Table => self.compute_table_root_layout(node_id, inputs),
             ChildLayout::Multicol { inline_root } => self.compute_multicol_layout(node_id, inputs, inline_root),
             ChildLayout::MathFraction => self.compute_math_fraction_layout(node_id, inputs),
+            ChildLayout::MathBox => self.compute_math_layout(node_id, inputs),
         }
     }
 
@@ -1968,6 +1969,10 @@ impl LayoutPassState<'_> {
                 if node.flags.contains(NodeFlags::IS_MATH_FRACTION) {
                     return ChildLayout::MathFraction;
                 }
+                // pyro: any other MathML box with a layout of its own (`math::construct_math`).
+                if node.flags.contains(NodeFlags::IS_MATH_BOX) {
+                    return ChildLayout::MathBox;
+                }
 
                 if node.flags.is_inline_root() {
                     return match multicol::is_multicol_node(node) {
@@ -2593,6 +2598,8 @@ enum ChildLayout {
     Multicol { inline_root: bool },
     /// pyro: an ordinary MathML fraction (`layout::math`).
     MathFraction,
+    /// pyro: a MathML box of the class `ElementData::math_kind` (`layout::math`).
+    MathBox,
 }
 
 impl TraversePartialTree for LayoutPassState<'_> {

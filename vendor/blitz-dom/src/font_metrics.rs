@@ -204,7 +204,7 @@ impl BlitzFontMetricsProvider {
     /// `font_styles` (the first of its list that has U+0020, as `query_font_metrics`) at
     /// `font_size`: its OpenType MATH constants, when it has a MATH table, and its x-height.
     pub(crate) fn math_parameters_for(&self, font_styles: &FontStyles, font_size: f32) -> crate::layout::math::MathFontParameters {
-        use crate::layout::math::{MathFontParameters, read_math_constants};
+        use crate::layout::math::{MathFontParameters, read_math_constants, scale_math_constants};
         use parley::fontique::{QueryFont, QueryStatus};
         use skrifa::instance::{LocationRef, Size};
         use skrifa::metrics::Metrics;
@@ -240,7 +240,7 @@ impl BlitzFontMetricsProvider {
             .table_data(skrifa::Tag::new(b"MATH"))
             .and_then(|data| read_math_constants(data.as_bytes()))
             .filter(|_| upem > 0.0)
-            .map(|values| values.map(|value| f32::from(value) * font_size / upem));
+            .map(|values| scale_math_constants(values, font_size, upem));
         MathFontParameters { constants, x_height: metrics.x_height.filter(|x| *x > 0.0) }
     }
 
