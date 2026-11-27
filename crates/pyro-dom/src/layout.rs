@@ -2199,7 +2199,11 @@ impl Layout {
         // out-of-flow box on the way up does not hold it (a `position:
         // absolute` box's needs a positioned one, a `position: fixed` box's
         // one that contains fixed boxes), and `overflow: clip` makes none.
-        let mut port = None;
+        // pyro: each axis has its own scrollport, the nearest scroll container on the chain that
+        // scrolls in THAT axis (`overflow: clip` in an axis makes none for it, so `overflow-x: scroll;
+        // overflow-y: clip` inside `overflow-y: scroll` is the scroller of `left` and the outer one
+        // that of `top`; css-position-3 § 3.4, WPT css-position `sticky/position-sticky-single-axis-*`).
+        let (mut port_x, mut port_y) = (None, None);
         let mut a = dom.parent_element(el).ok().flatten();
         // The out-of-flow position of the box whose containing block is looked for.
         let mut escaping = None;
@@ -2222,22 +2226,32 @@ impl Layout {
             }
             escaping = matches!(c.position, Position::Absolute | Position::Fixed).then_some(c.position);
             if c.scroll_container {
-                if let Some(pb) = box_of(p) {
-                    port = Some(Rect {
-                        x: pb.rect.x + pb.border[LEFT] + pb.padding[LEFT] + self.scroll_left(p) as f64,
-                        y: pb.rect.y + pb.border[TOP] + pb.padding[TOP] + self.scroll_top(p) as f64,
-                        width: (pb.client_width - pb.padding[LEFT] - pb.padding[RIGHT]).max(0.0),
-                        height: (pb.client_height - pb.padding[TOP] - pb.padding[BOTTOM]).max(0.0),
-                    });
+                let Some(pb) = box_of(p) else { break };
+                let scrolls = |axis: &str| {
+                    self.style.computed_value(dom, p, axis).is_some_and(|o| !matches!(o.as_str(), "visible" | "clip"))
+                };
+                let port = Rect {
+                    x: pb.rect.x + pb.border[LEFT] + pb.padding[LEFT] + self.scroll_left(p) as f64,
+                    y: pb.rect.y + pb.border[TOP] + pb.padding[TOP] + self.scroll_top(p) as f64,
+                    width: (pb.client_width - pb.padding[LEFT] - pb.padding[RIGHT]).max(0.0),
+                    height: (pb.client_height - pb.padding[TOP] - pb.padding[BOTTOM]).max(0.0),
+                };
+                if port_x.is_none() && scrolls("overflow-x") {
+                    port_x = Some(port);
                 }
-                break;
+                if port_y.is_none() && scrolls("overflow-y") {
+                    port_y = Some(port);
+                }
+                if port_x.is_some() && port_y.is_some() {
+                    break;
+                }
             }
             a = dom.parent_element(p).ok().flatten();
         }
         let fixed = b.fixed || escaping == Some(Position::Fixed);
         let (wx, wy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
-        let port =
-            port.unwrap_or(Rect { x: wx, y: wy, width: self.inner_width() as f64, height: self.inner_height() as f64 });
+        let viewport = Rect { x: wx, y: wy, width: self.inner_width() as f64, height: self.inner_height() as f64 };
+        let (port_x, port_y) = (port_x.unwrap_or(viewport), port_y.unwrap_or(viewport));
         let limit =
             sticky.limit.map(|(x, y, width, height)| Rect { x: x + cb_shift.0, y: y + cb_shift.1, width, height });
         let inset = |side: usize, basis: f64| sticky.insets[side].map(|(px, fraction)| px + fraction * basis);
@@ -2270,9 +2284,12 @@ impl Layout {
             Some(l) => (l.x, l.x + l.width, l.y, l.y + l.height),
             None => (f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY),
         };
-        let dy =
-            axis(inset(TOP, port.height), inset(BOTTOM, port.height), r.y, r.height, port.y, port.height, lo_y, hi_y);
-        let dx = axis(inset(LEFT, port.width), inset(RIGHT, port.width), r.x, r.width, port.x, port.width, lo_x, hi_x);
+        let dy = axis(
+            inset(TOP, port_y.height), inset(BOTTOM, port_y.height), r.y, r.height, port_y.y, port_y.height, lo_y, hi_y,
+        );
+        let dx = axis(
+            inset(LEFT, port_x.width), inset(RIGHT, port_x.width), r.x, r.width, port_x.x, port_x.width, lo_x, hi_x,
+        );
         (dx, dy)
     }
 
@@ -5812,13 +5829,15 @@ impl Layout {
                     parent = dom.parent_element(parent).ok().flatten()?;
                 }
                 // A sticky box's percentages resolve against the content box of its
-                // nearest scroll container, if it has one (as Chrome does).
+                // nearest scroll container in the inset's axis, if it has one (as Chrome does).
                 let mut scroller = None;
                 if position == Position::Sticky {
                     let mut a = Some(parent);
                     while let Some(e) = a {
-                        let scrolls = style.computed_value(dom, e, "overflow-x").is_some_and(|o| !matches!(o.as_str(), "visible" | "clip"))
-                            || style.computed_value(dom, e, "overflow-y").is_some_and(|o| !matches!(o.as_str(), "visible" | "clip"));
+                        // (the one that scrolls in this inset's axis: `overflow: clip` in it makes none)
+                        let scrolls = style
+                            .computed_value(dom, e, if horizontal { "overflow-x" } else { "overflow-y" })
+                            .is_some_and(|o| !matches!(o.as_str(), "visible" | "clip"));
                         if scrolls {
                             scroller = Some(e);
                             break;
