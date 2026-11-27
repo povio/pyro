@@ -1862,8 +1862,24 @@
     const cs = computedStyle(el);
     return /^(auto|scroll|hidden)$/.test(cs.overflowX) || /^(auto|scroll|hidden)$/.test(cs.overflowY);
   };
+  // Whether `cs`'s element is the containing block of `position` descendants.
+  const containsPositioned = (cs, position) => {
+    if (position === 'absolute' && cs.position !== 'static') return true;
+    return cs.transform !== 'none' || cs.perspective !== 'none' || cs.filter !== 'none' || /layout|paint|strict|content/.test(cs.contain) ||
+      /transform|perspective|filter/.test(cs.willChange);
+  };
   // (A pseudo-element's nearest scroll container may be its originating element: `self`.)
   function nearestScroller(el, includeSelf) {
+    // An absolutely positioned box moves with its containing block's scroll containers, not with
+    // the ones it sits inside in the tree.
+    const position = computedStyle(el).position;
+    if (!includeSelf && (position === 'absolute' || position === 'fixed')) {
+      let cb = el.parentElement;
+      while (cb !== null && cb !== document.documentElement && !containsPositioned(computedStyle(cb), position)) cb = cb.parentElement;
+      el = cb;
+      includeSelf = true;
+      if (el === null || el === document.documentElement) return scrollingElement();
+    }
     for (let p = includeSelf ? el : el.parentElement; p !== null; p = p.parentElement) {
       if (p === document.documentElement || p === document.body) break;
       if (isScrollContainer(p)) return p;
@@ -1889,25 +1905,72 @@
       return timeline;
     }
     if (t.startsWith('--')) {
-      for (let el = target; el !== null; el = el.parentElement) {
-        const cs = computedStyle(el);
-        const names = s => String(s || '').split(',').map(x => x.trim());
-        const scrollNames = names(cs.getPropertyValue('scroll-timeline-name'));
-        let i = scrollNames.indexOf(t);
-        if (i >= 0) {
-          const axes = names(cs.getPropertyValue('scroll-timeline-axis'));
-          return new ScrollTimeline({ source: el, axis: axes[i % axes.length] || 'block' });
-        }
-        const viewNames = names(cs.getPropertyValue('view-timeline-name'));
-        i = viewNames.indexOf(t);
-        if (i >= 0) {
-          const axes = names(cs.getPropertyValue('view-timeline-axis'));
-          const insets = names(cs.getPropertyValue('view-timeline-inset'));
-          return new ViewTimeline({ subject: el, axis: axes[i % axes.length] || 'block', inset: insets[i % insets.length] || 'auto' });
+      // The nearest ancestor-or-self declaring it (a scroll progress timeline before a view one on
+      // the same element); an ancestor's `timeline-scope` naming it (or `all`) makes the one
+      // element below it declaring it visible, none or several leave it unresolved (Scroll-driven
+      // Animations 1 § 4.5; the engine's `scroll_timeline.rs` `named`).
+      for (let el = target; el !== null; el = parentOf(el)) {
+        const found = declaredTimeline(el, null, t);
+        if (found) return timelineOf(found);
+        let scope = '';
+        try { scope = String(computedStyle(el).getPropertyValue('timeline-scope') || ''); } catch {}
+        const scoped = scope.split(',').map(x => x.trim());
+        if (scoped.some(n => n === t || n === 'all')) {
+          const all = [];
+          scopedDeclarations(el, t, all);
+          return all.length === 1 ? timelineOf(all[0]) : null;
         }
       }
     }
     return null;
+  }
+  // An element's parent, across a shadow root's boundary to its host.
+  function parentOf(el) {
+    if (el.parentElement !== null) return el.parentElement;
+    const root = apply(getRootNode, el, []);
+    return root && root.host ? root.host : null;
+  }
+  // The timeline `name` that `el` (or its `pseudo`-element) declares itself, as
+  // `{pseudo, el, scroll, axis, inset}`; null when it declares none of that name.
+  function declaredTimeline(el, pseudo, name) {
+    let cs;
+    try { cs = pseudo ? computedStyle(el, pseudo) : computedStyle(el); } catch { return null; }
+    const names = v => String(v || '').split(',').map(x => x.trim());
+    const scrollNames = names(cs.getPropertyValue('scroll-timeline-name'));
+    let i = scrollNames.lastIndexOf(name);
+    if (i >= 0) {
+      const axes = names(cs.getPropertyValue('scroll-timeline-axis'));
+      return { pseudo, el, scroll: true, axis: axes[i % axes.length] || 'block' };
+    }
+    const viewNames = names(cs.getPropertyValue('view-timeline-name'));
+    i = viewNames.lastIndexOf(name);
+    if (i >= 0) {
+      const axes = names(cs.getPropertyValue('view-timeline-axis'));
+      const insets = names(cs.getPropertyValue('view-timeline-inset'));
+      return { pseudo, el, scroll: false, axis: axes[i % axes.length] || 'block', inset: insets[i % insets.length] || 'auto' };
+    }
+    return null;
+  }
+  // The declarations of `name` below `scope` (its own pseudo-elements and those of the elements
+  // below it included, shadow trees too), stopping at a second.
+  function scopedDeclarations(scope, name, out) {
+    const visit = el => {
+      if (out.length > 1) return;
+      if (el !== scope) { const d = declaredTimeline(el, null, name); if (d) out.push(d); }
+      for (const pseudo of ['::before', '::after']) { const d = declaredTimeline(el, pseudo, name); if (d) out.push(d); }
+      if (el.shadowRoot) for (const c of el.shadowRoot.children) visit(c);
+      for (const c of el.children) visit(c);
+    };
+    visit(scope);
+  }
+  // The timeline object of a declaration. (A pseudo-element's timeline reports its originating
+  // element as the source or subject, as browsers do: the pseudo-element is never exposed.)
+  function timelineOf(d) {
+    if (d.scroll) return new ScrollTimeline({ source: d.el, axis: d.axis });
+    const timeline = new ViewTimeline({ subject: d.el, axis: d.axis, inset: d.inset });
+    const code = ({ '::before': 2, '::after': 3 })[d.pseudo];
+    if (code) timelines.get(timeline).subjectPseudo = code;
+    return timeline;
   }
   function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText, trigger, keyframeEasing, generation]) {
     // The engine hands over computed easings; one it could not compute is

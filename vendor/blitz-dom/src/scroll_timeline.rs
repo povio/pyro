@@ -416,17 +416,31 @@ fn is_scroll_container(node: &Node) -> bool {
 /// The nearest ancestor scroll container (`None`: the viewport).
 fn nearest_scroll_container(doc: &BaseDocument, node: &Node) -> Option<NodeId> {
     let root = doc.root_element().id;
-    let mut current = node.parent;
+    // pyro: an absolutely positioned box scrolls with its containing block's scroll containers,
+    // not with the scroll containers it merely sits inside in the tree (Scroll-driven Animations
+    // 1: `scroll(nearest)` is the nearest scroll container ancestor of the box's containing block
+    // chain; WPT scroll-timeline-nearest-with-absolute-positioned-element). Out-of-flow boxes
+    // know their containing block from layout (`Node::containing_block`).
+    let out_of_flow = node.primary_styles().is_some_and(|s| s.is_absolutely_positioned());
+    let mut current = if out_of_flow { node.containing_block() } else { node.parent };
     while let Some(id) = current {
         let n = doc.get_node(id)?;
-        if id == root || !n.is_element() {
+        if id == root {
+            return None;
+        }
+        if !n.is_element() {
+            // (Anonymous boxes of the containing block chain are passed over.)
+            if out_of_flow {
+                current = n.containing_block().or(n.parent);
+                continue;
+            }
             return None;
         }
         // (The body's overflow propagates to the viewport.)
         if is_scroll_container(n) && !is_viewport_propagated_body(doc, n) {
             return Some(id);
         }
-        current = n.parent;
+        current = if out_of_flow { n.containing_block().or(n.parent) } else { n.parent };
     }
     None
 }
