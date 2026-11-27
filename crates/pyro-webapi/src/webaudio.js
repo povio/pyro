@@ -2519,10 +2519,12 @@
   handler(BaseAudioContext, 'statechange');
   webidl(BaseAudioContext, 'BaseAudioContext');
   if (!secureContext) delete BaseAudioContext.prototype.audioWorklet;
+  // The state changes now; `statechange` is a task of its own, after the promise of the call that
+  // caused the change settled (a suspend() right after resume() is two changes, seen in order).
   function setState(c, state) {
     if (c.state === state) return;
     c.state = state;
-    fire(c.self, 'statechange');
+    setTimer(() => { fire(c.self, 'statechange'); }, 0);
   }
   function flushEnded(c) {
     const ended = c.endedQueue;
