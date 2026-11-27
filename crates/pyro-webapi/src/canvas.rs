@@ -1410,11 +1410,15 @@ fn gradient_paint(record: Object<'_>, space: Space) -> JsResult<Option<pyro_canv
     let Some(stops) = record.get_atom("stops")?.as_object() else { return Ok(None) };
     let len = stops.get_atom("length")?.to_number()? as u32;
     let mut list = Vec::with_capacity(len as usize / 2);
+    let mut oklab = false;
     for i in (0..len).step_by(2) {
         let offset = stops.get_index(i)?.to_number()? as f32;
         // Stops keep their serialization (currentcolor is black); painted
         // in the context's color space.
         let stop = stops.get_index(i + 1)?.to_string()?;
+        // Legacy sRGB syntaxes serialize as `#rrggbb` / `rgba(...)`; any other color makes the
+        // gradient interpolate in Oklab, as Chrome does (`color-mix()`, `rgb(from ...)`).
+        oklab |= !(stop.starts_with('#') || stop.starts_with("rgba("));
         let color = match space {
             Space::Srgb => color_of(&stop),
             _ => pyro_dom::canvas_color::parse_in(&stop, [0.0, 0.0, 0.0, 1.0], space)
@@ -1431,7 +1435,7 @@ fn gradient_paint(record: Object<'_>, space: Space) -> JsResult<Option<pyro_canv
         ("conic", 3) => pyro_canvas::GradientKind::Conic { center: p(1), angle: v[0] },
         _ => return Ok(None),
     };
-    Ok(Some(pyro_canvas::Gradient { kind, stops: list }))
+    Ok(Some(pyro_canvas::Gradient { kind, stops: list, oklab }))
 }
 
 fn pattern_paint(record: Object<'_>) -> JsResult<Option<(Paint, bool)>> {

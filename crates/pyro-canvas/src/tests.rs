@@ -73,6 +73,7 @@ fn gradients_and_patterns() {
     let g = Gradient {
         kind: GradientKind::Linear { start: Point::new(0.0, 0.0), end: Point::new(100.0, 0.0) },
         stops: vec![(0.0, Color::from_rgba8(255, 0, 0, 255)), (1.0, Color::from_rgba8(0, 0, 255, 255))],
+        oklab: false,
     };
     s.fill(&rect(0.0, 0.0, 100.0, 10.0), false, &Paint::Gradient(Arc::new(g)), &state(&[]));
     let left = px(&mut s, 0, 5);
