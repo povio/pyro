@@ -521,6 +521,19 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
     if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
         layout.snap_initial_positions(&dom);
     }
+    // pyro: what script changed since the offsets were last settled (a revert in a `scroll`
+    // handler) is laid out and adjusted for (anchoring, clamping) before this frame's callbacks,
+    // as Chromium's layout does; the delayed re-clamp would come after callbacks that wait two
+    // frames (WPT scroll-anchoring `after-scrollable-range-shrinkage-*`).
+    let owed = {
+        let (checked, queued) = page.scroll_clamp.get();
+        queued || (page.dom.try_borrow().is_ok_and(|dom| checked != Some(dom.version())) && page.layout.try_borrow().is_ok_and(|layout| layout.has_scroll_offsets()))
+    };
+    if owed {
+        let (checked, _) = page.scroll_clamp.get();
+        page.scroll_clamp.set((checked, false));
+        clamp_scrolls(page, true);
+    }
     crate::smooth_scroll::step(page);
     flush_pending_scrolls(page);
     fire_snap_events(page);
