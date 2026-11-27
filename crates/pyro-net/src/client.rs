@@ -2514,7 +2514,10 @@ impl Io {
                 && !req.cross_site_prefetch
                 && body.is_none()
                 && !headers.contains_key(header::RANGE)
-                && pause_response.is_none();
+                && pause_response.is_none()
+                // pyro: a credentialless context's responses (made with its own, empty cookie jar and
+                // authentication) neither come from nor go into the caches the normal partition shares.
+                && req.defaults.ephemeral_cookies.is_none();
             let request_time = wall_time();
             let sent = if cacheable { Some(headers.clone()) } else { None };
             // The dictionary this hop offered, which `dcb` and `dcz` decode with.
