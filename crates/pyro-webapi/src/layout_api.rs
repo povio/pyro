@@ -632,7 +632,8 @@ pub(crate) fn apply_owed_scroll_anchors(page: &Rc<PageDom>) {
         (Ok(dom), Ok(layout)) => layout.scroll_anchors_owed(&dom),
         _ => false,
     };
-    if owed {
+    // (A caller that still holds the layout cannot have it adjusted here: the next frame does.)
+    if owed && page.layout.try_borrow_mut().is_ok() {
         clamp_scrolls(page, false);
     }
 }
