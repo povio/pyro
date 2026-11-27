@@ -160,10 +160,17 @@ impl JsClass for IntersectionObserver {
         });
         def.getter("root", |s, o| {
             let page = o.page()?;
-            crate::util::opt_node(s, &page, o.options.root.as_ref().map(|r| r.id))
+            // The root's own document's bindings wrap it (it may be an iframe's document).
+            match o.options.root.as_ref() {
+                Some(r) => {
+                    let root_page = r.page.upgrade().unwrap_or(page);
+                    crate::util::opt_node(s, &root_page, Some(r.id))
+                }
+                None => Ok(s.null()),
+            }
         });
         def.getter("rootMargin", |s, o| Ok(s.string(&o.options.margin_text)));
-        def.getter("scrollMargin", |s, _| Ok(s.string("0px 0px 0px 0px")));
+        def.getter("scrollMargin", |s, o| Ok(s.string(&o.options.scroll_margin_text)));
         def.getter("thresholds", |s, o| {
             let realm = o.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
             let owner = realm.scope()?;
