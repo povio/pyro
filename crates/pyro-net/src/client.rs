@@ -408,6 +408,8 @@ struct Shared {
     cache: Mutex<crate::cache::HttpCache>,
     /// Compression dictionaries (RFC 9842) responses registered.
     dictionaries: Mutex<crate::dictionary::Dictionaries>,
+    /// The session's HTTP Basic credentials (`Authorization` values the servers' realms accepted).
+    basic_auth: Mutex<crate::auth::BasicSessions>,
     /// `Accept-CH`: the client hints each origin asked for, for the session.
     client_hints: Mutex<crate::client_hints::Store>,
     epoch: Instant,
@@ -806,6 +808,7 @@ impl NetClient {
             interceptor: Mutex::new(None),
             cache: Mutex::new(cache),
             dictionaries: Mutex::default(),
+            basic_auth: Mutex::default(),
             client_hints: Mutex::default(),
             epoch: Instant::now(),
             ignore_certificate_errors: std::sync::atomic::AtomicBool::new(false),
@@ -2094,6 +2097,16 @@ impl Io {
                 headers.insert(header::PROXY_AUTHORIZATION, value);
             }
         }
+        // User information is never part of the request target.
+        let stripped;
+        let url = if url.username().is_empty() && url.password().is_none() {
+            url
+        } else {
+            let mut plain = url.clone();
+            crate::auth::take_userinfo(&mut plain);
+            stripped = plain;
+            &stripped
+        };
         let mut b = http::Request::builder().method(method).uri(url.as_str());
         if let Some(h) = b.headers_mut() {
             *h = headers;
@@ -2305,6 +2318,24 @@ impl Io {
                 Some(None) => return Err(NetError::Other("interception dropped".into())),
             }
 
+            // HTTP Basic authentication (Fetch "HTTP-network-or-cache fetch" steps for credentials).
+            // User information in the URL (a link's, XHR `open(method, url, async, user, pass)`'s)
+            // is never sent as part of it; it answers a challenge, replacing what the session had
+            // stored. Without any, the session's credentials for this origin and path go out
+            // before one. A hop without credentials, a request with an `Authorization` of its
+            // own, and one whose body came from a stream take part in neither.
+            let url_credentials = crate::auth::take_userinfo(&mut url);
+            let basic_hop = includes_credentials(req.hop_credentials(basic_tainting), basic_tainting)
+                && !headers.contains_key(header::AUTHORIZATION)
+                && !req.body_from_stream;
+            let mut preemptive = None;
+            if basic_hop && url_credentials.is_none() {
+                preemptive = self.shared.basic_auth.lock().unwrap().preemptive(&url);
+                if let Some(value) = &preemptive {
+                    headers.insert(header::AUTHORIZATION, value.clone());
+                }
+            }
+
             // Static files for an origin served from disk: after interception
             // (routes can still override) and before the cache and network.
             if (method == Method::GET || method == Method::HEAD) && !self.shared.config.static_files.is_empty() {
@@ -2483,9 +2514,16 @@ impl Io {
             let request_start = Instant::now();
             let mut auth_attempts = 0;
             let auth_interceptor = interceptor.as_ref().filter(|i| i.handles_auth());
+            // A 401 this hop can answer itself: with the URL's credentials, or the session's for
+            // the challenge's realm (a stored one for this origin).
+            let basic_retry = basic_hop
+                && auth_interceptor.is_none()
+                && (url_credentials.is_some() || self.shared.basic_auth.lock().unwrap().knows(&url));
+            // The credentials a retry sent: stored once the server accepts them.
+            let mut basic_sent: Option<(String, HeaderValue)> = None;
             let resp = loop {
                 // Ordinary traffic does not need retry copies of the header map.
-                let sent = if auth_interceptor.is_some() {
+                let sent = if auth_interceptor.is_some() || basic_retry {
                     self.send(method.clone(), &url, headers.clone(), body.clone()).await
                 } else {
                     self.send(method.clone(), &url, std::mem::take(&mut headers), body.take()).await
@@ -2494,6 +2532,28 @@ impl Io {
                 let (resp, proxy, scheme, realm) = match sent {
                     Ok(resp) => {
                         let proxy = resp.status() == StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+                        if basic_retry && !proxy && resp.status() == StatusCode::UNAUTHORIZED {
+                            let challenge = auth_challenge(resp.headers(), header::WWW_AUTHENTICATE);
+                            if preemptive.is_some() && headers.get(header::AUTHORIZATION) == preemptive.as_ref() {
+                                // The session's credentials were refused: they are gone.
+                                self.shared.basic_auth.lock().unwrap().evict(&url, preemptive.as_ref().unwrap());
+                            } else if let Some((scheme, realm)) = challenge.filter(|_| auth_attempts == 0) {
+                                let value = match &url_credentials {
+                                    Some((user, password)) if scheme == "basic" => basic_authorization(user, password).ok(),
+                                    None if scheme == "basic" => self.shared.basic_auth.lock().unwrap().for_realm(&url, &realm),
+                                    _ => None,
+                                };
+                                if let Some(value) = value {
+                                    headers.insert(header::AUTHORIZATION, value.clone());
+                                    basic_sent = Some((realm, value));
+                                    auth_attempts += 1;
+                                    // The challenge's body is dropped unread, as for an interceptor's retry.
+                                    drop(resp);
+                                    continue;
+                                }
+                            }
+                            break resp;
+                        }
                         if (resp.status() != StatusCode::UNAUTHORIZED && !proxy) || auth_interceptor.is_none() {
                             break resp;
                         }
@@ -2564,6 +2624,15 @@ impl Io {
                     Err(_) => return Err(NetError::Other("authentication interception dropped".into())),
                 }
             };
+            // The server took the credentials a challenge was answered with: the session keeps them.
+            if let Some((realm, value)) = basic_sent.take() {
+                let mut sessions = self.shared.basic_auth.lock().unwrap();
+                if resp.status() == StatusCode::UNAUTHORIZED {
+                    sessions.evict(&url, &value);
+                } else {
+                    sessions.store(&url, &realm, value);
+                }
+            }
             // pyro: a response to an authentication retry answers the request as last sent, with
             // its `Authorization`: it is stored (if at all) under those headers and as credentialed,
             // never as the anonymous request that got the challenge (the shared asset store refuses

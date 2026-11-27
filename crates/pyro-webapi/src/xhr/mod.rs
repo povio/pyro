@@ -507,10 +507,10 @@ impl Xhr {
         let method = crate::headers::byte_string(args.get(0))?;
         let url = dom_string(args.get(1))?;
         let asynchronous = args.len() < 3 || args.get(2).to_bool();
-        let username =
-            if args.get(3).is_null() || args.get(3).is_undefined() { String::new() } else { dom_string(args.get(3))? };
-        let password =
-            if args.get(4).is_null() || args.get(4).is_undefined() { String::new() } else { dom_string(args.get(4))? };
+        // XHR open() steps 11-12: a non-null user name / password is set on the URL (a null one
+        // leaves what the URL had).
+        let username = if args.get(3).is_null() || args.get(3).is_undefined() { None } else { Some(dom_string(args.get(3))?) };
+        let password = if args.get(4).is_null() || args.get(4).is_undefined() { None } else { Some(dom_string(args.get(4))?) };
         let page = self.page()?;
         let upper = method.to_ascii_uppercase();
         let method =
@@ -529,14 +529,18 @@ impl Xhr {
         if !asynchronous && !self.worker && (self.timeout.get() != 0 || !self.response_type.borrow().is_empty()) {
             return Err(sync_access("A synchronous request cannot have a timeout or a responseType"));
         }
-        // Credentials go into the URL (open() steps 11-12); the network
-        // layer does not send them yet (documented gap).
-        if !username.is_empty() || !password.is_empty() {
+        // Credentials go into the URL (open() steps 11-12); the network layer sends them when the
+        // server challenges (pyro-net `run`).
+        if username.is_some() || password.is_some() {
             if url.cannot_be_a_base() {
                 return Err(JsError::dom("SyntaxError", "Invalid URL"));
             }
-            let _ = url.set_username(&username);
-            let _ = url.set_password(if password.is_empty() { None } else { Some(&password) });
+            if let Some(username) = &username {
+                let _ = url.set_username(username);
+            }
+            if let Some(password) = &password {
+                let _ = url.set_password(Some(password));
+            }
         }
         self.generation.set(self.generation.get().checked_add(1).expect("XHR generation exhausted"));
         self.stop();
