@@ -1187,7 +1187,17 @@ impl FrameHost {
         // HTML "process the iframe attributes" navigates with history handling "replace" when
         // the content document is not completely loaded when the attribute changes (a `src` set
         // from its `load` or `pageshow` handler), not when the queued task runs.
-        let completely_loaded = self.frame(key).is_some_and(|f| f.loaded && f.page_dom.as_ref().is_none_or(|dom| dom.is_completely_loaded()));
+        // Only a `src` set by the frame's own document (its `load` or `pageshow` handler) is judged by
+        // the state it was set in. Another document's script (a parent, a grandparent) sets it while the
+        // frame's `load` may merely not have run yet, in Pyro's task order, where a browser has run it
+        // (a message posted from a grandchild's `load` is delivered before the frame's own): that is
+        // judged when the queued task runs, as before.
+        let own_script = pyro_js::entry_realm()
+            .and_then(|realm| realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()))
+            .zip(self.page_dom(key))
+            .is_some_and(|(entry, own)| Rc::ptr_eq(&entry, &own));
+        let completely_loaded = !own_script
+            || self.frame(key).is_some_and(|f| f.loaded && f.page_dom.as_ref().is_none_or(|dom| dom.is_completely_loaded()));
         nav.attributes_queued.set(nav.attributes_queued.get() + 1);
         self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
             if let Some(mut doc) = b.doc_mut(key) {
