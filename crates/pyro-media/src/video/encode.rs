@@ -249,7 +249,11 @@ mod avc {
             let mut temporal_layer = 0;
             for l in 0..stream.num_layers() {
                 let layer = stream.layer(l).ok_or("missing AVC layer")?;
-                temporal_layer = temporal_layer.max(layer.raw_info().uiTemporalId);
+                // The temporal layer of the picture is its video coding layer's (a parameter-set layer
+                // has no temporal id of its own).
+                if layer.is_video() {
+                    temporal_layer = temporal_layer.max(layer.raw_info().uiTemporalId);
+                }
                 for n in 0..layer.nal_count() {
                     let unit = layer.nal_unit(n).ok_or("missing AVC NAL")?;
                     let nal = unit
