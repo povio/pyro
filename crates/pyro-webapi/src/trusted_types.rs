@@ -504,6 +504,49 @@ pub(crate) fn parser_options(
 pub(crate) fn parser_options_with(
     s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, sink: &str, streaming: bool, mode: ParseMode,
 ) -> JsResult<(ParserOptions, bool)> {
+    parser_options_inner(s, page, value, sink, streaming, mode, None)
+}
+
+/// The markup and parser options of a legacy HTML sink (`innerHTML`, `outerHTML`,
+/// `insertAdjacentHTML`, `createContextualFragment`), which take no options argument: a document
+/// that requires Trusted Types asks the default policy's `createParserOptions` for them, with the
+/// sink's name and `{runScripts: initial_run_scripts}` as input (false for the setters, true for
+/// `createContextualFragment`, whose scripts run once inserted); what it returns (a sanitizer, or
+/// `runScripts`) applies even to a `TrustedHTML` value. A policy that does not return options (none
+/// at all, or no `createParserOptions`) leaves the sink as it was; one that returns nothing is a
+/// violation, reported before the markup's own. `null_is_empty`: a `null` value is the empty string.
+pub(crate) fn legacy_html(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    value: Value<'_>,
+    sink: &str,
+    null_is_empty: bool,
+    initial_run_scripts: bool,
+) -> JsResult<(String, ParserOptions)> {
+    let defaults = ParserOptions { run_scripts: initial_run_scripts, ..ParserOptions::default() };
+    if !requires_for_script(page) {
+        let html = if null_is_empty { crate::util::null_to_empty(value) } else { crate::util::dom_string(value) }?;
+        return Ok((html, defaults));
+    }
+    let input = if null_is_empty && value.is_null() { HtmlInput::String(String::new()) } else { HtmlInput::convert(s, value)? };
+    let (options, vetted) = parser_options_inner(s, page, s.undefined(), sink, false, ParseMode::Unsafe, Some(initial_run_scripts))?;
+    if vetted {
+        return Ok((match input { HtmlInput::Trusted(html) | HtmlInput::String(html) => html }, options));
+    }
+    Ok((input.compliant(s, page, sink)?, options))
+}
+
+/// [`parser_options_with`]; `initial_run_scripts` is the `runScripts` the default policy's callback
+/// is given and a policy-less parse uses when `value` has none to say (a legacy sink's).
+fn parser_options_inner(
+    s: &Scope<'_>,
+    page: &Rc<PageDom>,
+    value: Value<'_>,
+    sink: &str,
+    streaming: bool,
+    mode: ParseMode,
+    initial_run_scripts: Option<bool>,
+) -> JsResult<(ParserOptions, bool)> {
     if mode == ParseMode::Safe {
         // Not a Trusted Types sink (see `for_html_insertion_as`): a plain `SetHTMLOptions` conversion.
         return Ok((ParserOptions::convert_with(s, value, mode)?, false));
@@ -513,7 +556,10 @@ pub(crate) fn parser_options_with(
             return Ok((snapshot.clone(), true));
         }
     }
-    let (options, sanitizer) = ParserOptions::convert_full(s, value, mode)?;
+    let (mut options, sanitizer) = ParserOptions::convert_full(s, value, mode)?;
+    if let Some(run_scripts) = initial_run_scripts {
+        options.run_scripts = run_scripts;
+    }
     if requires_for_script(page) {
         let module = MODULE.module(s, page)?;
         let callback = module.get("defaultParserOptions")?.as_object()

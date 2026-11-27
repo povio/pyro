@@ -1325,12 +1325,12 @@ impl JsClass for ShadowRoot {
             "innerHTML",
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
             |s, n, v| {
-                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "ShadowRoot innerHTML", true)?;
+                let (html, options) = crate::trusted_types::legacy_html(s, n.page(), v, "ShadowRoot innerHTML", true, false)?;
                 crate::handlers::drain_inline_before_fragment(n.page());
                 {
                     let mut dom = n.page().dom.borrow_mut();
                     let host = dom.fragment_host(n.id).js()?.ok_or(JsError::Type("detached shadow root".into()))?;
-                    let frag = pyro_dom::parse::parse_setter_fragment_in(&mut dom, host, n.id, &html).js()?;
+                    let frag = pyro_dom::parse::parse_setter_fragment_in_with(&mut dom, host, n.id, &html, options.run_scripts, options.filter).js()?;
                     dom.replace_all(n.id, Some(frag)).js()?;
                 }
                 crate::handlers::drain_inline_after_fragment(s, n.page());
@@ -1681,10 +1681,10 @@ impl JsClass for Element {
                 Ok(s.string(&if xml { dom.xml_inner(n.id) } else { dom.inner_html(n.id) }.js()?))
             },
             |s, n, v| {
-                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element innerHTML", true)?;
+                let (html, options) = crate::trusted_types::legacy_html(s, n.page(), v, "Element innerHTML", true, false)?;
                 crate::input::blur_before_removal(n.page(), n.id, true);
                 crate::handlers::drain_inline_before_fragment(n.page());
-                pyro_dom::parse::set_inner_html(&mut n.page().dom.borrow_mut(), n.id, &html).js()?;
+                pyro_dom::parse::set_inner_html_with(&mut n.page().dom.borrow_mut(), n.id, &html, options.run_scripts, options.filter).js()?;
                 crate::handlers::drain_inline_after_fragment(s, n.page());
                 Ok(())
             },
@@ -1698,7 +1698,7 @@ impl JsClass for Element {
                 Ok(s.string(&if xml { dom.xml_serialize(n.id) } else { dom.outer_html(n.id) }.js()?))
             },
             |s, n, v| {
-                let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "Element outerHTML", true)?;
+                let (html, options) = crate::trusted_types::legacy_html(s, n.page(), v, "Element outerHTML", true, false)?;
                 let has_parent = n.page().dom.borrow().parent(n.id).js()?.is_some();
                 if has_parent {
                     crate::input::blur_before_removal(n.page(), n.id, false);
@@ -1717,7 +1717,7 @@ impl JsClass for Element {
                     let doc = dom.node_document(n.id).js()?;
                     dom.create_element(doc, "body").js()?
                 };
-                let frag = pyro_dom::parse::parse_setter_fragment(&mut dom, ctx, &html).js()?;
+                let frag = pyro_dom::parse::parse_setter_fragment_with(&mut dom, ctx, &html, options.run_scripts, options.filter).js()?;
                 dom.replace_child(parent, frag, n.id).js()?;
                 Ok(())
             },
@@ -1725,7 +1725,7 @@ impl JsClass for Element {
         def.method("insertAdjacentHTML", 2, |s, n, a| {
             a.require(2, "Element.insertAdjacentHTML")?;
             let pos = dom_string(a.get(0))?.to_ascii_lowercase();
-            let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, a.get(1), "Element insertAdjacentHTML", false)?;
+            let (html, options) = crate::trusted_types::legacy_html(s, n.page(), a.get(1), "Element insertAdjacentHTML", false, false)?;
             let mut dom = n.page().dom.borrow_mut();
             let parent = dom.parent(n.id).js()?;
             let ctx = match pos.as_str() {
@@ -1741,7 +1741,7 @@ impl JsClass for Element {
                     ));
                 }
             };
-            let frag = pyro_dom::parse::parse_insertion_fragment(&mut dom, ctx, &html).js()?;
+            let frag = pyro_dom::parse::parse_insertion_fragment_with(&mut dom, ctx, &html, options.run_scripts, options.filter).js()?;
             insert_adjacent(&mut dom, n.id, &pos, frag)?;
             Ok(s.undefined())
         });

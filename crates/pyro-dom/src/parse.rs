@@ -1828,25 +1828,49 @@ pub fn parse_document_bytes(dom: &DomRef, url: &str, bytes: &[u8], charset: Opti
 /// createContextualFragment). Returns a new DocumentFragment owned by the
 /// context element's node document.
 pub fn parse_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, context, html, FragmentMode::Element, None)
+    parse_fragment_with(dom, context, context, html, FragmentMode::Element, false, None)
 }
 
 /// The legacy innerHTML and outerHTML setters parse into detached output,
 /// without a subsequent sanitization step or script activation.
 pub fn parse_setter_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, context, html, FragmentMode::Setter, None)
+    parse_setter_fragment_with(dom, context, html, false, None)
+}
+
+/// [`parse_setter_fragment`] with the options a Trusted Types default policy's `createParserOptions`
+/// can give the legacy setters: `run_scripts` leaves the scripts of the output not "already
+/// started" (they run once the fragment is inserted into a document), `filter` is a sanitizer.
+pub fn parse_setter_fragment_with(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, context, html, FragmentMode::Setter, run_scripts, filter)
 }
 
 /// A shadow root supplies the registry even though its host supplies the
 /// HTML tree builder's context element.
 pub fn parse_setter_fragment_in(dom: &mut Dom, context: NodeId, registry_source: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, registry_source, html, FragmentMode::Setter, None)
+    parse_setter_fragment_in_with(dom, context, registry_source, html, false, None)
+}
+
+/// [`parse_setter_fragment_in`] with [`parse_setter_fragment_with`]'s options.
+pub fn parse_setter_fragment_in_with(
+    dom: &mut Dom,
+    context: NodeId,
+    registry_source: NodeId,
+    html: &str,
+    run_scripts: bool,
+    filter: Option<Rc<FragmentFilter>>,
+) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, registry_source, html, FragmentMode::Setter, run_scripts, filter)
 }
 
 /// Fragment insertion APIs use an HTML body context when there is no context
 /// element or when the context is an HTML html element in an HTML document.
 pub fn parse_insertion_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, context, html, FragmentMode::Insertion, None)
+    parse_insertion_fragment_with(dom, context, html, false, None)
+}
+
+/// [`parse_insertion_fragment`] with [`parse_setter_fragment_with`]'s options.
+pub fn parse_insertion_fragment_with(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, context, html, FragmentMode::Insertion, run_scripts, filter)
 }
 
 /// `Range.createContextualFragment` (DOM Parsing): [`parse_fragment`], then
@@ -1854,7 +1878,17 @@ pub fn parse_insertion_fragment(dom: &mut Dom, context: NodeId, html: &str) -> D
 /// fragment parser's), so it runs once the fragment is inserted into a
 /// document, unlike `innerHTML`'s.
 pub fn parse_contextual_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    let frag = parse_fragment_with(dom, context, context, html, FragmentMode::Range, None)?;
+    parse_contextual_fragment_with(dom, context, html, true, None)
+}
+
+/// [`parse_contextual_fragment`] with the options a Trusted Types default policy's
+/// `createParserOptions` can give it: without `run_scripts` the scripts stay "already started"
+/// and never run; `filter` is a sanitizer.
+pub fn parse_contextual_fragment_with(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<NodeId> {
+    let frag = parse_fragment_with(dom, context, context, html, FragmentMode::Range, false, filter)?;
+    if !run_scripts {
+        return Ok(frag);
+    }
     let scripts: Vec<u32> = dom
         .descendants(frag)?
         .filter_map(|id| {
@@ -1928,6 +1962,10 @@ fn parse_fragment_with(
     registry_source: NodeId,
     html: &str,
     mode: FragmentMode,
+    // The scripts of the output are left to run when it is inserted (a script end tag clears their
+    // "already started" flag; an unclosed one stays inert): `Modern { run_scripts: true }`, and the
+    // legacy setters when a Trusted Types default policy's `createParserOptions` says so.
+    scripts: bool,
     filter: Option<Rc<FragmentFilter>>,
 ) -> DomResult<NodeId> {
     let ctx = dom.check(context)?;
@@ -1984,6 +2022,7 @@ fn parse_fragment_with(
             mode,
             FragmentMode::Setter | FragmentMode::Insertion | FragmentMode::Range | FragmentMode::Modern { run_scripts: false }
         ) && filter.is_none()
+            && !scripts
             && html.contains("<?")
             && !dom.is_xml_document(owner_id);
         let document_registry = dom.registry_idx(owner);
@@ -1997,7 +2036,7 @@ fn parse_fragment_with(
             enable_inline_patches(&mut parser.tokenizer.sink, false);
         }
         use html5ever::tendril::TendrilSink;
-        if matches!(mode, FragmentMode::Modern { run_scripts: true }) {
+        if scripts {
             // A script end tag yields its node. Keep the EOF parser flag on
             // unclosed scripts, which must stay inert after insertion.
             parser.input_buffer.push_back(StrTendril::from_slice(html));
@@ -2038,6 +2077,11 @@ fn parse_fragment_with(
 
 /// `Element.innerHTML` setter.
 pub fn set_inner_html(dom: &mut Dom, element: NodeId, html: &str) -> DomResult<()> {
+    set_inner_html_with(dom, element, html, false, None)
+}
+
+/// [`set_inner_html`] with [`parse_setter_fragment_with`]'s options.
+pub fn set_inner_html_with(dom: &mut Dom, element: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<()> {
     let i = dom.check(element)?;
     // For <template>, replace the template contents instead.
     let target = match dom.n(i).element() {
@@ -2061,7 +2105,7 @@ pub fn set_inner_html(dom: &mut Dom, element: NodeId, html: &str) -> DomResult<(
         }
         _ => return Err(DomError::Type("innerHTML context must be an element")),
     };
-    let frag = parse_setter_fragment(dom, ctx, html)?;
+    let frag = parse_setter_fragment_with(dom, ctx, html, run_scripts, filter)?;
     dom.replace_all(target, Some(frag))
 }
 
@@ -2117,7 +2161,7 @@ pub fn parse_modern_html_fragment(dom: &mut Dom, context: NodeId, html: &str, ru
 }
 
 pub fn parse_modern_html_fragment_with(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, context, html, FragmentMode::Modern { run_scripts }, filter)
+    parse_fragment_with(dom, context, context, html, FragmentMode::Modern { run_scripts }, run_scripts, filter)
 }
 
 /// `Element.setHTMLUnsafe` / `ShadowRoot.setHTMLUnsafe`: as `innerHTML`, with
@@ -2135,6 +2179,6 @@ pub fn set_html_unsafe_with(dom: &mut Dom, target: NodeId, html: &str, run_scrip
         NodeKind::Element(_) => (target, target),
         _ => return Err(DomError::Type("setHTMLUnsafe context must be an element")),
     };
-    let frag = parse_fragment_with(dom, ctx, target, html, FragmentMode::Modern { run_scripts }, filter)?;
+    let frag = parse_fragment_with(dom, ctx, target, html, FragmentMode::Modern { run_scripts }, run_scripts, filter)?;
     dom.replace_all(into, Some(frag))
 }

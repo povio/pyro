@@ -674,7 +674,7 @@ impl JsClass for Range {
             a.require(1, "Range.createContextualFragment")?;
             let page = r.page();
             // Trusted Types: the markup is a TrustedHTML sink ("Range createContextualFragment").
-            let html = crate::trusted_types::compliant_string(s, &page, crate::trusted_types::Kind::Html, a.get(0), "Range createContextualFragment", false)?;
+            let (html, options) = crate::trusted_types::legacy_html(s, &page, a.get(0), "Range createContextualFragment", false, true)?;
             let ctx = {
                 let dom = page.dom.borrow();
                 let sn = points(r).0;
@@ -685,7 +685,7 @@ impl JsClass for Range {
                     _ => sn,
                 }
             };
-            let frag = pyro_dom::parse::parse_contextual_fragment(&mut page.dom.borrow_mut(), ctx, &html).js()?;
+            let frag = pyro_dom::parse::parse_contextual_fragment_with(&mut page.dom.borrow_mut(), ctx, &html, options.run_scripts, options.filter).js()?;
             Ok(wrap_node(s, &page, frag)?.value())
         });
         def.method("getBoundingClientRect", 0, |s, r, _a| crate::layout_api::range_rect(s, &r.page(), points(r)));

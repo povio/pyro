@@ -30,8 +30,6 @@ pub(crate) struct ParserOptions {
     /// The options need vetting by a default policy's `createParserOptions` (Trusted Types):
     /// `runScripts` is true or the `sanitizer` member says something.
     pub needs_vetting: bool,
-    /// The `sanitizer` member was given.
-    pub has_sanitizer: bool,
 }
 
 impl ParserOptions {
@@ -62,7 +60,7 @@ impl ParserOptions {
             return Ok((Self::without_sanitizer(run_scripts, safe), None));
         }
         if sanitizer.is_string() && dom_string(sanitizer)? == "default" {
-            let options = Self { run_scripts, filter: Some(Rc::new(safe_default())), needs_vetting: true, has_sanitizer: true };
+            let options = Self { run_scripts, filter: Some(Rc::new(safe_default())), needs_vetting: true };
             return Ok((options, Some(s.string("default"))));
         }
         let page = crate::target::page_of(s)?;
@@ -75,13 +73,13 @@ impl ParserOptions {
         if safe {
             apply_baseline(&mut filter);
         }
-        let options = Self { run_scripts, filter: Some(Rc::new(filter)), needs_vetting: run_scripts || nonempty, has_sanitizer: true };
+        let options = Self { run_scripts, filter: Some(Rc::new(filter)), needs_vetting: run_scripts || nonempty };
         Ok((options, Some(config.value())))
     }
 
     /// No `sanitizer` member: an unsafe method does not filter; a safe one applies the default configuration.
     fn without_sanitizer(run_scripts: bool, safe: bool) -> Self {
-        Self { run_scripts, filter: safe.then(|| Rc::new(safe_default())), needs_vetting: run_scripts, has_sanitizer: false }
+        Self { run_scripts, filter: safe.then(|| Rc::new(safe_default())), needs_vetting: run_scripts }
     }
 
 }
