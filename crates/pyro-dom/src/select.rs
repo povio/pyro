@@ -369,9 +369,29 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                 let pseudo = style::selector_parser::highlight_selector(parser).map_err(|_| invalid())?;
                 return Ok(PseudoElement(pseudo.to_css_string()[2..].to_owned()));
             }
+            // `::scroll-button( <direction> | * )` (CSS Overflow 5): one keyword or `*`, serialized
+            // lower-case without the surrounding whitespace.
+            "scroll-button" => {
+                let direction = match parser.next().map_err(|_| invalid())? {
+                    cssparser::Token::Delim('*') => "*".to_owned(),
+                    cssparser::Token::Ident(ident) => {
+                        let ident = ident.to_ascii_lowercase();
+                        let known = matches!(
+                            ident.as_str(),
+                            "up" | "down" | "left" | "right" | "block-start" | "block-end" | "inline-start" | "inline-end"
+                        );
+                        if !known {
+                            return Err(invalid());
+                        }
+                        ident
+                    }
+                    _ => return Err(invalid()),
+                };
+                parser.expect_exhausted().map_err(|_| invalid())?;
+                return Ok(PseudoElement(format!("{lower}({direction})")));
+            }
             "cue" | "cue-region"
             | "picker"
-            | "scroll-button"
             | "column" => {
                 // The argument is kept only for serialization.
                 while parser.next().is_ok() {}
