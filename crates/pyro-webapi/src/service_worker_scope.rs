@@ -594,7 +594,10 @@ pub(crate) fn preload_ready(s: &Scope<'_>, key: u64) {
         (buffer.head.take(), std::mem::take(&mut buffer.body), buffer.done.take())
     };
     let failure = |message: &str| call(s, "preloadFailed", &[s.number(key as f64), s.string(message)]);
-    let (Some(head), Some(Ok(()))) = (head, done.clone()) else {
+    // Service Worker "handle fetch": `preloadResponse` settles when the response's headers are in; a body
+    // that breaks afterwards (a chunked encoding cut short) fails the reading of the body, never the
+    // promise. The body kept is what arrived before the error.
+    let (Some(head), Some(_)) = (head, done.clone()) else {
         failure(&match done {
             Some(Err(error)) => format!("The service worker navigation preload request failed with network error: {error}"),
             _ => "The service worker navigation preload request failed with network error: no response".to_owned(),
