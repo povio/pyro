@@ -70,6 +70,7 @@ mod media_devices;
 pub mod pressure;
 mod credentials;
 mod webauthn;
+mod sensors;
 mod paint_worklet;
 mod audio_worklet;
 /// Hooks only tests use (feature `test-hooks`, enabled by test builds through dev-dependencies).
@@ -182,6 +183,7 @@ pub use file_reader::FileReaderLimits;
 pub use scheduler::with_idle_scheduling_state;
 pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
+pub use sensors::SensorReading;
 pub use node::{wrap_node, NodeData};
 pub use webauthn::WebAuthnError;
 pub use page::{AgentClusterGroup, AvailableImage, FrameContainer,

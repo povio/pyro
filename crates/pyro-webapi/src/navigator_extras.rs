@@ -226,6 +226,8 @@ pub struct ContextServices {
     pub(crate) report_to: RefCell<crate::reporting_store::ReportToStore>,
     /// The context's WebAuthn virtual authenticators (`crate::webauthn`).
     pub(crate) webauthn: RefCell<crate::webauthn::State>,
+    /// The virtual sensors (`crate::sensors`).
+    pub(crate) sensors: RefCell<crate::sensors::SensorHub>,
 }
 
 /// A position `navigator.geolocation` reports. CDP's optional coordinates are

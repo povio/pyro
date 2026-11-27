@@ -96,7 +96,7 @@
   tag(NavigatorUAData, 'NavigatorUAData');
 
   const NAMES = new Set([
-    'accelerometer', 'background-fetch', 'background-sync', 'camera', 'captured-surface-control',
+    'accelerometer', 'ambient-light-sensor', 'background-fetch', 'background-sync', 'camera', 'captured-surface-control',
     'clipboard-read', 'clipboard-write', 'display-capture', 'geolocation', 'gyroscope', 'idle-detection',
     'keyboard-lock', 'local-fonts', 'magnetometer', 'microphone', 'midi', 'nfc', 'notifications',
     'payment-handler', 'periodic-background-sync', 'persistent-storage', 'pointer-lock', 'push',

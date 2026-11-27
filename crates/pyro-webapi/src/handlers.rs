@@ -72,6 +72,13 @@ macro_rules! window_events {
     };
 }
 
+/// Device Orientation and Motion: `[SecureContext]` handlers of the Window alone (not of `<body>`).
+macro_rules! device_events {
+    ($callback:ident!($($args:tt)*)) => {
+        $callback!($($args)* ["devicemotion", "deviceorientation", "deviceorientationabsolute"])
+    };
+}
+
 /// Document-only handlers.
 macro_rules! document_events {
     ($callback:ident!($($args:tt)*)) => {
@@ -209,6 +216,7 @@ where
 {
     global_events!(global_handler_accessors!(def, window_target::<W::Data>,));
     window_events!(global_handler_accessors!(def, window_target::<W::Data>,));
+    device_events!(global_handler_accessors!(def, window_target::<W::Data>,));
 }
 
 /// The Window's handlers for a `<body>`/`<frameset>` of the page's document;

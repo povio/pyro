@@ -42,6 +42,7 @@ const GLOBALS: &[&str] = &[
     "MLTensor",
     "PressureObserver",
     "PressureRecord",
+    "Sensor", "SensorErrorEvent", "Accelerometer", "LinearAccelerationSensor", "GravitySensor", "Gyroscope", "AmbientLightSensor", "OrientationSensor", "AbsoluteOrientationSensor", "RelativeOrientationSensor", "DeviceMotionEvent", "DeviceOrientationEvent", "DeviceMotionEventAcceleration", "DeviceMotionEventRotationRate",
     // `[SecureContext] readonly attribute CacheStorage caches`: absent rather than an accessor
     // reading undefined, so a page's own `var caches = ...` (fetch/api/request/request-init-001)
     // gets a plain global variable, as in Chrome.
@@ -84,10 +85,17 @@ pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
     for name in GLOBALS {
         global.delete(name)?;
     }
-    // `caches` is a Window attribute: also off the interface prototype, wherever it is installed.
+    // `caches` is a Window attribute: also off the interface prototype, wherever it is installed. So are the
+    // `[SecureContext]` device event handlers (`ondevicemotion`, ...).
+    for name in ["ondevicemotion", "ondeviceorientation", "ondeviceorientationabsolute"] {
+        global.delete(name)?;
+    }
     if let Some(window) = global.get_atom("Window")?.as_object() {
         if let Some(proto) = window.get_atom("prototype")?.as_object() {
             proto.delete("caches")?;
+            for name in ["ondevicemotion", "ondeviceorientation", "ondeviceorientationabsolute"] {
+                proto.delete(name)?;
+            }
         }
     }
     // `PointerEvent.getCoalescedEvents()` and `onpointerrawupdate` are `[SecureContext]` too.

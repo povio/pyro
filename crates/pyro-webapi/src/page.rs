@@ -3199,7 +3199,10 @@ impl PageDom {
         self.hidden.get()
     }
     pub(crate) fn set_hidden(&self, hidden: bool) {
-        self.hidden.set(hidden);
+        if self.hidden.replace(hidden) != hidden {
+            // Sensor readings withheld from a hidden document are delivered when it is shown again.
+            crate::sensors::state_changed(self);
+        }
     }
     /// HTML "unload counter" above 0: the document's `beforeunload` listeners are running, or it
     /// is being unloaded (`pagehide`, `unload`, and after). History traversals it asks for are

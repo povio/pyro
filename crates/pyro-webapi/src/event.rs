@@ -237,6 +237,25 @@ pub struct EventFields {
     /// exposes it.
     pub snap_targets: [Option<NodeId>; 2],
     pub snap_holds: Vec<crate::collections::NodeHold>,
+    /// `DeviceOrientationEvent` `alpha`, `beta`, `gamma` (null: `None`) and `absolute`.
+    pub(crate) device_orientation: [Option<f64>; 3],
+    pub(crate) device_absolute: bool,
+    /// `DeviceMotionEvent`'s members.
+    pub(crate) device_motion: MotionFields,
+}
+
+/// `DeviceMotionEvent`'s `acceleration`, `accelerationIncludingGravity` and `rotationRate` (`None`: null; the
+/// triplets are x, y, z and alpha, beta, gamma, each null when absent) and `interval`.
+#[derive(Default, Clone)]
+pub(crate) struct MotionFields {
+    pub acceleration: Option<[Option<f64>; 3]>,
+    pub gravity: Option<[Option<f64>; 3]>,
+    pub rotation: Option<[Option<f64>; 3]>,
+    pub interval: f64,
+    /// The objects the three members returned: each is [SameObject] ([`motion_triplet`]).
+    pub acceleration_object: Option<Persistent>,
+    pub gravity_object: Option<Persistent>,
+    pub rotation_object: Option<Persistent>,
 }
 
 /// Resolves a `MessageEvent.source` window in the realm reading it.
@@ -1387,6 +1406,121 @@ impl JsClass for BeforeUnloadEvent {
     }
 }
 
+/// `double?` of a dictionary member: undefined and null are null; anything else is converted to a number,
+/// which must be finite (WebIDL `double`).
+fn nullable_double(v: pyro_js::Value<'_>) -> JsResult<Option<f64>> {
+    if v.is_nullish() {
+        return Ok(None);
+    }
+    let n = v.to_number()?;
+    if !n.is_finite() {
+        return Err(JsError::Type("The provided double value is non-finite.".into()));
+    }
+    Ok(Some(n))
+}
+
+/// `DeviceMotionEventAccelerationInit` / `DeviceMotionEventRotationRateInit` member `member` of `init`: absent
+/// (undefined) is no object; null or an object is a dictionary whose `names` members are `double?`.
+fn init_triplet<'s>(init: Object<'s>, member: &'static str, names: [&'static str; 3]) -> JsResult<Option<[Option<f64>; 3]>> {
+    let value = init.get_atom(member)?;
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    let mut out = [None; 3];
+    if let Some(dictionary) = value.as_object() {
+        for (i, name) in names.iter().enumerate() {
+            out[i] = nullable_double(dictionary.get_atom(name)?)?;
+        }
+    } else if !value.is_null() {
+        return Err(JsError::Type(format!("The provided value for '{member}' is not an object.").into()));
+    }
+    Ok(Some(out))
+}
+
+fn fill_device_motion<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let Some(init) = init else { return Ok(()) };
+    // Dictionary members in lexicographic order.
+    f.device_motion.acceleration = init_triplet(init, "acceleration", ["x", "y", "z"])?;
+    f.device_motion.gravity = init_triplet(init, "accelerationIncludingGravity", ["x", "y", "z"])?;
+    let interval = init.get_atom("interval")?;
+    f.device_motion.interval = if interval.is_undefined() {
+        0.0
+    } else {
+        let n = interval.to_number()?;
+        if !n.is_finite() {
+            return Err(JsError::Type("The provided double value is non-finite.".into()));
+        }
+        n
+    };
+    f.device_motion.rotation = init_triplet(init, "rotationRate", ["alpha", "beta", "gamma"])?;
+    Ok(())
+}
+
+fn fill_device_orientation<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let Some(init) = init else { return Ok(()) };
+    f.device_absolute = init.get_atom("absolute")?.to_bool();
+    f.device_orientation = [
+        nullable_double(init.get_atom("alpha")?)?,
+        nullable_double(init.get_atom("beta")?)?,
+        nullable_double(init.get_atom("gamma")?)?,
+    ];
+    Ok(())
+}
+
+fn nullable_number<'s>(s: &Scope<'s>, v: Option<f64>) -> pyro_js::Value<'s> {
+    v.map_or(s.null(), |v| s.number(v))
+}
+
+/// The values of one of the three object members of a `DeviceMotionEvent` and the object made for it.
+type MotionMember<'a> = (&'a mut Option<[Option<f64>; 3]>, &'a mut Option<Persistent>);
+
+/// `DeviceMotionEventAcceleration` and `DeviceMotionEventRotationRate` objects of an event: made on the first read
+/// of the member that has them and returned by every later one (`[SameObject]`, as in Chrome).
+fn motion_triplet<'s, C: JsClass<Data = [Option<f64>; 3]>>(
+    s: &Scope<'s>,
+    e: &EventCore,
+    member: for<'a> fn(&'a mut MotionFields) -> MotionMember<'a>,
+) -> JsResult<pyro_js::Value<'s>> {
+    let (values, cached) = {
+        let mut fields = e.fields.borrow_mut();
+        let (values, cached) = member(&mut fields.device_motion);
+        (*values, cached.as_ref().map(|p| s.rehome(p.get(s))))
+    };
+    if let Some(cached) = cached {
+        return Ok(cached);
+    }
+    let Some(values) = values else { return Ok(s.null()) };
+    let object = s.wrap::<C>(values, None)?.value();
+    let held = Persistent::new(s, object);
+    let mut fields = e.fields.borrow_mut();
+    *member(&mut fields.device_motion).1 = Some(held);
+    Ok(object)
+}
+
+pub struct DeviceMotionEventAcceleration;
+impl JsClass for DeviceMotionEventAcceleration {
+    const NAME: &'static str = "DeviceMotionEventAcceleration";
+    type Data = [Option<f64>; 3];
+    type Parent = pyro_js::NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("x", |s, d| Ok(nullable_number(s, d[0])));
+        def.getter("y", |s, d| Ok(nullable_number(s, d[1])));
+        def.getter("z", |s, d| Ok(nullable_number(s, d[2])));
+    }
+}
+
+pub struct DeviceMotionEventRotationRate;
+impl JsClass for DeviceMotionEventRotationRate {
+    const NAME: &'static str = "DeviceMotionEventRotationRate";
+    type Data = [Option<f64>; 3];
+    type Parent = pyro_js::NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("alpha", |s, d| Ok(nullable_number(s, d[0])));
+        def.getter("beta", |s, d| Ok(nullable_number(s, d[1])));
+        def.getter("gamma", |s, d| Ok(nullable_number(s, d[2])));
+    }
+}
+
 pub struct DeviceMotionEvent;
 impl JsClass for DeviceMotionEvent {
     const NAME: &'static str = "DeviceMotionEvent";
@@ -1394,12 +1528,22 @@ impl JsClass for DeviceMotionEvent {
     type Parent = Event;
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(1, |s, nt, a| {
-            construct::<DeviceMotionEvent>(s, nt, a, EventInterface::DeviceMotionEvent, fill_none)
+            construct::<DeviceMotionEvent>(s, nt, a, EventInterface::DeviceMotionEvent, fill_device_motion)
         });
-        def.getter("acceleration", |s, _e| Ok(s.null()));
-        def.getter("accelerationIncludingGravity", |s, _e| Ok(s.null()));
-        def.getter("rotationRate", |s, _e| Ok(s.null()));
-        def.getter("interval", |s, _e| Ok(s.number(0.0)));
+        def.getter("acceleration", |s, e| {
+            motion_triplet::<DeviceMotionEventAcceleration>(s, e, |m| (&mut m.acceleration, &mut m.acceleration_object))
+        });
+        def.getter("accelerationIncludingGravity", |s, e| {
+            motion_triplet::<DeviceMotionEventAcceleration>(s, e, |m| (&mut m.gravity, &mut m.gravity_object))
+        });
+        def.getter("rotationRate", |s, e| {
+            motion_triplet::<DeviceMotionEventRotationRate>(s, e, |m| (&mut m.rotation, &mut m.rotation_object))
+        });
+        def.getter("interval", |s, e| Ok(s.number(e.fields.borrow().device_motion.interval)));
+        // Device Orientation "request permission to use motion and orientation events": accelerometer and gyroscope.
+        def.static_method("requestPermission", 0, |s, _a| {
+            crate::sensors::request_permission(s, &["accelerometer", "gyroscope"])
+        });
     }
 }
 
@@ -1410,12 +1554,17 @@ impl JsClass for DeviceOrientationEvent {
     type Parent = Event;
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(1, |s, nt, a| {
-            construct::<DeviceOrientationEvent>(s, nt, a, EventInterface::DeviceOrientationEvent, fill_none)
+            construct::<DeviceOrientationEvent>(s, nt, a, EventInterface::DeviceOrientationEvent, fill_device_orientation)
         });
-        def.getter("alpha", |s, _e| Ok(s.null()));
-        def.getter("beta", |s, _e| Ok(s.null()));
-        def.getter("gamma", |s, _e| Ok(s.null()));
-        def.getter("absolute", |s, _e| Ok(s.boolean(false)));
+        def.getter("alpha", |s, e| Ok(nullable_number(s, e.fields.borrow().device_orientation[0])));
+        def.getter("beta", |s, e| Ok(nullable_number(s, e.fields.borrow().device_orientation[1])));
+        def.getter("gamma", |s, e| Ok(nullable_number(s, e.fields.borrow().device_orientation[2])));
+        def.getter("absolute", |s, e| Ok(s.boolean(e.fields.borrow().device_absolute)));
+        // `requestPermission(absolute)`: the absolute orientation also needs the magnetometer.
+        def.static_method("requestPermission", 0, |s, a| {
+            let names: &[&str] = if a.get(0).to_bool() { &["accelerometer", "gyroscope", "magnetometer"] } else { &["accelerometer", "gyroscope"] };
+            crate::sensors::request_permission(s, names)
+        });
     }
 }
 
@@ -2515,6 +2664,8 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<TextEvent>();
     engine.register::<BeforeUnloadEvent>();
     engine.register::<DeviceMotionEvent>();
+    engine.register::<DeviceMotionEventAcceleration>();
+    engine.register::<DeviceMotionEventRotationRate>();
     engine.register::<DeviceOrientationEvent>();
     engine.register::<ProgressEvent>();
     engine.register::<ErrorEvent>();
