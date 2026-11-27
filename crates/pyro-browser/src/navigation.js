@@ -14,9 +14,11 @@
 //     answers 'cancel' so that nothing happens natively, and this commits when the handlers
 //     fulfilled; a traversal is queued again with traverse(key) and its hook answers 'intercept')
 //   hook('stop') follows window.stop().
+//   disabled() -> HTML "has entries and events disabled" (initial about:blank, opaque origin);
+//   opaque(); initialBlank(); inUnload() -> the document is being unloaded.
 //   dispatchTrusted(target, event): delivers an event of this script's making as a trusted one.
 //   reload(); traverse(key) -> 'missing' | 'current' | 'queued';
-//   updateState(stateJSON); reportException(error);
+//   updateState(stateJSON, entryId?); reportException(error);
 //   activation() -> null | [type, entryKey, entryId, entryUrl, null | [key, id, url, stateJSON]].
 // Navigation API state is kept as JSON, as history.state is. Events are made
 // by this script and delivered by `native.dispatchTrusted` (their isTrusted is true).
@@ -108,7 +110,7 @@
       return native.active() ? entryData.get(this).row.id : '';
     }
     get url() {
-      return native.active() ? entryData.get(this).row.url : null;
+      return native.active() ? entryData.get(this).row.url : '';
     }
     get index() {
       return native.active() ? snapshot().list.indexOf(this) : -1;
@@ -381,6 +383,11 @@
     return apiResult(r);
   };
 
+  // A navigation of a document with entries and events disabled: no event fires, so neither
+  // promise ever settles.
+  const never = () => apiResult(newResult());
+  const unloading = (method) => rejectedResult(invalidState(`Failed to execute '${method}' on 'Navigation': The document is unloading.`));
+
   let ongoing = null;
   let transition = null;
   let lastEntry = null;
@@ -420,7 +427,7 @@
       return '';
     }
   };
-  const fail = (o, error, resetsFocus) => {
+  const fail = (o, error, resetsFocus, quiet) => {
     if (ongoing === o) ongoing = null;
     o.pending = false;
     o.event.interception = 'finished';
@@ -428,8 +435,11 @@
     if (!o.controller.signal.aborted) o.controller.abort(error);
     // `filename` is the document's URL when the navigation began; Chrome reports the throw site
     // as the position, here any position (1:1) stands for it.
-    const ev = new ErrorEventC('navigateerror', { error, message: errorMessage(error), filename: o.href, lineno: 1, colno: 1 });
-    dispatch(navigation, ev);
+    // A document that is no longer fully active (detached inside the handler) fires nothing.
+    if (quiet !== true) {
+      const ev = new ErrorEventC('navigateerror', { error, message: errorMessage(error), filename: o.href, lineno: 1, colno: 1 });
+      dispatch(navigation, ev);
+    }
     if (o.result !== null) {
       o.result.committed.reject(error);
       o.result.finished.reject(error);
@@ -601,6 +611,12 @@
     } finally {
       d.dispatching = false;
     }
+    // HTML "inner navigate event firing": a document detached by a listener aborts the navigation
+    // (both promises reject AbortError of this realm, `event.signal` aborts).
+    if (!native.active()) {
+      if (ongoing === o) fail(o, abortError('The navigation was aborted because the document is no longer active.'), false, true);
+      return 'cancel';
+    }
     if (ongoing !== o) return 'proceed';
     if (event.defaultPrevented && cancelable) {
       fail(o, abortError('Navigation was aborted'));
@@ -740,7 +756,9 @@
 
   const traverse = (key, info) => {
     if (!native.active()) return rejectedResult(invalidState('The document is not fully active.'));
-    const answer = native.traverse(key);
+    if (native.inUnload()) return unloading('traverseTo');
+    // HTML: only an entry of `entries()` can be traversed to.
+    const answer = snapshot().list.some((e) => entryData.get(e).row.key === key) ? native.traverse(key) : 'missing';
     if (answer === 'missing') {
       return rejectedResult(invalidState("Failed to execute 'traverseTo' on 'Navigation': Invalid key"));
     }
@@ -816,7 +834,13 @@
       if (options === null || typeof options !== 'object' || !('state' in options)) {
         throw new TypeErrorC("Failed to execute 'updateCurrentEntry' on 'Navigation': Failed to read the 'state' property from 'NavigationUpdateCurrentEntryOptions': Required member is undefined.");
       }
-      native.updateState(serialize(options.state));
+      // HTML: InvalidStateError (not fully active, entries disabled) before DataCloneError.
+      if (!native.active() || native.disabled()) {
+        throw invalidState("Failed to execute 'updateCurrentEntry' on 'Navigation': The document is not fully active, or its entries are disabled.");
+      }
+      // The entry the call began with gets the state, whatever the state's getters did meanwhile.
+      const began = current();
+      native.updateState(serialize(options.state), began === null ? undefined : entryData.get(began).row.id);
       const from = lastEntry ?? current();
       lastEntry = current();
       dispatch(this, new NavigationCurrentEntryChangeEvent('currententrychange', { navigationType: null, from }));
@@ -841,7 +865,16 @@
         return rejectedResult(new DOMExceptionC('A navigation to a javascript: URL cannot be done with navigation.navigate().', 'NotSupportedError'));
       }
       if (!native.active()) return rejectedResult(invalidState("Failed to execute 'navigate' on 'Navigation': The document is not fully active."));
+      if (native.inUnload()) return unloading('navigate');
+      if (history === 'push' && native.initialBlank()) {
+        return rejectedResult(new DOMExceptionC("Failed to execute 'navigate' on 'Navigation': A \"push\" navigation was explicitly requested, but only a \"replace\" navigation is possible when navigating away from the initial about:blank.", 'NotSupportedError'));
+      }
       const replace = history === 'replace' || (history === 'auto' && target === location.href);
+      // No navigate event fires for this document: the navigation happens, nothing tracks it.
+      if (native.disabled()) {
+        native.navigate(target, replace, state);
+        return never();
+      }
       return start(replace ? 'replace' : 'push', target, options.info, state);
     }
     reload(options) {
@@ -853,6 +886,11 @@
         return rejectedResult(e);
       }
       if (!native.active()) return rejectedResult(invalidState("Failed to execute 'reload' on 'Navigation': The document is not fully active."));
+      if (native.inUnload()) return unloading('reload');
+      if (native.disabled()) {
+        if (!native.initialBlank()) native.reload();
+        return never();
+      }
       return start('reload', location.href, options.info, state);
     }
     traverseTo(key, options) {
@@ -860,12 +898,14 @@
     }
     back(options) {
       if (!native.active()) return rejectedResult(invalidState("Failed to execute 'back' on 'Navigation': The document is not fully active."));
+      if (native.inUnload()) return unloading('back');
       const { index, list } = snapshot();
       if (index <= 0) return rejectedResult(invalidState("Failed to execute 'back' on 'Navigation': Cannot go back."));
       return traverse(list[index - 1].key, (options ?? {}).info);
     }
     forward(options) {
       if (!native.active()) return rejectedResult(invalidState("Failed to execute 'forward' on 'Navigation': The document is not fully active."));
+      if (native.inUnload()) return unloading('forward');
       const { index, list } = snapshot();
       if (index < 0 || index >= list.length - 1) {
         return rejectedResult(invalidState("Failed to execute 'forward' on 'Navigation': Cannot go forward."));

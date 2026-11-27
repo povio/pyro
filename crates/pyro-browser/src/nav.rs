@@ -489,6 +489,22 @@ impl PageNav {
         self.state.borrow().initial
     }
 
+    /// HTML "has entries and events disabled": the document is the initial about:blank one or
+    /// has an opaque origin. The Navigation API fires no events for it (not even for a fragment
+    /// navigation or `history.pushState`) and its methods' promises never settle.
+    pub(crate) fn navigation_disabled(&self) -> bool {
+        self.is_initial_blank() || self.has_opaque_origin()
+    }
+
+    /// The active document has an opaque origin (a sandbox, a data: URL, about:blank of those):
+    /// the Navigation API lists no entries for it.
+    pub(crate) fn has_opaque_origin(&self) -> bool {
+        self.page_dom
+            .borrow()
+            .upgrade()
+            .is_some_and(|page| page.has_opaque_origin() || (page.dom.try_borrow().is_ok() && page.origin_key().starts_with("opaque")))
+    }
+
     /// The active document is the frame's initial about:blank one, whether
     /// or not a script has opened it since (no document has been fetched).
     pub(crate) fn is_first_blank(&self) -> bool {
@@ -1529,7 +1545,7 @@ impl PageNav {
         key: Option<u64>,
         source: &NavigateSource,
     ) -> NavigateDecision {
-        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
+        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() || self.navigation_disabled() {
             return NavigateDecision::Proceed;
         }
         let Some(page) = self.page_dom.borrow().upgrade() else { return NavigateDecision::Proceed };
@@ -1610,7 +1626,7 @@ impl PageNav {
     /// `currententrychange`, then the intercept handlers or
     /// `navigatesuccess`.
     pub(crate) fn navigation_committed(&self, navigation_type: &'static str) {
-        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() {
+        if self.navigation_hooks.borrow().is_empty() || self.navigation_api_call.get() || self.navigation_disabled() {
             return;
         }
         for (realm, hook) in self.navigation_hooks() {
@@ -2818,9 +2834,21 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         }
         Ok(s.undefined())
     });
+    // disabled() -> HTML "has entries and events disabled" (initial about:blank, opaque origin);
+    // opaque() -> the origin is opaque; initialBlank() -> the initial about:blank document;
+    // inUnload() -> the document's unload counter is above 0 (beforeunload, pagehide, unload).
+    native!("disabled", |s, nav, _a| Ok(s.boolean(nav.navigation_disabled())));
+    native!("opaque", |s, nav, _a| Ok(s.boolean(nav.has_opaque_origin())));
+    native!("initialBlank", |s, nav, _a| Ok(s.boolean(nav.is_initial_blank())));
+    native!("inUnload", |s, nav, _a| {
+        Ok(s.boolean(nav.page_dom.borrow().upgrade().is_some_and(|page| page.in_unload())))
+    });
     // entries() -> [index, [key, id, url, sameDocument, stateJSON]...]: the
-    // same-origin entries around the current one.
+    // same-origin entries around the current one (none for an opaque origin).
     native!("entries", |s, nav, _a| {
+        if nav.has_opaque_origin() {
+            return Ok(s.array(&[s.number(-1.0)])?.value());
+        }
         // The live document's origin (an `about:blank` or `srcdoc` document has its creator's).
         let live = nav.page_dom.borrow().upgrade().map(|p| p.origin_key());
         let st = nav.state.borrow();
@@ -2992,9 +3020,19 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         pyro_webapi::dispatch_trusted_event(s, a.get(0), a.get(1))?;
         Ok(s.undefined())
     });
+    // updateState(stateJSON, entryId?): the state of the current entry, or of the entry with that
+    // id (the one `updateCurrentEntry()` began with, which its state's getters may have left).
     native!("updateState", |s, nav, a| {
         let state = a.opt(0).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()?;
-        nav.set_navigation_state(state);
+        match a.opt(1).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()? {
+            Some(id) => {
+                let mut st = nav.state.borrow_mut();
+                if let Some(entry) = st.entries.iter_mut().find(|e| uuid_of(e.id) == id) {
+                    entry.nav_state = state;
+                }
+            }
+            None => nav.set_navigation_state(state),
+        }
         Ok(s.undefined())
     });
     let report = s.function("reportException", |s, _this, a| {
