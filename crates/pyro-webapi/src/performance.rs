@@ -79,8 +79,8 @@ const KEY_RESOURCE: u64 = 0x5265_736f_7572_6300;
 
 /// A document's Navigation Timing as its `navigation` entry reports it, in
 /// milliseconds since the time origin (the start of the document's fetch);
-/// 0 for a step that has not run. Unloading the previous document is not
-/// timed (0).
+/// 0 for a step that has not run. `unload_*` time the previous document's
+/// unload when it was same-origin (0 otherwise).
 #[derive(Clone)]
 pub struct NavigationValues {
     pub dom_interactive: f64,
@@ -90,6 +90,8 @@ pub struct NavigationValues {
     pub load_start: f64,
     pub load_end: f64,
     pub nav_type: &'static str,
+    pub unload_start: f64,
+    pub unload_end: f64,
     /// The document's fetch (`None`: none, as for a document without one).
     pub fetch: Option<Rc<ResourceEntry>>,
 }
@@ -103,6 +105,8 @@ impl NavigationValues {
         load_start: 0.0,
         load_end: 0.0,
         nav_type: "navigate",
+        unload_start: 0.0,
+        unload_end: 0.0,
         fetch: None,
     };
 }
@@ -203,8 +207,8 @@ pub const RESOURCE_SIZES: [(&str, FetchValue); 4] = [
 
 pub fn navigation_fields(n: &NavigationValues) -> [(&'static str, f64); 10] {
     [
-        ("unloadEventStart", 0.0),
-        ("unloadEventEnd", 0.0),
+        ("unloadEventStart", n.unload_start),
+        ("unloadEventEnd", n.unload_end),
         ("domInteractive", n.dom_interactive),
         ("domContentLoadedEventStart", n.dom_content_loaded_start),
         ("domContentLoadedEventEnd", n.dom_content_loaded_end),

@@ -229,6 +229,11 @@ pub struct PageNav {
     /// The URL the current document was created with (its navigation's final URL): the
     /// navigation entry's `name`, which `document.open()` and fragment navigations leave alone.
     creation_url: RefCell<String>,
+    /// When the previous document's unload ran (set by `Browser::commit_document` for a
+    /// same-origin previous document, taken by the commit).
+    pending_unload: Cell<Option<(Instant, Instant)>>,
+    /// The current document's `unloadEventStart`/`unloadEventEnd` (time-origin ms; 0: not exposed).
+    unload_times: Cell<(f64, f64)>,
     /// The fetch of the document about to commit (`begin_document`): its
     /// start becomes the time origin, its phases the Navigation Timing.
     incoming_fetch: RefCell<Option<Box<pyro_webapi::resource_timing::FetchReport>>>,
@@ -369,6 +374,8 @@ impl PageNav {
             first_paint: Cell::new(None),
             nav_type: Cell::new("navigate"),
             creation_url: RefCell::new(String::new()),
+            pending_unload: Cell::new(None),
+            unload_times: Cell::new((0.0, 0.0)),
             incoming_fetch: RefCell::new(None),
             fetch_timing: RefCell::new(None),
             timeline_watchers: RefCell::new(Vec::new()),
@@ -647,6 +654,7 @@ impl PageNav {
         // the navigation's start), so its phases have their own times.
         let now = crate::clock::now();
         let fetch = self.incoming_fetch.take();
+        let cross_origin_redirect = fetch.as_ref().and_then(|f| f.response.as_ref()).is_some_and(|r| r.timing.cross_origin_redirect);
         let origin = fetch
             .as_ref()
             .and_then(|f| now.checked_sub(Instant::now().saturating_duration_since(f.start)))
@@ -659,16 +667,46 @@ impl PageNav {
                 entry.redirect_start = 0.0;
                 entry.redirect_end = 0.0;
                 entry.redirect_count = 0;
+            } else if entry.redirect_count > 0 {
+                // The time origin is the navigation's start and the first request goes out after it:
+                // startTime < redirectStart < redirectEnd <= fetchStart, by at least the clock's tick
+                // (the resolution `entry_of` floors to) where both fell in the same tick.
+                const TICK: f64 = 0.1;
+                entry.redirect_start = entry.redirect_start.max(TICK);
+                entry.redirect_end = entry.redirect_end.max(entry.redirect_start + TICK);
+                entry.fetch_start = entry.fetch_start.max(entry.redirect_end);
+                entry.domain_lookup_start = entry.domain_lookup_start.max(entry.fetch_start);
+                entry.domain_lookup_end = entry.domain_lookup_end.max(entry.domain_lookup_start);
+                entry.connect_start = entry.connect_start.max(entry.domain_lookup_end);
+                entry.connect_end = entry.connect_end.max(entry.connect_start);
+                entry.request_start = entry.request_start.max(entry.connect_end);
+                entry.response_start = entry.response_start.max(entry.request_start);
+                entry.response_end = entry.response_end.max(entry.response_start);
             }
             Rc::new(entry)
         });
         self.first_paint.set(None);
+        // Exposed only without a cross-origin redirect (the unload says what the previous document did).
+        let hidden = self.fetch_timing.borrow().as_ref().is_none() || cross_origin_redirect;
+        self.unload_times.set(match self.pending_unload.take() {
+            Some((start, end)) if !hidden => {
+                let ms = |t: Instant| ((t.saturating_duration_since(origin).as_micros() / 100) as f64 / 10.0).max(0.1);
+                (ms(start), ms(end).max(ms(start)))
+            }
+            _ => (0.0, 0.0),
+        });
         *self.creation_url.borrow_mut() = url.to_owned();
         self.nav_type.set(match history {
             HistoryHandling::Reload => "reload",
             HistoryHandling::Traverse => "back_forward",
             _ => "navigate",
         });
+    }
+
+    /// Records when the previous document's unload ran, for the commit that follows
+    /// (`None`: not exposed to the next document).
+    pub(crate) fn set_unload_span(&self, span: Option<(Instant, Instant)>) {
+        self.pending_unload.set(span);
     }
 
     /// The fetch of the document that commits next (see `incoming_fetch`);
@@ -2421,6 +2459,8 @@ fn navigation_values(page: &pyro_webapi::PageDom, nav: &PageNav) -> NavigationVa
         load_start: t.load_start.unwrap_or(0.0),
         load_end: t.load_end.unwrap_or(0.0),
         nav_type: nav.nav_type.get(),
+        unload_start: nav.unload_times.get().0,
+        unload_end: nav.unload_times.get().1,
         fetch: nav.fetch_timing.borrow().clone(),
     }
 }
@@ -2500,6 +2540,8 @@ fn legacy_timing(origin: f64, n: &NavigationValues, name: &str) -> f64 {
         "secureConnectionStart" => n.fetch.as_ref().map_or(0.0, |f| at(f.secure_connection_start)),
         "redirectStart" => n.fetch.as_ref().filter(|f| f.redirect_count > 0).map_or(0.0, |_| origin.round()),
         "redirectEnd" => n.fetch.as_ref().map_or(0.0, |f| at(f.redirect_end)),
+        "unloadEventStart" => at(n.unload_start),
+        "unloadEventEnd" => at(n.unload_end),
         "domInteractive" => at(n.dom_interactive),
         "domContentLoadedEventStart" => at(n.dom_content_loaded_start),
         "domContentLoadedEventEnd" => at(n.dom_content_loaded_end),

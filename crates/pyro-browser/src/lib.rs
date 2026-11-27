@@ -2314,7 +2314,9 @@ impl Browser {
         let csp_sandbox = self.doc_mut(page).and_then(|mut p| p.committing_csp_sandbox.take());
         // `pageswap` at the document being replaced, then it (and its frames) unloads.
         self.fire_page_swap(page, &opts.url, history, origin);
+        let unload_start = clock::now();
         self.unload_documents(page);
+        let unload_span = (unload_start, clock::now());
         let host = self.page(page.page).ok_or(JsError::ContextDestroyed)?.frames.clone();
         self.cancel_pending_document(page);
         host.invalidate_focus(page, false);
@@ -2450,6 +2452,12 @@ impl Browser {
             p.main_frame.loader_id = loader_id.clone();
             p.main_frame.unreachable = unreachable.clone();
             let entry_url = unreachable.as_ref().map_or(opts.url.as_str(), |u| u.url.as_str());
+            // Navigation Timing: the unload event of the document this one replaces is exposed
+            // when both are same-origin (and no real previous document: not the initial blank).
+            p.nav.set_unload_span(
+                (!p.nav.is_first_blank() && previous_origin.as_deref() == Some(actual_origin.as_str()) && actual_origin != "null")
+                    .then_some(unload_span),
+            );
             p.nav.commit_document_at(&opts.url, entry_url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
             p.nav.set_page_dom(&page_dom);
