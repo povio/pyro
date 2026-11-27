@@ -650,7 +650,7 @@ impl<A: DomAccess> Sink<A> {
 
     /// `append` at the resolved place: `parent` and the sibling `before` (NIL: the end).
     fn append_to(&self, mut parent: u32, mut before: u32, child: NodeOrText<u32>) {
-        if self.filter.is_some() && self.forwarded(parent).is_some() {
+        if self.filter.is_some() && (self.forwarded(parent).is_some() || (before != NIL && self.forwarded(before).is_some())) {
             (parent, before) = self.resolve_place(parent, before);
         }
         if let Some(position) = self.dom.insertion_position() {
@@ -693,7 +693,9 @@ impl<A: DomAccess> Sink<A> {
         }
         let queued = self.dom.with(|d| {
             // A constructor or script can move the anchor between tokens.
-            if (before == NIL || d.n(before).parent == parent) && !cannot_insert(d, parent, &child) {
+            // An anchor that is no longer a child of `parent` (script moved it): the end.
+            let before = if before != NIL && d.n(before).parent != parent { NIL } else { before };
+            if !cannot_insert(d, parent, &child) {
                 insert_node(d, parent, before, child);
             }
             d.custom_reactions_queued() || d.has_upgrade_candidates()
@@ -746,6 +748,14 @@ impl<A: DomAccess> Sink<A> {
                 None => break,
             }
         }
+        // A sibling the filter replaced was never inserted: what stands for it is the place it
+        // was given, when that is still in `parent`.
+        for _ in 0..=forwards.len() {
+            match forwards.get(&before) {
+                Some(&(p, b)) if before != NIL && p == parent => before = b,
+                _ => break,
+            }
+        }
         (parent, before)
     }
 
@@ -764,7 +774,8 @@ impl<A: DomAccess> Sink<A> {
             let kids: Vec<u32> = d.child_idx_iter(replaced).collect();
             for kid in kids {
                 let child = NodeOrText::AppendNode(kid);
-                if (before == NIL || d.n(before).parent == parent) && !cannot_insert(d, parent, &child) {
+                let before = if before != NIL && d.n(before).parent != parent { NIL } else { before };
+                if !cannot_insert(d, parent, &child) {
                     insert_node(d, parent, before, child);
                 }
             }
