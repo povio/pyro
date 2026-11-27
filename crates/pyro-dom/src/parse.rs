@@ -1480,8 +1480,13 @@ impl DocumentParser {
         } else {
             matches!(meta_charset(&self.sniff, false), MetaScan::More) && self.sniff.len() < MAX_META_SCAN
         };
-        // Detection looks at more than the meta window: keep buffering while the bytes are all ASCII.
-        let detect_waiting = self.detect_charset && !self.plaintext && self.sniff.len() < 4096 && self.sniff.is_ascii();
+        // Detection looks at more than the meta window: keep buffering while the bytes are all ASCII
+        // and the prescan found no charset (a declared one wins over detection: nothing to wait for).
+        let detect_waiting = self.detect_charset
+            && !self.plaintext
+            && self.sniff.len() < 4096
+            && self.sniff.is_ascii()
+            && prescan_charset(&self.sniff).is_none();
         if !decided && (waiting || detect_waiting) {
             return ParseStep::NeedInput;
         }
