@@ -881,6 +881,8 @@ pub struct Renderer {
     scroll_directions: HashMap<u64, Vec<(u64, (i8, i8))>>,
     /// pyro: each page's snap targets as last told ([`Renderer::set_snapped`]), likewise.
     snapped: HashMap<u64, Vec<(u64, (bool, bool))>>,
+    /// pyro: each page's stuck sticky boxes as last told ([`Renderer::set_stuck`]), likewise.
+    stuck: HashMap<u64, Vec<(u64, u8)>>,
     pdf_cache: pdf::PdfCache,
     /// Layout queries of persistent documents, by page (present once the
     /// page's document has been laid out for them).
@@ -1054,6 +1056,7 @@ impl Renderer {
             pointer: HashMap::new(),
             scroll_directions: HashMap::new(),
             snapped: HashMap::new(),
+            stuck: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
             sprites: HashMap::new(),
@@ -1079,6 +1082,7 @@ impl Renderer {
         self.pointer.remove(&page);
         self.scroll_directions.remove(&page);
         self.snapped.remove(&page);
+        self.stuck.remove(&page);
     }
 
     /// Drops the persistent document of a page that lives on: its next sync builds it again (a
@@ -1273,6 +1277,20 @@ impl Renderer {
         changed
     }
 
+    /// pyro: the sticky boxes of the page held at an edge by their insets now (by key, with the
+    /// edges: bit 0 top, 1 right, 2 bottom, 3 left), which `scroll-state(stuck)` follows. Whether
+    /// the document's styles are stale now.
+    pub fn set_stuck(&mut self, page: u64, stuck: Vec<(u64, u8)>) -> bool {
+        let changed = self.mirrors.get_mut(&page).is_some_and(|m| m.set_stuck(&stuck));
+        self.stuck.insert(page, stuck);
+        changed
+    }
+
+    /// pyro: whether a container of the page's document was queried for `scroll-state()`.
+    pub fn uses_scroll_state(&self, page: u64) -> bool {
+        self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_state())
+    }
+
     fn apply_animations(&mut self, page: u64) {
         if let Some(m) = self.mirrors.get_mut(&page) {
             if let Some(directions) = self.scroll_directions.get(&page) {
@@ -1280,6 +1298,9 @@ impl Renderer {
             }
             if let Some(snapped) = self.snapped.get(&page) {
                 m.set_snapped(snapped);
+            }
+            if let Some(stuck) = self.stuck.get(&page) {
+                m.set_stuck(stuck);
             }
         }
         if let (Some(m), Some(scroll)) = (self.mirrors.get_mut(&page), self.timeline_scroll.get_mut(&page)) {

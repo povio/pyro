@@ -290,6 +290,9 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             if layout.push_scroll() {
                 layout.set_scroll_pushed_at(page.timeline_now_ms());
             }
+            if let Ok(dom) = page.dom.try_borrow() {
+                layout.push_stuck(&dom);
+            }
         }
         Ok(s.undefined())
     })?;

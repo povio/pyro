@@ -525,10 +525,8 @@ without a style context (custom properties left as they are): pyro serializes a 
   (`SnappedAxes`), read through `TElement::query_scrolled_edges` / `query_snapped_axes` / `query_stuck_edges`, whose
   defaults are empty (so `none` matches until the embedder feeds them). WPT css-conditional
   `container-queries/scroll-state/at-container-{scrolled,snapped,stuck}-{parsing,serialization}`.
-  Known gap: `scroll-state(stuck: ...)` parses and serializes but is not evaluated yet: no embedder implements
-  `query_stuck_edges` (the default is empty), so only `stuck: none` (and `not (stuck: ...)`) matches. Feeding it needs
-  per-container stuck edges from the layout (`Layout::sticky_offsets` has the offsets but not which edge of the scrollport
-  each sticky box is pinned to) through the geometry source into blitz-dom, like `snapped`.
+  `stuck` is fed by blitz-dom (`BaseDocument::set_stuck`, from pyro-dom `Layout::push_stuck`: the sign of each sticky
+  offset says which edge holds the box).
 - Round 8 (`scrolled` evaluation): blitz-dom's `scroll_state_queries` entry (`tree.rs` `ScrollStateEntry`) holds `scrollable`
   and `scrolled` per container; `scrolled` comes from `BaseDocument::set_scroll_directions` (pyro-dom `Layout` records the
   last direction per axis at each scroll write and pushes it with `push_scroll`), and `scrollable` reads the offsets of

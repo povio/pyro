@@ -546,6 +546,9 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
             if layout.push_scroll() {
                 layout.set_scroll_pushed_at(crate::event::page_now_ms(page));
             }
+            if let Ok(dom) = page.dom.try_borrow() {
+                layout.push_stuck(&dom);
+            }
         }
         clamp_scrolls(page, true);
     }

@@ -1098,6 +1098,10 @@ impl PageDom {
             if layout.push_scroll() {
                 layout.set_scroll_pushed_at(crate::event::page_now_ms(self));
             }
+            // (`scroll-state(stuck)`: the boxes sticky offsets hold at an edge now.)
+            if let Ok(dom) = self.dom.try_borrow() {
+                layout.push_stuck(&dom);
+            }
         }
         crate::animation_events::before_render(self);
     }
@@ -1110,6 +1114,10 @@ impl PageDom {
         if let Some(layout) = self.try_layout() {
             if layout.push_scroll() {
                 layout.set_scroll_pushed_at(crate::event::page_now_ms(self));
+            }
+            // (`scroll-state(stuck)`: the boxes sticky offsets hold at an edge now.)
+            if let Ok(dom) = self.dom.try_borrow() {
+                layout.push_stuck(&dom);
             }
         }
         crate::animation_events::before_render(self);

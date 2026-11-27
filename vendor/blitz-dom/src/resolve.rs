@@ -1238,7 +1238,16 @@ impl BaseDocument {
                 snapped.set(style::stylesheets::container_rule::SnappedAxes::X, x);
                 snapped.set(style::stylesheets::container_rule::SnappedAxes::Y, y);
             }
-            let entry = crate::tree::ScrollStateEntry { scrollable: edges, scrolled, snapped };
+            // `stuck`: the edges the sticky container is held at by its insets (bit 0 top, 1 right,
+            // 2 bottom, 3 left, as the embedder tracks them: `set_stuck`).
+            let mut stuck = ScrollableEdges::empty();
+            if let Some(&bits) = self.stuck_targets.get(&id) {
+                stuck.set(ScrollableEdges::TOP, bits & 1 != 0);
+                stuck.set(ScrollableEdges::RIGHT, bits & 2 != 0);
+                stuck.set(ScrollableEdges::BOTTOM, bits & 4 != 0);
+                stuck.set(ScrollableEdges::LEFT, bits & 8 != 0);
+            }
+            let entry = crate::tree::ScrollStateEntry { scrollable: edges, scrolled, snapped, stuck };
             let mut queries = self.nodes.scroll_state_queries.lock().unwrap();
             if let Some(previous) = queries.get_mut(&id)
                 && *previous != entry

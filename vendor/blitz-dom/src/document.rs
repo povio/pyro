@@ -762,6 +762,9 @@ pub struct BaseDocument {
     /// pyro: the elements that are a scroll container's snap target, with the axes (x, y) they
     /// are snapped on, as the embedder tracks them (`set_snapped`): `scroll-state(snapped)`.
     pub(crate) snapped_targets: std::collections::HashMap<NodeId, (bool, bool)>,
+    /// pyro: the edges each sticky box is held at by its insets (bit 0 top, 1 right, 2 bottom,
+    /// 3 left), as the embedder tracks them (`set_stuck`): `scroll-state(stuck)`.
+    pub(crate) stuck_targets: std::collections::HashMap<NodeId, u8>,
     /// pyro: a style traversal kept a `::first-line` style for some element (sticky): inline
     /// roots look for the style of their first line (`layout::first_line`).
     pub(crate) first_line_styles: bool,
@@ -1124,6 +1127,7 @@ impl BaseDocument {
             scroll_targets: Default::default(),
             scroll_directions: Default::default(),
             snapped_targets: Default::default(),
+            stuck_targets: Default::default(),
             first_line_styles: false,
             first_line_changed: Vec::new(),
             dom_selection: None,
@@ -2740,6 +2744,27 @@ impl BaseDocument {
         }
         self.update_scroll_marker_states();
         true
+    }
+
+    /// pyro: the sticky boxes held at an edge by their insets, with the edges (bit 0 top, 1 right,
+    /// 2 bottom, 3 left), which `scroll-state(stuck)` queries. Whether it changed (a container
+    /// with such a query then styles again at the next resolve).
+    pub fn set_stuck(&mut self, stuck: std::collections::HashMap<NodeId, u8>) -> bool {
+        if self.stuck_targets == stuck {
+            return false;
+        }
+        self.stuck_targets = stuck;
+        if self.nodes.scroll_state_queries.lock().unwrap().is_empty() {
+            return false;
+        }
+        self.update_scroll_marker_states();
+        true
+    }
+
+    /// pyro: whether a container was queried for `scroll-state()` (the embedder tells the
+    /// state that queries follow only then).
+    pub fn uses_scroll_state(&self) -> bool {
+        !self.nodes.scroll_state_queries.lock().unwrap().is_empty()
     }
 
     /// pyro: see [`Self::scroll_group_moves`].

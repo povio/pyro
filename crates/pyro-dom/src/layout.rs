@@ -325,6 +325,10 @@ pub struct Layout {
     /// Counts the changes of `snapped`; `snapped_pushed_at` is the count `snapped_pushed` was built at.
     snapped_generation: u64,
     snapped_pushed_at: std::cell::Cell<Option<u64>>,
+    /// The stuck sticky boxes last told to the geometry source ([`Self::stuck_keys`]), and the
+    /// observation stamp they were looked for at ([`Self::push_stuck`]).
+    stuck_pushed: std::cell::RefCell<Vec<(u64, u8)>>,
+    stuck_pushed_at: std::cell::Cell<Option<((u64, u64, u32, u32), u64)>>,
     /// Each scrolled element's `scrollLeft` and `scrollTop`: negative on an axis whose scroll
     /// origin is at its end (right-to-left, `row-reverse`, `column-reverse`, ...), as CSSOM View
     /// and Blitz's scroll offsets have them.
@@ -667,6 +671,8 @@ impl Layout {
             snapped: FxHashMap::default(),
             snapped_generation: 0,
             snapped_pushed_at: std::cell::Cell::new(None),
+            stuck_pushed: Default::default(),
+            stuck_pushed_at: std::cell::Cell::new(None),
             smooth_targets: Default::default(),
             reported_snaps: FxHashMap::default(),
             unsnapped_checked: None,
@@ -3466,6 +3472,52 @@ impl Layout {
         }
         *self.snapped_pushed.borrow_mut() = snapped;
         true
+    }
+
+    /// Tells the geometry source the sticky boxes held at an edge now, when they changed since it
+    /// was last told: `scroll-state(stuck)` follows them (CSS Conditional 5 § 7.3.4). Looked for
+    /// only in a document with a `scroll-state()` container, and again only after a scroll, a
+    /// layout or style change (the observation stamp). `true`: told.
+    pub fn push_stuck(&self, dom: &Dom) -> bool {
+        let Some(source) = self.external.as_ref().filter(|s| s.active() && s.uses_scroll_state()) else {
+            return false;
+        };
+        let stamp = self.observation_stamp(dom);
+        if self.stuck_pushed_at.replace(Some(stamp)) == Some(stamp) {
+            return false;
+        }
+        let stuck = self.stuck_keys(dom);
+        if *self.stuck_pushed.borrow() == stuck {
+            return false;
+        }
+        source.set_stuck(stuck.clone());
+        *self.stuck_pushed.borrow_mut() = stuck;
+        true
+    }
+
+    /// The sticky boxes held away from where they are laid out, by render key, with the edges
+    /// their insets hold them at (bit 0 top, 1 right, 2 bottom, 3 left): a box pushed down is
+    /// stuck to the top, one pushed up to the bottom, and likewise sideways.
+    pub fn stuck_keys(&self, dom: &Dom) -> Vec<(u64, u8)> {
+        // (Within a hundredth of a pixel of where it is laid out is not held.)
+        const EPSILON: f64 = 0.01;
+        self.sticky_offsets(dom)
+            .into_iter()
+            .filter_map(|(key, (dx, dy))| {
+                let mut edges = 0u8;
+                if dy > EPSILON {
+                    edges |= 1;
+                } else if dy < -EPSILON {
+                    edges |= 4;
+                }
+                if dx > EPSILON {
+                    edges |= 8;
+                } else if dx < -EPSILON {
+                    edges |= 2;
+                }
+                (edges != 0).then_some((key, edges))
+            })
+            .collect()
     }
 
     /// The elements that are the snap target of a scroll container now, by render key, with the

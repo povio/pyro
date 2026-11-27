@@ -762,6 +762,14 @@ pub trait GeometrySource {
     /// The elements that are a scroll container's snap target now, by key, with the axes (x, y)
     /// they are snapped on, which `scroll-state(snapped)` follows.
     fn set_snapped(&self, _snapped: Vec<(u64, (bool, bool))>) {}
+    /// The sticky boxes held at an edge by their insets now, by key, with the edges (bit 0 top, 1
+    /// right, 2 bottom, 3 left), which `scroll-state(stuck)` follows.
+    fn set_stuck(&self, _stuck: Vec<(u64, u8)>) {}
+    /// Whether a container was queried for `scroll-state()` as of the last sync (no state of
+    /// theirs to tell otherwise).
+    fn uses_scroll_state(&self) -> bool {
+        false
+    }
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
     /// HTML-in-Canvas `drawElementImage`: the element `key` painted alone (its subtree only, its

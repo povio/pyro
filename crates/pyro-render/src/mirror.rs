@@ -331,6 +331,13 @@ impl Mirror {
         self.doc.set_snapped(snapped)
     }
 
+    /// Gives the document the sticky boxes held at an edge by their insets, with the edges (bit 0
+    /// top, 1 right, 2 bottom, 3 left), for `scroll-state(stuck)`. Whether they changed.
+    pub(crate) fn set_stuck(&mut self, stuck: &[(u64, u8)]) -> bool {
+        let stuck = stuck.iter().filter_map(|&(key, edges)| Some((self.nodes.get(&key)?.id, edges))).collect();
+        self.doc.set_stuck(stuck)
+    }
+
     pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) {
         let root = self.doc.try_root_element().map(|root| root.id);
         let targets: Vec<(NodeId, NodeId)> = targets
