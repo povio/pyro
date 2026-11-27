@@ -3240,6 +3240,12 @@ fn disabled_control_of(page: &PageDom, node: NodeId) -> Option<NodeId> {
 /// synthetic layout leaves such gaps (e.g. at Playwright's initial mouse
 /// position, 0,0).
 fn pointer_target(page: &PageDom, x: f64, y: f64, root_fallback: bool) -> Option<NodeId> {
+    // While a view transition suppresses the document's rendering (its update callback is pending),
+    // input targets the document element: what is on screen is not what the DOM lays out now.
+    if page.view_transition_suppressed() {
+        let doc = page.document();
+        return page.dom.borrow().document_element(doc).ok().flatten();
+    }
     let hit = crate::layout_api::hit_test(page, x, y);
     if hit.is_some() || !root_fallback {
         return hit;
