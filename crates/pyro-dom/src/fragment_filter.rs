@@ -169,6 +169,14 @@ pub fn is_javascript_url(value: &str) -> bool {
     "javascript:".chars().all(|expected| chars.next().is_some_and(|c| c.to_ascii_lowercase() == expected))
 }
 
+/// Whether an `attributeName` value names the `href` attribute, bare or behind exactly one prefix.
+fn names_href(value: &str) -> bool {
+    match value.split_once(':') {
+        None => value == "href",
+        Some((prefix, local)) => !prefix.is_empty() && local == "href",
+    }
+}
+
 /// The built-in navigating URL attributes list and the built-in animating URL attributes list,
 /// restricted to a `javascript:` URL: whether `attr` (with `value`) on `el` is one of them.
 fn is_javascript_url_attribute(el: &QualName, attr: &QualName, value: &str) -> bool {
@@ -186,10 +194,12 @@ fn is_javascript_url_attribute(el: &QualName, attr: &QualName, value: &str) -> b
             return is_javascript_url(value);
         }
         // `<animate attributeName=href>` would animate a URL into existence: its value is not a URL.
+        // The target may be named through any namespace prefix (`xlink:href`, and `zlink:href`
+        // whatever `zlink` is bound to, or is not bound to at all): all of them are removed.
         return matches!(element, "animate" | "animateTransform" | "set")
             && no_ns
             && local == "attributeName"
-            && matches!(value, "href" | "xlink:href");
+            && names_href(value);
     }
     el.ns == ns!(mathml) && href_like && is_javascript_url(value)
 }
@@ -270,6 +280,16 @@ mod tests {
         assert_eq!(f.disposition(&html("p")), Disposition::Remove);
         assert!(f.allows_attribute(&html("div"), &attr("style"), ""));
         assert!(!f.allows_attribute(&html("div"), &attr("class"), ""));
+    }
+
+    #[test]
+    fn animated_href_through_any_prefix_is_removed() {
+        let set = svg("set");
+        let mut allowing = FragmentFilter::default();
+        allowing.javascript_urls = false;
+        for (value, removed) in [("href", true), ("xlink:href", true), ("ylink:href", true), ("zlink:href", true), ("xlink:href:x", false), ("hreflang", false), ("xref", false), (":href", false)] {
+            assert_eq!(!allowing.allows_attribute(&set, &attr("attributeName"), value), removed, "{value}");
+        }
     }
 
     #[test]
