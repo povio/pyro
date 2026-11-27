@@ -1526,6 +1526,7 @@ impl PageDom {
             self.release_activity();
         }
         crate::custom::release_document(self);
+        crate::eme::release_document(self);
         self.realms.borrow_mut().clear();
         drop(self.main_world.take());
     }

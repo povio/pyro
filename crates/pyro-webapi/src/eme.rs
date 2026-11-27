@@ -63,12 +63,19 @@ pub(crate) type SharedKeys = Rc<RefCell<KeyStore>>;
 
 thread_local! {
     /// The stores of the live `MediaKeys` objects by the number eme.js knows them by (its
-    /// finalization registry drops the entry); an element using one holds its own reference.
-    static STORES: RefCell<(u32, HashMap<u32, SharedKeys>)> = RefCell::new((0, HashMap::new()));
+    /// finalization registry drops the entry, or [`release_document`] when the page goes); an element
+    /// using one holds its own reference. Each entry knows the page that made it.
+    static STORES: RefCell<(u32, HashMap<u32, (u64, SharedKeys)>)> = RefCell::new((0, HashMap::new()));
 }
 
 fn lookup(id: f64) -> Option<SharedKeys> {
-    STORES.with(|stores| stores.borrow().1.get(&(id as u32)).cloned())
+    STORES.with(|stores| stores.borrow().1.get(&(id as u32)).map(|(_, keys)| keys.clone()))
+}
+
+/// The page is disposed: its key stores go with it (its realms' finalization registries may never run).
+pub(crate) fn release_document(page: &PageDom) {
+    let id = page.id();
+    STORES.with(|stores| stores.borrow_mut().1.retain(|_, (owner, _)| *owner != id));
 }
 
 /// AES-128 as the Common Encryption block cipher.
@@ -132,11 +139,12 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     native.set_atom(
         "makeStore",
         s.function("makeStore", |s, _, _| {
+            let owner = crate::target::page_of(s)?.id();
             let id = STORES.with(|stores| {
                 let mut stores = stores.borrow_mut();
                 stores.0 += 1;
                 let id = stores.0;
-                stores.1.insert(id, Rc::new(RefCell::new(KeyStore::default())));
+                stores.1.insert(id, (owner, Rc::new(RefCell::new(KeyStore::default()))));
                 id
             });
             Ok(s.number(f64::from(id)))
