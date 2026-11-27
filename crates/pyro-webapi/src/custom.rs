@@ -376,6 +376,12 @@ fn upgrade_with<'s>(
     if page.dom.borrow().custom_definition_owner(el).js()?.is_some() {
         return Ok(());
     }
+    // HTML "upgrade an element": a definition that disables shadow cannot take an element that has a
+    // shadow root; the element is failed and the exception reported.
+    if d.disable_shadow && page.dom.borrow().shadow_root(el).js()?.is_some() {
+        let _ = page.dom.borrow_mut().set_custom_failed(el);
+        return Err(JsError::dom("NotSupportedError", "Custom element definition disables shadow, but the element has a shadow root."));
+    }
     let (ctor, observed, face) = (d.ctor.get(s), &d.observed, d.form_associated);
     // The reactions the upgrade enqueues before it constructs.
     let (attributes, connected) = {
