@@ -50,7 +50,7 @@
 //! | Hook | Called by | When |
 //! |---|---|---|
 //! | `<m>::on_frame(page, &FrameInfo)` | [`rendering_update`], from `run_animation_frame` (`pyro-browser/src/window.rs`) | at the end of every rendering update (animation frame) of the document's window, after rAF callbacks, the style updates, ResizeObserver step, focus fixup and the canvas paint step; order: shift, paint, element, lcp, event, loaf, softnav. Frames only run when something asked for one (rAF, an animation, a client command, or `timeline::request_rendering`); a render-blocked document runs none |
-//! | `longtask::on_task(page, &TaskInfo)`, `loaf::on_task(page, &TaskInfo)` | [`task_finished`], from `Browser::task_finished` (`LoopState::task_finished`, `pyro-runtime`) | after every event-loop task (also frame timers, idle timers), before the checkpoint (`after_task`). Called for EVERY document (every frame of every page) of the browser, not only those whose script ran; times are in that document's clock. Filter on duration yourself (core does nothing but the `ENABLED` check). Cost when disabled: two `Instant::now()` per task |
+//! | `longtask::on_task(page, &TaskInfo)`, `loaf::on_task(page, &TaskInfo)` | [`task_finished`], from `Browser::task_finished` (`LoopState::task_finished`, `pyro-runtime`) | after every event-loop task (also frame timers, idle timers), before the checkpoint (`after_task`). Called for EVERY document (every frame of every page) of the browser, not only those whose script ran; times are in that document's clock. Tasks under 50 ms are skipped before any document is visited unless `loaf` is enabled (`TASK_BOOKKEEPING`); `loaf` filters for itself. Cost when disabled: two `Instant::now()` and one depth read per task, nothing else |
 //! | `event::dispatch_begin(page, &EventData) -> Option<DispatchToken>`, `event::dispatch_end(page, &EventData, DispatchToken)`; `softnav::dispatch_begin/end` the same | [`dispatch_begin`] / [`dispatch_end`], from `target.rs dispatch_at` | around the listeners of every TRUSTED event (not synthetic `dispatchEvent` ones: `event.state.is_trusted`), every type: the module decides which types matter. The token is yours to carry between the two calls. Callers that skip dispatching for an event nobody listens to (`target::unheard`) never reach it: the module also gets them through `event::note_unheard(page, &UnheardEvent)` (see [`note_unheard`]), so `eventCounts` and the entries count every trusted input event, heard or not |
 //! | `event::event_counts(s, page) -> JsResult<Value>`, `event::interaction_count(page) -> u32` | `performance.eventCounts` / `performance.interactionCount` getters of the window's `Performance` (`pyro-browser/src/nav.rs`), defined only when `event::ENABLED` | on property read |
 //!
@@ -59,6 +59,8 @@
 //! update (layout is final from there), `presented` the time at the end of
 //! the rendering update ("presentation": nothing is rasterized, the end of
 //! Pyro's own update is the definition). `start <= paint_time <= presented`.
+//! Tasks shorter than [`LONG_TASK_MS`] are only delivered while [`TASK_BOOKKEEPING`]
+//! (`loaf`); `longtask::on_task` therefore never sees one, and need not filter.
 //! `TaskInfo`: `start` / `end` of the task in the document clock, `depth`
 //! and `nested_ms` (below).
 //!
@@ -316,9 +318,22 @@ pub fn rendering_update(page: &Rc<PageDom>, frame: &FrameInfo) {
 /// in `Browser`).
 pub const TASK_HOOKS: bool = longtask::ENABLED || loaf::ENABLED;
 
+/// The long-task threshold (Long Tasks, and LoAF's `blockingDuration` over it).
+pub const LONG_TASK_MS: f64 = 50.0;
+
+/// Whether some ENABLED module needs [`task_finished`] for tasks shorter than
+/// [`LONG_TASK_MS`] too (a const, folded away while none does). `loaf` does: a
+/// frame's scripts and duration are summed from every task between two
+/// frames. `longtask` does not. `Browser::task_finished` returns before
+/// touching any document for a shorter task when this is false, so
+/// `longtask::on_task` only ever sees tasks of 50 ms or more and `loaf::on_task`
+/// sees every task. (A module that needs more must flip this const in its own
+/// commit.)
+pub const TASK_BOOKKEEPING: bool = loaf::ENABLED;
+
 /// A task of the event loop ended (`Browser::task_finished`).
 pub fn task_finished(page: &Rc<PageDom>, task: &TaskInfo) {
-    if longtask::ENABLED {
+    if longtask::ENABLED && task.end - task.start >= LONG_TASK_MS {
         longtask::on_task(page, task);
     }
     if loaf::ENABLED {

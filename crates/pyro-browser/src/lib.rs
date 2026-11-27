@@ -873,10 +873,15 @@ impl LoopState for Browser {
         if !pyro_webapi::perf::TASK_HOOKS {
             return;
         }
-        // Every document of every page: the entry types of long tasks are per document and
-        // the modules filter on the duration themselves.
+        // Every document of every page: the entry types of long tasks are per document.
         let depth = pyro_runtime::task_depth();
-        let nested_ms = pyro_webapi::perf::task_accounted(depth, end.saturating_duration_since(start).as_secs_f64() * 1000.0);
+        let duration = end.saturating_duration_since(start).as_secs_f64() * 1000.0;
+        let nested_ms = pyro_webapi::perf::task_accounted(depth, duration);
+        // Nothing to report for a short task unless a module keeps books on every task (no
+        // allocation, no clock conversion, no walk of the pages before this return).
+        if duration < pyro_webapi::perf::LONG_TASK_MS && !pyro_webapi::perf::TASK_BOOKKEEPING {
+            return;
+        }
         let pages: Vec<_> = self.pages.iter().map(|p| p.id).collect();
         for id in pages {
             let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };
