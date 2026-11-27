@@ -62,10 +62,29 @@ impl PartialEq for DocFacts {
 }
 impl Eq for DocFacts {}
 
-/// The Navigation API's key or id of an entry: a version 4 (variant 1) UUID shaped string, unique
-/// per counter value (the counter is in the last group and the third one's low digits).
-fn uuid_of(n: u64) -> String {
-    format!("70797230-4e41-4{:03x}-8000-{:012x}", (n >> 48) & 0xfff, n & 0xffff_ffff_ffff)
+/// A 64-bit finalizer (splitmix64's): a bijection, so distinct inputs stay distinct.
+fn mix64(mut x: u64) -> u64 {
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
+}
+
+/// The Navigation API's key or id of an entry: a version 4 (variant 1) UUID shaped string made of the
+/// frame's random `salt` and the entry's counter value `n`. Unique per counter value within a frame
+/// (the first half is a bijection of `salt + n`), different between frames and not guessable from
+/// the counter, as Chrome's random keys; the same `n` always gives the same string.
+fn uuid_of(salt: u64, n: u64) -> String {
+    let a = mix64(salt.wrapping_add(n));
+    let b = mix64(a ^ salt.rotate_left(32) ^ 0x7079_7230_4e41_0000);
+    format!(
+        "{:08x}-{:04x}-4{:03x}-{:x}{:03x}-{:012x}",
+        a >> 32,
+        (a >> 16) & 0xffff,
+        a & 0xfff,
+        8 | ((b >> 60) & 3),
+        (b >> 48) & 0xfff,
+        b & 0xffff_ffff_ffff
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,6 +249,8 @@ impl NavState {
 
 /// Per-page navigation state shared by the page and its windows.
 pub struct PageNav {
+    /// Random per frame: mixed into the Navigation API entry keys and ids (`uuid_of`).
+    salt: u64,
     page: PageId,
     frame_id: FrameId,
     observer: ObserverCell,
@@ -379,6 +400,7 @@ impl PageNav {
         joint: Rc<JointHistory>,
     ) -> Rc<PageNav> {
         let nav = Rc::new(PageNav {
+            salt: pyro_webapi::crypto::random_u64(),
             page,
             frame_id,
             observer,
@@ -1627,7 +1649,7 @@ impl PageNav {
                 s.boolean(hash_change),
                 s.boolean(cancelable),
                 s.boolean(can_intercept),
-                s.string(&key.map(uuid_of).unwrap_or_default()),
+                s.string(&key.map(|k| uuid_of(self.salt, k)).unwrap_or_default()),
                 form_data,
                 element,
                 s.boolean(source.user_initiated),
@@ -2934,7 +2956,7 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
             let state = e.nav_state.as_deref().map_or(s.undefined(), |j| s.string(j));
             // The URL of a no-referrer document's entry is hidden once that document was left.
             let url = if e.facts.no_referrer && e.doc != current.doc { s.null() } else { s.string(&e.url) };
-            let row = [s.string(&uuid_of(e.key)), s.string(&uuid_of(e.id)), url, s.boolean(e.doc == current.doc), state];
+            let row = [s.string(&uuid_of(nav.salt, e.key)), s.string(&uuid_of(nav.salt, e.id)), url, s.boolean(e.doc == current.doc), state];
             values.push(s.array(&row)?.value());
         }
         Ok(s.array(&values)?.value())
@@ -2949,13 +2971,13 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
             Some((key, id, url, state)) => {
                 let state = state.as_deref().map_or(s.undefined(), |j| s.string(j));
                 let url = url.as_deref().map_or(s.null(), |u| s.string(u));
-                s.array(&[s.string(&uuid_of(*key)), s.string(&uuid_of(*id)), url, state])?.value()
+                s.array(&[s.string(&uuid_of(nav.salt, *key)), s.string(&uuid_of(nav.salt, *id)), url, state])?.value()
             }
         };
         let row = [
             s.string(act.ty),
-            s.string(&uuid_of(act.entry.0)),
-            s.string(&uuid_of(act.entry.1)),
+            s.string(&uuid_of(nav.salt, act.entry.0)),
+            s.string(&uuid_of(nav.salt, act.entry.1)),
             s.string(&act.entry.2),
             from,
         ];
@@ -3030,7 +3052,7 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         let key = a.get(0).to_string()?;
         let delta = {
             let st = nav.state.borrow();
-            st.entries.iter().position(|e| uuid_of(e.key) == key).map(|i| i as i64 - st.index as i64)
+            st.entries.iter().position(|e| uuid_of(nav.salt, e.key) == key).map(|i| i as i64 - st.index as i64)
         };
         Ok(s.string(match delta {
             None => "missing",
@@ -3080,7 +3102,7 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         match a.opt(1).filter(|v| !v.is_undefined()).map(|v| v.to_string()).transpose()? {
             Some(id) => {
                 let mut st = nav.state.borrow_mut();
-                if let Some(entry) = st.entries.iter_mut().find(|e| uuid_of(e.id) == id) {
+                if let Some(entry) = st.entries.iter_mut().find(|e| uuid_of(nav.salt, e.id) == id) {
                     entry.nav_state = state;
                 }
             }

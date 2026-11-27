@@ -36,6 +36,11 @@ fn fill_random(buf: &mut [u8]) -> JsResult<()> {
     getrandom::fill(buf).map_err(|e| JsError::dom("OperationError", format!("random source failed: {e}")))
 }
 
+/// A random 64-bit value from the OS generator (salts that must differ between frames and not be guessable).
+pub fn random_u64() -> u64 {
+    getrandom::u64().expect("the OS random number generator failed")
+}
+
 /// `crypto.getRandomValues(array)`: integer typed arrays only.
 fn get_random_values<'s>(s: &Scope<'s>, v: Value<'s>) -> JsResult<Value<'s>> {
     let obj = v.as_object().ok_or_else(|| {
