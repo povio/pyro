@@ -3053,12 +3053,15 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         if reverse { offset.x = mirror - offset.x - size.width; }
         fn axis(track: PositionAreaTrack, start: f32, end: f32, low: f32, high: f32) -> (f32, f32, taffy::AlignSelf) {
             use taffy::AlignSelf as Align;
+            // css-anchor-position-1 §3.1.1: the position-area grid's outer tracks reach the
+            // containing block's edges, and extend to the anchor when it lies (partly) outside.
+            let (low, high) = (low.min(start), high.max(end));
             match track {
-                PositionAreaTrack::Start => (low.min(start), start, Align::END),
-                PositionAreaTrack::End => (end, high.max(end), Align::START),
+                PositionAreaTrack::Start => (low, start, Align::END),
+                PositionAreaTrack::End => (end, high, Align::START),
                 PositionAreaTrack::Center => (start, end, Align::CENTER),
-                PositionAreaTrack::SpanStart => (low.min(end), end, Align::END),
-                PositionAreaTrack::SpanEnd => (start, high.max(start), Align::START),
+                PositionAreaTrack::SpanStart => (low, end, Align::END),
+                PositionAreaTrack::SpanEnd => (start, high, Align::START),
                 PositionAreaTrack::SpanAll => (low, high, Align::CENTER),
             }
         }
