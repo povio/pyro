@@ -427,6 +427,30 @@ impl<'a> FocusNavigation<'a> {
     /// Shift+Tab lands on the first radio too). Other elements are not
     /// affected.
     fn radio_group_target(&self, i: u32, area: &dyn Fn(NodeId) -> bool) -> bool {
+        // The options of a base-appearance listbox (focusable areas only then) are one stop too:
+        // its first selected option that is a focusable area, else its first one (Chromium).
+        // The options of an open picker keep their own stops.
+        if self.html_local(i) == Some(&local_name!("option")) {
+            let select = self.option_nearest_ancestor_select(i);
+            if select == NIL || self.is_select_picker_open_idx(select) {
+                return true;
+            }
+            if let Some(target) = self.radio_targets.borrow().get(&i) {
+                return *target == Some(i);
+            }
+            let options = self.select_options_idx(select);
+            let focusable = |o: u32| area(self.id_of(o));
+            let target = options
+                .iter()
+                .copied()
+                .find(|&o| self.option_selected_idx(o) && focusable(o))
+                .or_else(|| options.iter().copied().find(|&o| focusable(o)));
+            let mut targets = self.radio_targets.borrow_mut();
+            for &o in &options {
+                targets.insert(o, target);
+            }
+            return target == Some(i);
+        }
         let radio = self.html_local(i) == Some(&local_name!("input"))
             && self.input_type_idx(i) == crate::forms::InputType::Radio;
         if !radio {

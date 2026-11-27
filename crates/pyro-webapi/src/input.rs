@@ -134,7 +134,7 @@ fn request_focus(page: &Rc<PageDom>, target: FocusTarget, prevent_scroll: bool) 
 fn can_focus(page: &PageDom, el: NodeId) -> bool {
     let dom = page.dom.borrow();
     let layout = page.layout();
-    (dom.is_focusable(el).unwrap_or(false) || page.popover.forced_focus(el) || is_keyboard_focusable_scroller(&layout, &dom, el))
+    (node_focusable(&layout, &dom, el) || page.popover.forced_focus(el) || is_keyboard_focusable_scroller(&layout, &dom, el))
         && !layout.style().is_inert(&dom, el)
 }
 
@@ -407,11 +407,44 @@ fn takes_typed_text(dom: &Dom, el: NodeId) -> bool {
     is_text_control(dom, el) || crate::editing::editing_host(dom, el).is_some()
 }
 
+/// Whether `select` is a listbox (display size above 1) of base appearance (`appearance:
+/// base-select`, a customizable select): its options take the focus, the select itself does not.
+fn is_base_listbox(layout: &pyro_dom::layout::Layout, dom: &Dom, select: NodeId) -> bool {
+    if !dom.element(select).is_ok_and(|e| e.is_html() && &*e.name.local == "select") {
+        return false;
+    }
+    let multiple = dom.has_attribute(select, "multiple").unwrap_or(false);
+    let size = dom.get_attribute(select, "size").ok().flatten().and_then(|s| s.trim().parse::<u32>().ok()).filter(|&s| s > 0);
+    size.unwrap_or(if multiple { 4 } else { 1 }) > 1 && layout.computed_style_value(dom, select, "appearance") == "base-select"
+}
+
+/// The base-appearance listbox select that holds `option` (see [`is_base_listbox`]).
+fn option_base_listbox(layout: &pyro_dom::layout::Layout, dom: &Dom, option: NodeId) -> Option<NodeId> {
+    if !dom.element(option).is_ok_and(|e| e.is_html() && &*e.name.local == "option") {
+        return None;
+    }
+    let select = dom.option_nearest_select(option).ok().flatten()?;
+    is_base_listbox(layout, dom, select).then_some(select)
+}
+
+/// [`Dom::is_focusable`] with what depends on style: the options of a base-appearance listbox are
+/// focusable areas (an enabled one in an enabled select) and the select itself is not (Chromium's
+/// customizable listbox: focus lives on the options).
+fn node_focusable(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
+    if dom.is_focusable(el).unwrap_or(false) {
+        let select = dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "select");
+        return !(select && !dom.has_attribute(el, "tabindex").unwrap_or(false) && is_base_listbox(layout, dom, el));
+    }
+    dom.is_connected(el).unwrap_or(false)
+        && !dom.is_disabled(el).unwrap_or(true)
+        && option_base_listbox(layout, dom, el).is_some_and(|s| !dom.is_disabled(s).unwrap_or(true))
+}
+
 /// HTML "focusable area": focusable, not inert, and being rendered (not in
 /// a `display: none` subtree nor `visibility: hidden`, as Chrome's
 /// focusable-style check). An `<area>` is rendered through its image map.
 pub(crate) fn is_focusable_area(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
-    if !dom.is_focusable(el).unwrap_or(false) || layout.style().is_inert(dom, el) {
+    if !node_focusable(layout, dom, el) || layout.style().is_inert(dom, el) {
         return false;
     }
     if dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "area") {
@@ -431,7 +464,7 @@ pub fn run_focus_fixup(page: &Rc<PageDom>) {
         let layout = page.layout();
         let dom = page.dom.borrow();
         let Some(f) = dom.focused(page.document()).ok().flatten() else { return };
-        let focusable = (dom.is_focusable(f).unwrap_or(false) || is_keyboard_focusable_scroller(&layout, &dom, f))
+        let focusable = (node_focusable(&layout, &dom, f) || is_keyboard_focusable_scroller(&layout, &dom, f))
             && !layout.style().is_inert(&dom, f)
             && layout.is_visible(&dom, f);
         (!focusable).then_some(f)
@@ -1436,7 +1469,9 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
                 return;
             }
             let Some(target) = key_target(page) else { return };
-            if !(k.modifiers.ctrl || k.modifiers.meta || k.modifiers.alt) && select_picker_key(page, target, &k.key) {
+            if !(k.modifiers.ctrl || k.modifiers.meta || k.modifiers.alt)
+                && (select_picker_key(page, target, &k.key) || base_listbox_key(page, target, &k.key))
+            {
                 return;
             }
             if k.key == " " && space_clickable(&page.dom.borrow(), target) {
@@ -2142,48 +2177,177 @@ fn select_picker_key(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool {
             true
         }
         "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End" | "PageUp" | "PageDown" => {
-            let mode = {
-                let dom = page.dom.borrow();
-                page.layout().computed_style_value(&dom, select, "writing-mode")
-            };
-            // +1: the next option, -1: the previous one, 2/-2: the last/first one.
-            let step: i32 = match (key, mode.as_str()) {
-                ("ArrowDown", _) => 1,
-                ("ArrowUp", _) => -1,
-                ("ArrowRight", "vertical-lr" | "sideways-lr") | ("ArrowLeft", "vertical-rl" | "sideways-rl") => 1,
-                ("ArrowLeft", "vertical-lr" | "sideways-lr") | ("ArrowRight", "vertical-rl" | "sideways-rl") => -1,
-                ("ArrowLeft" | "ArrowRight", _) => return true,
-                ("End" | "PageDown", _) => 2,
-                _ => -2,
-            };
-            let candidates: Vec<NodeId> = {
-                let dom = page.dom.borrow();
-                let layout = page.layout();
-                dom.select_options(select)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|&o| {
-                        o == option
-                            || (!dom.is_disabled(o).unwrap_or(true)
-                                && layout.computed_style_value(&dom, o, "display") != "none")
-                    })
-                    .collect()
-            };
-            let at = candidates.iter().position(|&o| o == option);
-            let next = match (step, at) {
-                (1, Some(i)) => candidates.get(i + 1).copied(),
-                (-1, Some(i)) => i.checked_sub(1).map(|i| candidates[i]),
-                (2, _) => candidates.last().copied(),
-                (-2, _) => candidates.first().copied(),
-                _ => None,
-            };
-            if let Some(next) = next.filter(|&n| n != option) {
-                crate::popover::focus_picker_option(page, next);
-            }
+            move_option_focus(page, select, option, key);
             true
         }
         _ => false,
     }
+}
+
+/// The arrow, Home, End, PageUp and PageDown keys on the focused `option` of `select` (an open
+/// picker or a base-appearance listbox): focus moves to the next or previous option that is enabled
+/// and displayed, without wrapping, along the select's block axis (Down/Up, and in a vertical writing
+/// mode Right/Left or Left/Right as its lines go; the other arrow keys do nothing); Home and End go to
+/// the first or last, PageDown to the last option in view (the next page when it is the focused
+/// one), PageUp to the first (the previous page). The selection does not change.
+fn move_option_focus(page: &Rc<PageDom>, select: NodeId, option: NodeId, key: &str) {
+    let mode = {
+        let dom = page.dom.borrow();
+        page.layout().computed_style_value(&dom, select, "writing-mode")
+    };
+    // +1: the next option, -1: the previous one, 2/-2: the last/first one, 3/-3: a page down/up.
+    let step: i32 = match (key, mode.as_str()) {
+        ("ArrowDown", _) => 1,
+        ("ArrowUp", _) => -1,
+        ("ArrowRight", "vertical-lr" | "sideways-lr") | ("ArrowLeft", "vertical-rl" | "sideways-rl") => 1,
+        ("ArrowLeft", "vertical-lr" | "sideways-lr") | ("ArrowRight", "vertical-rl" | "sideways-rl") => -1,
+        ("ArrowLeft" | "ArrowRight", _) => return,
+        ("End", _) => 2,
+        ("Home", _) => -2,
+        ("PageDown", _) => 3,
+        _ => -3,
+    };
+    let (candidates, visible): (Vec<NodeId>, Vec<usize>) = {
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        let candidates: Vec<NodeId> = dom
+            .select_options(select)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&o| {
+                o == option
+                    || (!dom.is_disabled(o).unwrap_or(true) && layout.computed_style_value(&dom, o, "display") != "none")
+            })
+            .collect();
+        // The options in view of a listbox: those whose middle is inside the select's box.
+        let visible = if step.abs() == 3 {
+            let sel = layout.bounding_client_rect(&dom, select);
+            candidates
+                .iter()
+                .enumerate()
+                .filter(|&(_, &o)| {
+                    let r = layout.bounding_client_rect(&dom, o);
+                    let mid = r.y + r.height / 2.0;
+                    r.height > 0.0 && mid >= sel.y && mid <= sel.y + sel.height
+                })
+                .map(|(i, _)| i)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        (candidates, visible)
+    };
+    let Some(at) = candidates.iter().position(|&o| o == option) else { return };
+    let last = candidates.len() - 1;
+    let (first_visible, last_visible) = match (visible.first(), visible.last()) {
+        (Some(&f), Some(&l)) => (f, l),
+        _ => (0, last),
+    };
+    let page_len = (last_visible - first_visible).max(1);
+    let next = match step {
+        1 => (at < last).then(|| at + 1),
+        -1 => at.checked_sub(1),
+        2 => Some(last),
+        -2 => Some(0),
+        3 => Some(if at < last_visible { last_visible } else { (at + page_len).min(last) }),
+        _ => Some(if at > first_visible { first_visible } else { at.saturating_sub(page_len) }),
+    };
+    if let Some(next) = next.filter(|&n| n != at) {
+        crate::popover::focus_picker_option(page, candidates[next]);
+    }
+}
+
+/// The keys of the focused option of a base-appearance listbox (`<select multiple>` or `size` above 1
+/// with `appearance: base-select`; Chromium's customizable listbox): the arrow, Home, End, PageUp and
+/// PageDown keys move the focus ([`move_option_focus`]); Space and Enter toggle the focused option's
+/// selectedness (`input` and `change` follow), another option of a single-selection listbox losing it.
+/// Returns whether the key was handled.
+fn base_listbox_key(page: &Rc<PageDom>, option: NodeId, key: &str) -> bool {
+    if local(&page.dom.borrow(), option).as_deref() != Some("option") {
+        return false;
+    }
+    let select = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        match option_base_listbox(&layout, &dom, option) {
+            Some(select) => select,
+            None => return false,
+        }
+    };
+    match key {
+        "Enter" | " " => {
+            if page.dom.borrow().is_disabled(option).unwrap_or(true) || page.dom.borrow().is_disabled(select).unwrap_or(true) {
+                return true;
+            }
+            let selected = page.dom.borrow().option_selected(option).unwrap_or(false);
+            let _ = page.dom.borrow_mut().set_option_selected(option, !selected);
+            fire_control_change(page, select);
+            true
+        }
+        "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End" | "PageUp" | "PageDown" => {
+            move_option_focus(page, select, option, key);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Typeahead on the focused `option` of an open picker or a base-appearance listbox: typed keys
+/// (kept for a second) move the focus, without selecting, to the next enabled, displayed option whose
+/// label starts with them (the focused one first when more than one key was typed). Returns whether
+/// `option` is such an option.
+fn option_typeahead(page: &Rc<PageDom>, option: NodeId, text: &str) -> bool {
+    let select = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        if !dom.element(option).is_ok_and(|e| e.is_html() && &*e.name.local == "option") {
+            return false;
+        }
+        match dom.option_nearest_select(option).ok().flatten() {
+            Some(s) if dom.is_select_picker_open(s) || is_base_listbox(&layout, &dom, s) => s,
+            _ => return false,
+        }
+    };
+    let typed = text.to_lowercase();
+    if typed.trim().is_empty() {
+        return true;
+    }
+    let now = crate::event::page_now_ms(page);
+    let search = {
+        let mut state = page.option_typeahead.borrow_mut();
+        if now - state.1 > 1000.0 {
+            state.0.clear();
+        }
+        state.0.push_str(&typed);
+        state.1 = now;
+        state.0.clone()
+    };
+    // The same key typed again cycles through the options starting with it.
+    let first = search.chars().next().unwrap_or(' ');
+    let repeated = search.chars().all(|c| c == first);
+    let needle = if repeated { first.to_string() } else { search };
+    let found = {
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        let options: Vec<NodeId> = dom
+            .select_options(select)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&o| {
+                o == option
+                    || (!dom.is_disabled(o).unwrap_or(true) && layout.computed_style_value(&dom, o, "display") != "none")
+            })
+            .collect();
+        let at = options.iter().position(|&o| o == option).unwrap_or(0);
+        let start = if needle.chars().count() == 1 { at + 1 } else { at };
+        (0..options.len())
+            .map(|k| options[(start + k) % options.len()])
+            .find(|&o| dom.option_text(o).unwrap_or_default().to_lowercase().starts_with(&needle))
+    };
+    if let Some(found) = found.filter(|&f| f != option) {
+        crate::popover::focus_picker_option(page, found);
+    }
+    true
 }
 
 /// `input` and `change` for a value the user committed at once (a key
@@ -2394,6 +2558,9 @@ fn select_by_key(
 /// option (after the selected one, wrapping) whose label starts with the
 /// typed character. Returns whether `el` is such a select.
 fn select_typeahead(page: &Rc<PageDom>, el: NodeId, text: &str) -> bool {
+    if option_typeahead(page, el, text) {
+        return true;
+    }
     {
         let dom = page.dom.borrow();
         if local(&dom, el).as_deref() != Some("select") || dom.has_attribute(el, "multiple").unwrap_or(true) {
@@ -2695,6 +2862,19 @@ pub fn insert_text(page: &Rc<PageDom>, text: &str) {
 /// other items of the segment it leaves, and entering a segment lands on
 /// its entry (`Dom::focusgroup_entry`) from either side.
 fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
+    // Tab or Shift+Tab inside an open customizable select's picker closes it.
+    let open_picker = {
+        let dom = page.dom.borrow();
+        let focused = dom.focused(page.document()).ok().flatten();
+        focused.and_then(|f| match local(&dom, f).as_deref() {
+            Some("select") => Some(f),
+            Some("option") => dom.option_nearest_select(f).ok().flatten(),
+            _ => None,
+        })
+    };
+    if let Some(select) = open_picker.filter(|&s| page.dom.borrow().is_select_picker_open(s)) {
+        crate::popover::hide_select_picker(page, select, false);
+    }
     // Moving focus with Tab ends the `:active` state of a button or checkable input, or of the
     // label pressed for one, whose pointer is still down.
     {
@@ -3649,13 +3829,14 @@ fn dispatch_mouse_inner(
             // Default action of mousedown: focus the nearest focusable ancestor.
             if pd && md {
                 let focus_target = {
+                    let layout = page.layout();
                     let dom = page.dom.borrow();
                     let mut cur = Some(target);
                     let mut found = None;
                     while let Some(c) = cur {
                         // A host that delegates focus takes it for a press
                         // anywhere in it (its delegate, see focus()).
-                        if dom.is_focusable(c).unwrap_or(false) || dom.is_delegates_focus_host(c) {
+                        if node_focusable(&layout, &dom, c) || dom.is_delegates_focus_host(c) {
                             found = Some(c);
                             break;
                         }

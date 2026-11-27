@@ -453,6 +453,9 @@ pub struct PageDom {
     pub(crate) ignore_destructive_writes: Cell<u32>,
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
+    /// Keys typed to search an option of an open picker or a base-appearance listbox by its label, and
+    /// the time (ms) of the last: the search restarts after a second (`input::option_typeahead`).
+    pub(crate) option_typeahead: RefCell<(String, f64)>,
     /// The last input that can move focus was a pointer press (a key press
     /// clears it): Chrome's `:focus-visible` modality.
     pub(crate) pointer_modality: Cell<bool>,
@@ -1256,6 +1259,7 @@ impl PageDom {
             written_pending: Cell::new(None),
             ignore_destructive_writes: Cell::new(0),
             space_target: Cell::new(None),
+            option_typeahead: RefCell::new((String::new(), 0.0)),
             pointer_modality: Cell::new(false),
             mouse_capture: Cell::new(Default::default()),
             dialog_returns: RefCell::new(FxHashMap::default()),
