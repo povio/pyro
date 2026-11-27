@@ -4,8 +4,8 @@
 //   logical  equal notEqual greater greaterOrEqual lesser lesserOrEqual (any type in, uint8 out),
 //            logicalAnd logicalOr logicalXor logicalNot (uint8 in/out), isNaN isInfinite (float in, uint8 out)
 // Kernels compute in double precision (BigInt for int64/uint64) and round once to the output data type by the
-// typed-array store (float32: fround, float16: round-to-nearest-even, integers: wrap-around). add/sub/mul/logical*
-// replace the stand-ins of core_ops.js (the last definition wins). `identity` belongs to tensor_ops.js.
+// typed-array store (float32: fround, float16: round-to-nearest-even, integers: wrap-around). `identity` belongs to
+// tensor_ops.js.
 (api) => {
   const { defineOp, tl, ALL_TYPES, FLOAT_TYPES, broadcastShapes, mapBinary, isBigInt } = api;
 

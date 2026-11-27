@@ -22,8 +22,6 @@ static MODULE: LazyModule = LazyModule {
     key: "lpWebNN",
     source: concat!(
         "(function (native) {\n'use strict';\nconst families = [\n",
-        include_str!("webnn/core_ops.js"),
-        "\n,\n",
         include_str!("webnn/elementwise.js"),
         "\n,\n",
         include_str!("webnn/activations.js"),
