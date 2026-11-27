@@ -2427,9 +2427,8 @@ impl Layout {
                 break chain.clone();
             }
             pending.push(node);
-            // A shadow tree's top-level elements paint within their host.
-            cur =
-                dom.check(node).ok().and_then(|i| crate::style::flat_tree_parent_element(dom, i)).map(|i| dom.id_of(i));
+            // A shadow tree's top-level elements paint within their host; a slotted node within its slot.
+            cur = dom.check(node).ok().and_then(|i| paint_parent_element(dom, i)).map(|i| dom.id_of(i));
         };
         let reached_root = cur.is_none();
         for (i, &node) in pending.iter().enumerate().rev() {
@@ -2440,7 +2439,7 @@ impl Layout {
                 let in_items_phase = dom
                     .check(node)
                     .ok()
-                    .and_then(|i| crate::style::flat_tree_parent_element(dom, i))
+                    .and_then(|i| paint_parent_element(dom, i))
                     .map(|i| dom.id_of(i))
                     .and_then(|parent| result.get(parent))
                     .is_some_and(|parent| parent.items_in_phases);
@@ -6363,6 +6362,13 @@ impl ScrollAlign {
             ScrollAlign::Nearest => nearest_scroll_offset,
         }
     }
+}
+
+/// The element whose box `idx` paints within: its slot when it is assigned to one (a slotted node is
+/// laid out and painted in its slot's place, so in the stacking context of the shadow tree's boxes
+/// around it, not its host's), else its flat tree parent.
+fn paint_parent_element(dom: &Dom, idx: u32) -> Option<u32> {
+    dom.find_slot(idx, false).or_else(|| crate::style::flat_tree_parent_element(dom, idx))
 }
 
 /// pyro: the parent of `node` in the flat tree: its slot when slotted (a closed shadow root's
