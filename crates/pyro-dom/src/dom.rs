@@ -319,6 +319,8 @@ pub struct Dom {
     /// A `<select>` was created: the selectedness steps of insertions and
     /// removals (`Dom::options_after_insert`) run (none before).
     pub(crate) select_seen: bool,
+    /// A `dialog` element was created in this DOM (`Dom::dialog_seen`).
+    pub(crate) dialog_seen: bool,
     /// An `<input>` was created: radios joining a group by insertion uncheck
     /// the rest of it (`Dom::radio_joined_group`; none before).
     pub(crate) input_seen: bool,
@@ -445,6 +447,7 @@ impl Dom {
             pending_input_value_attr: None,
             selectedcontent_seen: false,
             select_seen: false,
+            dialog_seen: false,
             input_seen: false,
             options_batch_removal: false,
             selectedcontent_updating: false,
@@ -1749,6 +1752,7 @@ impl Dom {
             local_name!("audio") | local_name!("video") | local_name!("track") => self.media_seen = true,
             local_name!("canvas") => self.canvas_seen = true,
             local_name!("select") => self.select_seen = true,
+            local_name!("dialog") => self.dialog_seen = true,
             local_name!("input") => self.input_seen = true,
             local_name!("animate") if name.ns == ns!(svg) => self.smil_seen = true,
             _ if name.ns == ns!(svg) && matches!(&*name.local, "animateTransform" | "set" | "animateMotion") => self.smil_seen = true,

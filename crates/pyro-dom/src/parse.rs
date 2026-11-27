@@ -813,6 +813,7 @@ impl<A: DomAccess> Sink<A> {
                     .any(|a| a.name.ns == ns!() && &*a.name.local == "content" && a.value.eq_ignore_ascii_case("drawable"));
             }
             local_name!("select") => d.select_seen = true,
+            local_name!("dialog") => d.dialog_seen = true,
             local_name!("input") => d.input_seen = true,
             local_name!("animate") if name.ns == markup5ever::ns!(svg) => d.smil_seen = true,
             _ if name.ns == markup5ever::ns!(svg) && matches!(&*name.local, "animateTransform" | "set" | "animateMotion") => d.smil_seen = true,

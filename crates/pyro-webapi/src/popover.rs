@@ -100,13 +100,11 @@ fn is_open(dom: &Dom, el: NodeId) -> bool {
     dom.has_attribute(el, "open").unwrap_or(false)
 }
 
-/// The flat-tree parent, approximated: the parent node, or a shadow root's host.
+/// The flat-tree parent element: the slot a node is assigned to, else its parent, or a shadow
+/// root's host (light dismiss and nesting look at flat-tree ancestors, so slotted content counts
+/// as inside the popover or dialog whose slot holds it).
 fn parent_or_host(dom: &Dom, n: NodeId) -> Option<NodeId> {
-    match dom.parent(n).ok().flatten() {
-        Some(p) if dom.element(p).is_ok() => Some(p),
-        Some(p) => dom.fragment_host(p).ok().flatten(),
-        None => None,
-    }
+    crate::input::flat_parent_element(dom, n)
 }
 
 fn state_name(open: bool) -> &'static str {
@@ -835,6 +833,7 @@ fn nearest_clicked_dialog(page: &PageDom, target: NodeId, x: f64, y: f64) -> Opt
 /// HTML "light dismiss open popovers" and "light dismiss open dialogs"
 /// for a trusted `pointerdown` (`down`) or `pointerup` at `target`.
 pub(crate) fn light_dismiss(page: &Rc<PageDom>, target: NodeId, x: f64, y: f64, down: bool) {
+    watch_open_dialogs(page);
     if page.popover.watchers.elements().is_empty() {
         return;
     }
@@ -868,6 +867,28 @@ pub(crate) fn light_dismiss(page: &Rc<PageDom>, target: NodeId, x: f64, y: f64, 
     }
 }
 
+/// Establishes the close watcher of each open dialog that has none: one that is open from the
+/// parser or got its `open` attribute set (HTML's dialog attribute change steps) never went through
+/// `show()` or `showModal()`. Looked for when a close request or a pointer press needs the watchers
+/// (nothing is scanned for before the document has had a `dialog` element).
+fn watch_open_dialogs(page: &PageDom) {
+    let missing = {
+        let dom = page.dom.borrow();
+        if !dom.dialog_seen() {
+            return;
+        }
+        let known = page.popover.watchers.elements();
+        dom.shadow_including_nodes(page.document())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&n| is_html(&dom, n, "dialog") && is_open(&dom, n) && !dom.is_popover_showing(n) && !known.contains(&n))
+            .collect::<Vec<_>>()
+    };
+    for dialog in missing {
+        page.popover.watchers.establish(Watcher::Element(dialog));
+    }
+}
+
 /// Forgets the close watchers whose element closed some other way (removed
 /// from its document, `open` removed).
 fn forget_closed_watchers(page: &PageDom) {
@@ -886,6 +907,7 @@ fn forget_closed_watchers(page: &PageDom) {
 /// A close request (Escape): HTML "process close watchers" acts on the newest group of the
 /// window's close watcher manager, its watchers newest first. Returns whether a watcher handled it.
 pub(crate) fn close_request(page: &Rc<PageDom>) -> bool {
+    watch_open_dialogs(page);
     if page.popover.watchers.is_empty() {
         return false;
     }

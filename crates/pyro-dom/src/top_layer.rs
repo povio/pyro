@@ -349,6 +349,11 @@ impl Dom {
         mine.into_iter().map(|(_, el)| el).collect()
     }
 
+    /// Whether a `dialog` element was ever created in this DOM: until then no dialog can be open.
+    pub fn dialog_seen(&self) -> bool {
+        self.dialog_seen
+    }
+
     pub fn has_changed_popovers(&self) -> bool {
         !self.top_layer.changed_popovers.is_empty()
     }
