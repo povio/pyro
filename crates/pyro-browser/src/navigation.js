@@ -10,6 +10,10 @@
 //   resolve(url) -> absolute URL (SyntaxError otherwise)
 //   navigate(url, replace, stateJSON) -> whether it stayed in the document
 //   commit(url, type, stateJSON): an intercepted navigation's commit
+//     (JS drives the commit of a navigation with a `precommitHandler`: its `navigate` hook
+//     answers 'cancel' so that nothing happens natively, and this commits when the handlers
+//     fulfilled; a traversal is queued again with traverse(key) and its hook answers 'intercept')
+//   hook('stop') follows window.stop().
 //   reload(); traverse(key) -> 'missing' | 'current' | 'queued';
 //   updateState(stateJSON); reportException(error);
 //   activation() -> null | [type, entryKey, entryId, entryUrl, null | [key, id, url, stateJSON]].
@@ -215,6 +219,7 @@
         hasUAVisualTransition: !!init.hasUAVisualTransition,
         sourceElement: init.sourceElement ?? null,
         handlers: [],
+        precommit: [],
         trusted: false,
         dispatching: false,
         // HTML NavigateEvent "interception state" and "scroll behavior".
@@ -250,6 +255,14 @@
           throw new TypeErrorC("Failed to execute 'intercept' on 'NavigateEvent': Failed to read the 'focusReset' property from 'NavigationInterceptOptions': The provided value '" + focusResetValue + "' is not a valid enum value of type NavigationFocusReset.");
         }
       }
+      const precommitHandler = options === undefined || options === null ? undefined : options.precommitHandler;
+      if (precommitHandler !== undefined && typeof precommitHandler !== 'function') {
+        throw new TypeErrorC("Failed to execute 'intercept' on 'NavigateEvent': Failed to read the 'precommitHandler' property from 'NavigationInterceptOptions': The provided value is not a function.");
+      }
+      // HTML "intercept": a precommit handler needs a navigation that can be canceled.
+      if (precommitHandler !== undefined && !this.cancelable) {
+        throw invalidState("Failed to execute 'intercept' on 'NavigateEvent': intercept() with a precommitHandler may not be called on a non-cancelable event.");
+      }
       const scroll = options === undefined || options === null ? undefined : options.scroll;
       if (scroll !== undefined) {
         const value = String(scroll);
@@ -261,6 +274,7 @@
       // The last `intercept()` that gives a `focusReset` decides.
       if (focusResetValue !== undefined) d.focusReset = focusResetValue;
       d.handlers.push(handler === undefined ? () => undefined : handler);
+      if (precommitHandler !== undefined) d.precommit.push(precommitHandler);
       d.interception = 'intercepted';
     }
     scroll() {
@@ -391,6 +405,7 @@
   };
   const fail = (o, error, resetsFocus) => {
     if (ongoing === o) ongoing = null;
+    o.pending = false;
     o.event.interception = 'finished';
     if (resetsFocus === true) resetFocus(o);
     if (!o.controller.signal.aborted) o.controller.abort(error);
@@ -405,6 +420,125 @@
     if (o.transition !== null) {
       o.transitionFinished.reject(error);
       if (transition === o.transition) transition = null;
+    }
+  };
+
+  // HTML NavigationPrecommitController: handed to the `precommitHandler`s of an intercepted
+  // navigation, which run before the navigation commits (the URL, the entries and
+  // `location` are still the old ones).
+  const controllerData = new WeakMap();
+  const precommitData = (c, method) => {
+    const o = controllerData.get(c);
+    if (o === undefined) throw new TypeErrorC('Illegal invocation');
+    if (!native.active()) {
+      throw invalidState(`Failed to execute '${method}' on 'NavigationPrecommitController': The document is not fully active.`);
+    }
+    if (!o.pending || ongoing !== o) {
+      throw invalidState(`Failed to execute '${method}' on 'NavigationPrecommitController': The navigation has already committed or was aborted.`);
+    }
+    return o;
+  };
+  class NavigationPrecommitController {
+    constructor(t, o) {
+      if (t !== token) throw illegal('NavigationPrecommitController');
+      controllerData.set(this, o);
+    }
+    redirect(url, options) {
+      if (arguments.length === 0) {
+        throw new TypeErrorC("Failed to execute 'redirect' on 'NavigationPrecommitController': 1 argument required, but only 0 present.");
+      }
+      options = options ?? {};
+      const history = options.history === undefined ? 'auto' : String(options.history);
+      if (!['auto', 'push', 'replace'].includes(history)) {
+        throw new TypeErrorC(`Failed to execute 'redirect' on 'NavigationPrecommitController': Failed to read the 'history' property from 'NavigationPrecommitControllerRedirectOptions': The provided value '${history}' is not a valid enum value of type NavigationHistoryBehavior.`);
+      }
+      const o = precommitData(this, 'redirect');
+      // Only a push or a replace can be redirected (a reload or a traversal keeps its entry).
+      if (o.type === 'reload' || o.type === 'traverse') {
+        throw invalidState("Failed to execute 'redirect' on 'NavigationPrecommitController': A reload or a traversal cannot be redirected.");
+      }
+      const target = native.resolve(String(url));
+      const to = new URLC(target);
+      const here = new URLC(location.href);
+      if (to.origin !== here.origin || to.protocol !== here.protocol) {
+        throw new DOMExceptionC("Failed to execute 'redirect' on 'NavigationPrecommitController': Cannot redirect to '" + target + "' from a document with origin '" + location.origin + "'.", 'SecurityError');
+      }
+      // HTML serializes the state only for a navigation that has an API method tracker.
+      const hasState = options.state !== undefined && o.result !== null;
+      const state = hasState ? serialize(options.state) : undefined;
+      if (history !== 'auto') o.type = history;
+      o.url = target;
+      o.event.navigationType = o.type;
+      o.transitionData.navigationType = o.type;
+      const destination = destinationData.get(o.event.destination);
+      destination.url = target;
+      if (options.info !== undefined) o.event.info = options.info;
+      if (hasState) {
+        o.commitState = state;
+        destination.state = state;
+      }
+    }
+    addHandler(handler) {
+      if (arguments.length === 0) {
+        throw new TypeErrorC("Failed to execute 'addHandler' on 'NavigationPrecommitController': 1 argument required, but only 0 present.");
+      }
+      if (typeof handler !== 'function') {
+        throw new TypeErrorC("Failed to execute 'addHandler' on 'NavigationPrecommitController': The callback provided as parameter 1 is not a function.");
+      }
+      const o = precommitData(this, 'addHandler');
+      // The handler joins the commit handlers, after those `intercept()` gave.
+      o.handlers.push(handler);
+    }
+  }
+  tag(NavigationPrecommitController, 'NavigationPrecommitController');
+
+  // The traversal whose commit is queued again after its precommit handlers (see `commitDeferred`).
+  let resume = null;
+  // HTML "intercept" commit step of a navigation with precommit handlers: they fulfilled, so the
+  // navigation commits now (the entry changes, `currententrychange`, the handlers run).
+  const commitDeferred = (o) => {
+    if (ongoing !== o) return;
+    if (!native.active()) {
+      fail(o, abortError('The navigation was aborted because the document is no longer active.'));
+      return;
+    }
+    o.pending = false;
+    if (o.type === 'traverse') {
+      // The traversal is queued again; its `navigate` hook answers 'intercept' (see native.watch)
+      // and the commit comes through the 'commit' hook.
+      resume = { o, key: o.key };
+      if (native.traverse(o.key) !== 'queued') {
+        resume = null;
+        fail(o, invalidState('The traversal could not be committed.'));
+      }
+      return;
+    }
+    native.commit(o.url, o.type, o.commitState);
+    onCommit(o.type);
+  };
+  // Runs the `precommitHandler`s in order, then commits when all fulfilled; the first rejection
+  // fails the navigation (it never committed: `committed` and `finished` reject with the reason).
+  const runPrecommit = (o) => {
+    const controller = new NavigationPrecommitController(token, o);
+    let remaining = o.precommit.length;
+    let failed = false;
+    for (const handler of o.precommit) {
+      let run;
+      try {
+        run = PromiseC.resolve(handler(controller));
+      } catch (e) {
+        run = PromiseC.reject(e);
+      }
+      run.then(
+        () => {
+          if (--remaining === 0 && !failed) commitDeferred(o);
+        },
+        (error) => {
+          if (failed) return;
+          failed = true;
+          if (ongoing === o) fail(o, error);
+        },
+      );
     }
   };
 
@@ -436,7 +570,11 @@
     });
     const d = eventData.get(event);
     d.trusted = true;
-    const o = { type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state, event: d, href: location.href, focused: document.activeElement };
+    const o = {
+      type, from, result, controller, handlers: [], transition: null, transitionFinished: null, state, event: d, href: location.href, focused: document.activeElement,
+      // A navigation with precommit handlers: not committed while `pending`; `url`, `type` and `commitState` can be redirected.
+      precommit: [], pending: false, url, key, commitState: state, transitionData: null,
+    };
     ongoing = o;
     d.dispatching = true;
     try {
@@ -452,8 +590,14 @@
     if (d.handlers.length > 0) {
       o.handlers = d.handlers;
       o.transitionFinished = deferred();
-      o.transition = new NavigationTransition(token, { navigationType: type, from, finished: o.transitionFinished.promise });
+      o.transitionData = { navigationType: type, from, finished: o.transitionFinished.promise };
+      o.transition = new NavigationTransition(token, o.transitionData);
       transition = o.transition;
+      if (d.precommit.length > 0) {
+        o.precommit = d.precommit;
+        o.pending = true;
+        return 'defer';
+      }
       return 'intercept';
     }
     return 'proceed';
@@ -527,8 +671,25 @@
   };
 
   native.watch((kind, a, b, c, d, e, f, formData, sourceElement) => {
-    if (kind === 'navigate') return fireNavigate(a, b, c, d, e, f, null, undefined, undefined, formData, sourceElement);
+    if (kind === 'navigate') {
+      // The queued-again traversal of a navigation whose precommit handlers fulfilled: it commits.
+      if (resume !== null && a === 'traverse' && f === resume.key) {
+        const r = resume;
+        resume = null;
+        if (ongoing === r.o) return 'intercept';
+      }
+      const decision = fireNavigate(a, b, c, d, e, f, null, undefined, undefined, formData, sourceElement);
+      // Nothing happens natively until the precommit handlers fulfilled: the navigation is
+      // canceled there and committed from `commitDeferred`.
+      if (decision === 'defer') {
+        runPrecommit(ongoing);
+        return 'cancel';
+      }
+      return decision;
+    }
     if (kind === 'commit') onCommit(a);
+    // HTML "stop loading": a navigation still before its commit is aborted.
+    if (kind === 'stop' && ongoing !== null && ongoing.pending) fail(ongoing, abortError('The navigation was aborted by window.stop().'));
     return undefined;
   });
 
@@ -542,6 +703,10 @@
     const canIntercept = target.origin === here.origin && target.protocol === here.protocol;
     const decision = fireNavigate(type, url, hashChange, true, canIntercept, '', result, info, state);
     if (decision === 'cancel') return apiResult(result);
+    if (decision === 'defer') {
+      runPrecommit(ongoing);
+      return apiResult(result);
+    }
     if (decision === 'intercept') {
       native.commit(url, type, state);
       onCommit(type);
@@ -724,6 +889,6 @@
   lastEntry = current();
   return {
     navigation, Navigation, NavigateEvent, NavigationHistoryEntry, NavigationDestination, NavigationTransition,
-    NavigationCurrentEntryChangeEvent, NavigationActivation, activation,
+    NavigationCurrentEntryChangeEvent, NavigationActivation, NavigationPrecommitController, activation,
   };
 })

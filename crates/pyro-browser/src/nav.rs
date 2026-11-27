@@ -466,9 +466,29 @@ impl PageNav {
     /// that has not started is dropped too ([`PageNav::stop_count`]), as one
     /// fetching is canceled.
     pub(crate) fn abort_document(&self) {
-        let mut st = self.state.borrow_mut();
-        st.aborts += 1;
-        st.stops += 1;
+        {
+            let mut st = self.state.borrow_mut();
+            st.aborts += 1;
+            st.stops += 1;
+        }
+        self.navigation_stopped();
+    }
+
+    /// `window.stop()` ran: the Navigation API aborts a navigation still waiting for its
+    /// `precommitHandler`s (navigation.js `hook('stop')`).
+    fn navigation_stopped(&self) {
+        if self.navigation_hooks.borrow().is_empty() {
+            return;
+        }
+        for (realm, hook) in self.navigation_hooks() {
+            let Some(realm) = realm.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            if let Some(f) = hook.get(&s).as_object() {
+                if let Err(e) = f.call(None, &[s.string("stop")]) {
+                    s.report_exception(&e);
+                }
+            }
+        }
     }
 
     /// Changes when `window.stop()` aborts the frame's document.
@@ -1407,11 +1427,17 @@ impl PageNav {
             return NavigateDecision::Proceed;
         }
         let (current, target) = (Url::parse(&self.url()).ok(), Url::parse(url).ok());
+        // Whether a traversal to the entry `key` stays in the current document.
+        let traversal_stays = key.is_some_and(|k| {
+            let st = self.state.borrow();
+            st.entries.iter().any(|e| e.key == k && e.doc == st.doc_seq)
+        });
         let (hash_change, can_intercept) = match (&current, &target) {
             (Some(c), Some(t)) => (
                 t.fragment().is_some() && c.fragment() != t.fragment() && same_document_except_fragment(c, t),
-                // A traversal to another document cannot be intercepted.
-                can_rewrite_url(c, t) && (navigation_type != "traverse" || cancelable),
+                // A traversal to another document cannot be intercepted (a same-document one of a
+                // child frame can, though its event is not cancelable).
+                can_rewrite_url(c, t) && (navigation_type != "traverse" || traversal_stays),
             ),
             _ => (false, false),
         };
@@ -1644,7 +1670,9 @@ fn apply_traversal(
         // Only a same-document traversal can be canceled or intercepted.
         let same = entry.doc == current_doc;
         let source = NavigateSource::default();
-        match nav.navigate_event_to("traverse", &entry.url, same, Some(entry.key), &source) {
+        // HTML: a traversal's `navigate` event is cancelable only in a top-level traversable.
+        let cancelable = same && page.child.is_none();
+        match nav.navigate_event_to("traverse", &entry.url, cancelable, Some(entry.key), &source) {
             NavigateDecision::Cancel if same => return false,
             NavigateDecision::Intercept => intercepted = same,
             _ => {}

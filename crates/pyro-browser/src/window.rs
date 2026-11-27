@@ -395,7 +395,8 @@ impl JsClass for Window {
             "NavigationDestination",
             "NavigationTransition",
             "NavigationCurrentEntryChangeEvent",
-            "NavigationActivation"
+            "NavigationActivation",
+            "NavigationPrecommitController"
         );
         // [Replaceable], as in Chrome: assignment shadows it on the window.
         def.accessor(
