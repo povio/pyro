@@ -53,6 +53,8 @@ struct BoxNode {
     id: NodeId,
     pseudo: PseudoElement,
     declarations: Option<Arc<Locked<PropertyDeclarationBlock>>>,
+    /// Whether it is its parent pseudo-element's only child (what `:only-child` matches).
+    only_child: bool,
 }
 
 pub(crate) struct Tree {
@@ -246,7 +248,12 @@ impl BaseDocument {
             }
         }
         let mut nodes = Vec::<BoxNode>::with_capacity(descriptors.len());
-        for (pseudo, parent, css, public_pseudo) in descriptors {
+        // (`:only-child` on a pseudo-element of the tree: no other pseudo-element of its parent.)
+        let only_children: Vec<bool> = (0..descriptors.len())
+            .map(|index| index != 0 && descriptors.iter().skip(1).filter(|other| other.1 == descriptors[index].1).count() == 1)
+            .collect();
+        for (index, (pseudo, parent, css, public_pseudo)) in descriptors.into_iter().enumerate() {
+            let only_child = only_children[index];
             let parent = nodes.get(parent).map_or(origin, |node| node.id);
             let declarations = (!css.is_empty()).then(|| {
                 Arc::new(self.guard.wrap(style::properties::declaration_block::parse_style_attribute(
@@ -257,7 +264,7 @@ impl BaseDocument {
                     style::stylesheets::CssRuleType::Style,
                 )))
             });
-            let Some(style) = self.transition_cascade(origin, parent, pseudo.clone(), declarations.as_ref()) else {
+            let Some(style) = self.transition_cascade(origin, parent, pseudo.clone(), declarations.as_ref(), only_child) else {
                 for node in nodes.into_iter().rev() {
                     self.remove_node_from_tree(node.id);
                 }
@@ -274,7 +281,7 @@ impl BaseDocument {
             }
             self.nodes[id].stylo_element_data_mut().ensure_init_mut().styles.primary = Some(style);
             self.nodes[id].update_layout_styles();
-            nodes.push(BoxNode { id, pseudo, declarations, samples:Vec::new(), public_pseudo });
+            nodes.push(BoxNode { id, pseudo, declarations, samples:Vec::new(), public_pseudo, only_child });
         }
         let count = nodes.len();
         let group_frames = generated.into_iter().map(|(index, name, css)| (nodes[index].id, (name, css))).collect();
@@ -333,8 +340,9 @@ impl BaseDocument {
         parent: NodeId,
         pseudo: PseudoElement,
         block: Option<&Arc<Locked<PropertyDeclarationBlock>>>,
+        only_child: bool,
     ) -> Option<Arc<ComputedValues>> {
-        let base = self.pseudo_element_style(origin, &pseudo, false)?;
+        let base = self.pseudo_element_style_in_tree(origin, &pseudo, false, only_child)?;
         let _thread = crate::stylo::LayoutThreadScope::enter();
         let parent = self.nodes.get(parent)?.primary_styles()?;
         let guard = self.guard.read();
@@ -381,7 +389,7 @@ impl BaseDocument {
             for item in &tree.nodes {
                 if let Some(parent) = self.nodes.get(item.id).and_then(|node| node.parent)
                     && let Some(style) =
-                        self.transition_cascade(*origin, parent, item.pseudo.clone(), item.declarations.as_ref())
+                        self.transition_cascade(*origin, parent, item.pseudo.clone(), item.declarations.as_ref(), item.only_child)
                 {
                     let Some(style) = self.sample_transition_style(*origin,parent,item.pseudo.clone(),style,&item.samples,tree.group_frames.get(&item.id),&mut budget) else { complete = false; break; };
                     self.nodes[item.id].stylo_element_data_mut().ensure_init_mut().styles.primary = Some(style);

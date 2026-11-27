@@ -1415,6 +1415,28 @@ impl Stylist {
     where
         E: TElement,
     {
+        self.lazily_compute_pseudo_element_style_in_tree(
+            guards, element, pseudo, rule_inclusion, originating_element_style, is_probe, matching_fn, false,
+        )
+    }
+
+    /// pyro: [`Self::lazily_compute_pseudo_element_style`] for a pseudo-element of a pseudo-element tree
+    /// (`::view-transition-group(x)`...) that `only_child` says is its parent's only child (what
+    /// `:only-child` after the pseudo-element matches).
+    pub fn lazily_compute_pseudo_element_style_in_tree<E>(
+        &self,
+        guards: &StylesheetGuards,
+        element: E,
+        pseudo: &PseudoElement,
+        rule_inclusion: RuleInclusion,
+        originating_element_style: &ComputedValues,
+        is_probe: bool,
+        matching_fn: Option<&dyn Fn(&PseudoElement) -> bool>,
+        only_child: bool,
+    ) -> Option<Arc<ComputedValues>>
+    where
+        E: TElement,
+    {
         let cascade_inputs = self.lazy_pseudo_rules(
             guards,
             element,
@@ -1423,6 +1445,7 @@ impl Stylist {
             is_probe,
             rule_inclusion,
             matching_fn,
+            only_child,
         )?;
 
         Some(self.compute_pseudo_element_style_with_inputs(
@@ -1705,6 +1728,7 @@ impl Stylist {
         is_probe: bool,
         rule_inclusion: RuleInclusion,
         matching_fn: Option<&dyn Fn(&PseudoElement) -> bool>,
+        only_child: bool,
     ) -> Option<CascadeInputs>
     where
         E: TElement,
@@ -1732,6 +1756,7 @@ impl Stylist {
         );
 
         matching_context.pseudo_element_matching_fn = matching_fn;
+        matching_context.pseudo_element_only_child = only_child;
         matching_context.extra_data.originating_element_style = Some(originating_element_style);
         matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || *pseudo == PseudoElement::ScrollMarkerGroup;
 
@@ -1766,6 +1791,7 @@ impl Stylist {
                 MatchingForInvalidation::No,
             );
             matching_context.pseudo_element_matching_fn = matching_fn;
+            matching_context.pseudo_element_only_child = only_child;
             matching_context.extra_data.originating_element_style = Some(originating_element_style);
             matching_context.extra_data.skip_originating_container = pseudo.is_scroll_button() || *pseudo == PseudoElement::ScrollMarkerGroup;
 

@@ -508,6 +508,18 @@ impl crate::document::BaseDocument {
         pseudo: &style::selector_parser::PseudoElement,
         generated_only: bool,
     ) -> Option<Arc<ComputedValues>> {
+        self.pseudo_element_style_in_tree(node_id, pseudo, generated_only, false)
+    }
+
+    /// [`Self::pseudo_element_style`] of a pseudo-element of a pseudo-element tree that `only_child`
+    /// says is its parent's only child (`::view-transition-group(x):only-child` matches it).
+    pub fn pseudo_element_style_in_tree(
+        &self,
+        node_id: NodeId,
+        pseudo: &style::selector_parser::PseudoElement,
+        generated_only: bool,
+        only_child: bool,
+    ) -> Option<Arc<ComputedValues>> {
         let node = self.nodes.get(node_id)?;
         if !node.is_element() || !node.flags.is_in_document() {
             return None;
@@ -617,7 +629,7 @@ impl crate::document::BaseDocument {
             let wanted = pseudo.clone();
             let matches = move |pe: &PseudoElement| wanted.matches_transition_selector(pe)
                 || (wanted.is_highlight() && *pe == PseudoElement::Highlight(style::selector_parser::ANY_HIGHLIGHT));
-            let lazy = self.stylist.lazily_compute_pseudo_element_style(
+            let lazy = self.stylist.lazily_compute_pseudo_element_style_in_tree(
                 &guards,
                 node,
                 &pseudo.rule_map_key(),
@@ -625,6 +637,7 @@ impl crate::document::BaseDocument {
                 &primary,
                 false,
                 (pseudo.is_highlight() || pseudo.transition_argument().is_some()).then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
+                only_child,
             );
             if *pseudo == PseudoElement::Marker {
                 if let Some(style) = self.animated_marker_style(node, &primary, lazy.as_ref()) {
