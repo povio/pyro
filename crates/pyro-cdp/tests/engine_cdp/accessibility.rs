@@ -391,3 +391,42 @@ fn role_tokens_fall_back_and_html_aam_context_roles() {
         assert_eq!(own_role(&mut h, selector), role, "{selector}");
     }
 }
+
+fn own_name(h: &mut Harness, selector: &str) -> String {
+    let id = object(h, selector);
+    let r = h.page("Accessibility.getPartialAXTree", json!({"objectId": id, "fetchRelatives": false}));
+    nodes(&r)[0]["name"]["value"].as_str().unwrap_or_else(|| panic!("{selector}: {r}")).to_owned()
+}
+
+#[test]
+fn names_keep_no_break_spaces_and_follow_chromium_sources() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r##"<!doctype html><body>
+<button id="nbsp">a&nbsp;&nbsp;b  c</button>
+<label for="btn">Label</label><input id="btn" type="button" value="value">
+<button id="actions" aria-actions="act">Save <span id="act">Edit</span></button>
+<h1 id="upper" style="text-transform:uppercase">Call us</h1>
+<button id="nested"> button<span><span> </span></span>label </button>
+<input id="number" type="number" aria-placeholder="ap">
+<img id="empty-alt" alt="" title="tip">
+<figure id="figure" title="figure title">x</figure>
+<div id="host">slotted</div><button id="slotted" aria-labelledby="host"></button>
+</body>"##,
+    );
+    eval_value(&mut h, "document.getElementById('host').attachShadow({mode: 'open'}).innerHTML = 'foo <slot></slot> bar'");
+    for (selector, name) in [
+        ("#nbsp", "a\u{a0}\u{a0}b c"),
+        ("#btn", "Label"),
+        ("#actions", "Save"),
+        ("#upper", "CALL US"),
+        ("#nested", "button label"),
+        ("#number", "ap"),
+        ("#empty-alt", ""),
+        ("#figure", "figure title"),
+        ("#slotted", "foo slotted bar"),
+    ] {
+        assert_eq!(own_name(&mut h, selector), name, "{selector}");
+    }
+}

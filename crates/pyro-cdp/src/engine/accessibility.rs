@@ -25,7 +25,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::dom::NodeParams;
-use super::driver::{accessible_name_in, aria_true, attr, id_refs, implicit_role, labels, local, normalize, role_of, text_of};
+use super::driver::{ax_name_in, aria_true, attr, id_refs, implicit_role, labels, local, normalize, role_of, text_of};
 use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
 use crate::target::PageCommand;
@@ -882,12 +882,15 @@ impl<'a> Builder<'a> {
             // Chromium names these only from aria-label/labelledby: rows not
             // from their cells, generics not from title, figures not from
             // their caption.
+            // Their `title` still names them, though (a figure, or a `<section>` without a role).
             "row" | "generic" | "figure"
-                if attr(dom, el, "aria-label").is_none() && attr(dom, el, "aria-labelledby").is_none() =>
+                if attr(dom, el, "aria-label").is_none()
+                    && attr(dom, el, "aria-labelledby").is_none()
+                    && !(attr(dom, el, "title").is_some() && matches!(tag, Some("figure" | "section"))) =>
             {
                 String::new()
             }
-            _ => accessible_name_in(dom, self.layout, self.doc, el, &self.pseudo_content),
+            _ => ax_name_in(dom, self.layout, self.doc, el, &self.pseudo_content),
         };
         let input_type = (tag == Some("input")).then(|| dom.input_type(el).unwrap_or(InputType::Text));
         let text_field =
