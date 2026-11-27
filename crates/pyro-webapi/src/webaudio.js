@@ -1851,8 +1851,10 @@
     const step = pr * pow(2, dt / 1200) * data.rate / rate;
     const len = data.length;
     let loopStart = 0, loopEnd = len;
-    if (n.loop && n.loopStart >= 0 && n.loopEnd > 0 && n.loopStart < n.loopEnd) {
-      loopStart = n.loopStart * data.rate;
+    // A negative loopStart is clamped to 0 (Chrome; the spec would play the whole buffer); a loopEnd
+    // that is not positive, or not after the start, plays the whole buffer.
+    if (n.loop && n.loopEnd > 0 && max(n.loopStart, 0) < n.loopEnd) {
+      loopStart = max(n.loopStart, 0) * data.rate;
       loopEnd = min(n.loopEnd * data.rate, len);
     }
     if (n.pos === undefined) {
