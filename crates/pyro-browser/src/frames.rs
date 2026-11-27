@@ -208,6 +208,15 @@ enum InitialIframeLoad {
 
 pub(crate) type LazyFrameStamp = (((u64, u64, u32, u32), u64), bool, bool);
 
+/// What HTML "process the iframe attributes" fixes for a lazy iframe before its fetch waits for
+/// the lazy load check: the `src` resolved against the base URL of then, and the container's
+/// referrer policy of then (the request is made then; only the fetch is deferred).
+#[derive(Clone, Debug)]
+pub(crate) struct LazyFrameRequest {
+    pub(crate) url: String,
+    pub(crate) referrer_policy: Option<pyro_net::ReferrerPolicy>,
+}
+
 pub(crate) struct FrameHost {
     pub children: RefCell<BTreeMap<u64, DocumentState>>,
     pub root: RefCell<Frame>,
@@ -276,6 +285,8 @@ pub(crate) struct FrameHost {
     pub(crate) lazy_frames: RefCell<Vec<(FrameKey, Option<LazyFrameStamp>)>>,
     /// Lazy iframes the check let go: their next attribute processing navigates.
     pub(crate) lazy_approved: RefCell<Vec<FrameKey>>,
+    /// The request each deferred lazy iframe fixed when its attributes were processed.
+    pub(crate) lazy_requests: RefCell<Vec<(FrameKey, LazyFrameRequest)>>,
     /// Some document of this page was made with `media-playback-while-not-visible` disabled by its
     /// container's `allow`: the checkpoint pass `refresh_media_visibility` has work. Never reset.
     pub(crate) media_policy_frames: Cell<bool>,
@@ -462,6 +473,7 @@ impl FrameHost {
             hidden_objects: RefCell::new(Vec::new()),
             lazy_frames: RefCell::new(Vec::new()),
             lazy_approved: RefCell::new(Vec::new()),
+            lazy_requests: RefCell::new(Vec::new()),
             media_policy_frames: Cell::new(false),
             lazy_cancelled: RefCell::new(Vec::new()),
             attribute_navigation: RefCell::new(Vec::new()),
@@ -557,6 +569,7 @@ impl FrameHost {
             hidden_objects: RefCell::new(Vec::new()),
             lazy_frames: RefCell::new(Vec::new()),
             lazy_approved: RefCell::new(Vec::new()),
+            lazy_requests: RefCell::new(Vec::new()),
             media_policy_frames: Cell::new(false),
             lazy_cancelled: RefCell::new(Vec::new()),
             attribute_navigation: RefCell::new(Vec::new()),
@@ -2314,9 +2327,9 @@ impl Browser {
         if !host.dom.borrow().is_connected(owner).unwrap_or(false) {
             return;
         }
-        if self.defer_lazy_frame(&host, key, owner, parent.page_dom.as_deref(), lazy_cancelled) {
+        let Some(lazy_request) = self.defer_lazy_frame(&host, key, owner, parent.page_dom.as_deref(), lazy_cancelled) else {
             return;
-        }
+        };
         host.attribute_navigation.borrow_mut().push(key);
         let (srcdoc, src, src_base, encoded_src) = {
             let dom = host.dom.borrow();
@@ -2351,6 +2364,8 @@ impl Browser {
                     .map(|u| u.to_string())
                     .unwrap_or_else(|_| raw.clone())
             };
+            // A lazy iframe the check let go navigates to what its attributes said when processed.
+            let url = lazy_request.as_ref().map_or(url, |r| r.url.clone());
             if let Some(source) = crate::bindings::javascript_url_source(&url) {
                 // HTML "navigate to a javascript: URL" with initialInsertion: a task runs the
                 // Trusted Types pre-navigation check and the script in the frame's initial
@@ -2457,8 +2472,10 @@ impl Browser {
                 Ok(())
             } else {
                 // The container's `referrerpolicy`, else its document's policy (the request's client).
-                let referrer_policy =
-                    crate::loader::container_referrer_policy(&host.dom.borrow(), owner, parent.page_dom.as_deref());
+                let referrer_policy = match &lazy_request {
+                    Some(r) => r.referrer_policy,
+                    None => crate::loader::container_referrer_policy(&host.dom.borrow(), owner, parent.page_dom.as_deref()),
+                };
                 // HTML "navigate an iframe or frame": "replace" while the frame's document is
                 // not completely loaded (its `load` and `pageshow` handlers still run, after
                 // the frame counts as loaded), else "auto", a push (which leaving the initial
@@ -2507,7 +2524,8 @@ impl Browser {
     /// HTML "will lazy load element steps" for an iframe (`loading=lazy`, scripting enabled in
     /// its document): its navigation (`src`, `srcdoc` or a `javascript:` URL) waits for the lazy
     /// load check, the frame staying on its complete initial `about:blank`, which holds up no
-    /// `load`. False when the check let it go (or it is not lazy): navigate now.
+    /// `load`. `None` when it is deferred; else navigate now, with the request fixed when the
+    /// attributes were first processed if the check let a deferred frame go.
     fn defer_lazy_frame(
         &mut self,
         host: &Rc<FrameHost>,
@@ -2515,7 +2533,7 @@ impl Browser {
         owner: NodeId,
         parent_dom: Option<&pyro_webapi::PageDom>,
         cancelled: bool,
-    ) -> bool {
+    ) -> Option<Option<LazyFrameRequest>> {
         // HTML "process the iframe attributes": only the navigation to a `src` URL (not srcdoc,
         // not about:blank) waits on the lazy loading steps.
         let lazy = {
@@ -2525,19 +2543,42 @@ impl Browser {
                 && attr("srcdoc").is_none()
                 && attr("src").is_some_and(|src| !src.is_empty() && !src.eq_ignore_ascii_case("about:blank"))
         } && parent_dom.is_some_and(|d| !d.scripting_disabled());
+        // A deferred frame that stopped being lazy (`loading` set to eager) was approved by
+        // `resume_lazy_frames`: it navigates to the request it fixed, not to the live attributes.
+        let take_request = |host: &FrameHost| {
+            let mut approved = host.lazy_approved.borrow_mut();
+            let i = approved.iter().position(|k| *k == key)?;
+            approved.remove(i);
+            let mut requests = host.lazy_requests.borrow_mut();
+            let request = requests.iter().position(|(k, _)| *k == key).map(|i| requests.remove(i).1);
+            Some(request)
+        };
         if !lazy {
-            return false;
+            return Some(take_request(&**host).flatten());
         }
         // Navigated otherwise first (before this queued processing ran): no lazy load, and this
         // processing navigates nowhere.
         if cancelled {
-            return true;
+            return None;
         }
+        if let Some(request) = take_request(&**host) {
+            return Some(request);
+        }
+        // The request is made now (HTML "process the iframe attributes"): its URL against the
+        // base URL of now, the container's referrer policy of now. A later `<base href>` or
+        // `referrerpolicy` change does not reach the fetch the lazy load check starts.
+        let request = {
+            let dom = host.dom.borrow();
+            dom.get_attribute(owner, "src").ok().flatten().map(|raw| LazyFrameRequest {
+                url: pyro_webapi::html::resolve_url(&dom, owner, raw),
+                referrer_policy: crate::loader::container_referrer_policy(&dom, owner, parent_dom),
+            })
+        };
         {
-            let mut approved = host.lazy_approved.borrow_mut();
-            if let Some(i) = approved.iter().position(|k| *k == key) {
-                approved.remove(i);
-                return false;
+            let mut requests = host.lazy_requests.borrow_mut();
+            requests.retain(|(k, _)| *k != key);
+            if let Some(request) = request {
+                requests.push((key, request));
             }
         }
         {
@@ -2552,7 +2593,7 @@ impl Browser {
             doc.main_frame.dom_content_loaded = true;
             doc.main_frame.loaded = true;
         }
-        true
+        None
     }
 
     /// HTML "navigate" clears the container's lazy load resumption steps: a lazy iframe navigated
@@ -2572,6 +2613,7 @@ impl Browser {
         }
         host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
         host.lazy_approved.borrow_mut().retain(|k| *k != key);
+        host.lazy_requests.borrow_mut().retain(|(k, _)| *k != key);
         // A script navigation cancels the processings queued when it was asked for (not one a
         // `src` set since queued: WPT iframe-loading-lazy-nav-location-replace-set-src). Tasks
         // run in order, so those have usually run (and deferred into `lazy_frames`, cleared

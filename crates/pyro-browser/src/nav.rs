@@ -890,6 +890,14 @@ impl PageNav {
                 }
                 return;
             }
+            // HTML "reload" of a lazy iframe still on its deferred initial about:blank: the lazy
+            // load resumption steps are kept, so the check's navigation to `src` still happens
+            // (WPT iframe-loading-lazy-reload-location-reload, -navigation-reload).
+            if history == HistoryHandling::Reload
+                && b.page(page.page).is_some_and(|p| p.frames.lazy_frames.borrow().iter().any(|(k, _)| *k == page))
+            {
+                return;
+            }
             let opts = NavigateOpts {
                 post: None,
                 url,
