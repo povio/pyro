@@ -318,6 +318,28 @@ impl EngineHost {
                 }
                 Ok(Some(json!({})))
             }
+            // Reporting API "generate test report" (WebDriver's Generate Test Report command; the
+            // page's `test_driver.generate_test_report`): a `test` report with `message`, queued
+            // for the main frame's ReportingObservers and, as Chrome does, for the endpoint named
+            // `group` of its `Reporting-Endpoints` (`default` when none is given).
+            "generateTestReport" => {
+                #[derive(Deserialize)]
+                struct P {
+                    message: String,
+                    group: Option<String>,
+                }
+                let p = cmd.command.params::<P>()?;
+                let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                let document = self
+                    .thread
+                    .browser
+                    .page(page_id)
+                    .and_then(|page| page.main_frame.page_dom.clone())
+                    .ok_or_else(|| CdpError::server("No document to generate a test report for"))?;
+                let group = p.group.filter(|g| !g.is_empty()).unwrap_or_else(|| "default".to_owned());
+                pyro_webapi::reporting_store::generate_test_report(&document, &p.message, &group);
+                Ok(Some(json!({})))
+            }
             // A single foreground page: nothing to change.
             "bringToFront" => Ok(Some(json!({}))),
             // Like document.open(); document.write(html); document.close() in

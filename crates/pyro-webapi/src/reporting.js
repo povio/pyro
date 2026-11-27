@@ -3,13 +3,13 @@
 // as interfaces, plus `Report` and `DeprecationReportBody`, which Chrome
 // keeps off the global. Native code (reporting.rs) reaches two helpers:
 //   queue(type, url, bodyJSON): a report the engine generated (a CSP
-//     violation, after its securitypolicyviolation event); `bodyJSON` holds
-//     the body's fields.
+//     violation after its securitypolicyviolation event, or any report
+//     queued through reporting_store.rs); `bodyJSON` holds the body's fields.
 //   deprecation(id, message, url): a deprecation report for `id`, once per
 //     realm. Its source location is the innermost page frame on the stack.
 //     Returns the body's JSON (for the document's `default` endpoint), or
 //     null when `id` was already reported.
-// Reports go to the realm's buffer (the newest 100, for `buffered`
+// Reports go to the realm's buffer (the newest 100 of each type, for `buffered`
 // observers) and to every observer whose `types` take them. Each such
 // observer's callback runs in a task after the report was queued, as in
 // Chrome; it still runs when takeRecords() emptied its queue in between, and
@@ -113,6 +113,32 @@
   // (Off the global in Chrome: its prototype has no constructor to reach the class through.)
   delete DeprecationReportBody.prototype.constructor;
 
+  // Test reports (Reporting API "generate test report"): TestReportBody.
+  class TestReportBody extends ReportBody {
+    constructor(t, fields) {
+      if (t !== token) throw illegal('TestReportBody');
+      super(t, 'TestReportBody', fields);
+    }
+  }
+  bodyKind(TestReportBody, 'TestReportBody', ['message'], ['message']);
+  delete TestReportBody.prototype.constructor;
+
+  // The body of any other type the engine reports (reporting_store.rs): the
+  // fields it was given, as attributes of the body object and in toJSON().
+  class GenericReportBody extends ReportBody {
+    constructor(t, fields) {
+      if (t !== token) throw illegal('ReportBody');
+      super(t, 'GenericReportBody', fields);
+      for (const key of O.keys(fields)) {
+        defineProperty(this, key, { get: () => fields[key], enumerable: true, configurable: true });
+      }
+    }
+    toJSON() {
+      return { ...branded(bodyData, this).fields };
+    }
+  }
+  delete GenericReportBody.prototype.constructor;
+
   const reportData = new WeakMap();
   class Report {
     constructor(t, type, url, body) {
@@ -173,8 +199,13 @@
       d.queue.push(report);
       notify(observer);
     }
+    // The buffer holds the newest 100 reports of each type (Chrome; WPT
+    // reporting-api-honors-limits), in arrival order.
+    const type = branded(reportData, report).type;
     buffer.push(report);
-    if (buffer.length > MAX_BUFFER) buffer.shift();
+    let same = 0;
+    for (const r of buffer) if (reportData.get(r).type === type) same++;
+    if (same > MAX_BUFFER) buffer.splice(buffer.findIndex((r) => reportData.get(r).type === type), 1);
   };
 
   const ctorError = (rest) => new TypeErrorC(`Failed to construct 'ReportingObserver': ${rest}`);
@@ -231,9 +262,13 @@
   tag(ReportingObserver, 'ReportingObserver');
   members(ReportingObserver);
 
+  // A report type's body interface; a type without one gets GenericReportBody. A new kind of
+  // report with a Chrome interface adds its class above and a row here.
+  const BODY_TYPES = { __proto__: null, 'csp-violation': CSPViolationReportBody, test: TestReportBody };
+
   const queue = (type, url, json) => {
     const fields = JSONParse(json);
-    const body = type === 'csp-violation' ? new CSPViolationReportBody(token, fields) : null;
+    const body = new (BODY_TYPES[type] || GenericReportBody)(token, fields);
     add(new Report(token, String(type), String(url), body));
   };
 

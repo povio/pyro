@@ -204,8 +204,9 @@ pub struct Resource {
     /// A document's `Last-Modified` response header as Unix milliseconds, if valid
     /// (`document.lastModified`).
     pub last_modified: Option<f64>,
-    /// A document's `Reporting-Endpoints` response header, if any (the
-    /// endpoints its CSP `report-to` names; `PageDom::set_reporting_endpoints`).
+    /// A document's `Reporting-Endpoints` response header, if any, with its `Report-To` header
+    /// after a newline (`pyro_webapi::csp_report::pack_reporting_headers`; the endpoints its
+    /// reports go to, `PageDom::set_reporting_endpoints`).
     pub reporting_endpoints: Option<String>,
     /// A document's `Link: <url>; rel="compression-dictionary"` headers, resolved: fetched after
     /// its `load` event.
@@ -767,11 +768,16 @@ impl ResourceLoader for NetLoader {
                             .flatten()
                             .and_then(pyro_net::parse_http_date)
                             .map(|secs| secs * 1000.0),
+                        // `Reporting-Endpoints` and the legacy `Report-To`, packed in one value
+                        // (`pyro_webapi::csp_report::pack_reporting_headers`).
                         reporting_endpoints: document
                             .then(|| {
-                                let values = h.headers.get_all("reporting-endpoints");
-                                let values: Vec<&str> = values.iter().filter_map(|v| v.to_str().ok()).collect();
-                                (!values.is_empty()).then(|| values.join(","))
+                                let joined = |name: &str| {
+                                    let values = h.headers.get_all(name);
+                                    let values: Vec<&str> = values.iter().filter_map(|v| v.to_str().ok()).collect();
+                                    (!values.is_empty()).then(|| values.join(","))
+                                };
+                                pyro_webapi::csp_report::pack_reporting_headers(joined("reporting-endpoints"), joined("report-to"))
                             })
                             .flatten(),
                         dictionary_links: if document {

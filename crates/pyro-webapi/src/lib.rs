@@ -60,6 +60,7 @@ pub mod typed_om;
 pub mod trusted_types;
 pub mod csp_report;
 pub mod reporting;
+pub mod reporting_store;
 pub mod form_data;
 pub mod formdata;
 pub mod fullscreen;

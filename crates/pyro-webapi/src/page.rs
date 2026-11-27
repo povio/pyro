@@ -1415,6 +1415,8 @@ impl PageDom {
         if self.disposed.replace(true) {
             return;
         }
+        // Reports the document queued in this task still go out (`reporting_store`).
+        crate::csp_report::flush_pending(self);
         if !self.detached.replace(true) {
             self.release_activity();
         }
@@ -1432,6 +1434,7 @@ impl PageDom {
     /// (`pyro_js::Realm::linger`) and go when nothing reaches them. DOM calls
     /// on it keep working. [`PageDom::dispose`] later finishes it.
     pub fn detach(&self) {
+        crate::csp_report::flush_pending(self);
         if self.disposed.get() || self.detached.replace(true) {
             return;
         }

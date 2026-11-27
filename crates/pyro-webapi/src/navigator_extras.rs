@@ -219,6 +219,9 @@ pub struct ContextServices {
     geolocation: RefCell<Option<Option<GeolocationFix>>>,
     /// Service worker registrations and clients (`crate::service_worker`).
     pub(crate) service_workers: crate::service_worker::Registry,
+    /// The `Report-To` groups the context's responses delivered, by origin
+    /// (`crate::reporting_store`).
+    pub(crate) report_to: RefCell<crate::reporting_store::ReportToStore>,
 }
 
 /// A position `navigator.geolocation` reports. CDP's optional coordinates are

@@ -289,3 +289,47 @@ fn denied_downloads_are_announced_and_canceled_like_chromium() {
     assert_eq!(r["result"], json!({}), "{r}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ----- Page.generateTestReport -------------------------------------------------
+
+const REPORT_PAGE: &[u8] = b"<!doctype html><script>
+window.seen = [];
+new ReportingObserver((reports) => { for (const r of reports) seen.push(JSON.stringify(r)); }).observe();
+</script>";
+
+#[test]
+fn generate_test_report_reaches_observers_and_the_endpoint_in_one_request() {
+    let site = Site::new(|path| match path {
+        "/report" => ("200 OK", "Content-Type: text/plain\r\n", b"ok"),
+        _ => ("200 OK", "Content-Type: text/html\r\nReporting-Endpoints: default=\"/report\", other=\"/other\"\r\n", REPORT_PAGE),
+    });
+    let mut h = Harness::new();
+    let page = format!("{}/page", site.origin);
+    goto(&mut h, &page);
+    let r = h.page("Page.generateTestReport", json!({"message": "one"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    let r = h.page("Page.generateTestReport", json!({"message": "two", "group": "other"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    let r = h.page("Page.generateTestReport", json!({}));
+    assert_eq!(r["error"]["code"], -32602, "message is required: {r}");
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "new Promise((resolve) => setTimeout(() => resolve(seen), 100))", "returnByValue": true, "awaitPromise": true}),
+    );
+    let seen = r["result"]["result"]["value"].clone();
+    assert_eq!(
+        seen,
+        json!([
+            format!("{{\"type\":\"test\",\"url\":\"{page}\",\"body\":{{\"message\":\"one\"}}}}"),
+            format!("{{\"type\":\"test\",\"url\":\"{page}\",\"body\":{{\"message\":\"two\"}}}}"),
+        ])
+    );
+    // One request per endpoint, each after its task.
+    for _ in 0..50 {
+        if site.hits("/report") == 1 && site.hits("/other") == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!((site.hits("/report"), site.hits("/other")), (1, 1));
+}
