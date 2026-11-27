@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use pyro_net::{CorpReport, CorpViolation, EmbedderPolicy, EmbedderReporting, RequestDefaults};
+use pyro_net::{CorpReport, CorpViolation, EmbedderPolicy, RequestDefaults};
 use serde_json::Map;
 
 use crate::csp_report::strip_url_for_report;
