@@ -200,8 +200,6 @@ struct VirtualSource {
     /// `{available}` of the creation's metadata: false makes `observe()` reject with NotSupportedError.
     available: bool,
     state: Option<PressureState>,
-    /// `setPressureDataOverride`'s `ownContributionEstimate` (0 to 1), kept with the reading.
-    own_contribution_estimate: Option<f64>,
 }
 
 #[derive(Default)]
@@ -230,12 +228,12 @@ impl PressureHub {
         if source != "cpu" {
             return Err(format!("Unknown pressure source '{source}'"));
         }
-        self.lock().cpu_virtual = enabled.then_some(VirtualSource { available, state: None, own_contribution_estimate: None });
+        self.lock().cpu_virtual = enabled.then_some(VirtualSource { available, state: None });
         Ok(())
     }
 
     /// `Emulation.setPressureStateOverride` / `setPressureDataOverride`: the virtual source's new reading.
-    pub fn set_reading(&self, source: &str, state: PressureState, own_contribution_estimate: Option<f64>) -> Result<(), String> {
+    pub fn set_reading(&self, source: &str, state: PressureState) -> Result<(), String> {
         if source != "cpu" {
             return Err(format!("Unknown pressure source '{source}'"));
         }
@@ -244,16 +242,7 @@ impl PressureHub {
             return Err(format!("The pressure source '{source}' is not overridden"));
         };
         virtual_source.state = Some(state);
-        virtual_source.own_contribution_estimate = own_contribution_estimate;
         Ok(())
-    }
-
-    /// The virtual source's last `ownContributionEstimate`, if the source is virtual and one was given.
-    pub fn own_contribution_estimate(&self, source: &str) -> Option<f64> {
-        if source != "cpu" {
-            return None;
-        }
-        self.lock().cpu_virtual.as_ref().and_then(|v| v.own_contribution_estimate)
     }
 
     /// Whether `source` can be observed.
@@ -451,15 +440,13 @@ mod tests {
     #[test]
     fn virtual_source_replaces_the_real_one() {
         let hub = PressureHub::default();
-        assert!(hub.set_reading("cpu", PressureState::Fair, None).is_err());
+        assert!(hub.set_reading("cpu", PressureState::Fair).is_err());
         hub.set_override("cpu", true, true).unwrap();
         assert!(hub.supported("cpu"));
         assert_eq!(hub.sample("cpu"), None);
-        hub.set_reading("cpu", PressureState::Critical, Some(0.5)).unwrap();
+        hub.set_reading("cpu", PressureState::Critical).unwrap();
         assert_eq!(hub.sample("cpu"), Some(PressureState::Critical));
-        assert_eq!(hub.own_contribution_estimate("cpu"), Some(0.5));
         hub.set_override("cpu", false, true).unwrap();
-        assert_eq!(hub.own_contribution_estimate("cpu"), None);
         hub.set_override("cpu", true, false).unwrap();
         assert!(!hub.supported("cpu"));
         assert!(hub.set_override("gpu", true, true).is_err());

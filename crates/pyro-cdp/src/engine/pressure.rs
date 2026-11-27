@@ -41,11 +41,13 @@ impl EngineHost {
         }
         let state = p.state.ok_or_else(|| CdpError::invalid_params("state is required"))?;
         let state = PressureState::parse(&state).ok_or_else(|| CdpError::invalid_params(format!("Invalid state '{state}'")))?;
+        // The protocol's `ownContributionEstimate` is validated, then dropped: the web API's `PressureRecord` has no
+        // member to carry it (compute-pressure.idl), so nothing would read it.
         let estimate = if action == "setPressureDataOverride" { p.own_contribution_estimate } else { None };
         if estimate.is_some_and(|e| !(0.0..=1.0).contains(&e)) {
             return Err(CdpError::invalid_params("ownContributionEstimate must be between 0 and 1"));
         }
-        hub.set_reading(&p.source, state, estimate).map_err(CdpError::server)?;
+        hub.set_reading(&p.source, state).map_err(CdpError::server)?;
         Ok(Some(serde_json::json!({})))
     }
 }
