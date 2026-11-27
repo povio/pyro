@@ -4146,7 +4146,7 @@ impl BaseDocument {
         while let Some(id) = stack.pop() {
             let Some(node) = self.get_node(id) else { continue };
             if let Some(element) = node.element_data() {
-                if element.name.ns == markup5ever::ns!(svg) && element.name.local.eq_ignore_ascii_case("feImage") {
+                if element.name.ns == markup5ever::ns!(svg) && (&*element.name.local).eq_ignore_ascii_case("feImage") {
                     let opaque = element.attrs().iter().any(|attr| {
                         &*attr.name.local == "href" && images.get::<str>(&attr.value).is_some_and(|image| image.is_opaque())
                     });

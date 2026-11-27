@@ -375,8 +375,10 @@ pub(crate) fn element_image(page: &Rc<PageDom>, canvas: NodeId, element: NodeId)
             })
             .unwrap_or_default()
     };
-    if !owners.is_empty() && let Some(hooks) = page.hooks() {
-        hooks.refresh_frame_documents(&owners);
+    if !owners.is_empty() {
+        if let Some(hooks) = page.hooks() {
+            hooks.refresh_frame_documents(&owners);
+        }
     }
     let layout = page.layout();
     let dom = page.dom.borrow();
