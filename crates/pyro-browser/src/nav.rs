@@ -226,6 +226,9 @@ pub struct PageNav {
     first_paint: Cell<Option<f64>>,
     /// `PerformanceNavigationTiming.type` of the current document.
     nav_type: Cell<&'static str>,
+    /// The URL the current document was created with (its navigation's final URL): the
+    /// navigation entry's `name`, which `document.open()` and fragment navigations leave alone.
+    creation_url: RefCell<String>,
     /// The fetch of the document about to commit (`begin_document`): its
     /// start becomes the time origin, its phases the Navigation Timing.
     incoming_fetch: RefCell<Option<Box<pyro_webapi::resource_timing::FetchReport>>>,
@@ -365,6 +368,7 @@ impl PageNav {
             time_origin: Cell::new(crate::clock::now()),
             first_paint: Cell::new(None),
             nav_type: Cell::new("navigate"),
+            creation_url: RefCell::new(String::new()),
             incoming_fetch: RefCell::new(None),
             fetch_timing: RefCell::new(None),
             timeline_watchers: RefCell::new(Vec::new()),
@@ -659,6 +663,7 @@ impl PageNav {
             Rc::new(entry)
         });
         self.first_paint.set(None);
+        *self.creation_url.borrow_mut() = url.to_owned();
         self.nav_type.set(match history {
             HistoryHandling::Reload => "reload",
             HistoryHandling::Traverse => "back_forward",
@@ -2424,7 +2429,8 @@ fn navigation_values(page: &pyro_webapi::PageDom, nav: &PageNav) -> NavigationVa
 /// document starts loading and fills it in as it goes; an `about:` document
 /// (the initial one, `setContent`) has none.
 fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
-    let url = p.nav.url();
+    let created = p.nav.creation_url.borrow().clone();
+    let url = if created.is_empty() { p.nav.url() } else { created };
     if !(url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")) {
         return None;
     }
