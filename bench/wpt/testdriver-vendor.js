@@ -67,18 +67,40 @@
     return () => listeners.get(name).delete(fn);
   };
   window.__pyroTdEvent = (name, data) => { for (const fn of [...(listeners.get(name) ?? [])]) { try { fn(data); } catch (e) { setTimeout(() => { throw e; }); } } };
-  // WebDriver's in-view center point of the element's first client rect, after scrolling it into view.
-  function center(el) {
+  // WebDriver's in-view center point of the element's first client rect, after scrolling it into view, in the viewport of
+  // the element's own frame. An element of another frame than this one (same origin: a test passing
+  // `frames[0].document.body` as an origin) also says which: its frame element gets a marker attribute (`undo` removes it
+  // after the call) and the runner maps the point through the frames around it (td/core.mjs `frameMap`), CSS transforms
+  // of the frame elements included.
+  let frameMarks = 0;
+  function center(el, undo = []) {
     if (!(el instanceof Element) && !(el && el.nodeType === 1)) throw new Error('testdriver: not an element');
     if (!el.isConnected) throw new Error('testdriver: element is not attached');
     el.scrollIntoView({ block: 'end', inline: 'nearest' });
+    const w = el.ownerDocument.defaultView ?? window;
     const rect = el.getClientRects()[0] ?? el.getBoundingClientRect();
-    const left = Math.max(0, rect.left), right = Math.min(window.innerWidth, rect.right);
-    const top = Math.max(0, rect.top), bottom = Math.min(window.innerHeight, rect.bottom);
-    return { x: Math.floor((left + right) / 2), y: Math.floor((top + bottom) / 2) };
+    const left = Math.max(0, rect.left), right = Math.min(w.innerWidth, rect.right);
+    const top = Math.max(0, rect.top), bottom = Math.min(w.innerHeight, rect.bottom);
+    const at = { x: Math.floor((left + right) / 2), y: Math.floor((top + bottom) / 2) };
+    if (w !== window) {
+      try {
+        if (w === w.top && w.top !== window.top) throw new Error('another page');
+        if (w === w.top) at.frame = 'main';
+        else {
+          const id = 'f' + ++frameMarks + Math.random().toString(36).slice(2, 8);
+          w.frameElement.setAttribute('data-pyro-td-frame', id);
+          undo.push(() => { try { w.frameElement.removeAttribute('data-pyro-td-frame'); } catch {} });
+          at.frame = id;
+        }
+      } catch { /* a window this one cannot reach: the point stays in this frame's viewport, as it always did */ }
+    }
+    return at;
   }
 
-  internal.click = (el) => call({ cmd: 'click', at: center(el) });
+  internal.click = async (el) => {
+    const undo = [];
+    try { return await call({ cmd: 'click', at: center(el, undo) }); } finally { undo.forEach((f) => f()); }
+  };
 
   internal.send_keys = (el, keys) => {
     // WebDriver's Element Send Keys focuses the element (it does not click it), then types. It scrolls nothing
@@ -154,12 +176,15 @@
   def('bidi.emulation.set_touch_override', { check: (p = {}) => { if (p.maxTouchPoints != null && !(Number.isInteger(p.maxTouchPoints) && p.maxTouchPoints >= 1)) throw bidiError('maxTouchPoints must be an integer of at least 1'); } });
   def('bidi.emulation.set_media_features_override', { check: (p = {}) => { if (p.features != null && (typeof p.features !== 'object' || Array.isArray(p.features))) throw bidiError('features must be an object'); } });
 
-  internal.action_sequence = (sources) => {
-    // Element origins become this frame's viewport coordinates of the element's center.
-    const out = sources.map((s) => ({
-      ...s,
-      actions: s.actions.map((a) => (a.origin && typeof a.origin === 'object' ? { ...a, origin: 'element', at: center(a.origin) } : a)),
-    }));
-    return call({ cmd: 'actions', sources: out });
+  internal.action_sequence = async (sources) => {
+    // Element origins become the viewport coordinates of the element's center (in its own frame: `at.frame`).
+    const undo = [];
+    try {
+      const out = sources.map((s) => ({
+        ...s,
+        actions: s.actions.map((a) => (a.origin && typeof a.origin === 'object' ? { ...a, origin: 'element', at: center(a.origin, undo) } : a)),
+      }));
+      return await call({ cmd: 'actions', sources: out });
+    } finally { undo.forEach((f) => f()); }
   };
 })();
