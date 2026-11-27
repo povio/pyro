@@ -111,6 +111,7 @@
   // missing cookie (null) into its "no such cookie" error.
   def('get_all_cookies');
   def('get_named_cookie');
+  def('generate_test_report');
 
   // WebDriver BiDi (td/bidi.mjs). `subscribe` returns the function that removes the subscription.
   const bidiError = (m) => new Error(`invalid argument: ${m}`);

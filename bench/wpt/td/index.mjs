@@ -25,8 +25,9 @@
 import * as core from './core.mjs';
 import * as cookies from './cookies.mjs';
 import * as bidi from './bidi.mjs';
+import * as report from './report.mjs';
 
-const GROUPS = [core, cookies, bidi];
+const GROUPS = [core, cookies, bidi, report];
 
 export const commands = new Map();
 for (const g of GROUPS) {
