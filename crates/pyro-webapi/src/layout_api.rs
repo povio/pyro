@@ -162,8 +162,22 @@ pub(crate) fn perform_scroll(
     boxes: &[Option<NodeId>],
     write: impl FnOnce(&pyro_dom::Dom, &mut pyro_dom::layout::Layout) -> Vec<Option<NodeId>>,
 ) -> Option<Rc<crate::smooth_scroll::Waiter>> {
+    // A smooth scroll may head where one already running on a box goes: that no-op leaves the
+    // running one alone, so those boxes are not stopped before the scroll is known.
+    let running: Vec<Option<NodeId>> = boxes
+        .iter()
+        .copied()
+        .filter(|&t| crate::smooth_scroll::running_to(page, t).is_some())
+        .filter(|&t| match behavior {
+            ScrollBehavior::Smooth => true,
+            ScrollBehavior::Instant => false,
+            ScrollBehavior::Auto => crate::smooth_scroll::css_smooth(page, t),
+        })
+        .collect();
     for &target in boxes {
-        crate::smooth_scroll::cancel(page, target);
+        if !running.contains(&target) {
+            crate::smooth_scroll::cancel(page, target);
+        }
     }
     let before = (behavior != ScrollBehavior::Instant).then(|| page.layout.borrow().scroll_positions());
     let moved = {
@@ -172,6 +186,7 @@ pub(crate) fn perform_scroll(
         write(&*dom, &mut *layout)
     };
     let mut waiter: Option<Rc<crate::smooth_scroll::Waiter>> = None;
+    let moved_targets = moved.clone();
     for target in moved {
         let smooth = match behavior {
             ScrollBehavior::Smooth => true,
@@ -194,7 +209,16 @@ pub(crate) fn perform_scroll(
             to
         };
         let w = waiter.get_or_insert_with(crate::smooth_scroll::Waiter::new);
+        if running.contains(&target) && crate::smooth_scroll::running_to(page, target) == Some(to) && crate::smooth_scroll::join(page, target, w) {
+            continue;
+        }
         crate::smooth_scroll::start(page, target, from, to, w);
+    }
+    // A box this scroll did not move (or none) still stops the smooth scroll running on it.
+    for &target in &running {
+        if !moved_targets.contains(&target) {
+            crate::smooth_scroll::cancel(page, target);
+        }
     }
     waiter
 }
