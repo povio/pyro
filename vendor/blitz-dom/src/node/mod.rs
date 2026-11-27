@@ -27,7 +27,7 @@ pub use element::{
 };
 pub use node::*;
 pub use scrollbar::{ClassicScrollbars, ScrollbarColor, ScrollbarRef, ScrollbarWidth};
-pub use stylo_data::ComputedStyleRef;
+pub use stylo_data::{ComputedStyleRef, UnvisitedPaint};
 pub(crate) use stylo_data::LayoutStyles;
 #[cfg(feature = "svg")]
 pub use svg::{SvgImageData, SvgIntrinsicDimensions, SvgTree, svg_source_element};

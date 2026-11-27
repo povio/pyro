@@ -140,6 +140,9 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
     let widgets = HashMap::new();
     let mut painter = BlitzDomPainter::new(doc, scale, width, height, 0.0, 0.0, &widgets);
     painter.privacy = Some(render::Privacy::default());
+    // pyro: a visited link (around the element or in it) is painted as unvisited: what shows
+    // whether it was visited is not read back (CSS Selectors 4 § 7.2, HTML-in-Canvas privacy).
+    let _unvisited = blitz_dom::node::UnvisitedPaint::enter();
     let node = doc.get_node(id)?;
     let size = node.final_layout().size;
     let parent = painter.node_transform(node, kurbo::Affine::IDENTITY).inverse();
@@ -155,12 +158,11 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
 }
 
 /// pyro: HTML-in-Canvas privacy: whether the paint of `id`'s subtree (`scene`) may show content a
-/// page must not read back from a canvas, after `render::Privacy` left out the images of other
-/// origins it can classify: any other image (a video frame, a nested canvas, an SVG `<image>`, an
-/// `feImage`, one whose pixels are not among the `allowed` ones), a border, mask, list-style or
-/// referenced SVG document (`filter`, `clip-path`, `mask`) from an opaque response, a nested document, an embedded plugin or media element, or a
-/// visited link (whose colours reveal history). The canvas drawn into is then no longer
-/// origin-clean.
+/// page must not read back from a canvas, after `render::Privacy` left out what it can classify
+/// (images of other origins, frames of other origins, visited link colours): any other image (a
+/// nested canvas, an SVG `<image>`, an `feImage`, one whose pixels are not among the `allowed`
+/// ones) or a referenced SVG document (`filter`, `clip-path`, `mask`) from an opaque response. The
+/// canvas drawn into is then no longer origin-clean.
 fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u64]) -> bool {
     use anyrender::Paint;
     use anyrender::filters::FilterEffect;
@@ -183,38 +185,34 @@ fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u
     if in_scene {
         return true;
     }
-    // A visited link around the element (the drawable canvas inside one, or the element inside
-    // one in the canvas) gives it visited-dependent colours, which reveal history. (The render
-    // tree has no shadow root nodes: a shadow tree's parent is its host.)
+    // A visited link (around the element, or in it) is painted as unvisited (`UnvisitedPaint`)
+    // by the styles of its elements; the styles of their eager pseudo-elements (`::first-line`,
+    // `::marker`, ...) and an inline `<svg>`'s serialised colours are not: they could show visited
+    // colours.
+    let mut visited = false;
+    let mut pseudos = false;
     let mut ancestor = doc.get_node(id).and_then(|node| node.parent);
     while let Some(a) = ancestor {
-        if doc.is_visited_link(a) {
-            return true;
-        }
+        visited |= doc.is_visited_link(a);
         ancestor = doc.get_node(a).and_then(|node| node.parent);
     }
     let mut stack = vec![id];
     while let Some(n) = stack.pop() {
         let Some(node) = doc.get_node(n) else { continue };
-        if doc.is_visited_link(n) {
-            return true;
-        }
+        visited |= doc.is_visited_link(n);
+        pseudos |= node.try_stylo_element_data().and_then(|data| data.get()).is_some_and(|data| !data.styles.pseudos.is_empty())
+            // (an inline `<svg>` is serialised with its colours as they were styled, visited ones too)
+            || node.element_data().is_some_and(|element| &*element.name.local == "svg");
         if let Some(element) = node.element_data() {
-            if element.sub_doc_data().is_some()
-                || matches!(&*element.name.local, "iframe" | "frame" | "embed" | "object" | "video" | "audio")
-            {
-                return true;
-            }
+            // (A frame of another origin, an `<embed>`'s, `<object>`'s or `<video>`'s image and a
+            // border, mask or list-style image from an opaque response are left out by the paint,
+            // `render::Privacy`.)
+            // (`reference_images`: the external SVG documents of its `clip-path`, `filter` and
+            // `mask` references, whose primitives and shapes reach the pixels.)
             let foreign = |images: &[Option<blitz_dom::node::ImageResourceData>]| {
                 images.iter().flatten().any(|image| render::Privacy::opaque(&image.image))
             };
-            // (`reference_images`: the external SVG documents of its `clip-path`, `filter` and
-            // `mask` references, whose primitives and shapes reach the pixels.)
-            if foreign(&element.border_images)
-                || foreign(&element.mask_images)
-                || foreign(&element.list_style_images)
-                || foreign(&element.reference_images)
-            {
+            if foreign(&element.reference_images) {
                 return true;
             }
         }
@@ -223,7 +221,7 @@ fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u
             stack.extend(children.iter().copied());
         }
     }
-    false
+    visited && pseudos
 }
 
 /// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded

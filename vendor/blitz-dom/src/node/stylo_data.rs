@@ -165,7 +165,16 @@ impl StyloData {
             .and_then(|d| d.styles.get_primary())
             .is_some()
         {
-            Some(StyleDataRef(self.get().unwrap()))
+            let data = self.get().unwrap();
+            // pyro: HTML-in-Canvas privacy: while an element is painted for a canvas
+            // ([`UnvisitedPaint`]), a visited link and its contents read the visited-dependent
+            // properties (colours) as unvisited.
+            let unvisited = if UNVISITED_PAINT.get() {
+                data.styles.get_primary().unwrap().pyro_unvisited_view().map(Arc::new)
+            } else {
+                None
+            };
+            Some(StyleDataRef(data, unvisited))
         } else {
             None
         }
@@ -238,13 +247,38 @@ impl StyloData {
     }
 }
 
-pub struct StyleDataRef<'a>(ElementDataRef<'a>);
+pub struct StyleDataRef<'a>(ElementDataRef<'a>, Option<Arc<style::properties::ComputedValues>>);
 
 impl Deref for StyleDataRef<'_> {
     type Target = Arc<style::properties::ComputedValues>;
 
     fn deref(&self) -> &Self::Target {
-        self.0.styles.get_primary().unwrap()
+        match &self.1 {
+            Some(unvisited) => unvisited,
+            None => self.0.styles.get_primary().unwrap(),
+        }
+    }
+}
+
+std::thread_local! {
+    static UNVISITED_PAINT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// pyro: HTML-in-Canvas privacy: while this guard lives, `Node::primary_styles` gives a visited
+/// link and its contents their visited-dependent properties (colours) as unvisited, so that what
+/// is painted for a canvas a page can read back does not show whether a link was visited. Layout
+/// reads styles another way (`ComputedStyleRef`) and is not affected.
+pub struct UnvisitedPaint(bool);
+
+impl UnvisitedPaint {
+    pub fn enter() -> Self {
+        Self(UNVISITED_PAINT.replace(true))
+    }
+}
+
+impl Drop for UnvisitedPaint {
+    fn drop(&mut self) {
+        UNVISITED_PAINT.set(self.0);
     }
 }
 

@@ -2604,6 +2604,33 @@ pub(crate) struct Privacy {
 }
 
 impl Privacy {
+    /// Whether the document `frame` (the one of the frame element `owner`, in `parent`) may be
+    /// drawn: it is of the origin of `parent` (an `about:` document, `about:srcdoc`, inherits its
+    /// creator's) and not sandboxed without `allow-same-origin` (an opaque origin). A frame of
+    /// another origin is left out, as an opaque image is (HTML-in-Canvas, privacy-preserving
+    /// painting: "cross-origin iframes").
+    pub(crate) fn same_origin_frame(parent: &BaseDocument, frame: &BaseDocument, owner: &ElementData) -> bool {
+        if let Some(sandbox) = owner.attrs().iter().find(|attr| &*attr.name.local == "sandbox")
+            && !sandbox.value.split_ascii_whitespace().any(|token| token.eq_ignore_ascii_case("allow-same-origin"))
+        {
+            return false;
+        }
+        let (parent, frame) = (parent.url(), frame.url());
+        frame.scheme() == "about" || frame.origin() == parent.origin()
+    }
+
+    /// Whether `image` may be drawn: not from an opaque response; the pixels of a raster image
+    /// that is drawn are noted as allowed.
+    pub(crate) fn admit(&self, image: &blitz_dom::node::ImageData) -> bool {
+        if Self::opaque(image) {
+            return false;
+        }
+        if let blitz_dom::node::ImageData::Raster(raster) = image {
+            self.allowed.borrow_mut().push(raster.data.id());
+        }
+        true
+    }
+
     /// Whether `image` came from an opaque response, which must not be drawn.
     pub(crate) fn opaque(image: &blitz_dom::node::ImageData) -> bool {
         match image {
@@ -5363,6 +5390,14 @@ impl ElementCx<'_, '_> {
         if image.is_none() && !self.generated_marker() {
             return;
         }
+        // pyro: HTML-in-Canvas privacy: a marker image from an opaque response is left out; the
+        // pixels of another are allowed (`Privacy`).
+        if let Some(privacy) = &self.context.privacy
+            && let Some(image) = image
+            && !privacy.admit(&image.image)
+        {
+            return;
+        }
         let Some(text_layout) = self.element.inline_layout_data.as_ref() else { return };
         let Some(line) = text_layout.layout.lines().next() else { return };
         let metrics = line.metrics();
@@ -5771,6 +5806,14 @@ impl ElementCx<'_, '_> {
     ) {
         let image = self.element.list_style_images.first().and_then(Option::as_ref);
         if image.is_none() && !self.generated_marker() {
+            return;
+        }
+        // pyro: HTML-in-Canvas privacy: a marker image from an opaque response is left out; the
+        // pixels of another are allowed (`Privacy`).
+        if let Some(privacy) = &self.context.privacy
+            && let Some(image) = image
+            && !privacy.admit(&image.image)
+        {
             return;
         }
         let (baseline, line_x) = self.marker_baseline(marker_layout);
@@ -7744,17 +7787,18 @@ impl ElementCx<'_, '_> {
         // pyro: HTML-in-Canvas privacy: an image from an opaque response is left out; the pixels
         // of any other are allowed (`Privacy`), whichever source (`src`, `srcset`, `<picture>`,
         // generated content) chose it.
-        // A canvas's or a video's pixels come from the page (a canvas a cross-origin image tainted,
-        // a cross-origin video frame), not from a response noted here: they taint.
+        // A canvas's pixels come from the page (a canvas a cross-origin image tainted), not from a
+        // response noted here: they taint. A `<video>`'s image is its poster (a frame the page was
+        // given, which cannot be told from it, is drawn as one), an `<embed>`'s or `<object>`'s
+        // its image: left out when opaque. An inline `<svg>` is the document's own content (`draw_svg`
+        // taints for what it references).
         if let Some(privacy) = &self.context.privacy
             && let Some(image) = self.element.image_data()
         {
-            if !matches!(&*self.element.name.local, "img" | "input" | "image") {
+            if !matches!(&*self.element.name.local, "img" | "input" | "image" | "video" | "embed" | "object" | "svg") {
                 privacy.unclassified.set(true);
-            } else if Privacy::opaque(image) {
+            } else if !privacy.admit(image) {
                 return;
-            } else if let Some(raster) = self.element.raster_image_data() {
-                privacy.allowed.borrow_mut().push(raster.data.id());
             }
         }
         if let Some(image) = self.element.raster_image_data() {
@@ -7869,6 +7913,11 @@ impl ElementCx<'_, '_> {
 
     fn draw_sub_document(&self, scene: &mut impl PaintScene) {
         if let Some(sub_doc) = self.element.sub_doc_data().map(|doc| doc.inner()) {
+            // pyro: HTML-in-Canvas privacy: the document of another origin (or a sandboxed one)
+            // is left out; the drawn ones are painted under the same rules (below).
+            if self.context.privacy.is_some() && !Privacy::same_origin_frame(self.context.dom, &sub_doc, self.element) {
+                return;
+            }
             let scale = self.scale;
             let width = self.frame.content_box.width() as u32;
             let height = self.frame.content_box.height() as u32;
@@ -7889,12 +7938,23 @@ impl ElementCx<'_, '_> {
                 0.0,
                 self.custom_widget_scenes,
             );
+            // pyro: HTML-in-Canvas privacy: its own frames and images are left out by the same
+            // rules, and what it draws is noted in this paint's.
+            if self.context.privacy.is_some() {
+                painter.privacy = Some(Privacy::default());
+            }
             let mut recording = anyrender::recording::Scene::new();
             if let Some(budget) = self.capture_budget {
                 painter.capture_budget = Some(budget);
                 painter.paint_scene(&mut crate::capture::Recording(&mut recording, budget));
                 if budget.exhausted.get() { return; }
             } else { painter.paint_scene(&mut recording); }
+            if let (Some(outer), Some(inner)) = (&self.context.privacy, painter.privacy.take()) {
+                outer.allowed.borrow_mut().extend(inner.allowed.into_inner());
+                if inner.unclassified.get() {
+                    outer.unclassified.set(true);
+                }
+            }
             let clip = Rect::new(0.0, 0.0, width as f64, height as f64);
             scene.push_clip_layer(Fill::NonZero, transform, &clip);
             scene.append_scene(recording, transform);
