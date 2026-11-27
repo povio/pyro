@@ -3964,12 +3964,52 @@ impl Layout {
         let mut stops: [Vec<(f64, SnapBox)>; 2] = [Vec::new(), Vec::new()];
         let mut areas = Vec::new();
         let Ok(nodes) = dom.descendants(scroller.unwrap_or(doc)) else { return unchanged };
+        // One snap area: its box `r` (client coordinates) grown by its `scroll-margin`s `margins`
+        // (top, right, bottom, left) and aligned as `align` says.
+        let mut push_area = |id: NodeId, r: Rect, margins: [f64; 4], align: &str, always: bool| {
+            let [margin_top, margin_right, margin_bottom, margin_left] = margins;
+            let (top, bottom) = (r.y - origin_y - margin_top, r.y + r.height - origin_y + margin_bottom);
+            let (left, right) = (r.x - origin_x - margin_left, r.x + r.width - origin_x + margin_right);
+            let [align_x, align_y] = snap_alignment(align, mode);
+            let position = |a: &str, start: f64, end: f64, pad_start: f64, pad_end: f64, size: f64| match a {
+                "start" => Some(start - pad_start),
+                "end" => Some(end - (size - pad_end)),
+                "center" => Some((start + end) / 2.0 - (pad_start + (size - pad_start - pad_end) / 2.0)),
+                _ => None,
+            };
+            let candidates = [
+                snap_x.then(|| position(align_x, left, right, pl, pr, width)).flatten(),
+                snap_y.then(|| position(align_y, top, bottom, pt, pb, height)).flatten(),
+            ];
+            // A snap area larger than the snapport on an axis can be scrolled within: any target
+            // that keeps the snapport inside it is a snap position (CSS Scroll Snap 1 § 6.2.1).
+            let covering = [
+                snap_x && right - left > width - pl - pr,
+                snap_y && bottom - top > height - pt - pb,
+            ];
+            let spans = [(left - pl, right - (width - pr)), (top - pt, bottom - (height - pb))];
+            areas.push((id, candidates, covering, spans, [(left, right), (top, bottom)], [align_x, align_y], always));
+        };
+        let source = self.external.as_ref().filter(|s| s.active());
         for id in nodes {
-            if dom.element(id).is_err() || Some(id) == scroller {
+            if dom.element(id).is_err() {
                 continue;
             }
-            let align = value(id, "scroll-snap-align");
-            if align.is_empty() || align == "none" {
+            let is_scroller = Some(id) == scroller;
+            let align = if is_scroller { String::new() } else { value(id, "scroll-snap-align") };
+            let element_area = !(align.is_empty() || align == "none");
+            // pyro: its `::before` and `::after` boxes (1, 2) are snap areas of their own with their own
+            // `scroll-snap-align` (a snap event reports the element as their target; WPT css-scroll-snap
+            // `snap-to-visible-areas-both-pseudo`).
+            let pseudo_boxes = [(1u8, style::selector_parser::PseudoElement::Before), (2, style::selector_parser::PseudoElement::After)]
+                .into_iter()
+                .filter_map(|(n, pseudo)| {
+                    let b = source?.element_box(crate::snapshot::pseudo_render_key(id, n))?;
+                    let align = self.computed_pseudo_style_value(dom, id, &pseudo, "scroll-snap-align");
+                    (!(align.is_empty() || align == "none")).then_some((b, pseudo, align))
+                })
+                .collect::<Vec<_>>();
+            if !element_area && pseudo_boxes.is_empty() {
                 continue;
             }
             // Its nearest scroll container: as user scrolls find it (which handles the root and
@@ -3983,7 +4023,8 @@ impl Layout {
                 (ScrollTarget::Viewport, None) => true,
                 _ => false,
             };
-            let owned = by_user || {
+            // (The scroller's own pseudo-elements are its snap areas.)
+            let owned = is_scroller || by_user || {
                 let mut cur = dom.parent_element(id).ok().flatten();
                 loop {
                     match cur {
@@ -4003,30 +4044,22 @@ impl Layout {
             if !owned {
                 continue;
             }
-            let r = self.bounding_client_rect(dom, id);
-            let margin = |side: &str| px(&value(id, &format!("scroll-margin-{side}")), 0.0);
-            let (top, bottom) = (r.y - origin_y - margin("top"), r.y + r.height - origin_y + margin("bottom"));
-            let (left, right) = (r.x - origin_x - margin("left"), r.x + r.width - origin_x + margin("right"));
-            let [align_x, align_y] = snap_alignment(&align, mode);
-            let position = |a: &str, start: f64, end: f64, pad_start: f64, pad_end: f64, size: f64| match a {
-                "start" => Some(start - pad_start),
-                "end" => Some(end - (size - pad_end)),
-                "center" => Some((start + end) / 2.0 - (pad_start + (size - pad_start - pad_end) / 2.0)),
-                _ => None,
-            };
-            let candidates = [
-                snap_x.then(|| position(align_x, left, right, pl, pr, width)).flatten(),
-                snap_y.then(|| position(align_y, top, bottom, pt, pb, height)).flatten(),
-            ];
-            // A snap area larger than the snapport on an axis can be scrolled within: any target
-            // that keeps the snapport inside it is a snap position (CSS Scroll Snap 1 § 6.2.1).
-            let covering = [
-                snap_x && right - left > width - pl - pr,
-                snap_y && bottom - top > height - pt - pb,
-            ];
-            let spans = [(left - pl, right - (width - pr)), (top - pt, bottom - (height - pb))];
-            let always = dir.is_some() && value(id, "scroll-snap-stop") == "always";
-            areas.push((id, candidates, covering, spans, [(left, right), (top, bottom)], [align_x, align_y], always));
+            if element_area {
+                let r = self.bounding_client_rect(dom, id);
+                let margin = |side: &str| px(&value(id, &format!("scroll-margin-{side}")), 0.0);
+                let always = dir.is_some() && value(id, "scroll-snap-stop") == "always";
+                push_area(id, r, [margin("top"), margin("right"), margin("bottom"), margin("left")], &align, always);
+            }
+            for (b, pseudo, align) in pseudo_boxes {
+                let (dx, dy) = self.ancestor_scroll_offset(dom, id);
+                // (A scroller's own pseudo-element is scrolled by its offset too.)
+                let (dx, dy) = if is_scroller { (dx + current.0 as f64, dy + current.1 as f64) } else { (dx, dy) };
+                let (sx, sy) = if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
+                let r = Rect { x: b.x - sx - dx, y: b.y - sy - dy, width: b.width, height: b.height };
+                let margin = |side: &str| px(&self.computed_pseudo_style_value(dom, id, &pseudo, &format!("scroll-margin-{side}")), 0.0);
+                let always = dir.is_some() && self.computed_pseudo_style_value(dom, id, &pseudo, "scroll-snap-stop") == "always";
+                push_area(id, r, [margin("top"), margin("right"), margin("bottom"), margin("left")], &align, always);
+            }
         }
         for &(id, candidates, covering, spans, bounds, align, always) in &areas {
             let mut mine = [None, None];
