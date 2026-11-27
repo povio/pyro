@@ -187,7 +187,7 @@ fn snap_axes(axis: &str, mode: style::logical_geometry::WritingMode) -> (bool, b
         "y" => (false, true),
         "inline" => (mode.is_horizontal(), mode.is_vertical()),
         "block" => (mode.is_vertical(), mode.is_horizontal()),
-        "both" => (true, true),
+        "both" | "pair" => (true, true),
         _ => (false, false),
     }
 }
@@ -3692,6 +3692,8 @@ impl Layout {
         let mode = self.style.stylo_style(dom, styled).map_or_else(style::logical_geometry::WritingMode::horizontal_tb, |style| style.writing_mode);
         let (snap_x, snap_y) = snap_axes(words.first().copied().unwrap_or("none"), mode);
         let mandatory = words.get(1).copied() == Some("mandatory");
+        // `pair` (CSS Scroll Snap 2): both axes snap to ONE area aligned on both.
+        let pair = words.first().copied() == Some("pair");
         // The scroller's padding box in client coordinates and its size.
         let px = |v: &str, basis: f64| -> f64 {
             let v = v.trim();
@@ -3932,7 +3934,44 @@ impl Layout {
                 }
             }
         }
-        if dir.is_some() {
+        // `scroll-snap-type: pair`: one area aligned on both axes (the others are ignored): the one
+        // nearest the end position, or for a directional scroll the one whose direction from the
+        // scroll offset is nearest the scroll's (the greatest cosine; WPT css-scroll-snap
+        // `scroll-snap-type-pair-001`..`-007`).
+        if pair {
+            let only_box = only.and_then(|o| o[0].or(o[1]));
+            let goal = [target[0].unwrap_or(from[0]), target[1].unwrap_or(from[1])];
+            let mut by_direction: Option<(f64, [f64; 2], SnapBox)> = None;
+            let mut nearest: Option<(f64, [f64; 2], SnapBox)> = None;
+            for &(id, candidates, _, _, _, _, _) in &areas {
+                let (Some(c0), Some(c1)) = (candidates[0], candidates[1]) else { continue };
+                if only_box.is_some_and(|b| b != (id, None)) {
+                    continue;
+                }
+                let point = [reachable(0, c0), reachable(1, c1)];
+                let distance = (point[0] - goal[0]).hypot(point[1] - goal[1]);
+                if nearest.is_none_or(|(d, _, _)| distance < d) {
+                    nearest = Some((distance, point, (id, None)));
+                }
+                if let Some(d) = dir {
+                    let (vx, vy) = (point[0] - from[0], point[1] - from[1]);
+                    let (dx, dy) = (d[0] as f64, d[1] as f64);
+                    let (length, scroll_length) = (vx.hypot(vy), dx.hypot(dy));
+                    if length > 0.0 && scroll_length > 0.0 {
+                        let cosine = (vx * dx + vy * dy) / (length * scroll_length);
+                        if cosine > 0.0 && by_direction.is_none_or(|(c, _, _)| cosine > c) {
+                            by_direction = Some((cosine, point, (id, None)));
+                        }
+                    }
+                }
+            }
+            let picked = if dir.is_some() { by_direction.or(if mandatory { nearest } else { None }) } else { nearest };
+            best = match picked {
+                Some((_, point, id)) => [Some((point[0], id)), Some((point[1], id))],
+                None => [None, None],
+            };
+        }
+        if dir.is_some() && !pair {
             for axis in 0..2 {
                 // (Only `mandatory` must rest on a snap position: `proximity` with nothing ahead
                 // lands where it was sent, not back where it was.)
@@ -3952,7 +3991,7 @@ impl Layout {
         // A scroller snapping both axes ends on a visible area: when the nearest position of each axis
         // together show none, the axis nearer its target snaps as it is and the other snaps among the
         // areas visible there (WPT css-scroll-snap `snap-to-visible-areas-both`).
-        if snap_x && snap_y && dir.is_none() && only.is_none() {
+        if snap_x && snap_y && !pair && dir.is_none() && only.is_none() {
             if let ([Some((bx, _)), Some((by, _))], [Some(target_x), Some(target_y)]) = (best, target) {
                 let visible = |px: f64, py: f64, bounds: &[(f64, f64); 2]| {
                     bounds[0].1 >= px + pl && bounds[0].0 <= px + width - pr && bounds[1].1 >= py + pt && bounds[1].0 <= py + height - pb
@@ -3988,7 +4027,7 @@ impl Layout {
         // candidate inside it), then one aligned on both axes, then the first in tree order (CSS
         // Scroll Snap 1 § 6.2.3; WPT css-scroll-snap `snap-after-relayout/multiple-aligned-targets`).
         // The focused and the targeted must be in the snapport.
-        if only.is_none() {
+        if only.is_none() && !pair {
             let focused = dom.focused(doc).ok().flatten();
             let url_target = dom.url_target_element(doc);
             let contains = |outer: NodeId, inner: NodeId| dom.contains(outer, inner).unwrap_or(false);

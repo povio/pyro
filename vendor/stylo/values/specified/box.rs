@@ -1071,6 +1071,8 @@ pub enum ScrollSnapAxis {
     Block,
     Inline,
     Both,
+    /// pyro: CSS Scroll Snap 2: both axes snap together to one area aligned on both.
+    Pair,
 }
 
 /// https://drafts.csswg.org/css-scroll-snap-1/#snap-strictness
@@ -1135,7 +1137,7 @@ impl ScrollSnapType {
 }
 
 impl Parse for ScrollSnapType {
-    /// none | [ x | y | block | inline | both ] [ mandatory | proximity ]?
+    /// none | [ x | y | block | inline | both | pair ] [ mandatory | proximity ]?
     fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         if input
             .try_parse(|input| input.expect_ident_matching("none"))
