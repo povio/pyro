@@ -210,7 +210,8 @@ pub fn parse(text: &str, ctx: &ParseContext<'_>) -> Result<RuleSet, ParseError> 
     if let Some(tag) = top.get("tag") {
         match valid_tag(tag) {
             Some(tag) => set.tag = Some(tag),
-            None => set.warnings.push("The rule set's \"tag\" is not a string of printable ASCII: ignored.".into()),
+            // An invalid rule-set tag makes the whole set invalid (an `error` event at the script).
+            None => return Err(ParseError("Invalid speculation rules: \"tag\" must be a string of printable ASCII".into())),
         }
     }
     for (key, action) in
@@ -331,8 +332,11 @@ fn parse_rule(value: &Value, ctx: &ParseContext<'_>) -> Result<Rule, String> {
         Some(Value::String(s)) => Some(s.clone()),
         Some(_) => return Err("\"expects_no_vary_search\" must be a string".into()),
     };
-    // An invalid tag is dropped (the rule is then tagless), not a reason to skip the rule.
-    let tag = map.get("tag").and_then(valid_tag);
+    // A rule with an invalid tag is skipped; an absent tag is the null tag.
+    let tag = match map.get("tag") {
+        None => None,
+        Some(v) => Some(valid_tag(v).ok_or("\"tag\" must be a string of printable ASCII")?),
+    };
     let target_hint = match map.get("target_hint") {
         None => None,
         Some(Value::String(s)) if s == "_blank" => Some(TargetHint::Blank),
@@ -895,11 +899,13 @@ mod tests {
             r#"{"tag":"set","prefetch":[{"urls":["a"],"referrer_policy":"","tag":"rule"},{"urls":["b"],"tag":"é"},{"urls":["c"]}]}"#,
         )
         .unwrap();
-        assert_eq!(set.prefetch.len(), 3);
+        // The rule with the non-ASCII tag is skipped.
+        assert_eq!(set.prefetch.len(), 2);
         assert_eq!(set.prefetch[0].referrer_policy, None);
         assert_eq!(set.prefetch[0].tag.as_deref(), Some("rule"));
         assert_eq!(set.prefetch[1].tag, None);
         assert_eq!(set.tag.as_deref(), Some("set"));
+        assert!(parse_str(r#"{"tag":null,"prefetch":[{"urls":["a"]}]}"#).is_err());
     }
 
     #[test]

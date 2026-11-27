@@ -2625,7 +2625,7 @@ impl Browser {
             self.dictionary_headers(page, resource.dictionary_links.clone());
         }
         // Speculation rules are fetched for top-level documents only.
-        if !resource.speculation_rules.is_empty() && page.child.is_none() {
+        if crate::speculation_rules::SUPPORTED && !resource.speculation_rules.is_empty() && page.child.is_none() {
             self.speculation_header(page, &resource.url, &resource.speculation_rules);
         }
         if resource.content_language.is_some() {
@@ -2919,7 +2919,10 @@ impl Browser {
                 let d = dom.borrow();
                 d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
             };
-            self.add_speculation_rules(page, &dom, node, &info, rules_base.as_deref().unwrap_or(&base));
+            // Until speculation rules are supported the script is inert, as in a browser without them.
+            if crate::speculation_rules::SUPPORTED {
+                self.add_speculation_rules(page, &dom, node, &info, rules_base.as_deref().unwrap_or(&base));
+            }
             return;
         }
         if info.kind == ScriptKind::ImportMap {
@@ -3645,7 +3648,10 @@ impl Browser {
                 let d = dom.borrow();
                 d.node_document(node).ok().and_then(|doc| d.document_base_url(doc).ok().map(str::to_owned))
             };
-            self.add_speculation_rules(page, &dom, node, &info, rules_base.as_deref().unwrap_or(&base));
+            // Until speculation rules are supported the script is inert, as in a browser without them.
+            if crate::speculation_rules::SUPPORTED {
+                self.add_speculation_rules(page, &dom, node, &info, rules_base.as_deref().unwrap_or(&base));
+            }
             return;
         }
         if info.kind == ScriptKind::ImportMap {
