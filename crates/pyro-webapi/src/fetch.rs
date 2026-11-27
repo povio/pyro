@@ -805,6 +805,12 @@ pub(crate) fn send_beacon(s: &Scope<'_>, page: &Rc<PageDom>, url: pyro_net::Url,
         extract_body(s, data)?
     };
     let Some(net) = page.net.borrow().clone() else { return Ok(false) };
+    // Mixed Content: a beacon the fetch would block is not queued, and the call says so (Chrome
+    // returns false; WPT beacon/headers `header-referrer-*.https` treats that as "blocked").
+    let insecure = page.insecure_policy();
+    if insecure.prohibits_mixed && !insecure.upgrade && url.scheme() == "http" && !pyro_net::is_potentially_trustworthy_url(&url) {
+        return Ok(false);
+    }
     // CSP `connect-src`: a blocked beacon is never sent (no request is made; its violation is
     // reported), and the call still returns true, as the queued beacon's fetch would fail
     // later in Chrome.
