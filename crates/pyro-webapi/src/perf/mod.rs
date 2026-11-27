@@ -356,6 +356,11 @@ pub fn rendering_update(page: &Rc<PageDom>, frame: &FrameInfo) {
 /// in `Browser`).
 pub const TASK_HOOKS: bool = longtask::ENABLED || loaf::ENABLED;
 
+/// Whether some ENABLED module reads [`FrameInfo::render_start`] or [`FrameInfo::style_and_layout_start`]
+/// (a const: `run_animation_frame` makes those two clock reads only while one does; otherwise both
+/// equal `start`, which keeps their ordering). A module that needs them must flip this in its commit.
+pub const FRAME_STAGE_TIMES: bool = loaf::ENABLED;
+
 /// The long-task threshold (Long Tasks, and LoAF's `blockingDuration` over it).
 pub const LONG_TASK_MS: f64 = 50.0;
 
