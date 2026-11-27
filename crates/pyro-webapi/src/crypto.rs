@@ -320,6 +320,10 @@ pub(crate) fn foreign_key<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value
 /// (making the realm's subtle.js if it has none yet).
 pub(crate) fn deserialize_key<'s>(s: &Scope<'s>, parts: Value<'s>) -> JsResult<Value<'s>> {
     let page = crate::target::page_of(s)?;
+    // CryptoKey is `[SecureContext, Serializable]`: an insecure receiver cannot deserialize one.
+    if !crate::secure_context::secure(s, &page) {
+        return Err(JsError::dom("DataCloneError", "A CryptoKey cannot be deserialized in an insecure context."));
+    }
     let module = subtle_module(s, &page)?;
     module.get_atom("deserializeKey")?.as_object().ok_or_else(unavailable)?.call(None, &[parts])
 }

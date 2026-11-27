@@ -101,6 +101,11 @@ pub(super) type Rows = Vec<(String, &'static str, String)>;
 pub(crate) struct LockService(Arc<Mutex<FxHashMap<StorageKey, Manager>>>);
 
 impl LockService {
+    /// Equal for every holder of this service (a browser context's pages and their workers).
+    pub(crate) fn identity(&self) -> usize {
+        Arc::as_ptr(&self.0) as *const () as usize
+    }
+
     pub(super) fn acquire(
         &self,
         key: StorageKey,

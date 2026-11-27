@@ -5,7 +5,8 @@
 // prepares the transfer of a transferable one (a MessagePort: its new port
 // here, undefined if the value is not transferable, DataCloneError if it is
 // detached); mode 2 completes the transfer prepared for `value` as `extra`;
-// mode 3 copies a platform object made in JS (CryptoKey) or returns undefined;
+// mode 3 copies a platform object made in JS (CryptoKey, which is cluster-bound:
+// a receiver that is not a secure context refuses it) or returns undefined;
 // mode 4 is unused here; mode 5 prepares the transfer of a stream ([its new
 // stream here, the new ports it reads or writes], undefined if the value is
 // not a stream, DataCloneError if it is locked) and mode 6 completes it (the
@@ -345,7 +346,7 @@
                 const name = call(stringSlice, kind, [8, -1]);
                 if (descriptor(boxed, name)) return remember(source, O(call(boxed[name], source)));
                 if (kind !== '[object Object]') {
-                    const platformCopy = host(source, 3);
+                    const platformCopy = host(source, 3, forStorage, clusterBound);
                     if (platformCopy !== undefined) return remember(source, platformCopy);
                     fail('Object type is not supported');
                 }

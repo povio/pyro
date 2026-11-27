@@ -40,6 +40,11 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
                 3 => {
                     let copy = crate::crypto::clone_platform_object(s, value)?;
                     if !copy.is_undefined() {
+                        // A CryptoKey is `[SecureContext]`: whether the receiver gets it is
+                        // decided when it deserializes the message (`messageerror` if not).
+                        if let Some(marker) = args.get(3).as_object() {
+                            marker.set_index(0, s.boolean(true))?;
+                        }
                         return Ok(copy);
                     }
                     match canvas_object(s, value, false)? {

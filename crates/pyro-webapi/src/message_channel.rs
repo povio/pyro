@@ -758,23 +758,73 @@ impl JsClass for MessageChannel {
 // alive); `close()` releases the pin, and every pin goes with the page. The
 // registry holds channels weakly and is pruned as it is used.
 //
-// Gaps (explicit): workers have no BroadcastChannel; the "browser context"
-// is the page's `ContextServices` (what pages of a CDP browser context
-// share), so documents without an embedder each form their own.
+// Gaps (explicit): service workers have no BroadcastChannel peers (their
+// scope has no poster back to its loop); the "browser context" is the page's
+// `ContextServices` (what pages of a CDP browser context share), so documents
+// without an embedder each form their own.
+//
+// Across threads (a dedicated or shared worker and its pages): every open
+// channel is an `Endpoint` in the process-wide `BUS`. A receiver on another
+// thread is reached through its page's `RemotePoster`: the task finds the
+// channel by endpoint id in that thread's `CHANNELS` and delivers there. Only
+// channels of the same name, origin, browser context and storage partition
+// (top-level site) match, and a channel of a detached document neither sends
+// nor receives (HTML: "if the document is not fully active, return").
 
 thread_local! {
     static CHANNELS: RefCell<Vec<Weak<ChannelInner>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// What other threads know of an open channel.
+struct Endpoint {
+    id: u64,
+    thread: std::thread::ThreadId,
+    name: String,
+    /// The document's tuple origin, or a per-document key for an opaque one.
+    origin: String,
+    /// Identity of the browser context (its Web Locks service, shared with workers).
+    context: usize,
+    /// The cookie/storage partition: the top-level site of the document.
+    partition: Option<String>,
+    closed: std::sync::atomic::AtomicBool,
+    /// Runs a closure on the owning thread (`None`: only that thread's own channels reach it).
+    poster: Option<crate::page::RemotePoster>,
+}
+
+impl Endpoint {
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    fn matches(&self, other: &Endpoint) -> bool {
+        self.context == other.context
+            && self.origin == other.origin
+            && self.name == other.name
+            && self.partition == other.partition
+    }
+}
+
+static BUS: std::sync::Mutex<Vec<std::sync::Arc<Endpoint>>> = std::sync::Mutex::new(Vec::new());
+static NEXT_ENDPOINT: AtomicU64 = AtomicU64::new(1);
+
+fn bus() -> std::sync::MutexGuard<'static, Vec<std::sync::Arc<Endpoint>>> {
+    BUS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 pub(crate) struct ChannelInner {
     target: EventTargetData,
     realm: WeakRealm,
     name: String,
-    /// The document's tuple origin, or a per-document key for an opaque one.
-    origin: String,
-    /// Identity of the browser context (`ContextServices` pointer).
-    context: usize,
+    endpoint: std::sync::Arc<Endpoint>,
+    /// What `MessageEvent.origin` reads at the receivers: the serialized origin ("null" if opaque).
+    event_origin: String,
     closed: Cell<bool>,
+}
+
+impl Drop for ChannelInner {
+    fn drop(&mut self) {
+        self.endpoint.closed.store(true, Ordering::Release);
+    }
 }
 
 impl ChannelInner {
@@ -782,13 +832,9 @@ impl ChannelInner {
         &self.target.page
     }
 
-    fn matches(&self, other: &ChannelInner) -> bool {
-        self.context == other.context && self.origin == other.origin && self.name == other.name
-    }
-
     /// Delivers `message` (already queued as a task on this page).
     fn deliver(&self, message: &crate::structured_clone::WireMessage, origin: &str) {
-        if self.closed.get() || self.page().is_disposed() {
+        if self.closed.get() || self.page().is_disposed() || self.page().is_detached() {
             return;
         }
         let Some(realm) = self.realm.upgrade() else { return };
@@ -810,6 +856,8 @@ impl ChannelInner {
         if self.closed.replace(true) {
             return;
         }
+        self.endpoint.closed.store(true, Ordering::Release);
+        bus().retain(|e| !e.is_closed());
         if let Some(realm) = self.realm.upgrade() {
             if let Ok(s) = realm.scope() {
                 unpin_target(&s, self.page(), self.target.key);
@@ -817,6 +865,11 @@ impl ChannelInner {
         }
         CHANNELS.with(|c| c.borrow_mut().retain(|w| w.upgrade().is_some_and(|c| !c.closed.get())));
     }
+}
+
+/// The open channel of this thread with endpoint `id`.
+fn local_channel(id: u64) -> Option<Rc<ChannelInner>> {
+    CHANNELS.with(|c| c.borrow().iter().filter_map(Weak::upgrade).find(|c| c.endpoint.id == id && !c.closed.get()))
 }
 
 pub struct BroadcastData(Rc<ChannelInner>);
@@ -837,16 +890,28 @@ impl JsClass for BroadcastChannel {
             }
             // An opaque origin by identity (`PageDom::origin_key`): an about:blank document that inherited
             // it from its creator shares it, and talks with it.
-            let origin = crate::storage::tuple_origin(s, &page).unwrap_or_else(|| page.origin_key());
+            let tuple = crate::storage::tuple_origin(s, &page);
+            let event_origin = tuple.clone().unwrap_or_else(|| "null".to_owned());
+            let origin = tuple.unwrap_or_else(|| page.origin_key());
             let target = EventTargetData::new(&page);
             let TargetKey::Other(k) = target.key else { unreachable!() };
             let key = page.other_identity(k);
+            let endpoint = std::sync::Arc::new(Endpoint {
+                id: NEXT_ENDPOINT.fetch_add(1, Ordering::Relaxed),
+                thread: std::thread::current().id(),
+                name: name.clone(),
+                origin,
+                context: page.context_services().web_locks.identity(),
+                partition: page.cookie_partition_key(),
+                closed: std::sync::atomic::AtomicBool::new(false),
+                poster: page.remote_poster(),
+            });
             let inner = Rc::new(ChannelInner {
                 target,
                 realm: s.realm().downgrade(),
                 name,
-                origin,
-                context: Rc::as_ptr(&page.context_services()) as usize,
+                endpoint: endpoint.clone(),
+                event_origin,
                 closed: Cell::new(false),
             });
             let object = s.wrap_new::<BroadcastChannel>(BroadcastData(inner.clone()), nt, Some(key))?;
@@ -856,6 +921,11 @@ impl JsClass for BroadcastChannel {
                 c.retain(|w| w.upgrade().is_some_and(|c| !c.closed.get()));
                 c.push(Rc::downgrade(&inner));
             });
+            {
+                let mut bus = bus();
+                bus.retain(|e| !e.is_closed());
+                bus.push(endpoint);
+            }
             Ok(object)
         });
         def.getter("name", |s, d| Ok(s.string(&d.0.name)));
@@ -867,23 +937,46 @@ impl JsClass for BroadcastChannel {
             if d.0.page().is_disposed() {
                 return Err(JsError::ContextDestroyed);
             }
-            let message = Rc::new(crate::structured_clone::encode_message(s, a.get(0), s.undefined())?);
-            let origin = d.0.origin.clone();
-            let receivers: Vec<Rc<ChannelInner>> = CHANNELS.with(|c| {
-                c.borrow()
-                    .iter()
-                    .filter_map(Weak::upgrade)
-                    .filter(|c| !c.closed.get() && !Rc::ptr_eq(c, &d.0) && c.matches(&d.0) && !c.page().is_disposed())
-                    .collect()
-            });
-            for receiver in receivers {
+            let message = std::sync::Arc::new(std::sync::Mutex::new(crate::structured_clone::encode_message(
+                s,
+                a.get(0),
+                s.undefined(),
+            )?));
+            // A detached document's channel sends nothing (its message is still serialized: errors
+            // are reported regardless).
+            if d.0.page().is_detached() {
+                return Ok(s.undefined());
+            }
+            let origin = d.0.event_origin.clone();
+            let here = std::thread::current().id();
+            let peers: Vec<std::sync::Arc<Endpoint>> = bus()
+                .iter()
+                .filter(|e| !e.is_closed() && e.id != d.0.endpoint.id && e.matches(&d.0.endpoint))
+                .cloned()
+                .collect();
+            for peer in peers {
                 let (message, origin) = (message.clone(), origin.clone());
-                let weak = Rc::downgrade(&receiver);
-                receiver.page().post_task(Box::new(move || {
-                    if let Some(receiver) = weak.upgrade() {
-                        receiver.deliver(&message, &origin);
+                if peer.thread == here {
+                    let Some(receiver) = local_channel(peer.id) else { continue };
+                    if receiver.page().is_disposed() || receiver.page().is_detached() {
+                        continue;
                     }
-                }));
+                    let weak = Rc::downgrade(&receiver);
+                    receiver.page().post_task(Box::new(move || {
+                        if let Some(receiver) = weak.upgrade() {
+                            let message = message.lock().unwrap_or_else(|e| e.into_inner());
+                            receiver.deliver(&message, &origin);
+                        }
+                    }));
+                } else if let Some(poster) = &peer.poster {
+                    let id = peer.id;
+                    poster(Box::new(move || {
+                        if let Some(receiver) = local_channel(id) {
+                            let message = message.lock().unwrap_or_else(|e| e.into_inner());
+                            receiver.deliver(&message, &origin);
+                        }
+                    }));
+                }
             }
             Ok(s.undefined())
         });
