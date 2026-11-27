@@ -529,8 +529,10 @@ pub fn fetch_resource_type(destination: pyro_net::Destination) -> ResourceType {
         D::Font => ResourceType::Font,
         D::Xhr | D::Fetch | D::EventSource => ResourceType::XHR,
         D::WebSocket => ResourceType::WebSocket,
-        D::Beacon => ResourceType::Ping,
-        D::CompressionDictionary | D::SpeculationRules | D::Other => ResourceType::Other,
+        D::Beacon | D::Report => ResourceType::Ping,
+        D::CompressionDictionary | D::SpeculationRules | D::Object | D::Embed | D::AudioWorklet | D::PaintWorklet | D::Other => {
+            ResourceType::Other
+        }
     }
 }
 

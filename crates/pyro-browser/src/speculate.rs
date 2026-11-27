@@ -371,7 +371,7 @@ impl Browser {
                         let crossorigin = crossorigin.map(|value| {
                             if value.eq_ignore_ascii_case("use-credentials") { value } else { "anonymous".to_owned() }
                         });
-                        let mut request = requester.request(url, ResourceKind::Object, crossorigin, None);
+                        let mut request = requester.request(url, ResourceKind::SvgImage, crossorigin, None);
                         request.initiator = Some(pyro_webapi::resource_timing::Initiator::Other);
                         with_policy(request, None)
                     }

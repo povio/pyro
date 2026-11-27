@@ -977,6 +977,13 @@ fn fetch_call<'s>(
         }
         let (mut request, signal, extras) = parse_request(s, &page, args.get(0), args.get(1), false)?;
         request.body_from_stream = request.body.is_some() && settled == Some(true);
+        // An engine-internal request has its own Fetch destination (`Sec-Fetch-Dest`).
+        match csp_dest {
+            Some(pyro_net::csp::RequestDest::AudioWorklet) => request.destination = Destination::AudioWorklet,
+            Some(pyro_net::csp::RequestDest::PaintWorklet) => request.destination = Destination::PaintWorklet,
+            Some(pyro_net::csp::RequestDest::Font) => request.destination = Destination::Font,
+            _ => {}
+        }
         // Init conversion can execute script, including embedder teardown.
         if page.is_disposed() {
             return Err(JsError::ContextDestroyed);

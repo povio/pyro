@@ -50,6 +50,17 @@ pub enum Destination {
     CompressionDictionary,
     /// A `Speculation-Rules` header's rule set (`Sec-Fetch-Dest: speculationrules`, CORS mode).
     SpeculationRules,
+    /// An `<object>` element's resource, or the document it shows (`Sec-Fetch-Dest: object`, and
+    /// `Sec-Fetch-Mode: navigate`: Chrome treats it as a navigation of a nested context).
+    Object,
+    /// An `<embed>` element's resource (`Sec-Fetch-Dest: embed`, mode `navigate`).
+    Embed,
+    /// A CSP or Reporting API report (`Sec-Fetch-Dest: report`).
+    Report,
+    /// `audioWorklet.addModule()` (`Sec-Fetch-Dest: audioworklet`, CORS mode).
+    AudioWorklet,
+    /// `CSS.paintWorklet.addModule()` (`Sec-Fetch-Dest: paintworklet`, CORS mode).
+    PaintWorklet,
     Other,
 }
 
@@ -83,8 +94,14 @@ impl Destination {
             Destination::Fetch => "Fetch",
             Destination::EventSource => "EventSource",
             Destination::WebSocket => "WebSocket",
-            Destination::Beacon => "Ping",
-            Destination::CompressionDictionary | Destination::SpeculationRules | Destination::Other => "Other",
+            Destination::Beacon | Destination::Report => "Ping",
+            Destination::CompressionDictionary
+            | Destination::SpeculationRules
+            | Destination::Object
+            | Destination::Embed
+            | Destination::AudioWorklet
+            | Destination::PaintWorklet
+            | Destination::Other => "Other",
         }
     }
 }

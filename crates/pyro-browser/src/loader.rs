@@ -86,6 +86,10 @@ pub enum ResourceKind {
     Download,
     /// An `<object>` element's data (destination "object").
     Object,
+    /// An `<embed>` element's `src` (destination "embed").
+    Embed,
+    /// An SVG `<image>`'s `href`, fetched for its `load`/`error` events (no destination of its own).
+    SvgImage,
     /// A `<link rel=preload as=fetch>` (destination "", CORS mode).
     Fetch,
     /// A `<link rel=prefetch>`: destination "" (`Sec-Fetch-Dest: empty`), initiator "prefetch"
@@ -440,7 +444,9 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Audio => pyro_net::Destination::Audio,
             ResourceKind::Video => pyro_net::Destination::Video,
             ResourceKind::Track => pyro_net::Destination::Track,
-            ResourceKind::Download | ResourceKind::Object => pyro_net::Destination::Other,
+            ResourceKind::Object => pyro_net::Destination::Object,
+            ResourceKind::Embed => pyro_net::Destination::Embed,
+            ResourceKind::Download | ResourceKind::SvgImage => pyro_net::Destination::Other,
             ResourceKind::Fetch => pyro_net::Destination::Fetch,
             // Destination "": `Other` sends `Sec-Fetch-Dest: empty` in no-cors mode.
             ResourceKind::Prefetch => pyro_net::Destination::Other,
@@ -449,6 +455,13 @@ impl ResourceLoader for NetLoader {
         };
         // Resource Timing: the document that gets this fetch's entry.
         let document = requesting_document(browser, &request);
+        // A document shown by an `<object>` or `<embed>` is requested with that destination.
+        let destination = match (destination, request.kind) {
+            (pyro_net::Destination::Iframe, ResourceKind::Iframe) => {
+                document.as_deref().and_then(|d| embedding_destination(browser, &request, d)).unwrap_or(destination)
+            }
+            _ => destination,
+        };
         let timed = request.initiator.zip(document.clone());
         let render_blocking = request.kind == ResourceKind::Stylesheet;
         let priority = request.loader_id.as_ref().filter(|_| request.parser_priority || request.kind == ResourceKind::Image)
@@ -1110,7 +1123,8 @@ pub(crate) fn csp_dest(request: &FetchRequest) -> Option<pyro_net::csp::RequestD
         ResourceKind::Image => RequestDest::Image,
         ResourceKind::Font => RequestDest::Font,
         ResourceKind::Audio | ResourceKind::Video | ResourceKind::Track => RequestDest::Media,
-        ResourceKind::Object => RequestDest::Object,
+        ResourceKind::Object | ResourceKind::SvgImage => RequestDest::Object,
+        ResourceKind::Embed => RequestDest::Embed,
         // `<link rel=preload as=fetch>`: the empty destination, connect-src.
         ResourceKind::Fetch => RequestDest::Empty,
         // `<link rel=prefetch>`: default-src, or any fetch directive that allows it (Chrome).
@@ -1208,6 +1222,23 @@ fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<p
         _ => key,
     };
     frames.page_dom(key)
+}
+
+/// `Object` or `Embed` when the child frame `request` navigates is the nested browsing context of
+/// an `<object>` or `<embed>` of `parent` (its owner element), else `None` (an `<iframe>`).
+fn embedding_destination(browser: &Browser, request: &FetchRequest, parent: &pyro_webapi::PageDom) -> Option<pyro_net::Destination> {
+    let frames = &browser.page(request.page)?.frames;
+    let key = frames.key_of(request.frame_id.as_deref()?)?;
+    let owner = frames.with_frame(key, |f| f.owner)??;
+    let dom = parent.dom.borrow();
+    if !dom.is_document_object(owner) {
+        return None;
+    }
+    match &*dom.element(owner).ok()?.name.local {
+        "object" => Some(pyro_net::Destination::Object),
+        "embed" => Some(pyro_net::Destination::Embed),
+        _ => None,
+    }
 }
 
 /// The referrer source and policy `request` is sent with: its own policy,

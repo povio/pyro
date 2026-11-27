@@ -574,9 +574,8 @@ pub(crate) fn flush_pending(page: &PageDom) {
 
 /// The report POST of `body` to `endpoint`, as `delivery` makes it.
 fn report_request(page: &PageDom, endpoint: Url, delivery: Delivery, body: String) -> Request {
-    // Both specs use destination "report". pyro-net has no such destination, and the beacon
-    // one has the same request shape: a POST that outlives its document.
-    let mut request = Request::get(endpoint, Destination::Beacon);
+    // Both specs use destination "report" (`Sec-Fetch-Dest: report`).
+    let mut request = Request::get(endpoint, Destination::Report);
     request.method = Method::POST;
     request.headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(delivery.content_type()));
     request.body = Some(Bytes::from(body));

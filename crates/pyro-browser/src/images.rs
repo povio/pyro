@@ -945,7 +945,7 @@ impl Browser {
         if rendered && matches!(source, Source::None) {
             object_without_url_csp(&bindings, node, &base, pyro_net::csp::RequestDest::Object);
         }
-        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0, ResourceKind::Object);
     }
 
     /// The deferred lazy images of `page` that are rendered now run their steps again (select
@@ -1169,7 +1169,7 @@ impl Browser {
         if rendered && matches!(source, Source::None) {
             object_without_url_csp(&bindings, node, &base, pyro_net::csp::RequestDest::Embed);
         }
-        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, false, 0, ResourceKind::Embed);
     }
 
     /// SVG `<image>` (SVG 2 §5.7): a connected one fetches its `href` (or
@@ -1218,7 +1218,7 @@ impl Browser {
         drop(state);
         // pyro: its `crossorigin` (a CORS settings attribute) is its request's mode, as an `<img>`'s.
         let cors = image_cors(&bindings.dom.borrow(), node);
-        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, true, cors);
+        self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, true, cors, ResourceKind::SvgImage);
         // pyro: the attribute value the request is for, which `decode()` settles against.
         if let Some(raw) = href {
             if let Some(mut image) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.images.entries.get_mut(&node)))
@@ -1248,6 +1248,8 @@ impl Browser {
         // pyro: the CORS state of an SVG `<image>`'s request (0: none, 1: anonymous, 2:
         // use-credentials).
         cors: u8,
+        // The request's kind: `Object`, `Embed` or `SvgImage` (its Fetch destination and CSP directive).
+        kind: ResourceKind,
     ) {
         let bindings = bindings.clone();
         let Some(state) = self.doc(page) else { return };
@@ -1325,7 +1327,7 @@ impl Browser {
             credentials: None,
             post: None,
             url,
-            kind: ResourceKind::Object,
+            kind,
             page: page.page,
             referrer: Some(base),
             referrer_policy: None,

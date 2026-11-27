@@ -44,7 +44,9 @@ impl pyro_dom::layout::SubresourceLoader for LayoutLoader {
             pyro_dom::layout::SubresourceKind::Style => crate::ResourceKind::Stylesheet,
         };
         let options = crate::SubresourceOptions {
-            crossorigin: options.crossorigin.clone(),
+            // CSS Fonts: a font is fetched in CORS mode ("anonymous"), so `Sec-Fetch-Mode: cors`
+            // and a cross-origin font needs `Access-Control-Allow-Origin`, as in Chrome.
+            crossorigin: options.crossorigin.clone().or_else(|| (kind == crate::ResourceKind::Font).then(|| "anonymous".to_owned())),
             integrity: options.integrity.clone(),
             referrer: options.referrer.clone(),
             referrer_policy: options.referrer_policy.as_deref().and_then(pyro_net::ReferrerPolicy::parse),
