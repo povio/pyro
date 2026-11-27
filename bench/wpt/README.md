@@ -821,8 +821,11 @@ button at the same spot within 500 ms count up (`clickCount`), as Chrome's WebDr
 session; subscriptions by window or global, events delivered to the subscribing page), `permissions.set_permission`
 (`Browser.setPermission`) and the emulation overrides Pyro's CDP evaluates: geolocation, locale, touch, and the
 `prefers-color-scheme` / `prefers-reduced-motion` media features. Commands live in `td/<group>.mjs` (`td/index.mjs`
-explains how to add a group). Everything else (screen orientation, scrollbar and viewport-meta overrides, client hints,
-speculation, virtual authenticators, payment and wallet modes, ...) rejects as "not implemented", as testdriver.js does
+explains how to add a group). WebDriver's virtual authenticators (`td/webauthn.mjs`: `add_virtual_authenticator`,
+`add_credential`, `get_credentials`, `remove_credential`, `remove_all_credentials`, `set_user_verified`,
+`set_credential_properties`, `remove_virtual_authenticator`) go to CDP's `WebAuthn` domain, whose authenticators are
+real software CTAP authenticators of the browser context (`pyro-webapi` `webauthn`). Everything else (screen orientation, scrollbar and viewport-meta overrides, client hints,
+speculation, payment and wallet modes, ...) rejects as "not implemented", as testdriver.js does
 with no vendor. At a421f2fe 3,206 of the 3,462 files that load testdriver call
 only `click`, `send_keys`, `Actions` or `bless`; the next by use are all implemented too: `set_permission` (165
 calls), `get_computed_role` (114), `get_computed_label` (77), `delete_all_cookies` (41). A sample of 50 testdriver
