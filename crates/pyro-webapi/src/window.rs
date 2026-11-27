@@ -237,6 +237,7 @@ where
     crate::media_devices::define_globals(def);
     crate::credentials::define_globals(def);
     crate::sensors::define_globals(def);
+    crate::media_stream::define_globals(def);
     crate::paint_worklet::define_globals(def);
     crate::audio_worklet::define_globals(def);
     crate::lazy_module::lazy_globals!(def, crate::pseudo_element::MODULE, "CSSPseudoElement");

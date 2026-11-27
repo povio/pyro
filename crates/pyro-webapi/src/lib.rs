@@ -67,6 +67,7 @@ pub mod fullscreen;
 pub mod permissions_policy;
 mod web_locks;
 mod media_devices;
+mod media_stream;
 pub mod pressure;
 mod credentials;
 mod webauthn;
@@ -179,6 +180,7 @@ pub use event::{EventCore, EventData, EventInterface};
 pub fn dispatch_trusted_event(s: &Scope<'_>, receiver: Value<'_>, event: Value<'_>) -> JsResult<()> {
     cookie_store::events::dispatch_trusted(s, receiver, event)
 }
+pub use media_devices::set_fake_devices as set_fake_media_devices;
 pub use fetch::{FetchLimits, RequestContext};
 pub use file_reader::FileReaderLimits;
 pub use scheduler::with_idle_scheduling_state;

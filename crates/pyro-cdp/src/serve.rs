@@ -103,6 +103,11 @@ options:
                                         drop-in turns it off, as Playwright's Chromium
                                         runs without it. Default: on;
                                         env PYRO_NAVIGATION_RATE_LIMIT=on|off
+  --use-fake-device-for-media-stream    offer a synthetic camera (a moving test pattern) and
+                                        microphone (a beep) to getUserMedia(), as Chrome's
+                                        switch of the same name does; without it getUserMedia()
+                                        rejects NotFoundError, as on a machine without devices.
+                                        Default: off; env PYRO_FAKE_MEDIA_DEVICES=1
   --text-antialiasing <on|off>          off: screenshots draw text aliased, each pixel
                                         painted fully or not at all, as Chrome draws it
                                         when WPT's runner starts it without font
@@ -283,6 +288,9 @@ pub struct ServeOptions {
     /// text of screenshots aliased, as Chrome under WPT's runner
     /// (`pyro_render::set_text_antialiasing`). On by default.
     pub text_antialiasing: bool,
+    /// `--use-fake-device-for-media-stream` (or `PYRO_FAKE_MEDIA_DEVICES=1`): the fake camera and microphone
+    /// (`pyro_webapi::set_fake_media_devices`). Off by default.
+    pub fake_media_devices: bool,
     /// `--scrollbars` (or `PYRO_SCROLLBARS`): `classic` scrollbars take layout space, as
     /// Chrome's on Linux (wpt.fyi's runs); `overlay` (the default) take none
     /// (`pyro_render::set_classic_scrollbars`).
@@ -424,6 +432,7 @@ impl Default for ServeOptions {
                 .ok()
                 .and_then(|v| parse_switch(TEXT_ANTIALIASING_ENV, &v).ok())
                 .unwrap_or(true),
+            fake_media_devices: std::env::var("PYRO_FAKE_MEDIA_DEVICES").is_ok_and(|v| v.trim() == "1"),
             classic_scrollbars: std::env::var(SCROLLBARS_ENV)
                 .ok()
                 .and_then(|v| parse_scrollbars(SCROLLBARS_ENV, &v).ok())
@@ -565,6 +574,7 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             },
             "--bytecode-cache" => o.bytecode_cache = Some(PathBuf::from(value()?)),
             "--fork" => o.fork = true,
+            "--use-fake-device-for-media-stream" => o.fake_media_devices = true,
             "--spare-engine" => o.spare_engine = Some(parse_switch("--spare-engine", &value()?)?),
             "--engine-reuse" => o.engine_reuse = EngineReuse::parse("--engine-reuse", &value()?)?,
             "--render-prewarm" => o.render_prewarm = Some(parse_switch("--render-prewarm", &value()?)?),
@@ -663,6 +673,8 @@ pub fn serve_main(args: &[String]) -> ExitCode {
         }
     };
     pyro_browser::set_navigation_rate_limit(options.navigation_rate_limit);
+    // Before any page exists, in the template process too: its forks keep it.
+    pyro_webapi::set_fake_media_devices(options.fake_media_devices);
     // Before any renderer exists, in the template process too (it gets the
     // same arguments): every renderer takes the default when it is made.
     #[cfg(feature = "render")]

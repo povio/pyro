@@ -110,6 +110,8 @@ struct MediaState {
     clock: Option<(f64, f64)>,
     duration: f64,
     video: (u32, u32),
+    /// The resource has an audio track (`captureStream()` makes a track for it).
+    audio: bool,
     seeking: bool,
     seek_serial: u32,
     volume: f64,
@@ -199,6 +201,7 @@ impl Default for MediaState {
             clock: None,
             duration: f64::NAN,
             video: (0, 0),
+            audio: false,
             seeking: false,
             seek_serial: 0,
             volume: 1.0,
@@ -1357,6 +1360,7 @@ fn media_ready(page: &Rc<PageDom>, node: NodeId, generation: u32, info: MediaInf
     with(page, node, |st| {
         st.duration = info.duration;
         st.video = size;
+        st.audio = info.audio;
         st.ready = HAVE_METADATA;
         st.position = 0.0;
     });
@@ -1710,6 +1714,20 @@ pub(crate) fn mse_time_ranges<'s>(s: &Scope<'s>, flat: Value<'s>) -> JsResult<Va
     MODULE.helper(s, &crate::target::page_of(s)?, "timeRanges", &[flat])
 }
 
+/// What `captureStream()` (media_stream.js) can capture from a media element now: bit 0 an audio
+/// track, bit 1 a video track, bit 2 the metadata is loaded.
+pub(crate) fn capture_kinds<'s>(s: &Scope<'s>, element: Value<'s>) -> JsResult<Value<'s>> {
+    let n = s.unwrap::<crate::node::Node>(element).ok_or_else(|| JsError::Type("The provided value is not of type 'HTMLMediaElement'.".into()))?;
+    let kinds = peek(n.page(), n.id, |st| {
+        if st.ready < HAVE_METADATA {
+            return 0u32;
+        }
+        let video = st.video != (0, 0);
+        4 | u32::from(st.audio) | (u32::from(video) << 1)
+    });
+    Ok(s.number(f64::from(kinds)))
+}
+
 fn time_ranges<'s>(s: &Scope<'s>, n: &NodeData, ranges: &[(f64, f64)]) -> JsResult<Value<'s>> {
     let flat: Vec<Value<'s>> = ranges.iter().flat_map(|&(a, b)| [s.number(a), s.number(b)]).collect();
     let list = s.array(&flat)?;
@@ -1929,6 +1947,11 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
             Ok(())
         },
     );
+    // Media Capture from DOM Elements: a MediaStream whose tracks follow what the element plays.
+    def.method("captureStream", 0, |s, n, _a| {
+        let wrapper = node_value(s, n.page(), Some(n.id))?;
+        crate::media_stream::stream_helper(s, n.page(), "captureElement", &[wrapper])
+    });
     def.method("load", 0, |s, n, _a| {
         let page = page_rc(n);
         flush(&page, &Rc::downgrade(&page));

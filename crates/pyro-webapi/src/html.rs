@@ -3782,6 +3782,11 @@ simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
         let kind = arg_string(&a, 0, "HTMLCanvasElement.getContext")?;
         crate::canvas::get_context(s, n.page(), n.id, &kind, a.get(1))
     });
+    // Media Capture from DOM Elements: a MediaStream with one video track following the canvas.
+    def.method("captureStream", 0, |s, n, a| {
+        let wrapper = node_value(s, n.page(), Some(n.id))?;
+        crate::media_stream::stream_helper(s, n.page(), "captureCanvas", &[wrapper, a.get(0)])
+    });
     def.method("toDataURL", 0, |s, n, a| crate::canvas::to_data_url(s, n.page(), n.id, a));
     def.method("toBlob", 1, |s, n, a| crate::canvas::to_blob(s, n.page(), n.id, a));
     def.method("transferControlToOffscreen", 0, |s, n, _a| {

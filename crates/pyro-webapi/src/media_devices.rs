@@ -1,8 +1,12 @@
 //! `navigator.mediaDevices` (`MediaDevices`, Media Capture and Streams): made in JS
 //! (media_devices.js). pyro has no capture device, so `enumerateDevices()` lists none and
-//! `getUserMedia()` rejects with NotFoundError. `[SecureContext]` (`crate::secure_context`).
+//! `getUserMedia()` rejects with NotFoundError, as Chrome does on a machine without devices, unless
+//! the embedder asked for the fake devices (`pyro serve --use-fake-device-for-media-stream`, Chrome's
+//! switch of the same name): then a synthetic camera and microphone exist (media_stream.js) whose frames
+//! and samples are computed, never a real capture. `[SecureContext]` (`crate::secure_context`).
 
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use pyro_js::{JsError, JsResult, Object, Scope, Value};
 
@@ -16,17 +20,29 @@ pub(crate) static MODULE: LazyModule = LazyModule {
     natives: Some(natives),
 };
 
+static FAKE_DEVICES: AtomicBool = AtomicBool::new(false);
+
+/// Embedder option: offer the fake camera and microphone (default off). Set before any page exists.
+pub fn set_fake_devices(on: bool) {
+    FAKE_DEVICES.store(on, Ordering::Relaxed);
+}
+
+pub(crate) fn fake_devices() -> bool {
+    FAKE_DEVICES.load(Ordering::Relaxed)
+}
+
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let native = s.object();
     let active = s.function("active", |s, _, _| Ok(s.boolean(crate::target::page_of(s)?.is_fully_active())))?;
     native.set_atom("active", active.value())?;
-    // policy(feature): whether the document's permissions policy lets it use `feature` (`camera`,
-    // `microphone`); a refusal is also reported (`crate::permissions_policy::check_feature`).
-    let policy = s.function("policy", |s, _, args| {
+    // The media stream module's helpers (getUserMedia, the device list, ...), called as `stream(name, ...args)`.
+    let stream = s.function("stream", |s, _, a| {
         let page = crate::target::page_of(s)?;
-        Ok(s.boolean(crate::permissions_policy::check_feature(s, &page, &args.get(0).to_string()?)))
+        let name = a.get(0).to_string()?;
+        let rest: Vec<Value<'_>> = (1..a.len()).map(|i| a.get(i)).collect();
+        crate::media_stream::stream_helper(s, &page, &name, &rest)
     })?;
-    native.set_atom("policy", policy.value())?;
+    native.set_atom("stream", stream.value())?;
     Ok(native)
 }
 
@@ -36,6 +52,7 @@ where
     W: pyro_js::JsClass,
     W::Data: crate::window::WindowHost,
 {
+    // `MediaDeviceInfo` and `InputDeviceInfo` are made by media_stream.js (they share its device model).
     def.global_value_accessor(
         "MediaDevices",
         |s, w| {
@@ -47,6 +64,27 @@ where
         },
         |s, w, value| crate::lazy_module::replace(s, crate::window::WindowHost::page(w), "MediaDevices", value),
     );
+    def.global_value_accessor(
+        "MediaDeviceInfo",
+        |s, w| device_info_global(s, w, "MediaDeviceInfo"),
+        |s, w, value| crate::lazy_module::replace(s, crate::window::WindowHost::page(w), "MediaDeviceInfo", value),
+    );
+    def.global_value_accessor(
+        "InputDeviceInfo",
+        |s, w| device_info_global(s, w, "InputDeviceInfo"),
+        |s, w, value| crate::lazy_module::replace(s, crate::window::WindowHost::page(w), "InputDeviceInfo", value),
+    );
+}
+
+/// `MediaDeviceInfo` or `InputDeviceInfo` of media_stream.js (`[SecureContext]`).
+fn device_info_global<'s, D: crate::window::WindowHost>(s: &Scope<'s>, w: &D, name: &str) -> JsResult<Value<'s>> {
+    let page = crate::window::WindowHost::page(w);
+    if !crate::secure_context::secure(s, page) {
+        return Ok(s.undefined());
+    }
+    let value = crate::media_stream::MODULE.module(s, page)?.get(name)?;
+    crate::lazy_module::replace(s, page, name, value)?;
+    Ok(value)
 }
 
 /// `navigator.mediaDevices`: the realm's `MediaDevices` in a secure context.
