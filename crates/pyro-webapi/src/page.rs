@@ -559,6 +559,10 @@ pub struct PageDom {
     frame_resize_queued: Cell<bool>,
     frame_resize_next: Cell<Option<std::time::Instant>>,
     frame_resize_wake: Cell<bool>,
+    /// pyro: the classic scrollbar gutters (horizontal and vertical totals, CSS px) the visual
+    /// viewport's size was last read with, and whether they changed since its `resize` fired.
+    visual_gutters: Cell<(f64, f64)>,
+    visual_resize_due: Cell<bool>,
     /// The emulated viewport is `mobile` (a top document): the layout
     /// follows the document's viewport `<meta>` ([`PageDom::layout`]), the
     /// Dom's viewport-`<meta>` version it last took, and the viewport metrics
@@ -1038,6 +1042,8 @@ impl PageDom {
             frame_resize_queued: Cell::new(false),
             frame_resize_next: Cell::new(None),
             frame_resize_wake: Cell::new(false),
+            visual_gutters: Cell::new((0.0, 0.0)),
+            visual_resize_due: Cell::new(false),
             mobile: Cell::new(false),
             viewport_meta_seen: Cell::new(None),
             meta_resize_from: Cell::new(None),
@@ -2195,6 +2201,42 @@ impl PageDom {
                     page.fire_viewport_meta_resize();
                 }
             }));
+        }
+    }
+
+    /// pyro: lays the document out and notes whether the viewport's classic scrollbars appeared,
+    /// vanished or changed size since the last note: the visual viewport is the layout viewport
+    /// less them, so its `resize` is due (Chromium fires it when layout changes the scrollbars;
+    /// WPT visual-viewport `viewport-scrollbars-cause-resize`). Under mobile emulation the viewport
+    /// `<meta>` steps own the visual viewport's resizes.
+    pub(crate) fn note_visual_viewport(&self) {
+        if self.mobile.get() {
+            return;
+        }
+        let Some(layout) = self.try_layout() else { return };
+        let Ok(dom) = self.dom.try_borrow() else { return };
+        layout.synced_geometry_source(&dom);
+        let now = layout.viewport_gutter_totals();
+        if self.visual_gutters.replace(now) != now {
+            self.visual_resize_due.set(true);
+        }
+    }
+
+    /// pyro: the resize steps of a rendering update for the visual viewport: its `resize` when its
+    /// scrollbars changed ([`PageDom::note_visual_viewport`]). Nothing for a page that never
+    /// used `visualViewport`.
+    pub fn fire_visual_viewport_resize(self: &Rc<Self>) {
+        if self.is_disposed() || self.mobile.get() || self.viewport_targets(crate::window::ViewportTarget::VisualViewport).is_empty() {
+            return;
+        }
+        self.note_visual_viewport();
+        if !self.visual_resize_due.replace(false) {
+            return;
+        }
+        for target in self.viewport_targets(crate::window::ViewportTarget::VisualViewport) {
+            let event =
+                crate::event::EventCore::trusted(self, crate::event::EventInterface::Event, "resize", false, false);
+            crate::target::fire(self, target, &event);
         }
     }
 

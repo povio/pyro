@@ -822,6 +822,8 @@ fn window_size(p: &PageDom) -> (u32, u32) {
 /// `visualViewport`'s width, height and scale (see [`VisualViewport`]).
 fn visual_viewport(p: &PageDom) -> (f64, f64, f64) {
     p.sync_mobile_layout();
+    // The size excludes classic scrollbars: laid out first, noting a change for `resize`.
+    p.note_visual_viewport();
     p.layout().visual_viewport()
 }
 

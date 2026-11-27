@@ -492,6 +492,8 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
+    // The resize steps for the visual viewport (its classic scrollbars changed).
+    page.fire_visual_viewport_resize();
     if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
         layout.snap_initial_positions(&dom);
     }

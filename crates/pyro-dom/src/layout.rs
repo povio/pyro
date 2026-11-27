@@ -1014,7 +1014,21 @@ impl Layout {
     pub fn visual_viewport(&self) -> (f64, f64, f64) {
         match self.mobile_metrics() {
             Some(m) => (m.visual.0, m.visual.1, m.scale),
-            None => (self.viewport().width as f64, self.viewport().height as f64, 1.0),
+            None => {
+                // Chrome: the layout viewport less its classic scrollbars (`documentElement.clientWidth`
+                // and `clientHeight`; `innerWidth` includes them), as of the last sync.
+                let (horizontal, vertical) = self.viewport_gutter_totals();
+                ((self.viewport().width as f64 - horizontal).max(0.0), (self.viewport().height as f64 - vertical).max(0.0), 1.0)
+            }
+        }
+    }
+
+    /// The space the viewport's classic scrollbars take as of the last sync: left plus right and
+    /// top plus bottom gutters (CSS px); zero without them.
+    pub fn viewport_gutter_totals(&self) -> (f64, f64) {
+        match self.external.as_ref().filter(|s| s.active()).and_then(|s| s.viewport_gutters()) {
+            Some([left, top, right, bottom]) => (left + right, top + bottom),
+            None => (0.0, 0.0),
         }
     }
 
