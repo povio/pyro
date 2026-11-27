@@ -125,6 +125,7 @@
   handlerAttributes(NavigationHistoryEntry, ['dispose'], (o) => entryData.get(o));
   tag(NavigationHistoryEntry, 'NavigationHistoryEntry');
 
+  const removedEntries = [];
   const snapshot = () => {
     const raw = native.entries();
     const rows = [];
@@ -133,7 +134,13 @@
       rows.push({ key: r[0], id: r[1], url: r[2], same: r[3], state: r[4] });
     }
     const ids = new Set(rows.map((r) => r.id));
-    for (const id of ArrayFromKeys(entryObjects)) if (!ids.has(id)) entryObjects.delete(id);
+    // An entry that left the list is disposed: its `dispose` event is fired by `flushDisposals`.
+    for (const id of ArrayFromKeys(entryObjects)) {
+      if (!ids.has(id)) {
+        removedEntries.push(entryObjects.get(id));
+        entryObjects.delete(id);
+      }
+    }
     const list = rows.map((row) => {
       let o = entryObjects.get(row.id);
       if (o === undefined) {
@@ -149,6 +156,12 @@
   const current = () => {
     const { index, list } = snapshot();
     return index >= 0 ? list[index] : null;
+  };
+  // HTML "update the navigation API entries for a same-document navigation": the entries a push, a
+  // replace or a traversal removed are disposed after `currententrychange`.
+  const flushDisposals = () => {
+    snapshot();
+    while (removedEntries.length > 0) dispatch(removedEntries.shift(), new EventC('dispose'));
   };
 
   // ----- destination, events, transition -----------------------------------
@@ -570,7 +583,8 @@
   };
 
   const fireNavigate = (type, url, hashChange, cancelable, canIntercept, key, result, info, state, formData, sourceElement, userInitiated, sameDocument) => {
-    if (ongoing !== null) fail(ongoing, abortError('The navigation was aborted by a new navigation.'));
+    // A `navigateerror` listener may start a navigation of its own, which this one aborts in turn.
+    while (ongoing !== null) fail(ongoing, abortError('The navigation was aborted by a new navigation.'));
     const from = current();
     let destination;
     if (type === 'traverse') {
@@ -643,9 +657,10 @@
     const entry = current();
     const from = o !== null && o.from !== null ? o.from : lastEntry;
     lastEntry = entry;
-    if (type !== 'reload' && from !== null) {
+    if (from !== null) {
       dispatch(navigation, new NavigationCurrentEntryChangeEvent('currententrychange', { navigationType: type, from }));
     }
+    flushDisposals();
     if (o === null) return;
     if (o.result !== null) o.result.committed.resolve(entry);
     if (o.handlers.length > 0) {
@@ -758,6 +773,9 @@
     if (!native.active()) return rejectedResult(invalidState('The document is not fully active.'));
     if (native.inUnload()) return unloading('traverseTo');
     // HTML: only an entry of `entries()` can be traversed to.
+    // A traversal to the entry already being traversed to is that traversal.
+    const repeated = pendingTraversals.find((p) => p.key === key);
+    if (repeated !== undefined) return apiResult(repeated.result);
     const answer = snapshot().list.some((e) => entryData.get(e).row.key === key) ? native.traverse(key) : 'missing';
     if (answer === 'missing') {
       return rejectedResult(invalidState("Failed to execute 'traverseTo' on 'Navigation': Invalid key"));
