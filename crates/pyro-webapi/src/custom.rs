@@ -477,28 +477,44 @@ pub(crate) fn run_reactions(page: &Rc<PageDom>) {
     }
 }
 
+/// The batch a running reaction loop still has to run, innermost last: a callback's own DOM calls
+/// run their reactions nested in it ([CEReactions]), and an element they touch must first run what
+/// the outer batches still hold for it (the element's own reaction queue is in order).
+struct Frame {
+    page: Rc<PageDom>,
+    items: std::collections::VecDeque<(NodeId, CustomReaction)>,
+}
+
+thread_local! {
+    static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
+}
+
 fn run_document_reactions(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
     let pending = page.dom.try_borrow().is_ok_and(|dom| dom.has_custom_reactions_for(page.document()));
-    if !pending || RUNNING.with(|r| r.borrow().contains(&page.id())) {
+    if !pending {
         return;
     }
-    RUNNING.with(|r| r.borrow_mut().push(page.id()));
+    // A call a callback makes comes back here with the page already running: its reactions run
+    // now, nested in the callback, as HTML's reactions stack does (`RUNNING` then holds the page
+    // once per level).
     struct Done(u64);
     impl Drop for Done {
         fn drop(&mut self) {
-            RUNNING.with(|r| r.borrow_mut().retain(|&id| id != self.0));
+            RUNNING.with(|r| {
+                let mut r = r.borrow_mut();
+                if let Some(i) = r.iter().rposition(|&id| id == self.0) {
+                    r.remove(i);
+                }
+            });
         }
     }
+    RUNNING.with(|r| r.borrow_mut().push(page.id()));
     let _done = Done(page.id());
-    // HTML runs the reactions a callback's DOM calls queue nested in that
-    // callback ([CEReactions]); here they run after it, in the next batch, so
-    // the batch count is how deep they would nest. A callback that inserts an
-    // element whose callback inserts another nests without end; as in a
-    // browser it ends with a stack overflow, here at a fixed depth.
-    let mut depth = 0;
+    // A callback that inserts an element whose callback inserts another nests without end; as in
+    // a browser it ends with a stack overflow, here at a fixed depth.
     loop {
         let batch = {
             let Ok(mut dom) = page.dom.try_borrow_mut() else { return };
@@ -507,15 +523,67 @@ fn run_document_reactions(page: &Rc<PageDom>) {
         if batch.is_empty() {
             return;
         }
-        let overflow = depth >= MAX_REACTION_NESTING;
-        depth += 1;
-        for (el, reaction) in batch {
+        let below = FRAMES.with(|f| f.borrow().len());
+        let overflow = below >= MAX_REACTION_NESTING;
+        FRAMES.with(|f| f.borrow_mut().push(Frame { page: page.clone(), items: batch.into() }));
+        struct Pop(usize);
+        impl Drop for Pop {
+            fn drop(&mut self) {
+                FRAMES.with(|f| f.borrow_mut().truncate(self.0));
+            }
+        }
+        let _pop = Pop(below);
+        loop {
+            let next = FRAMES.with(|f| f.borrow_mut().get_mut(below).and_then(|frame| frame.items.pop_front()));
+            let Some((el, reaction)) = next else { break };
             if page.is_disposed() {
                 return;
+            }
+            // The outer batches' reactions of this element are older than this one: they run
+            // first, but only when this reaction calls something (a missing callback queues
+            // nothing, HTML "enqueue a custom element callback reaction").
+            if below > 0 && reaction_has_callback(page, el, &reaction) {
+                let older: Vec<(Rc<PageDom>, CustomReaction)> = FRAMES.with(|f| {
+                    let mut f = f.borrow_mut();
+                    let mut older = Vec::new();
+                    for frame in f[..below].iter_mut() {
+                        let mut rest = std::collections::VecDeque::new();
+                        for (e, r) in frame.items.drain(..) {
+                            if e == el { older.push((frame.page.clone(), r)) } else { rest.push_back((e, r)) }
+                        }
+                        frame.items = rest;
+                    }
+                    older
+                });
+                for (owner, r) in older {
+                    run_reaction(&owner, el, r, false);
+                }
             }
             run_reaction(page, el, reaction, overflow);
         }
     }
+}
+
+/// Whether running `reaction` on `el` would call a callback (the definition has it, and for an
+/// attribute change observes the attribute).
+fn reaction_has_callback(page: &Rc<PageDom>, el: NodeId, reaction: &CustomReaction) -> bool {
+    let Some((local, is)) = element_names(page, el) else { return false };
+    let Some((owner, key)) = element_definition(page, el) else { return false };
+    let Some(name) = with_registry(&owner, |r| r.def_key(key, &local, is.as_ref())) else { return false };
+    with_registry(&owner, |r| {
+        let Some(d) = r.defs.get(&(key, name.clone())) else { return false };
+        let c = &d.callbacks;
+        match reaction {
+            CustomReaction::Connected => c.connected.is_some(),
+            CustomReaction::Disconnected => c.disconnected.is_some(),
+            CustomReaction::Moved => c.connected_move.is_some() || c.disconnected.is_some() || c.connected.is_some(),
+            CustomReaction::Adopted { .. } => c.adopted.is_some(),
+            CustomReaction::AttributeChanged(change) => d.observed.contains(&change.local) && c.attribute_changed.is_some(),
+            CustomReaction::FormAssociated(_) => c.form_associated.is_some(),
+            CustomReaction::FormReset => c.form_reset.is_some(),
+            CustomReaction::FormDisabled(_) => c.form_disabled.is_some(),
+        }
+    })
 }
 
 /// How deep reactions nest (see [`run_reactions`]) before a callback throws
@@ -578,7 +646,8 @@ fn run_reaction(page: &Rc<PageDom>, el: NodeId, reaction: CustomReaction, overfl
             s.report_exception(&JsError::Range("Maximum call stack size exceeded.".into()));
             continue;
         }
-        if let Err(e) = f.call(Some(obj), &args) {
+        // The callback's own DOM calls run their reactions before they return to it.
+        if let Err(e) = realm.reenter_native_callback_hook(|| f.call(Some(obj), &args)) {
             s.report_exception(&e);
         }
     }
