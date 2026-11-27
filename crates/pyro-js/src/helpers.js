@@ -74,6 +74,7 @@
   const isView = ArrayBuffer.isView;
   // Remote-object previews and internal properties (CDP Runtime).
   const jsonStringify = JSON.stringify;
+  const jsonParse = JSON.parse;
   const objectIs = O.is;
   const symbolToString = Symbol.prototype.toString;
   const mapEntries = MapC.prototype.entries, setValues = SetC.prototype.values;
@@ -1032,6 +1033,19 @@
         preventExtensions() { return false; },
       });
       return proxy;
+    },
+    // The SyntaxError `JSON.parse(text)` throws for a JSON module's text, located at the module
+    // (`sourceURL`: where HTML "report an exception" takes the filename from), or undefined.
+    jsonModuleError(text, url) {
+      try {
+        jsonParse(text);
+      } catch (e) {
+        if (e !== null && typeof e === 'object') {
+          try { defineProperty(e, 'sourceURL', { value: url, configurable: true, writable: true }); } catch (_) {}
+        }
+        return e;
+      }
+      return undefined;
     },
     noteModuleEvaluationError(value) {
       if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return;

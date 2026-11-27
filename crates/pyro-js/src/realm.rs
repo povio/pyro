@@ -298,6 +298,19 @@ impl ModuleRequest {
     /// `default` export is `JSON.parse(text)`, and text that is not JSON
     /// fails the import with a SyntaxError.
     pub fn resolve_json(self, scope: &Scope<'_>, text: &str) -> JsResult<()> {
+        // HTML "creating a JSON module script": text that does not parse is the script's parse
+        // error, located at the module (its own URL, not the importer's, is the report's filename).
+        let parse_error = scope
+            .realm
+            .cached_helper(scope, "jsonModuleError")
+            .and_then(|f| f.call(None, &[scope.string(text), scope.string(&self.url)]))
+            .ok()
+            .filter(|e| !e.is_undefined());
+        if let Some(error) = parse_error {
+            let mut this = self;
+            this.done = true;
+            return this.reject.get(scope).as_object().expect("reject fn").call(None, &[error]).map(|_| ());
+        }
         self.resolve_source(scope, text, sys::modules::MODULE_TYPE_JSON)
     }
 
