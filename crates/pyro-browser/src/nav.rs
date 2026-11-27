@@ -2539,15 +2539,26 @@ impl JsClass for PerformanceNavigation {
     type Parent = NoParent;
 
     fn define(def: &mut ClassDef<Self>) {
+        // NavigationTimingType constants, on the interface object and the prototype.
+        def.constant("TYPE_NAVIGATE", 0.0);
+        def.constant("TYPE_RELOAD", 1.0);
+        def.constant("TYPE_BACK_FORWARD", 2.0);
+        def.constant("TYPE_RESERVED", 255.0);
         def.getter("type", |s, n| Ok(s.number(legacy_navigation_type(n))));
-        def.getter("redirectCount", |s, _n| Ok(s.number(0.0)));
+        def.getter("redirectCount", |s, n| Ok(s.number(legacy_redirect_count(n))));
         def.method("toJSON", 0, |s, n, _a| {
             let o = s.object();
             o.set("type", s.number(legacy_navigation_type(n)))?;
-            o.set("redirectCount", s.number(0.0))?;
+            o.set("redirectCount", s.number(legacy_redirect_count(n)))?;
             Ok(o.value())
         });
     }
+}
+
+/// `performance.navigation.redirectCount`: the same-origin redirects the document's
+/// fetch followed (the fetch timing already hides redirects through other origins).
+fn legacy_redirect_count(n: &PageNav) -> f64 {
+    n.fetch_timing.borrow().as_ref().map_or(0.0, |f| f64::from(f.redirect_count))
 }
 
 fn legacy_navigation_type(n: &PageNav) -> f64 {
