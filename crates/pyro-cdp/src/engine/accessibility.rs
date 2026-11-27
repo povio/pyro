@@ -25,7 +25,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::dom::NodeParams;
-use super::driver::{ax_name_in, aria_true, attr, id_refs, implicit_role, labels, local, normalize, role_of, text_of};
+use super::driver::{ax_name_in, aria_attr, aria_true, attr, id_refs, implicit_role, labels, local, normalize, role_of, text_of};
 use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
 use crate::target::PageCommand;
@@ -279,8 +279,8 @@ fn known_role(token: &str) -> bool {
 
 /// `aria-label` with text or an `aria-labelledby`: what makes a `region` or `form` a landmark.
 fn has_aria_name(dom: &Dom, el: NodeId) -> bool {
-    attr(dom, el, "aria-label").is_some_and(|l| !l.trim().is_empty())
-        || attr(dom, el, "aria-labelledby").is_some_and(|l| !l.trim().is_empty())
+    aria_attr(dom, el, "aria-label").is_some_and(|l| !l.trim().is_empty())
+        || aria_attr(dom, el, "aria-labelledby").is_some_and(|l| !l.trim().is_empty())
 }
 
 /// A global ARIA attribute, which keeps `role=none`/`presentation` from removing the element's native role
@@ -310,7 +310,7 @@ fn has_global_aria_attr(dom: &Dom, el: NodeId) -> bool {
         "aria-relevant",
         "aria-roledescription",
     ];
-    GLOBAL.iter().any(|a| attr(dom, el, a).is_some())
+    GLOBAL.iter().any(|a| aria_attr(dom, el, a).is_some())
 }
 
 fn boolean(v: bool) -> Prop {
@@ -723,7 +723,7 @@ impl<'a> Builder<'a> {
         let dom = self.dom;
         // The first token naming a role Chromium knows, whatever its case (the rest are fallbacks); `region` and
         // `form` only count with a name. An element whose tokens are all unknown has its native role.
-        let tokens = attr(dom, el, "role").map(|r| r.split_ascii_whitespace().map(str::to_ascii_lowercase).collect::<Vec<_>>());
+        let tokens = aria_attr(dom, el, "role").map(|r| r.split_ascii_whitespace().map(str::to_ascii_lowercase).collect::<Vec<_>>());
         let explicit = tokens.as_ref().and_then(|t| {
             t.iter().find(|t| known_role(t) && (!matches!(t.as_str(), "region" | "form") || has_aria_name(dom, el))).cloned()
         });
@@ -787,7 +787,8 @@ impl<'a> Builder<'a> {
         if self.is_svg_root(el) {
             return node("image");
         }
-        let native = if native_only { implicit_role(dom, el) } else { role_of(dom, el) };
+        // HTML-AAM: an element with the `popover` attribute and no other role is a `group` (as in `role_of`).
+        let native = if native_only { implicit_role(dom, el).or_else(|| attr(dom, el, "popover").map(|_| "group".to_owned())) } else { role_of(dom, el) };
         match native.as_deref() {
             Some("presentation" | "none") => Class::Flatten,
             Some("img") => node("image"),
@@ -918,12 +919,12 @@ impl<'a> Builder<'a> {
             "LineBreak" => "\n".into(),
             // Options of a `<select>` have no box; name them from their label
             // or text as Chromium does.
-            "option" if self.focusable(el, tag) || dom.is_disabled(el).unwrap_or(false) => attr(dom, el, "aria-label")
+            "option" if self.focusable(el, tag) || dom.is_disabled(el).unwrap_or(false) => aria_attr(dom, el, "aria-label")
                 .or_else(|| attr(dom, el, "label"))
                 .map(normalize)
                 .filter(|l| !l.is_empty())
                 .unwrap_or_else(|| normalize(&text_of(dom, el))),
-            "group" if tag == Some("optgroup") && attr(dom, el, "aria-label").is_none() => {
+            "group" if tag == Some("optgroup") && aria_attr(dom, el, "aria-label").is_none() => {
                 attr(dom, el, "label").map(normalize).unwrap_or_default()
             }
             // Chromium names these only from aria-label/labelledby: rows not
@@ -931,8 +932,8 @@ impl<'a> Builder<'a> {
             // their caption.
             // Their `title` still names them, though (a figure, or a `<section>` without a role).
             "row" | "generic" | "figure"
-                if attr(dom, el, "aria-label").is_none()
-                    && attr(dom, el, "aria-labelledby").is_none()
+                if aria_attr(dom, el, "aria-label").is_none()
+                    && aria_attr(dom, el, "aria-labelledby").is_none()
                     && !(attr(dom, el, "title").is_some() && matches!(tag, Some("figure" | "section"))) =>
             {
                 String::new()

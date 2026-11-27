@@ -128,6 +128,14 @@ const ARIA: &[&str] = &[
     "ariaValueText",
 ];
 
+/// The content attribute an ARIAMixin property reflects: `role`, `ariaLabel` -> `aria-label`.
+fn aria_attribute(property: &str) -> String {
+    match property.strip_prefix("aria") {
+        Some(rest) => format!("aria-{}", rest.to_ascii_lowercase()),
+        None => property.to_owned(),
+    }
+}
+
 macro_rules! aria_accessors {
     ($def:expr, $($i:literal),*) => {
         $(
@@ -139,6 +147,8 @@ macro_rules! aria_accessors {
                 },
                 |_s, d, v| {
                     let value = opt_dom_string(v)?;
+                    // The default semantics the accessibility tree reads (as the content attribute would).
+                    d.page().dom.borrow_mut().set_default_aria(d.id(), &aria_attribute(ARIA[$i]), value.as_deref()).js()?;
                     let mut aria = d.aria.borrow_mut();
                     aria.retain(|(k, _)| *k != ARIA[$i]);
                     if let Some(v) = value {

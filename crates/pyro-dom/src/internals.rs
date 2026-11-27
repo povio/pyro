@@ -34,6 +34,9 @@ struct ElementInternalsData {
     /// `CustomStateSet`, in insertion order.
     states: Vec<Atom>,
     face: Option<FaceState>,
+    /// The default ARIA semantics set through `ElementInternals` (`role`, `aria-label`, ...), by
+    /// content attribute name: what the element has when it has no such attribute.
+    aria: Vec<(Box<str>, Box<str>)>,
 }
 
 /// A form-associated custom element's form state.
@@ -61,6 +64,23 @@ impl Dom {
             return Err(DomError::Type("not an element"));
         }
         Ok((i, self.internals.map.entry(i).or_default()))
+    }
+
+    /// `ElementInternals`' ARIAMixin setters: the default `role` / `aria-*` value of `el` (`name` is
+    /// the content attribute name, `None` removes it).
+    pub fn set_default_aria(&mut self, el: NodeId, name: &str, value: Option<&str>) -> DomResult<()> {
+        let (_, data) = self.internals_entry(el)?;
+        data.aria.retain(|(k, _)| &**k != name);
+        if let Some(value) = value {
+            data.aria.push((name.into(), value.into()));
+        }
+        Ok(())
+    }
+
+    /// The default ARIA value `ElementInternals` set for the content attribute `name`.
+    pub fn default_aria(&self, el: NodeId, name: &str) -> Option<&str> {
+        let i = self.check(el).ok()?;
+        self.internals.map.get(&i)?.aria.iter().find(|(k, _)| &**k == name).map(|(_, v)| &**v)
     }
 
     /// The element was freed.

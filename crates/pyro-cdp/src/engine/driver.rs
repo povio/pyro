@@ -1987,6 +1987,12 @@ pub(super) fn attr<'d>(dom: &'d Dom, id: NodeId, name: &str) -> Option<&'d str> 
     dom.element(id).ok()?.attr(name)
 }
 
+/// An ARIA content attribute (`role`, `aria-*`), else the default semantics the element's
+/// `ElementInternals` set for it.
+pub(super) fn aria_attr<'d>(dom: &'d Dom, id: NodeId, name: &str) -> Option<&'d str> {
+    attr(dom, id, name).or_else(|| dom.default_aria(id, name))
+}
+
 /// A JavaScript value as JSON (`null` when it has no JSON form).
 fn json_of(v: pyro_js::Value<'_>) -> Value {
     v.to_json(0).ok().flatten().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or(Value::Null)
@@ -2002,7 +2008,7 @@ fn elements(dom: &Dom, root: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 
 /// `aria-*` boolean attribute: `true` case-insensitively.
 pub(super) fn aria_true(dom: &Dom, id: NodeId, name: &str) -> bool {
-    attr(dom, id, name).is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
+    aria_attr(dom, id, name).is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
 }
 
 /// `id` and then its ancestor elements, nearest first (the `closest` order).
@@ -2013,7 +2019,7 @@ fn self_and_ancestors(dom: &Dom, id: NodeId) -> impl Iterator<Item = NodeId> + '
 /// Playwright's `hasExplicitAccessibleName`: `<section>`/`<form>` are
 /// landmarks only with an aria name.
 fn has_explicit_name(dom: &Dom, id: NodeId) -> bool {
-    attr(dom, id, "aria-label").is_some() || attr(dom, id, "aria-labelledby").is_some()
+    aria_attr(dom, id, "aria-label").is_some() || aria_attr(dom, id, "aria-labelledby").is_some()
 }
 
 /// The elements an IDREF list names, in order, each once (Playwright's
@@ -2159,10 +2165,10 @@ fn has_global_aria(dom: &Dom, id: NodeId, role: &str) -> bool {
         "aria-owns",
         "aria-relevant",
     ];
-    ANY.iter().any(|a| attr(dom, id, a).is_some())
+    ANY.iter().any(|a| aria_attr(dom, id, a).is_some())
         || (!LABEL_PROHIBITED.contains(&role)
-            && (attr(dom, id, "aria-label").is_some() || attr(dom, id, "aria-labelledby").is_some()))
-        || (role != "generic" && attr(dom, id, "aria-roledescription").is_some())
+            && (aria_attr(dom, id, "aria-label").is_some() || aria_attr(dom, id, "aria-labelledby").is_some()))
+        || (role != "generic" && aria_attr(dom, id, "aria-roledescription").is_some())
 }
 
 /// JavaScript's `Number(s)` for an attribute value: whitespace trimmed, ""
@@ -2245,7 +2251,7 @@ fn pw_focusable(dom: &Dom, id: NodeId) -> bool {
 /// way to the implicit role on a focusable element or one with a global
 /// `aria-*` attribute (`hasPresentationConflictResolution`).
 pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
-    let explicit = attr(dom, id, "role").and_then(|r| r.split(' ').map(str::trim).find(|t| VALID_ROLES.contains(t)));
+    let explicit = aria_attr(dom, id, "role").and_then(|r| r.split(' ').map(str::trim).find(|t| VALID_ROLES.contains(t)));
     match explicit {
         Some(r @ ("none" | "presentation")) => {
             let implicit = implicit_role(dom, id);
@@ -2257,7 +2263,8 @@ pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
             }
         }
         Some(r) => Some(r.into()),
-        None => implicit_role(dom, id),
+        // HTML-AAM: an element with the `popover` attribute and no other role is a `group`.
+        None => implicit_role(dom, id).or_else(|| attr(dom, id, "popover").map(|_| "group".to_owned())),
     }
 }
 
@@ -2754,7 +2761,7 @@ impl Names<'_> {
         }
         // 2D: aria-label.
         // (A `<slot>` shows its content: Chromium takes no name from an `aria-label` on it.)
-        if let Some(label) = attr(dom, id, "aria-label").filter(|l| !self.blank(l) && !(self.chrome && tag == "slot")) {
+        if let Some(label) = aria_attr(dom, id, "aria-label").filter(|l| !self.blank(l) && !(self.chrome && tag == "slot")) {
             self.visited.borrow_mut().insert(id);
             return label.to_owned();
         }
