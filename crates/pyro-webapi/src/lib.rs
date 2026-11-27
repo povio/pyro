@@ -230,6 +230,7 @@ pub fn register(engine: &pyro_js::Engine) {
     mutation_observer::register(engine);
     intersection_observer::register(engine);
     crypto::register(engine);
+    highlights::register(engine);
     form_data::register(engine);
     dom_parser::register(engine);
     resize_observer::register(engine);

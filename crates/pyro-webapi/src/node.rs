@@ -1969,6 +1969,7 @@ impl JsClass for Document {
         });
         def.getter("styleSheets", crate::css::style_sheets);
         def.getter("timeline", |s, n| crate::animations::timeline(s, n.page()));
+        def.getter("fragmentDirective", |s, n| crate::highlights::fragment_directive(s, n.page()));
         def.method("getAnimations", 0, |s, n, _a| {
             let root = wrap_node(s, n.page(), n.id)?.value();
             crate::animations::root_animations(s, n.page(), root)

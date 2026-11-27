@@ -365,6 +365,8 @@ struct PopupOpen {
     features: pyro_webapi::window_features::WindowFeatures,
     referrer: Option<String>,
     referrer_policy: Option<pyro_net::ReferrerPolicy>,
+    /// The `window.open` ran with a user activation (URL text directives of its first load).
+    user_gesture: bool,
 }
 
 pub(crate) struct PageState {
@@ -1562,6 +1564,7 @@ impl Host for EngineHost {
         {
             if let Some(creation) = &creation {
                 self.thread.browser.configure_popup(id, opener_id, &creation.window_name, creation.features);
+                self.thread.browser.set_popup_user_gesture(id, creation.user_gesture);
             }
             self.thread.browser.adopt_popup(id, opener_id, ticket.clone());
         }

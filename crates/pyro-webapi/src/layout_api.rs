@@ -518,6 +518,8 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
     }
     // The resize steps for the visual viewport (its classic scrollbars changed).
     page.fire_visual_viewport_resize();
+    // HTML "update the rendering": the scroll to the load's fragment is tried again.
+    crate::highlights::try_fragment_scroll(page, false);
     if let (Ok(dom), Ok(mut layout)) = (page.dom.try_borrow(), page.layout.try_borrow_mut()) {
         layout.snap_initial_positions(&dom);
     }
@@ -800,6 +802,51 @@ pub fn scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) {
     scroll_to_fragment_or(page, fragment, false);
 }
 
+/// [`scroll_to_fragment`] of a document load, which tries again until it can: true when there is
+/// nothing more to do (the top of the document, or an element was scrolled to), false when no
+/// element is indicated (yet).
+pub fn try_scroll_to_fragment(page: &Rc<PageDom>, fragment: &str) -> bool {
+    let decoded = percent_encoding::percent_decode_str(fragment).decode_utf8_lossy();
+    if fragment.is_empty() || decoded.eq_ignore_ascii_case("top") {
+        return true;
+    }
+    scroll_to_fragment_or(page, fragment, false)
+}
+
+/// URL Fragment Text Directives "scroll a range into view": the element holding the text a
+/// directive matched (`node`, a text node) is centered in the viewport, as Chrome does, and so
+/// is each same-origin ancestor frame's element showing it (a cross-origin parent is not
+/// scrolled: it would learn where the text is).
+pub fn scroll_to_text_match(page: &Rc<PageDom>, node: NodeId) {
+    let el = {
+        let dom = page.dom.borrow();
+        if dom.node_type(node).ok() == Some(pyro_dom::NodeType::Element) { Some(node) } else { dom.parent_element(node).ok().flatten() }
+    };
+    let Some(el) = el else { return };
+    scroll_centered(page, el);
+    let mut current = page.clone();
+    while let Some(crate::page::FrameContainer::Frame(parent, owner)) = current.hooks().map(|h| h.container()) {
+        if parent.origin_key() != current.origin_key() {
+            break;
+        }
+        scroll_centered(&parent, owner);
+        current = parent;
+    }
+}
+
+/// `el` scrolled into the center of every scrolling box around it, the viewport included.
+fn scroll_centered(page: &Rc<PageDom>, el: NodeId) {
+    use pyro_dom::layout::ScrollAlign;
+    crate::animation_events::layout_flush(page, page.document());
+    perform_scroll(page, ScrollBehavior::Auto, &[], |dom, layout| {
+        layout
+            .scroll_into_view_aligned_script_targets(dom, el, ScrollAlign::Center, ScrollAlign::Center)
+            .iter()
+            .map(scroll_target_node)
+            .collect()
+    });
+}
+
 /// [`scroll_to_fragment`] that, with `top_if_missing`, also scrolls to the top of the document
 /// when no element is indicated (the Navigation API's "process scroll behavior", which Chrome
 /// does for a missing fragment as for an empty one).
@@ -807,7 +854,7 @@ pub fn scroll_to_fragment_or_top(page: &Rc<PageDom>, fragment: &str) {
     scroll_to_fragment_or(page, fragment, true);
 }
 
-fn scroll_to_fragment_or(page: &Rc<PageDom>, fragment: &str, top_if_missing: bool) {
+fn scroll_to_fragment_or(page: &Rc<PageDom>, fragment: &str, top_if_missing: bool) -> bool {
     use pyro_dom::layout::ScrollAlign;
     let doc = page.document();
     let decoded = percent_encoding::percent_decode_str(fragment).decode_utf8_lossy().into_owned();
@@ -864,13 +911,15 @@ fn scroll_to_fragment_or(page: &Rc<PageDom>, fragment: &str, top_if_missing: boo
                     crate::input::blur_element(page, focused);
                 }
             }
+            true
         }
         None if top_if_missing || fragment.is_empty() || decoded.eq_ignore_ascii_case("top") => {
             perform_scroll(page, ScrollBehavior::Auto, &[None], |dom, layout| {
                 layout.window_scroll_to(dom, Some(0), Some(0)).then_some(None).into_iter().collect()
             });
+            true
         }
-        None => {}
+        None => false,
     }
 }
 

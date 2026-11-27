@@ -798,7 +798,7 @@ impl EngineHost {
                     opener: page,
                     url,
                     opener_access: opener,
-                    handle: Some(std::rc::Rc::new(super::PopupOpen { window_name, ticket, features: window_features, referrer, referrer_policy })),
+                    handle: Some(std::rc::Rc::new(super::PopupOpen { window_name, ticket, features: window_features, referrer, referrer_policy, user_gesture })),
                 });
             }
             PageEvent::PopupCommand { popup, command } => {

@@ -1883,6 +1883,14 @@ impl Browser {
         self.sync_root(page);
     }
 
+    /// Whether the `window.open` that made popup `page` ran with a user activation (the popup's
+    /// first navigation then may invoke a URL text directive).
+    pub fn set_popup_user_gesture(&mut self, page: PageId, gesture: bool) {
+        if let Some(p) = self.page(page) {
+            p.nav.directive_gesture.set(Some(gesture));
+        }
+    }
+
     /// The page `page` opened as a popup with its opener kept, if any.
     pub fn popup_opener(&self, page: PageId) -> Option<PageId> {
         self.page(page)?.frames.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade).map(|h| h.page)

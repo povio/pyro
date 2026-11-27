@@ -187,7 +187,7 @@ fn parse_directives(directives: &str) -> Vec<TextDirective> {
 }
 
 /// The document's searchable text: whitespace collapsed, lowercased, each char with the text node
-/// and UTF-16 offset it came from (`None`: a block boundary, which no match crosses).
+/// and UTF-16 offset it came from (`None`: a block boundary, which no exact text crosses).
 struct Haystack {
     chars: Vec<char>,
     at: Vec<Option<(NodeId, u32, u32)>>,
@@ -201,12 +201,31 @@ const BLOCKS: &[&str] = &[
 ];
 const SKIPPED: &[&str] = &["head", "script", "style", "noscript", "template", "iframe", "textarea", "select", "title"];
 
-fn haystack(dom: &Dom, document: NodeId, inline: &dyn Fn(NodeId) -> bool) -> Haystack {
+/// What an element's style says of its text for the search (Chrome: only rendered, visible text
+/// is searched; a block-level box is a boundary).
+#[derive(Clone, Copy, Default)]
+struct SearchStyle {
+    /// `display: none`: the subtree is not rendered, and is no boundary.
+    none: bool,
+    /// An inline-level box (`display: inline*`): no boundary.
+    inline: bool,
+    /// `display: contents` and the like: no box of its own.
+    contents: bool,
+    /// `visibility: hidden` (or `collapse`): its text is not searched, but a block still bounds.
+    hidden: bool,
+    /// The style is known (a styled element); else the element name decides.
+    known: bool,
+}
+
+fn haystack(dom: &Dom, document: NodeId, style_of: &dyn Fn(NodeId) -> SearchStyle) -> Haystack {
     let mut hay = Haystack { chars: Vec::new(), at: Vec::new() };
-    fn walk(dom: &Dom, node: NodeId, hay: &mut Haystack, inline: &dyn Fn(NodeId) -> bool) {
+    fn walk(dom: &Dom, node: NodeId, hay: &mut Haystack, style_of: &dyn Fn(NodeId) -> SearchStyle, hidden: bool) {
         let Ok(children) = dom.children(node) else { return };
         for child in children {
             if crate::editing::is_text(dom, child) {
+                if hidden {
+                    continue;
+                }
                 let Ok(data) = dom.char_data(child) else { continue };
                 let mut units = 0u32;
                 for c in data.chars() {
@@ -230,21 +249,29 @@ fn haystack(dom: &Dom, document: NodeId, inline: &dyn Fn(NodeId) -> bool) -> Hay
             if name.is_empty() || SKIPPED.contains(&name.as_str()) {
                 continue;
             }
+            let style = style_of(child);
+            if style.none {
+                continue;
+            }
             // pyro: by its computed display: an inline `div` is no boundary (WPT css-pseudo
-            // `target-text-010`).
-            let block = BLOCKS.contains(&name.as_str()) && !inline(child);
+            // `target-text-010`), a block-level `span` is one.
+            let block = if style.known {
+                name == "br" || (!style.inline && !style.contents)
+            } else {
+                BLOCKS.contains(&name.as_str())
+            };
             if block {
                 hay.chars.push('\0');
                 hay.at.push(None);
             }
-            walk(dom, child, hay, inline);
+            walk(dom, child, hay, style_of, style.hidden);
             if block {
                 hay.chars.push('\0');
                 hay.at.push(None);
             }
         }
     }
-    walk(dom, document, &mut hay, inline);
+    walk(dom, document, &mut hay, style_of, false);
     hay
 }
 
@@ -268,39 +295,61 @@ fn needle_of(text: &str) -> Vec<char> {
     out
 }
 
-fn is_word(c: Option<&char>) -> bool {
-    c.is_some_and(|c| c.is_alphanumeric())
+/// Whether `j` joins the alphanumerics `a` and `b` into one word (UAX #29 MidLetter, MidNum and
+/// MidNumLet: "he's", "3.5", "1,000").
+fn joins(a: char, j: char, b: char) -> bool {
+    a.is_alphanumeric()
+        && b.is_alphanumeric()
+        && (matches!(j, '\'' | '\u{2019}' | '.') || (j == ',' && a.is_numeric() && b.is_numeric()))
 }
 
 impl Haystack {
-    /// The first word-bounded occurrence of `needle` at or after `from`.
-    fn find(&self, needle: &[char], from: usize) -> Option<usize> {
+    /// Whether the text has a word boundary between `chars[i - 1]` and `chars[i]` (the ends of the
+    /// text and a block boundary are ones).
+    fn boundary(&self, i: usize) -> bool {
+        let c = &self.chars;
+        if i == 0 || i >= c.len() {
+            return true;
+        }
+        let joined = (c[i - 1].is_alphanumeric() && c[i].is_alphanumeric())
+            || (i + 1 < c.len() && joins(c[i - 1], c[i], c[i + 1]))
+            || (i >= 2 && joins(c[i - 2], c[i - 1], c[i]));
+        !joined
+    }
+
+    /// The first occurrence of `needle` at or after `from`, starting on a word boundary when
+    /// `start_bound` and ending on one when `end_bound`.
+    fn find(&self, needle: &[char], from: usize, start_bound: bool, end_bound: bool) -> Option<usize> {
         if needle.is_empty() || needle.len() > self.chars.len() {
             return None;
         }
         (from..=self.chars.len() - needle.len()).find(|&i| {
             self.chars[i..i + needle.len()] == *needle
-                && !(is_word(i.checked_sub(1).and_then(|p| self.chars.get(p))) && is_word(needle.first()))
-                && !(is_word(self.chars.get(i + needle.len())) && is_word(needle.last()))
+                && (!start_bound || self.boundary(i))
+                && (!end_bound || self.boundary(i + needle.len()))
         })
     }
 
-    /// Whether `needle` ends just before `at` (white space between allowed).
+    /// Whether `needle` (a context term: it starts on a word boundary, and need not end on one)
+    /// ends just before `at`, with white space and block boundaries between.
     fn ends_before(&self, needle: &[char], at: usize) -> bool {
         let mut end = at;
-        while end > 0 && self.chars[end - 1] == ' ' {
+        while end > 0 && matches!(self.chars[end - 1], ' ' | '\0') {
             end -= 1;
         }
-        end >= needle.len() && self.chars[end - needle.len()..end] == *needle
+        end >= needle.len() && self.chars[end - needle.len()..end] == *needle && self.boundary(end - needle.len())
     }
 
-    /// Whether `needle` starts just after `at` (white space between allowed).
+    /// Whether `needle` (a context term: it ends on a word boundary, and need not start on one)
+    /// starts just after `at`, with white space and block boundaries between.
     fn starts_after(&self, needle: &[char], at: usize) -> bool {
         let mut start = at;
-        while start < self.chars.len() && self.chars[start] == ' ' {
+        while start < self.chars.len() && matches!(self.chars[start], ' ' | '\0') {
             start += 1;
         }
-        self.chars.len() - start >= needle.len() && self.chars[start..start + needle.len()] == *needle
+        self.chars.len() - start >= needle.len()
+            && self.chars[start..start + needle.len()] == *needle
+            && self.boundary(start + needle.len())
     }
 
     fn matches(&self, directive: &TextDirective) -> Option<((NodeId, u32), (NodeId, u32))> {
@@ -314,29 +363,45 @@ impl Haystack {
         self.matches_start(directive, needle(&directive.start))
     }
 
+    /// "Find a range from a text directive": the first `start` (after the `prefix`, if any) that
+    /// the rest of the directive matches. `start` begins on a word boundary unless a prefix leads
+    /// it; it ends on one unless a suffix follows without an `end`; an `end` begins on one and
+    /// ends on one unless a suffix follows it. The range may cross block boundaries when it has
+    /// an `end`.
     fn matches_start(&self, directive: &TextDirective, start: Vec<char>) -> Option<((NodeId, u32), (NodeId, u32))> {
         let end = directive.end.as_deref().map(needle);
         let prefix = directive.prefix.as_deref().map(needle);
         let suffix = directive.suffix.as_deref().map(needle);
+        let suffix_follows = |last: usize| suffix.as_ref().is_none_or(|s| self.starts_after(s, last));
         let mut from = 0;
-        while let Some(i) = self.find(&start, from) {
+        while let Some(i) = self.find(&start, from, prefix.is_none(), end.is_some() || suffix.is_none()) {
             from = i + 1;
             if prefix.as_ref().is_some_and(|p| !self.ends_before(p, i)) {
                 continue;
             }
             let last = match &end {
                 Some(end) => {
-                    let Some(j) = self.find(end, i + start.len()) else { return None };
-                    if self.chars[i..j].contains(&'\0') {
+                    let mut end_from = i + start.len();
+                    let mut found = None;
+                    while let Some(j) = self.find(end, end_from, true, suffix.is_none()) {
+                        end_from = j + 1;
+                        if suffix_follows(j + end.len()) {
+                            found = Some(j + end.len());
+                            break;
+                        }
+                    }
+                    match found {
+                        Some(last) => last,
+                        None => continue,
+                    }
+                }
+                None => {
+                    if !suffix_follows(i + start.len()) {
                         continue;
                     }
-                    j + end.len()
+                    i + start.len()
                 }
-                None => i + start.len(),
             };
-            if suffix.as_ref().is_some_and(|s| !self.starts_after(s, last)) {
-                continue;
-            }
             let (Some(first), Some(final_)) = (self.at[i], self.at[last - 1]) else { continue };
             return Some(((first.0, first.1), (final_.0, final_.2)));
         }
@@ -346,15 +411,26 @@ impl Haystack {
 
 /// Finds the text of a fragment's directives (`directives`: what follows `:~:`) and makes them
 /// the document's target text, painted as `::target-text`. Directives that match nothing are
-/// ignored.
-pub fn apply_fragment_directive(page: &Rc<PageDom>, directives: &str) {
+/// ignored. Returns the text node the first matching directive (in URL order, as the spec's
+/// "invoke text directives" scrolls to it) starts in, which the caller scrolls into view.
+pub fn apply_fragment_directive(page: &Rc<PageDom>, directives: &str) -> Option<NodeId> {
     let parsed = parse_directives(directives);
+    crate::animation_events::layout_flush(page, page.document());
     let found: Vec<_> = {
         let dom = page.dom.borrow();
         let layout = page.layout();
         let style = layout.style();
-        let inline = |id: NodeId| style.computed_display(&dom, id).is_some_and(|d| d.starts_with("inline"));
-        let hay = haystack(&dom, page.document(), &inline);
+        let style_of = |id: NodeId| match style.computed_display(&dom, id) {
+            Some(display) => SearchStyle {
+                none: display == "none",
+                inline: display.starts_with("inline"),
+                contents: display == "contents",
+                hidden: style.computed_value(&dom, id, "visibility").is_some_and(|v| v == "hidden" || v == "collapse"),
+                known: true,
+            },
+            None => SearchStyle::default(),
+        };
+        let hay = haystack(&dom, page.document(), &style_of);
         parsed.iter().filter_map(|d| hay.matches(d)).collect()
     };
     // pyro: the ancestor revealing algorithm (HTML) runs on each match's ends: a
@@ -365,6 +441,7 @@ pub fn apply_fragment_directive(page: &Rc<PageDom>, directives: &str) {
         crate::layout_api::reveal_ancestors(page, start);
         crate::layout_api::reveal_ancestors(page, end);
     }
+    let first = found.first().map(|&((start, _), _)| start);
     let mut ranges = Vec::new();
     for (start, end) in found {
         if let Ok(owner) = RangeOwner::new(page, start, end) {
@@ -373,6 +450,94 @@ pub fn apply_fragment_directive(page: &Rc<PageDom>, directives: &str) {
     }
     let old = std::mem::replace(&mut *page.target_text.borrow_mut(), ranges);
     drop(old);
+    first
+}
+
+/// HTML "scroll to the fragment" for a fragment with text directives: invokes them
+/// ([`apply_fragment_directive`]), scrolls the first match into the center of the viewport and
+/// makes it the sequential focus navigation starting point (a Tab moves on from the text). False
+/// when no directive matched: the caller falls back to the element the fragment names.
+pub fn invoke_text_directives(page: &Rc<PageDom>, directives: &str) -> bool {
+    let Some(node) = apply_fragment_directive(page, directives) else { return false };
+    crate::layout_api::scroll_to_text_match(page, node);
+    // (The element holding the text: the starting point is an element.)
+    let holder = page.dom.borrow().parent_element(node).ok().flatten();
+    page.sequential_start.set(holder.or(Some(node)));
+    true
+}
+
+/// A cross-document load's fragment that is yet to be scrolled to (HTML "try to scroll to the
+/// fragment", repeated at each rendering opportunity until the document has loaded).
+pub(crate) struct PendingFragment {
+    /// The URL's fragment without its text directives.
+    fragment: String,
+    /// The text directives (what follows `:~:`), when the navigation may invoke them.
+    directives: Option<String>,
+    /// DOMContentLoaded has fired: the document's content is there to search (Chrome waits for
+    /// it too; the spec's "search timing" lets the UA).
+    armed: bool,
+}
+
+/// Starts the scroll of a document committed by a cross-document navigation to `fragment`
+/// (without its directives): it happens once the indicated element, or a text, exists. The
+/// navigation may invoke `directives` only when allowed (a user activation, no opener, top level:
+/// the caller decides). `force_load_at_top`: the response's `Document-Policy: force-load-at-top`
+/// stops the document from scrolling on load, for any fragment.
+pub fn begin_fragment_scroll(page: &Rc<PageDom>, fragment: Option<&str>, directives: Option<String>, force_load_at_top: bool) {
+    let fragment = fragment.unwrap_or("");
+    let nothing = fragment.is_empty() && directives.is_none();
+    *page.pending_fragment.borrow_mut() =
+        (!force_load_at_top && !nothing).then(|| PendingFragment { fragment: fragment.to_owned(), directives, armed: false });
+}
+
+/// One attempt of the pending fragment scroll, at DOMContentLoaded (`arm`), at each rendering
+/// update after it and after `load`: a text directive that matches is scrolled to; an element the
+/// fragment names is scrolled to (and takes focus) as soon as it exists. Once the document has
+/// completely loaded the attempt is the last: a text that is not found falls back to the element,
+/// and a fragment that indicates nothing is dropped.
+pub fn try_fragment_scroll(page: &Rc<PageDom>, arm: bool) {
+    if page.is_disposed() {
+        return;
+    }
+    let (fragment, directives) = match page.pending_fragment.borrow_mut().as_mut() {
+        Some(p) => {
+            p.armed |= arm;
+            if !p.armed {
+                return;
+            }
+            (p.fragment.clone(), p.directives.clone())
+        }
+        None => return,
+    };
+    let last = page.is_completely_loaded();
+    let done = match directives.as_deref() {
+        Some(directives) if invoke_text_directives(page, directives) => true,
+        Some(_) if !last => false,
+        _ => crate::layout_api::try_scroll_to_fragment(page, &fragment) || last,
+    };
+    if done {
+        page.pending_fragment.borrow_mut().take();
+    }
+}
+
+/// The `FragmentDirective` interface (`document.fragmentDirective`): an object without members,
+/// which scripts feature-detect text directives by.
+pub struct FragmentDirective;
+impl pyro_js::JsClass for FragmentDirective {
+    const NAME: &'static str = "FragmentDirective";
+    type Data = ();
+    type Parent = pyro_js::NoParent;
+    fn define(_def: &mut pyro_js::ClassDef<Self>) {}
+}
+
+pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<FragmentDirective>();
+}
+
+/// `document.fragmentDirective`: the document's one `FragmentDirective` ([SameObject]).
+pub(crate) fn fragment_directive<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
+    let key = pyro_js::IdentityKey(page.id() | (1 << 57), 0x7f01);
+    crate::window::same_object(s, page, key, || s.wrap::<FragmentDirective>((), Some(key)))
 }
 
 #[cfg(test)]

@@ -2677,7 +2677,10 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
         let doc = page.document();
         let area = |n: NodeId| is_focusable_area(&layout, &dom, n);
         let step = |cur: Option<NodeId>| dom.sequential_focus_target_with_layout(doc, cur, backward, &area, &layout);
-        let current = dom.focused(doc).ok().flatten();
+        // HTML "sequential focus navigation starting point": with nothing focused, the node a
+        // text directive scrolled to (still in the document) is where the Tab starts from.
+        let start = page.sequential_start.take().filter(|&n| dom.is_connected(n).unwrap_or(false));
+        let current = dom.focused(doc).ok().flatten().or(start);
         let owner_of = |n: NodeId| dom.focusgroup_owner_of(n).map(|(o, _)| o);
         let leaving = current.and_then(owner_of);
         let mut next = step(current);

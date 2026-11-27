@@ -1049,6 +1049,11 @@ fn before_navigation(
         key.and_then(|key| host.nav(key))
     });
     let get = request.method == "GET" && request.body.is_none();
+    // URL Fragment Text Directives: the navigation the target document will commit (or the
+    // fragment navigation below) has the activation of this one's initiator.
+    if let Some(nav) = &nav {
+        nav.directive_gesture.set(Some(user_gesture));
+    }
     // What the `navigate` event says of where the navigation is from.
     let source = crate::nav::NavigateSource {
         element: request

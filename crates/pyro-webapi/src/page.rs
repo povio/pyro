@@ -410,6 +410,11 @@ pub struct PageDom {
     pub(crate) highlights: RefCell<Vec<crate::highlights::CustomHighlight>>,
     /// The ranges of the last fragment navigation's text directives (`::target-text`).
     pub(crate) target_text: RefCell<Vec<Rc<crate::range::RangeOwner>>>,
+    /// The fragment of a cross-document load still to be scrolled to (`crate::highlights`).
+    pub(crate) pending_fragment: RefCell<Option<crate::highlights::PendingFragment>>,
+    /// The node a text directive scrolled to: where the next Tab starts from when nothing is
+    /// focused (HTML "sequential focus navigation starting point").
+    pub(crate) sequential_start: Cell<Option<NodeId>>,
     /// Undo/redo steps of user edits (`crate::edit_commands`).
     pub(crate) undo: RefCell<crate::edit_commands::UndoHistory>,
     /// Values set by a formatting command on a collapsed selection.
@@ -1189,6 +1194,8 @@ impl PageDom {
             selectionchange_pending: RefCell::new(FxHashSet::default()),
             highlights: RefCell::new(Vec::new()),
             target_text: RefCell::new(Vec::new()),
+            pending_fragment: RefCell::new(None),
+            sequential_start: Cell::new(None),
             undo: RefCell::new(Default::default()),
             typing_values: Default::default(),
             script_parser: RefCell::new(None),
@@ -1511,6 +1518,8 @@ impl PageDom {
         // Highlights hold their ranges' nodes.
         drop(self.highlights.take());
         drop(self.target_text.take());
+        self.pending_fragment.take();
+        self.sequential_start.take();
         self.opaque_storage.clear();
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());

@@ -600,7 +600,7 @@ impl ResourceLoader for NetLoader {
                 dictionary_links: Vec::new(),
                 speculation_rules: Vec::new(),
                 referrer_policy: None,
-                origin_agent_cluster: false,
+                origin_agent_cluster: false, force_load_at_top: false,
                 embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                 coop: Vec::new(),
                 sent_referrer: document.then(|| {
@@ -694,7 +694,7 @@ impl ResourceLoader for NetLoader {
                     dictionary_links: Vec::new(),
                     speculation_rules: Vec::new(),
                     referrer_policy: None,
-                    origin_agent_cluster: false,
+                    origin_agent_cluster: false, force_load_at_top: false,
                     embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                     coop: Vec::new(),
                     sent_referrer: None,
@@ -788,6 +788,7 @@ impl ResourceLoader for NetLoader {
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
                         origin_agent_cluster: document && origin_agent_cluster_requested(&h.headers),
+                        force_load_at_top: document && force_load_at_top_policy(&h.headers),
                         embedder_policy: if document { obtain_embedder_policy(&h.headers, &h.url) } else { pyro_net::EmbedderPolicy::UnsafeNone },
                         coop: if document {
                             let mut responses = std::mem::take(&mut coop_responses);
@@ -825,6 +826,42 @@ impl ResourceLoader for NetLoader {
         let client = self.client.clone();
         Some(ResourceCancellation::new(move || client.cancel(native_id)))
     }
+}
+
+/// URL Fragment Text Directives "remove the fragment directive": `url` without the directive of
+/// its fragment (a fragment left empty is dropped), and the directives it held.
+fn strip_fragment_directive(url: &str) -> Option<(String, String)> {
+    if !url.contains(":~:") {
+        return None;
+    }
+    let mut parsed = pyro_net::Url::parse(url).ok()?;
+    let (fragment, directives) = {
+        let (fragment, directives) = pyro_webapi::highlights::split_fragment_directive(parsed.fragment()?)?;
+        (fragment.to_owned(), directives.to_owned())
+    };
+    parsed.set_fragment((!fragment.is_empty()).then_some(fragment.as_str()));
+    Some((parsed.to_string(), directives))
+}
+
+/// The `Document-Policy` response header's `force-load-at-top` feature (Document Policy: a
+/// structured dictionary of booleans; a bare key is true, `no-` prefixed the negation): the
+/// document does not scroll on load, to a fragment (text directive or element) or to a restored
+/// position.
+fn force_load_at_top_policy(headers: &http::HeaderMap) -> bool {
+    let mut forced = false;
+    for value in headers.get_all("document-policy").iter().filter_map(|v| v.to_str().ok()) {
+        for member in value.split(',') {
+            let member = member.split(';').next().unwrap_or("").trim();
+            let (key, value) = member.split_once('=').map_or((member, "?1"), |(k, v)| (k.trim(), v.trim()));
+            let on = value != "?0";
+            match key {
+                "force-load-at-top" => forced = on,
+                "no-force-load-at-top" => forced = !on,
+                _ => {}
+            }
+        }
+    }
+    forced
 }
 
 /// The `Origin-Agent-Cluster` response header is the structured-field boolean `?1` (HTML
@@ -1347,7 +1384,7 @@ impl ResourceLoader for StaticLoader {
                         dictionary_links: Vec::new(),
                         speculation_rules: Vec::new(),
                         referrer_policy,
-                        origin_agent_cluster: false,
+                        origin_agent_cluster: false, force_load_at_top: false,
                         embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
                         coop: Vec::new(),
                         sent_referrer: sent_referrer.clone(),
@@ -2328,7 +2365,7 @@ impl Browser {
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             referrer_policy: None,
-            origin_agent_cluster: false,
+            origin_agent_cluster: false, force_load_at_top: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             coop: Vec::new(),
             sent_referrer: None,
@@ -2408,6 +2445,36 @@ impl Browser {
         creator
     }
 
+    /// Whether the navigation to `url` may invoke a text directive of it (URL Fragment Text
+    /// Directives "should allow text fragment"): a browser-initiated one (an address bar
+    /// navigation) or one started with a user activation, of a top-level document that has no
+    /// opener (a popup `window.open` made keeps one unless `noopener`), or of a frame
+    /// same-origin with its top-level document. A traversal and a frame's `src` never do.
+    fn text_directive_allowed(&self, page: FrameKey, opts: &NavigateOpts, url: &str) -> bool {
+        use crate::NavigationReason;
+        let Some(state) = self.doc(page) else { return false };
+        let gesture = state.nav.directive_gesture.get();
+        let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return false };
+        if page.child.is_some() {
+            let top_origin = self.doc(FrameKey::from(page.page)).map(|d| d.main_frame.origin.clone());
+            return matches!(opts.reason, NavigationReason::Script | NavigationReason::Anchor | NavigationReason::FormGet) && gesture == Some(true) && top_origin.as_deref() == Some(origin_of(url).as_str());
+        }
+        // A window that kept its opener invokes none (the opener could read the scroll position
+        // through the document).
+        let has_opener = host.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade).is_some()
+            && !host.popup.borrow().as_ref().is_some_and(|t| t.opener_cleared());
+        if has_opener {
+            return false;
+        }
+        match opts.reason {
+            NavigationReason::AddressBar => opts.cdp_request_id.is_some() || gesture != Some(false),
+            NavigationReason::Anchor | NavigationReason::FormGet | NavigationReason::FormPost | NavigationReason::Script => {
+                gesture == Some(true)
+            }
+            NavigationReason::History | NavigationReason::InitialFrameNavigation => false,
+        }
+    }
+
     pub(crate) fn begin_document(
         &mut self,
         page: FrameKey,
@@ -2440,6 +2507,22 @@ impl Browser {
         // CSP Embedded Enforcement: the required policy this document accepted, taken before
         // anything can fail (`Browser::prepare_required_csp`).
         let enforce_required = self.doc_mut(page).and_then(|mut p| p.enforce_required_csp.take());
+        // URL Fragment Text Directives: the directive leaves the document's URL (and its session
+        // history entry); whether it activates is decided now, while the document it replaces
+        // is still the active one.
+        let stripped;
+        let mut opts = opts;
+        let mut text_directive = None;
+        if unreachable.is_none() {
+            if let Some((url, directives)) = strip_fragment_directive(&resource.url) {
+                let allowed = self.text_directive_allowed(page, opts, &resource.url);
+                text_directive = Some((directives, allowed));
+                resource.url = url.clone();
+                stripped = NavigateOpts { url, ..opts.clone() };
+                opts = &stripped;
+            }
+        }
+        let activation = self.doc(page).and_then(|d| d.nav.directive_gesture.take());
         let origin = origin_of(&resource.url);
         // The policy the navigation request was sent with (its initiator's).
         let policy = match (&opts.referrer, opts.referrer_policy) {
@@ -2542,6 +2625,21 @@ impl Browser {
                     }
                     self.sync_root(page.page);
                 }
+            }
+        }
+        // URL Fragment Text Directives and HTML "try to scroll to the fragment": a document a
+        // navigation committed scrolls to the fragment's text, else its element, once there is
+        // one (a traversal or a reload too: Pyro restores no scroll position across documents).
+        let has_directive = text_directive.is_some();
+        if !error_document {
+            let fragment = pyro_net::Url::parse(&resource.url).ok().and_then(|u| u.fragment().map(str::to_owned));
+            let directives = text_directive.take().filter(|(_, allowed)| *allowed).map(|(d, _)| d);
+            pyro_webapi::highlights::begin_fragment_scroll(&page_dom, fragment.as_deref(), directives, resource.force_load_at_top);
+        }
+        // An activation the document did not use stays for a client redirect while it loads.
+        if activation == Some(true) && !has_directive {
+            if let Some(nav) = &nav {
+                nav.directive_gesture.set(Some(true));
             }
         }
         match resource.sent_referrer.take() {
@@ -3962,6 +4060,9 @@ impl Browser {
         self.sync_root(page.page);
         if let Some(dom) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
             pyro_webapi::lifecycle::dom_content_loaded(&dom, dom.document());
+            // The document's content is parsed and its DOMContentLoaded handlers have run: the
+            // load's fragment (text directive or element) can be scrolled to now.
+            pyro_webapi::highlights::try_fragment_scroll(&dom, true);
         }
         self.emit(page.page, PageEvent::FrameDomContentLoaded { frame_id, loader_id, timestamp: self.timestamp() });
         self.maybe_fire_load(page);
@@ -4042,6 +4143,8 @@ impl Browser {
         self.sync_root(page.page);
         if let Some(dom) = &frame.page_dom {
             pyro_webapi::lifecycle::load(dom, dom.document());
+            // The attempt after `load` is the last one: a text not found falls back to the element.
+            pyro_webapi::highlights::try_fragment_scroll(dom, false);
             // HTML "update the rendering" reveals a document at its first rendering opportunity;
             // one that requested no animation frame gets a frame now, so `pagereveal` fires.
             if pyro_webapi::lifecycle::reveal_pending(dom) {
@@ -4945,7 +5048,7 @@ mod disposition_tests {
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             referrer_policy: None,
-            origin_agent_cluster: false,
+            origin_agent_cluster: false, force_load_at_top: false,
             embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone,
             coop: Vec::new(),
             sent_referrer: None,

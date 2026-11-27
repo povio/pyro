@@ -243,6 +243,11 @@ pub struct PageNav {
     /// A navigation that navigation.js started (and fired `navigate` for)
     /// is running: the native paths fire no event of their own.
     navigation_api_call: Cell<bool>,
+    /// Whether the navigation being requested has a user activation of its initiator (URL
+    /// Fragment Text Directives: a directive activates only for one that has). `None`: nothing
+    /// said, as for a browser-initiated navigation. Taken by the commit or the fragment
+    /// navigation it is for.
+    pub(crate) directive_gesture: Cell<Option<bool>>,
     /// Chrome's navigation rate limiter (crbug.com/1038223): the start of
     /// the current period and the history updates and navigations counted
     /// in it.
@@ -365,6 +370,7 @@ impl PageNav {
             timeline_watchers: RefCell::new(Vec::new()),
             navigation_hooks: RefCell::new(Vec::new()),
             navigation_api_call: Cell::new(false),
+            directive_gesture: Cell::new(None),
             rate_limit: Cell::new((Instant::now(), 0)),
             joint,
             queued_navigations: Rc::new(Cell::new(0)),
@@ -1165,7 +1171,10 @@ impl PageNav {
         if target.fragment().is_none() || !same_document_except_fragment(&current, &target) {
             return false;
         }
-        self.take_fragment_directive(&mut target);
+        // URL Fragment Text Directives: a same-document navigation activates one when it has a
+        // user activation or its initiator is same-origin with the document.
+        let activated = self.directive_gesture.take() == Some(true);
+        let directives = self.take_fragment_directive(&mut target).filter(|_| !source.cross_origin || activated);
         let kind = if (current == target && !source.cross_origin) || source.replace {
             SameDocumentKind::Replace
         } else {
@@ -1181,7 +1190,7 @@ impl PageNav {
             NavigateDecision::Proceed => {}
         }
         self.same_document(target.as_str(), None, kind);
-        self.scroll_to_fragment(&target);
+        self.scroll_to_fragment_or_text(&target, directives.as_deref());
         self.navigation_committed(navigation_type);
         self.fire_fragment_popstate();
         self.queue_hashchange(current.as_str(), target.as_str());
@@ -1189,19 +1198,27 @@ impl PageNav {
     }
 
     /// URL Fragment Text Directives: a same-document navigation's directive (`:~:text=...`)
-    /// leaves its URL and selects the document's target text.
-    fn take_fragment_directive(&self, target: &mut Url) {
-        let Some((fragment, directives)) = target
+    /// leaves its URL, whether or not it may activate. Returns the directives it held.
+    fn take_fragment_directive(&self, target: &mut Url) -> Option<String> {
+        let (fragment, directives) = target
             .fragment()
             .and_then(pyro_webapi::highlights::split_fragment_directive)
-            .map(|(fragment, directives)| (fragment.to_owned(), directives.to_owned()))
-        else {
-            return;
-        };
+            .map(|(fragment, directives)| (fragment.to_owned(), directives.to_owned()))?;
         target.set_fragment(Some(&fragment));
-        if let Some(page) = self.page_dom.borrow().upgrade() {
-            pyro_webapi::highlights::apply_fragment_directive(&page, &directives);
+        Some(directives)
+    }
+
+    /// HTML "scroll to the fragment" of a same-document navigation to `target`, which first
+    /// invokes its text `directives` (the first matching one is scrolled to, centered, and the
+    /// text is painted as `::target-text`); the element the fragment names is the fallback.
+    fn scroll_to_fragment_or_text(&self, target: &Url, directives: Option<&str>) {
+        if let Some(directives) = directives {
+            let page = self.page_dom.borrow().upgrade();
+            if page.is_some_and(|page| pyro_webapi::highlights::invoke_text_directives(&page, directives)) {
+                return;
+            }
         }
+        self.scroll_to_fragment(target);
     }
 
     /// HTML "persist the history entry state": the viewport's scroll position, kept for the
@@ -1854,7 +1871,7 @@ fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsRe
         dom.document_data(page.document()).ok().map(|d| d.url.to_string())
     });
     if nav.rate_limit_allows() {
-        navigate_to_from(nav, target, replace || loading, source_referrer);
+        navigate_to_from(nav, target, replace || loading, source_referrer, true);
     }
     Ok(())
 }
@@ -1871,7 +1888,8 @@ pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>,
         .parse(&href)
         .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))?;
     if target.scheme() != "javascript" && nav.rate_limit_allows() {
-        navigate_to(nav, target, replace);
+        // A text directive of a cross-origin navigation needs a user activation.
+        navigate_to_from(nav, target, replace, None, false);
     }
     Ok(())
 }
@@ -1880,14 +1898,26 @@ pub(crate) fn navigate_cross_origin(nav: &PageNav, base: &str, input: Value<'_>,
 /// fragment change is same-document, anything else loads. Returns whether
 /// it stayed in the document.
 fn navigate_to(nav: &PageNav, target: Url, replace: bool) -> bool {
-    navigate_to_from(nav, target, replace, None)
+    navigate_to_from(nav, target, replace, None, true)
+}
+
+/// Whether the script now running, the initiator of the navigation it asks for, has a user
+/// activation (URL Fragment Text Directives).
+fn initiator_activated() -> bool {
+    pyro_js::entry_realm()
+        .and_then(|realm| realm.scope().ok().and_then(|scope| pyro_webapi::target::page_of(&scope).ok()))
+        .is_some_and(|page| page.window_open_user_gesture())
 }
 
 /// `navigate_to` with the source document's URL as the referrer of a loading navigation.
-fn navigate_to_from(nav: &PageNav, mut target: Url, replace: bool, source_referrer: Option<String>) -> bool {
+/// `same_origin`: the initiator is same-origin with the document, which lets a same-document
+/// navigation invoke a text directive without a user activation.
+fn navigate_to_from(nav: &PageNav, mut target: Url, replace: bool, source_referrer: Option<String>, same_origin: bool) -> bool {
     let current = Url::parse(&nav.url()).ok();
+    let activated = initiator_activated();
+    let mut directives = None;
     if current.as_ref().is_some_and(|current| same_document_except_fragment(current, &target)) {
-        nav.take_fragment_directive(&mut target);
+        directives = nav.take_fragment_directive(&mut target).filter(|_| same_origin || activated);
     }
     let same_url = current.as_ref() == Some(&target);
     let navigation_type = if replace || same_url { "replace" } else { "push" };
@@ -1904,13 +1934,17 @@ fn navigate_to_from(nav: &PageNav, mut target: Url, replace: bool, source_referr
             // HTML "navigate": the document's own URL is a replace.
             let kind = if replace || same_url { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
             nav.same_document(target.as_str(), None, kind);
-            nav.scroll_to_fragment(&target);
+            nav.scroll_to_fragment_or_text(&target, directives.as_deref());
             nav.navigation_committed(navigation_type);
             nav.fire_fragment_popstate();
             nav.queue_hashchange(cur.as_str(), target.as_str());
             true
         }
         _ => {
+            // A client redirect while the document loads keeps the activation the navigation
+            // that made the document had (Chrome: a text directive per user gesture).
+            let loading = nav.page_dom.borrow().upgrade().is_some_and(|page| !page.is_completely_loaded());
+            nav.directive_gesture.set(Some(activated || (loading && nav.directive_gesture.get() == Some(true))));
             nav.navigate_from(
                 target.to_string(),
                 if replace { HistoryHandling::Replace } else { HistoryHandling::Push },
