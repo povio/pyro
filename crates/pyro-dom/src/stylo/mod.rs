@@ -178,6 +178,11 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
                     return Some(out);
                 }
             }
+            if name.eq_ignore_ascii_case("shape-outside") {
+                if let Some(value) = shape_outside_with_absolute_path(style) {
+                    return Some(value);
+                }
+            }
             let value = resolved_alignment(name, style.computed_value_to_string(declaration));
             // Gecko's prefixed keywords, as Chrome spells them.
             Some(match value.strip_prefix("-moz-") {
@@ -188,6 +193,19 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
             })
         }
     }
+}
+
+/// pyro: Chrome's computed `shape-outside: path()` has absolute commands (`h 80` computes to `H 90`; `clip-path` and
+/// `offset-path` keep the authored ones), as WPT css-shapes `parsing/shape-outside-computed` has it.
+fn shape_outside_with_absolute_path(style: &ComputedValues) -> Option<String> {
+    use style::values::computed::basic_shape::{BasicShape, ShapeOutside};
+    use style::values::generics::basic_shape::{GenericBasicShape, GenericPathOrShapeFunction};
+    let ShapeOutside::Shape(shape, shape_box) = &style.get_box().shape_outside else { return None };
+    let GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path)) = &**shape else { return None };
+    let mut path = path.clone();
+    path.path = path.path.normalize(false);
+    let shape = BasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path));
+    Some(style_traits::ToCss::to_css_string(&ShapeOutside::Shape(Box::new(shape), shape_box.clone())))
 }
 
 /// Preserve the DOM double carried by a CSSUnitValue across the text bridge to Typed OM.
