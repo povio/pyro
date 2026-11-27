@@ -857,7 +857,7 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
             if let Some(guard) = &start.csp.guard {
                 post_violations(start.id, &start.poster, guard.take_violations());
             }
-            let (bytes, mime) = fetched.ok()?;
+            let (bytes, mime, _) = fetched.ok()?;
             // A module worker's script is a module script: strict MIME
             // checking (HTML "fetch a single module script").
             if start.module && crate::module_script::mime_error(pyro_js::ModuleType::JavaScript, &mime, "").is_some() {
@@ -1196,6 +1196,7 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                                 None,
                                                 guard.clone(),
                                             )
+                                            .map(|(bytes, mime, _)| (bytes, mime))
                                         }
                                     };
                                     // The guard's findings go where its policy is: the owner's
@@ -1271,7 +1272,7 @@ fn fetch_script(
     main: bool,
     main_request: Option<&MainRequest>,
     csp: Option<Arc<pyro_net::csp::RequestCsp>>,
-) -> Result<(Bytes, String), String> {
+) -> Result<(Bytes, String, pyro_net::Url), String> {
     let mut request = Request::get(url, destination);
     request.mode = mode;
     request.credentials = credentials;
@@ -1290,6 +1291,7 @@ fn fetch_script(
     });
     // An imported script is in the worker's timeline (the main one is in
     // its document's); the entry is added when the timeline is next read.
+    let request_url = request.url.clone();
     let sink = if main {
         sink
     } else {
@@ -1299,11 +1301,14 @@ fn fetch_script(
     let id = net.fetch(request, sink);
     let mut body: Vec<u8> = Vec::new();
     let mut mime = String::new();
+    // The response's URL after redirects (a script that ends cross-origin is "muted").
+    let mut final_url: Option<pyro_net::Url> = None;
     loop {
         match rx.recv_timeout(CLOSING_POLL) {
             Ok(ResponseEvent::Redirect { .. }) => {}
             Ok(ResponseEvent::Response(head)) => {
                 mime = head.mime.clone();
+                final_url = Some(head.url.clone());
                 if !head.status.is_success() && !matches!(head.kind, ResponseKind::Opaque) {
                     net.cancel(id);
                     return Err(format!("HTTP status {}", head.status.as_u16()));
@@ -1335,7 +1340,10 @@ fn fetch_script(
                 }
             }
             Ok(ResponseEvent::Data(bytes)) => body.extend_from_slice(&bytes),
-            Ok(ResponseEvent::Finished { .. }) => return Ok((Bytes::from(body), mime)),
+            Ok(ResponseEvent::Finished { .. }) => {
+                let url = final_url.unwrap_or_else(|| request_url.clone());
+                return Ok((Bytes::from(body), mime, url));
+            }
             Ok(ResponseEvent::Failed(error)) => return Err(error.to_string()),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if shared.closing.load(Ordering::Acquire) {
@@ -1569,7 +1577,7 @@ impl JsClass for WorkerGlobalScope {
                     )
                 })?;
                 let fetched = match page.blob_url(&name) {
-                    Some((bytes, _)) => Ok(bytes),
+                    Some((bytes, _)) => Ok((bytes, None)),
                     None => fetch_script(
                         page,
                         &net,
@@ -1583,19 +1591,45 @@ impl JsClass for WorkerGlobalScope {
                         None,
                         guard.clone(),
                     )
-                    .map(|(b, _)| b),
+                    .map(|(b, mime, final_url)| (b, Some((mime, final_url)))),
                 };
                 crate::csp::report_guard(page, guard.as_ref(), None);
-                let bytes = fetched.map_err(|e| {
+                let (bytes, response) = fetched.map_err(|e| {
                     JsError::dom(
                         "NetworkError",
                         format!("Failed to execute 'importScripts': The script at '{name}' failed to load: {e}."),
                     )
                 })?;
-                scripts.push((script_text(&bytes), name));
+                // HTML issue 3255 (and Chrome): an imported script needs a JavaScript
+                // MIME type; text/html, text/plain, application/octet-stream ... fail.
+                // A response without a Content-Type is let through, as before.
+                let mut muted = false;
+                if let Some((mime, final_url)) = &response {
+                    if !mime.is_empty() && !pyro_net::is_javascript_mime(mime) {
+                        return Err(JsError::dom(
+                            "NetworkError",
+                            format!("Failed to execute 'importScripts': The script at '{name}' failed to load: MIME type ('{mime}') is not executable."),
+                        ));
+                    }
+                    // A script whose response ended cross-origin has muted errors.
+                    muted = !pyro_net::cors::same_origin(final_url, &g.url);
+                }
+                scripts.push((script_text(&bytes), name, muted));
             }
-            for (text, name) in scripts {
-                s.eval(&text, Some(&name), 1)?;
+            for (text, name, muted) in scripts {
+                match s.eval(&text, Some(&name), 1) {
+                    // HTML "run a classic script", rethrow errors: a muted script's
+                    // error is a NetworkError, so nothing of it leaks (step 8.2).
+                    Err(JsError::Terminated) => return Err(JsError::Terminated),
+                    Err(_) if muted => {
+                        return Err(JsError::dom(
+                            "NetworkError",
+                            format!("Failed to execute 'importScripts' on 'WorkerGlobalScope': The script at '{name}' failed to load."),
+                        ));
+                    }
+                    Err(e) => return Err(e),
+                    Ok(_) => {}
+                }
             }
             Ok(s.undefined())
         });
