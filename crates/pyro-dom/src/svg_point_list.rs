@@ -402,9 +402,23 @@ impl PointItem {
     }
 }
 
+/// The items of an `SVGPointList` for a `points` attribute: an item that is not a number clears the
+/// whole list (the error rule of SVG 2 "list parsing"), a last coordinate without its pair is dropped.
+/// (Rendering still reads the valid prefix: [`parse_points`].)
+fn parse_point_items(text: &str) -> Vec<Pair> {
+    let mut numbers = Vec::new();
+    for number in svgtypes::NumberListParser::from(text) {
+        match number {
+            Ok(n) if (n as f32).is_finite() => numbers.push(n as f32),
+            _ => return Vec::new(),
+        }
+    }
+    numbers.chunks_exact(2).map(|pair| (pair[0], pair[1])).collect()
+}
+
 impl PointLists {
     pub(crate) fn attribute_changed(&self, text: &str) {
-        self.sync_attribute(parse_points(text));
+        self.sync_attribute(parse_point_items(text).into_iter());
     }
 }
 
