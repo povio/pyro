@@ -726,7 +726,7 @@ impl Xhr {
             false,
             sink,
         );
-        net.fetch_with_id(id, request, sink);
+        crate::service_worker::route_blocking(page, net, id, request, sink);
         let timeout = Some(self.timeout.get()).filter(|t| *t != 0).map(|t| Duration::from_millis(t as u64));
         let deadline = Instant::now() + timeout.unwrap_or(SYNC_WAIT).min(SYNC_WAIT);
         let watch = page.xhr_state.sync_watch.borrow().is_some();

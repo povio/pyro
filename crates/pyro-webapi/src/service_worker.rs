@@ -812,6 +812,19 @@ pub(crate) fn route(page: &PageDom, net: &NetClient, id: RequestId, request: Req
     }
 }
 
+/// A synchronous XHR's request: only a controlled worker's goes through its service worker (the
+/// browser thread answers it; a document's own thread is the one blocked, and cannot).
+pub(crate) fn route_blocking(page: &PageDom, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
+    let link = page.context_services().service_workers.remote.borrow().clone();
+    match link {
+        Some(link) if link.version.load(Ordering::Acquire) != 0 && matches!(request.url.scheme(), "http" | "https") && !is_embedded_content(&request) => {
+            let (version, client_id, net) = (link.version.load(Ordering::Acquire), link.client_id.clone(), net.clone());
+            (link.poster)(Box::new(move || remote_route(version, client_id, net, id, request, sink)));
+        }
+        _ => net.fetch_with_id(id, request, sink),
+    }
+}
+
 /// A controlled worker's request, on the browser thread: the controller's `fetch` event, or the
 /// network when the version is gone.
 fn remote_route(version: u64, client_id: String, net: NetClient, id: RequestId, request: Request, sink: ResponseSink) {
