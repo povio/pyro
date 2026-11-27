@@ -1085,12 +1085,260 @@ impl ResourceLoader for NetLoader {
             }
             None => sink,
         };
+        // A navigation a service worker may see the redirects of (HTML "navigate", Fetch "HTTP
+        // fetch": a worker handles the request with the manual redirect mode and the browser
+        // follows the redirect it answers with, asking the registration of each next URL): the
+        // loader follows the hops itself. Without a worker for the first URL, the client follows
+        // them until one enters a scope.
+        let hop_eligible = document && request.purpose.is_none() && part.is_none();
+        let stop = if hop_eligible && service_worker.is_none() { navigation_redirect_stop(browser, request.page) } else { None };
+        let mut hops: Option<std::sync::Arc<NavigationHops>> = None;
+        let sink = if hop_eligible && (service_worker.is_some() || stop.is_some()) {
+            let state = std::sync::Arc::new(NavigationHops {
+                inner: std::sync::Mutex::new(HopInner {
+                    client: self.client.clone(),
+                    handle: browser.loop_handle(),
+                    page: request.page,
+                    sink,
+                    req: req.clone(),
+                    chain: pyro_net::referrer::ReferrerChain::new(req.referrer.clone(), req.referrer_policy),
+                    redirects: 0,
+                    cross_origin: false,
+                    redirect_end: None,
+                    last_client: service_worker.as_ref().map(|route| (req.url.origin(), route.resulting_client().to_owned())),
+                }),
+                current: std::sync::atomic::AtomicU64::new(native_id.0),
+                cancelled: std::sync::atomic::AtomicBool::new(false),
+            });
+            hops = Some(state.clone());
+            hop_sink(state)
+        } else {
+            sink
+        };
+        req.prefetch_redirect_stop = stop.or(req.prefetch_redirect_stop.take());
         match service_worker {
-            Some(route) => route.dispatch(&self.client, native_id, req, sink),
+            Some(route) => {
+                if hops.is_some() {
+                    req.redirect = pyro_net::RedirectMode::Manual;
+                }
+                route.dispatch(&self.client, native_id, req, sink)
+            }
             None => self.client.fetch_with_id(native_id, req, sink),
         }
         let client = self.client.clone();
-        Some(ResourceCancellation::new(move || client.cancel(native_id)))
+        match hops {
+            Some(hops) => Some(ResourceCancellation::new(move || {
+                hops.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+                client.cancel(pyro_net::RequestId(hops.current.load(std::sync::atomic::Ordering::SeqCst)));
+            })),
+            None => Some(ResourceCancellation::new(move || client.cancel(native_id))),
+        }
+    }
+}
+
+/// The hops of one navigation that service workers may handle (see `fetch_cancellable`): the
+/// state they share, locked briefly (never across a call that may deliver an event).
+struct NavigationHops {
+    inner: std::sync::Mutex<HopInner>,
+    /// The request in flight (the cancellation's target).
+    current: std::sync::atomic::AtomicU64,
+    cancelled: std::sync::atomic::AtomicBool,
+}
+
+struct HopInner {
+    client: pyro_net::NetClient,
+    handle: pyro_runtime::LoopHandle<Browser>,
+    page: PageId,
+    /// The loader's own sink: it hears every redirect and the final response.
+    sink: pyro_net::ResponseSink,
+    /// The request as the last hop sent it.
+    req: pyro_net::Request,
+    /// The referrer the next hop sends (Referrer Policy: each hop's is the previous one's).
+    chain: pyro_net::referrer::ReferrerChain,
+    redirects: u16,
+    /// Some hop went to another origin (Navigation Timing hides redirects then).
+    cross_origin: bool,
+    redirect_end: Option<std::time::Instant>,
+    /// The origin of the last hop a worker handled and the `resultingClientId` it was given: a
+    /// next hop of that origin gets the same one.
+    last_client: Option<(url::Origin, String)>,
+}
+
+/// Fetch's limit of consecutive redirects.
+const MAX_NAVIGATION_HOPS: u16 = 20;
+
+/// The scopes a redirect of a navigation no worker handled yet must hand back to the loader at
+/// (`None`: the page bypasses service workers, or no registration has an active worker).
+fn navigation_redirect_stop(browser: &Browser, page: PageId) -> Option<std::sync::Arc<pyro_net::PrefetchRedirectStop>> {
+    let page = browser.page(page)?;
+    if page.bypass_service_worker {
+        return None;
+    }
+    let settings = page.frames.settings.borrow();
+    if !settings.services.may_route_loads() {
+        return None;
+    }
+    let stop = pyro_webapi::navigation_redirect_stop(&settings.services);
+    (!stop.scopes.is_empty()).then(|| std::sync::Arc::new(stop))
+}
+
+/// The sink of one hop: an opaque-redirect response (a manual redirect from the network, or a
+/// worker's answer) starts the next hop on the browser thread; everything else is the loader's.
+fn hop_sink(hops: std::sync::Arc<NavigationHops>) -> pyro_net::ResponseSink {
+    let mut redirect: Option<pyro_net::ResponseHead> = None;
+    Box::new(move |event| match event {
+        pyro_net::ResponseEvent::Response(head) if head.kind == pyro_net::ResponseKind::OpaqueRedirect => redirect = Some(head),
+        pyro_net::ResponseEvent::Finished { .. } if redirect.is_some() => {
+            let Some(head) = redirect.take() else { return };
+            let handle = hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).handle.clone();
+            let next = hops.clone();
+            let _ = handle.post(move |b: &mut Browser| run_hop(b, next, head));
+        }
+        other => {
+            redirect = None;
+            forward_hop_event(&hops, other);
+        }
+    })
+}
+
+/// An event of the hop in flight, for the loader: the final response carries the redirects the
+/// hops made (Navigation and Resource Timing).
+fn forward_hop_event(hops: &NavigationHops, event: pyro_net::ResponseEvent) {
+    let mut inner = hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let event = match event {
+        pyro_net::ResponseEvent::Response(mut head) if inner.redirects > 0 => {
+            head.timing.redirect_count = head.timing.redirect_count.saturating_add(inner.redirects);
+            head.timing.redirect_end = inner.redirect_end.or(head.timing.redirect_end);
+            head.timing.cross_origin_redirect |= inner.cross_origin;
+            pyro_net::ResponseEvent::Response(head)
+        }
+        other => other,
+    };
+    (inner.sink)(event);
+}
+
+/// What a redirect response of a navigation leads to.
+enum Hop {
+    /// The events to give the loader: the navigation ends here.
+    Deliver(Vec<pyro_net::ResponseEvent>),
+    /// The next request.
+    Next { req: pyro_net::Request, client: pyro_net::NetClient, page: PageId },
+}
+
+/// `Location` as Fetch reads it: a header value's bytes, a non-ASCII one percent-encoded.
+fn redirect_location(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    for &b in bytes {
+        if b.is_ascii() {
+            text.push(char::from(b));
+        } else {
+            text.push_str(&format!("%{b:02X}"));
+        }
+    }
+    text
+}
+
+/// Fetch "HTTP-redirect fetch" for the redirect `head` answered the last hop with: the next
+/// request, or the end of the navigation.
+fn advance_hop(inner: &mut HopInner, head: pyro_net::ResponseHead) -> Hop {
+    use pyro_net::http::{header, Method, StatusCode};
+    let fail = |error: pyro_net::NetError| Hop::Deliver(vec![pyro_net::ResponseEvent::Failed(error)]);
+    let status = head.status;
+    let location = head.headers.get(header::LOCATION).map(|v| redirect_location(v.as_bytes()));
+    let Some(location) = location.filter(|_| matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)) else {
+        // No redirect to follow: the response is an ordinary one (as the client delivers a 3xx
+        // without `Location`).
+        let mut head = head;
+        head.kind = pyro_net::ResponseKind::Basic;
+        return Hop::Deliver(vec![
+            pyro_net::ResponseEvent::Response(head),
+            pyro_net::ResponseEvent::Finished { encoded_len: 0, decoded_len: 0 },
+        ]);
+    };
+    let from = head.url.clone();
+    let Ok(mut target) = from.join(&location) else { return fail(pyro_net::NetError::InvalidUrl) };
+    // A Location without a fragment keeps the current URL's.
+    if target.fragment().is_none() {
+        target.set_fragment(from.fragment());
+    }
+    if !matches!(target.scheme(), "http" | "https") {
+        return fail(pyro_net::NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+    }
+    inner.redirects += 1;
+    if inner.redirects > MAX_NAVIGATION_HOPS {
+        return fail(pyro_net::NetError::TooManyRedirects);
+    }
+    if inner.req.csp.as_ref().is_some_and(|csp| !csp.allows_redirect(&target)) {
+        return fail(pyro_net::NetError::Blocked(pyro_net::csp::BLOCKED_BY_CSP.into()));
+    }
+    inner.redirect_end = Some(std::time::Instant::now());
+    let cross_origin = from.origin() != target.origin();
+    inner.cross_origin |= cross_origin;
+    // The loader's bookkeeping of the redirect (opener policies, referrer chain).
+    (inner.sink)(pyro_net::ResponseEvent::Redirect { from: from.clone(), to: target.clone(), status, headers: head.headers.clone() });
+    let req = &mut inner.req;
+    if (status == StatusCode::SEE_OTHER && req.method != Method::HEAD && req.method != Method::GET)
+        || (matches!(status.as_u16(), 301 | 302) && req.method == Method::POST)
+    {
+        req.method = Method::GET;
+        req.body = None;
+        for name in [header::CONTENT_TYPE, header::CONTENT_LENGTH, header::CONTENT_ENCODING, header::CONTENT_LANGUAGE, header::CONTENT_LOCATION] {
+            req.headers.remove(name);
+        }
+    }
+    if cross_origin {
+        req.headers.remove(header::AUTHORIZATION);
+        req.headers.remove(header::COOKIE);
+    }
+    inner.chain.redirect(&from, &head.headers);
+    req.referrer = inner.chain.referrer.clone();
+    req.referrer_policy = inner.chain.policy;
+    req.url = target;
+    Hop::Next { req: req.clone(), client: inner.client.clone(), page: inner.page }
+}
+
+/// The next hop of a navigation, on the browser thread: the registration of the new URL decides
+/// whether a worker sees it.
+fn run_hop(browser: &mut Browser, hops: std::sync::Arc<NavigationHops>, head: pyro_net::ResponseHead) {
+    if hops.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let step = {
+        let mut inner = hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        advance_hop(&mut inner, head)
+    };
+    match step {
+        Hop::Deliver(events) => {
+            for event in events {
+                forward_hop_event(&hops, event);
+            }
+        }
+        Hop::Next { mut req, client, page } => {
+            let id = client.next_request_id();
+            hops.current.store(id.0, std::sync::atomic::Ordering::SeqCst);
+            let sink = hop_sink(hops.clone());
+            match service_worker_route(browser, page, &req, true) {
+                Some(mut route) => {
+                    let origin = req.url.origin();
+                    let kept = {
+                        let inner = hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        inner.last_client.as_ref().filter(|(last, _)| *last == origin).map(|(_, id)| id.clone())
+                    };
+                    if let (Some(id), Some(page)) = (kept, browser.page(page)) {
+                        route.keep_resulting_client(&page.frames.settings.borrow().services, &id, req.frame_id.as_deref());
+                    }
+                    hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last_client =
+                        Some((origin, route.resulting_client().to_owned()));
+                    req.redirect = pyro_net::RedirectMode::Manual;
+                    route.dispatch(&client, id, req, sink)
+                }
+                None => {
+                    req.redirect = pyro_net::RedirectMode::Follow;
+                    req.prefetch_redirect_stop = navigation_redirect_stop(browser, page);
+                    client.fetch_with_id(id, req, sink)
+                }
+            }
+        }
     }
 }
 

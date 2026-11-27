@@ -2967,7 +2967,15 @@ impl Io {
                     }
                     // A prefetch's hop into a service worker's scope: its fetch event cannot see the
                     // hops, so the prefetch fails here (the navigation fetches normally later).
-                    if req.prefetch_redirect_stop.as_ref().is_some_and(|stop| stop.stops_at(&target)) {
+                    if let Some(stop) = req.prefetch_redirect_stop.as_ref().filter(|stop| stop.stops_at(&target)) {
+                        if stop.navigation {
+                            // A navigation's hop into a scope: the redirect goes back to the caller,
+                            // whose next request goes through that scope's worker.
+                            let head = self
+                                .head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 1)
+                                .over(protocol);
+                            return self.finish_empty(id, &req, sink, head);
+                        }
                         return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
                     }
                     let cross_origin = !cors::same_origin(&url, &target);

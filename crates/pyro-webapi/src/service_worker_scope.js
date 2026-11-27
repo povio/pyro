@@ -526,8 +526,21 @@
   // native `FetchJob`; sw-3 adds `preload` to `LoadRoute`/`FetchJob` there.
   const sendHead = (id, response) => {
     const headers = [];
-    for (const pair of headersEntries.call(responseHeaders.call(response))) headers.push(pair[0], pair[1]);
-    native.respondHead(id, response.status, response.statusText, headers, response.url, response.type, native.responseCorp(response));
+    let status = response.status;
+    const internal = response.type === 'opaqueredirect' ? native.internalHead(response) : undefined;
+    if (typeof internal === 'string') {
+      // An opaque-redirect response hides its redirect from script, not from the navigation it
+      // answers: that follows the `Location` it names.
+      const lines = internal.split('\n');
+      status = Number(lines[0]);
+      for (let i = 1; i < lines.length; i++) {
+        const colon = lines[i].indexOf(':');
+        if (colon > 0) headers.push(lines[i].slice(0, colon), lines[i].slice(colon + 1));
+      }
+    } else {
+      for (const pair of headersEntries.call(responseHeaders.call(response))) headers.push(pair[0], pair[1]);
+    }
+    native.respondHead(id, status, response.statusText, headers, response.url, response.type, native.responseCorp(response));
   };
 
   // Response bodies being streamed to the page, by fetch id: the page cancelling its side

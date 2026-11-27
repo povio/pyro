@@ -214,6 +214,14 @@ impl Registry {
         id
     }
 
+    /// The client a navigation of `frame` creates has the id `id` (a redirect hop that the same
+    /// origin's worker handles keeps the id the navigation's earlier hop reserved).
+    fn reserve_as(&self, frame: &str, id: &str) {
+        let mut reserved = self.reserved.borrow_mut();
+        reserved.retain(|(f, _)| f != frame);
+        reserved.push((frame.to_owned(), id.to_owned()));
+    }
+
     fn take_reserved(&self, frame: &str) -> Option<String> {
         let mut reserved = self.reserved.borrow_mut();
         let i = reserved.iter().position(|(f, _)| f == frame)?;
@@ -692,6 +700,22 @@ impl LoadRoute {
 }
 
 impl LoadRoute {
+    /// The `resultingClientId` of this navigation's `fetch` event.
+    pub fn resulting_client(&self) -> &str {
+        &self.resulting_client_id
+    }
+
+    /// A redirect hop of a navigation within the origin of the hop before it creates the same
+    /// client: its `resultingClientId` is `id`, and the document that commits is that client.
+    pub fn keep_resulting_client(&mut self, services: &ContextServices, id: &str, frame: Option<&str>) {
+        self.resulting_client_id = id.to_owned();
+        if let Some(frame) = frame {
+            services.service_workers.reserve_as(frame, id);
+        }
+    }
+}
+
+impl LoadRoute {
     /// The route of a speculation-rules prefetch: its `fetch` event has the document that asked
     /// as `clientId` and no `resultingClientId` (the prefetch creates no client).
     pub fn for_prefetch(mut self, initiator: &Rc<PageDom>) -> Self {
@@ -710,7 +734,20 @@ pub fn prefetch_redirect_stop(services: &ContextServices) -> pyro_net::PrefetchR
         .filter(|r| !r.uninstalling.get() && r.site == SiteContext::SameSite && r.active.borrow().is_some())
         .map(|r| (r.partition.clone(), r.scope.clone()))
         .collect();
-    pyro_net::PrefetchRedirectStop { scopes }
+    pyro_net::PrefetchRedirectStop { scopes, navigation: false }
+}
+
+/// The scopes of the context's registrations with an active worker, for the redirects of a
+/// navigation that no worker handled so far: a hop into one of them goes back to the loader
+/// (`PrefetchRedirectStop::navigation`), which asks that registration's worker for the next hop.
+pub fn navigation_redirect_stop(services: &ContextServices) -> pyro_net::PrefetchRedirectStop {
+    let registrations = services.service_workers.registrations.borrow();
+    let scopes = registrations
+        .iter()
+        .filter(|r| !r.uninstalling.get() && r.active.borrow().is_some())
+        .map(|r| (r.partition.clone(), r.scope.clone()))
+        .collect();
+    pyro_net::PrefetchRedirectStop { scopes, navigation: true }
 }
 
 /// A request `document` makes (its `fetch()`, XHR, scripts, stylesheets,

@@ -207,7 +207,7 @@ pub use popup::{
     PopupState, PopupTicket, ACCESS_NOTE,
 };
 pub use render_blocking::RenderBlocker;
-pub use service_worker::{navigation_route, prefetch_redirect_stop, subresource_route, LoadRoute};
+pub use service_worker::{navigation_redirect_stop, navigation_route, prefetch_redirect_stop, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};
 pub use structured_clone::{
     decode_message as deserialize_message, encode_for_storage as serialize_for_storage, encode_message as serialize_message,

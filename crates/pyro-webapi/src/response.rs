@@ -339,6 +339,23 @@ fn wrap_script<'s>(
     Ok(wrapper.value())
 }
 
+/// The status and headers of an opaque-redirect Response as the network gave them (script sees
+/// status 0 and no headers): a `respondWith` of one answers a navigation, which follows the
+/// redirect it names. `None` for any other Response.
+pub(crate) fn internal_head(s: &Scope<'_>, response: Value<'_>) -> Option<(u16, Vec<(String, String)>)> {
+    let data = s.unwrap::<Response>(response)?;
+    if data.origin != Origin::Network || data.head.kind != ResponseKind::OpaqueRedirect {
+        return None;
+    }
+    let headers = data
+        .head
+        .headers
+        .iter()
+        .map(|(name, value)| (name.as_str().to_owned(), String::from_utf8_lossy(value.as_bytes()).into_owned()))
+        .collect();
+    Some((data.head.status.as_u16(), headers))
+}
+
 fn opaque(kind: ResponseKind) -> bool {
     matches!(kind, ResponseKind::Opaque | ResponseKind::OpaqueRedirect)
 }

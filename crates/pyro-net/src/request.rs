@@ -354,6 +354,10 @@ impl std::hash::Hash for DeferredCookies {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PrefetchRedirectStop {
     pub scopes: Vec<(Option<String>, String)>,
+    /// A navigation's, not a prefetch's: the hop into a scope is not an error but ends the
+    /// request with the redirect response as an opaque-redirect one (as a `manual` redirect
+    /// mode does), and the caller follows it through the scope's service worker.
+    pub navigation: bool,
 }
 
 impl PrefetchRedirectStop {

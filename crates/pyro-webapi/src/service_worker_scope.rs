@@ -412,6 +412,24 @@ pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster,
         None => Ok(s.null()),
     })?;
     native.set_atom("responseCorp", corp_fn.value())?;
+    // What an opaque-redirect Response hides from script: its redirect's status and headers, as
+    // "status\nname:value\n..." (undefined for any other Response).
+    let internal_head = s.function("internalHead", |s, _, a| {
+        Ok(match crate::response::internal_head(s, a.get(0)) {
+            Some((status, headers)) => {
+                let mut text = status.to_string();
+                for (name, value) in headers {
+                    text.push('\n');
+                    text.push_str(&name);
+                    text.push(':');
+                    text.push_str(&value);
+                }
+                s.string(&text)
+            }
+            None => s.undefined(),
+        })
+    })?;
+    native.set_atom("internalHead", internal_head.value())?;
     let chunk_fn = s.function("respondChunk", |s, _, a| {
         let key = a.get(0).to_number()? as u64;
         let bytes = crate::encoding::buffer_source_bytes(s, a.get(1))?.map(Bytes::from).unwrap_or_default();
@@ -647,6 +665,9 @@ fn respond_head(s: &Scope<'_>, job: &mut FetchJob, a: &pyro_js::Args<'_>) -> JsR
     }
     let status = a.get(1).to_number()? as u16;
     let status = match (StatusCode::from_u16(status), kind) {
+        // An opaque-redirect response keeps its redirect's own status (`internalHead`): the
+        // navigation it answers follows the redirect it names.
+        (Ok(status), ResponseKind::OpaqueRedirect) if status.is_redirection() => status,
         (_, ResponseKind::Opaque | ResponseKind::OpaqueRedirect) => StatusCode::OK,
         (Ok(status), _) => status,
         (Err(_), _) => {
