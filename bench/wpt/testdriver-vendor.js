@@ -4,7 +4,7 @@
 // (window.__pyroTestdriver, a function returning a promise of the runner's JSON answer). Elements cannot cross the
 // binding: they go as their center in this frame's viewport, and the runner adds the offsets of the frames around it.
 // Implemented: click, send_keys, action_sequence (pointer, key, wheel and none sources), and with them bless, and
-// set_permission, get_computed_role, get_computed_label (from Pyro's accessibility tree) and get_accessibility_properties_for_element / _for_accessibility_node, delete_all_cookies; get_named_cookie and get_all_cookies;
+// set_permission, get_computed_role, get_computed_label (from Pyro's accessibility tree) and get_accessibility_properties_for_element / _for_accessibility_node, delete_all_cookies, minimize_window / set_window_rect / get_window_rect / create_window / navigate; get_named_cookie and get_all_cookies;
 // bidi.log.entry_added, bidi.permissions.set_permission and the bidi.emulation overrides the browser really has
 // (geolocation, locale, touch, prefers-color-scheme/reduced-motion), and WebDriver's virtual authenticators. The rest keeps testdriver.js's own "not
 // implemented" rejections. A command group is added with one `def` line below (td/index.mjs says how).
@@ -99,6 +99,13 @@
   def('get_computed_label', { elements: [0] });
   def('get_accessibility_properties_for_element', { elements: [0] });
   def('get_accessibility_properties_for_accessibility_node');
+
+  // WebDriver's window commands (td/window.mjs): Minimize Window, Set / Get Window Rect, New Window, Navigate To.
+  def('minimize_window');
+  def('set_window_rect');
+  def('get_window_rect');
+  def('create_window');
+  def('navigate');
 
   // WebDriver's Delete All Cookies: the browser context's cookies.
   internal.delete_all_cookies = () => call({ cmd: 'delete_all_cookies' });
