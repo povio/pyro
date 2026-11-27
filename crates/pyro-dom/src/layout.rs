@@ -3938,7 +3938,14 @@ impl Layout {
         let mut current = Some(anchor);
         while let Some(el) = current.filter(|&el| Some(el) != scroller) {
             for property in PROPERTIES {
-                out.push_str(&self.style.computed_value(dom, el, property).unwrap_or_default());
+                let value = self.style.computed_value(dom, el, property).unwrap_or_default();
+                if *property == "position" {
+                    // Only a change between in-flow (static, relative, sticky) and out-of-flow
+                    // (absolute, fixed) positioning is a trigger (WPT `position-change-heuristic`).
+                    out.push_str(if matches!(value.trim(), "absolute" | "fixed") { "out-of-flow" } else { "in-flow" });
+                } else {
+                    out.push_str(&value);
+                }
                 out.push('|');
             }
             current = dom.parent_element(el).ok().flatten();
@@ -4077,6 +4084,29 @@ impl Layout {
         None
     }
 
+    /// Whether a box inside `scroller` (`None`: any) changed between in-flow and out-of-flow
+    /// positioning (absolute or fixed) from `old` to `flow`: Chromium suppresses the adjustment
+    /// then, whichever box it is (CSS Scroll Anchoring 1 § 2.4; WPT `position-change-heuristic`).
+    fn out_of_flow_changed(&self, dom: &Dom, old: &LayoutResult, flow: &LayoutResult, scroller: Option<NodeId>) -> bool {
+        use crate::geometry::BoxPosition;
+        let out_of_flow = |p: BoxPosition| matches!(p, BoxPosition::Absolute | BoxPosition::Fixed);
+        old.boxes.iter().any(|(&id, before)| {
+            let Some(now) = flow.get(id) else { return false };
+            if out_of_flow(before.position) == out_of_flow(now.position) {
+                return false;
+            }
+            let Some(scroller) = scroller else { return true };
+            let mut cur = dom.parent_element(id).ok().flatten();
+            while let Some(el) = cur {
+                if el == scroller {
+                    return true;
+                }
+                cur = dom.parent_element(el).ok().flatten();
+            }
+            false
+        })
+    }
+
     /// `contain: paint` (also `strict`, `content`): the box clips its descendants' overflow.
     fn contains_paint(&self, dom: &Dom, el: NodeId) -> bool {
         self.style
@@ -4124,7 +4154,7 @@ impl Layout {
             let suppressed = captured.as_ref().is_some_and(|(captured, fingerprint)| {
                 *captured == anchor && self.anchor_fingerprint(dom, el, anchor) != *fingerprint
             });
-            if suppressed {
+            if suppressed || self.out_of_flow_changed(dom, &old, &flow, el) {
                 continue;
             }
             let (Some(ab), Some(oab)) = (flow.get(anchor), old.get(anchor)) else { continue };
