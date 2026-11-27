@@ -16,9 +16,11 @@
 //! - Web Locks, `BroadcastChannel` and shared workers: the storage key gets the nonce
 //!   ([`PageDom::storage_partition_key`]).
 //!
-//! Not partitioned: service worker registrations and clients (the registry matches navigations by the
-//! site only), the HTTP cache (a credentialless request may be answered from a response cached for a
-//! credentialed one).
+//! Service workers: Chrome keys registrations by the nonce; this registry (matched by site) cannot, so a
+//! credentialless document has none: `register` rejects with `SecurityError`, the document is never a
+//! service worker client, and its frames' navigations do not go through a worker of the normal partition.
+//! The HTTP cache and the Basic-auth session are the normal partition's alone: a credentialless request
+//! (one with an ephemeral jar) neither reads nor writes them.
 //!
 //! A credentialless document has no storage access (`document.hasStorageAccess()` is false and
 //! `requestStorageAccess()` rejects), a popup it opens has no opener (as `noopener`), and a popup

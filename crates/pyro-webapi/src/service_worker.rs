@@ -704,7 +704,9 @@ fn client_made(page: &Rc<PageDom>, reserved: Option<String>, created: Option<&py
     if let Some(client) = page.sw_client.borrow().clone() {
         return Some(client);
     }
-    if opaque_origin(page) {
+    // A credentialless document is never a service worker client (it cannot register, and a worker of
+    // the normal partition must not control it): see `register`.
+    if opaque_origin(page) || page.is_credentialless() {
         return None;
     }
     let url = match created {
@@ -980,6 +982,11 @@ pub fn subresource_route(document: &PageDom, request: &Request) -> Option<LoadRo
 /// [`ContextServices::may_route_loads`] first.
 pub fn navigation_route(services: &ContextServices, request: &Request) -> Option<LoadRoute> {
     if request.skip_interception || is_embedded_content(request) || !matches!(request.url.scheme(), "http" | "https") {
+        return None;
+    }
+    // A credentialless frame's navigation (it carries the ephemeral cookie jar) goes to the network, not
+    // to a worker of the normal partition that would fetch it with the normal jar.
+    if request.defaults.ephemeral_cookies.is_some() {
         return None;
     }
     let registry = &services.service_workers;
@@ -1441,6 +1448,16 @@ fn register(
     update_via_cache: String,
 ) -> JsResult<()> {
     let prefix = "Failed to register a ServiceWorker";
+    // A credentialless document is in an ephemeral partition: Chrome keys its registrations by the
+    // partition's nonce, which this registry (matched by site) cannot do. A registration made here
+    // would be shared with the normal partition and its worker would fetch with the normal cookie
+    // jar, so the partition has no service workers at all.
+    if page.is_credentialless() {
+        return Err(JsError::dom(
+            "SecurityError",
+            format!("{prefix}: Service workers are not available to a credentialless document."),
+        ));
+    }
     let client = client_of(page)
         .ok_or_else(|| JsError::dom("SecurityError", format!("{prefix}: The document is in an invalid state.")))?;
     let base = page.dom.borrow().document_base_url(page.document()).ok().map(str::to_owned);
