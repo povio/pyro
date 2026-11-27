@@ -1196,6 +1196,14 @@ fn hop_sink(hops: std::sync::Arc<NavigationHops>) -> pyro_net::ResponseSink {
         }
         other => {
             redirect = None;
+            if let pyro_net::ResponseEvent::Redirect { from, to, status, headers } = &other {
+                // A hop the network client followed itself (before one entered a scope): the
+                // request the next hop continues from has the method and body that hop left,
+                // not the loader's original (a POST a 302 turned into GET stays a GET).
+                let mut inner = hops.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                carry_redirect(&mut inner.req, *status, from.origin() != to.origin());
+                inner.chain.redirect(from, headers);
+            }
             forward_hop_event(&hops, other);
         }
     })
@@ -1238,10 +1246,31 @@ fn redirect_location(bytes: &[u8]) -> String {
     text
 }
 
+/// Fetch "HTTP-redirect fetch" step 12 and the credential strip: a redirect `status` turns a POST
+/// (301/302) or any other non-GET/HEAD method (303) into a body-less GET, and a cross-origin hop
+/// drops `Authorization` and `Cookie`. Applied to `req`, the request the hop that got the redirect
+/// sent, so the next hop continues from that hop's method and body.
+fn carry_redirect(req: &mut pyro_net::Request, status: pyro_net::http::StatusCode, cross_origin: bool) {
+    use pyro_net::http::{header, Method, StatusCode};
+    if (status == StatusCode::SEE_OTHER && req.method != Method::HEAD && req.method != Method::GET)
+        || (matches!(status.as_u16(), 301 | 302) && req.method == Method::POST)
+    {
+        req.method = Method::GET;
+        req.body = None;
+        for name in [header::CONTENT_TYPE, header::CONTENT_LENGTH, header::CONTENT_ENCODING, header::CONTENT_LANGUAGE, header::CONTENT_LOCATION] {
+            req.headers.remove(name);
+        }
+    }
+    if cross_origin {
+        req.headers.remove(header::AUTHORIZATION);
+        req.headers.remove(header::COOKIE);
+    }
+}
+
 /// Fetch "HTTP-redirect fetch" for the redirect `head` answered the last hop with: the next
 /// request, or the end of the navigation.
 fn advance_hop(inner: &mut HopInner, head: pyro_net::ResponseHead) -> Hop {
-    use pyro_net::http::{header, Method, StatusCode};
+    use pyro_net::http::header;
     let fail = |error: pyro_net::NetError| Hop::Deliver(vec![pyro_net::ResponseEvent::Failed(error)]);
     let status = head.status;
     let location = head.headers.get(header::LOCATION).map(|v| redirect_location(v.as_bytes()));
@@ -1277,19 +1306,7 @@ fn advance_hop(inner: &mut HopInner, head: pyro_net::ResponseHead) -> Hop {
     // The loader's bookkeeping of the redirect (opener policies, referrer chain).
     (inner.sink)(pyro_net::ResponseEvent::Redirect { from: from.clone(), to: target.clone(), status, headers: head.headers.clone() });
     let req = &mut inner.req;
-    if (status == StatusCode::SEE_OTHER && req.method != Method::HEAD && req.method != Method::GET)
-        || (matches!(status.as_u16(), 301 | 302) && req.method == Method::POST)
-    {
-        req.method = Method::GET;
-        req.body = None;
-        for name in [header::CONTENT_TYPE, header::CONTENT_LENGTH, header::CONTENT_ENCODING, header::CONTENT_LANGUAGE, header::CONTENT_LOCATION] {
-            req.headers.remove(name);
-        }
-    }
-    if cross_origin {
-        req.headers.remove(header::AUTHORIZATION);
-        req.headers.remove(header::COOKIE);
-    }
+    carry_redirect(req, status, cross_origin);
     inner.chain.redirect(&from, &head.headers);
     req.referrer = inner.chain.referrer.clone();
     req.referrer_policy = inner.chain.policy;
