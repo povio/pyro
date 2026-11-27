@@ -215,13 +215,13 @@ impl PageHooks for Hooks {
         (origin != "null").then_some(origin)
     }
 
-    fn refresh_frame_documents(&self) {
+    fn refresh_frame_documents(&self, owners: &[pyro_dom::NodeId]) {
         let Some(host) = self.frames.upgrade() else { return };
         if !host.matches(self.page, &self.loader) {
             return;
         }
         let top = host.page_dom(FrameKey { page: self.page.page, child: None });
-        crate::update_frame_documents_of(&host, top.as_ref());
+        crate::update_same_origin_frame_documents_of(&host, top.as_ref(), self.page, owners);
     }
 
     fn frame_detached(&self) -> bool {

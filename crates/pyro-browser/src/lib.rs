@@ -737,7 +737,7 @@ impl Page {
     /// frame's HTML holds its own frames' documents. pyro: each frame document carries its own
     /// sheets ([`pyro_dom::FrameDocument::sheets`]), never merged with the page's by URL.
     pub fn update_frame_documents(&self) -> Vec<pyro_dom::geometry::TransitionFrame> {
-        update_frame_documents_of(&self.frames, self.main_frame.page_dom.as_ref())
+        update_frame_documents_of(&self.frames, self.main_frame.page_dom.as_ref(), None)
     }
 
     /// Copies the page's own request options (extra headers, cache bypass)
@@ -764,9 +764,15 @@ fn frame_tree_documents_of(frames: &frames::FrameHost, main: Option<&Rc<pyro_web
 /// [`Page::update_frame_documents`] for the frames of `frames` (a page's), whose top document is
 /// `main`: also what a `drawElementImage` of an element holding a frame asks of its document's hooks
 /// (`PageHooks::refresh_frame_documents`), as a screenshot does before its snapshot.
-pub(crate) fn update_frame_documents_of(frames: &frames::FrameHost, main: Option<&Rc<pyro_webapi::PageDom>>) -> Vec<pyro_dom::geometry::TransitionFrame> {
+///
+/// `only`: render just these frames and leave the documents the others have as they are (a
+/// `drawElementImage`'s refresh, [`update_same_origin_frame_documents_of`]); `None`: all of them.
+pub(crate) fn update_frame_documents_of(frames: &frames::FrameHost, main: Option<&Rc<pyro_webapi::PageDom>>, only: Option<&[frames::FrameKey]>) -> Vec<pyro_dom::geometry::TransitionFrame> {
     let mut transitions = Vec::new();
     if !frames.has_children() {
+        if only.is_some() {
+            return transitions;
+        }
         if let Some(page_dom) = main {
             if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
                 dom.set_frame_documents(&frame_tree_documents_of(frames, main), Vec::new());
@@ -789,6 +795,9 @@ pub(crate) fn update_frame_documents_of(frames: &frames::FrameHost, main: Option
     let mut documents = Vec::new();
     let mut frame_animations = Vec::new();
     for (_, key) in keys {
+        if only.is_some_and(|only| !only.contains(&key)) {
+            continue;
+        }
         let Some((owner, page_dom, base_url, url, client)) = frames.with_frame(key, |f| {
             (f.owner, f.page_dom.clone(), f.base_url.clone(), f.url.clone(), document_client(f))
         })
@@ -826,6 +835,14 @@ pub(crate) fn update_frame_documents_of(frames: &frames::FrameHost, main: Option
     let store = main.map(|p| p.dom.clone());
     if let Some(store) = store {
         if let Ok(mut dom) = store.try_borrow_mut() {
+            if only.is_some() {
+                // (Each frame's document is set above; those of the frames left out stay.)
+                dom.frame_animations = frame_animations
+                    .into_iter()
+                    .filter_map(|(client, frame)| Some((client, std::sync::Arc::new(frame?))))
+                    .collect();
+                return transitions;
+            }
             dom.set_frame_documents(&frame_tree_documents_of(frames, main), documents);
             dom.frame_animations = frame_animations
                 .into_iter()
@@ -834,6 +851,41 @@ pub(crate) fn update_frame_documents_of(frames: &frames::FrameHost, main: Option
         }
     }
     transitions
+}
+
+/// [`update_frame_documents_of`] for a `drawElementImage` of an element of the document `drawing`
+/// holding the frame elements `owners`: only the frames of `drawing`'s origin that those elements
+/// hold, and the frames of that origin inside them. A frame of another origin (or an opaque one)
+/// is not painted into a canvas a page can read back, and rendering it anyway would make the time
+/// the call takes show what the frame holds; frames outside the drawn subtree are not painted
+/// either.
+pub(crate) fn update_same_origin_frame_documents_of(
+    frames: &frames::FrameHost,
+    main: Option<&Rc<pyro_webapi::PageDom>>,
+    drawing: frames::FrameKey,
+    owners: &[pyro_dom::NodeId],
+) -> Vec<pyro_dom::geometry::TransitionFrame> {
+    let Some(origin) = frames.with_frame(drawing, |f| f.origin.clone()).filter(|origin| origin != "null") else {
+        return Vec::new();
+    };
+    let mut selected: Vec<frames::FrameKey> = Vec::new();
+    let mut stack = vec![(drawing, true)];
+    while let Some((parent, in_drawing)) = stack.pop() {
+        for child in frames.child_keys(parent) {
+            let Some((owner, child_origin)) = frames.with_frame(child, |f| (f.owner, f.origin.clone())) else { continue };
+            // (The top frames must be held by the drawn subtree; the frames inside a selected one
+            // are all painted with it.)
+            if child_origin != origin || (in_drawing && !owner.is_some_and(|owner| owners.contains(&owner))) || selected.contains(&child) {
+                continue;
+            }
+            selected.push(child);
+            stack.push((child, false));
+        }
+    }
+    if selected.is_empty() {
+        return Vec::new();
+    }
+    update_frame_documents_of(frames, main, Some(&selected))
 }
 
 /// Browser-thread state: the loop state type for [`EventLoop`].

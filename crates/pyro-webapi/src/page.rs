@@ -838,8 +838,11 @@ pub trait PageHooks {
     /// HTML-in-Canvas: gives the render snapshot of the top document the documents its frames show
     /// now (each frame's markup, URL, sheets and scroll position), as a screenshot does before it
     /// takes one: `drawElementImage` paints an element holding a frame (an `<iframe>`, `<object>`
-    /// or `<embed>` showing a document) from it. Called before the DOM is borrowed.
-    fn refresh_frame_documents(&self) {}
+    /// or `<embed>` showing a document) from it. Called before the DOM is borrowed. Only the
+    /// frames the elements `owners` (the frame elements in the drawn subtree) hold, and the frames
+    /// in them, of this document's origin are rendered: a frame of another origin is not painted
+    /// (HTML-in-Canvas privacy), and rendering it would show how long it takes to a page.
+    fn refresh_frame_documents(&self, _owners: &[NodeId]) {}
     /// HTML "secure context" for this document, ancestors included (the embedder knows the frame
     /// chain); `None` when it cannot tell (the document's own URL decides then).
     fn is_secure_context(&self) -> Option<bool> {
