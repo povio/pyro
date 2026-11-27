@@ -1936,6 +1936,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         cx.draw_content_gradient(scene);
                     }
                     cx.draw_math_fraction_bar(scene);
+                    cx.draw_math_radical(scene);
                     #[cfg(feature = "custom-widget")]
                     cx.draw_custom_widget(scene);
                     if !skipped {
@@ -7704,6 +7705,46 @@ impl ElementCx<'_, '_> {
         let rect = Rect::new(content.x0, y, content.x1, y + thickness as f64 * self.scale);
         let color = self.style.clone_color().as_srgb_color();
         scene.fill(Fill::NonZero, self.transform, color, None, &rect);
+    }
+
+    /// pyro: a MathML radical's overbar and sign (`blitz_dom::layout::math::radical`): the bar
+    /// over the radicand and the sign's glyph at the start of the content box (its end when
+    /// `rtl`), both in the element's `color` (Chromium's `MathMLPainter::PaintRadicalSymbol`).
+    fn draw_math_radical(&self, scene: &mut impl PaintScene) {
+        let Some(radical) = self.element.math_radical.as_ref() else { return };
+        if self.style.get_inherited_box().visibility != StyloVisibility::Visible {
+            return;
+        }
+        let content = self.frame.content_box;
+        let color = self.style.clone_color().as_srgb_color();
+        let scale = self.scale;
+        // The x of a span `[start, start + width]` of the content box's start-edge coordinates.
+        let x = |start: f32, width: f32| {
+            if radical.rtl { content.x1 - (start + width) as f64 * scale } else { content.x0 + start as f64 * scale }
+        };
+        if radical.bar_width > 0.0 && radical.bar_thickness > 0.0 {
+            let left = x(radical.bar_start, radical.bar_width);
+            let top = radical.bar_top as f64 * scale;
+            let rect = Rect::new(left, top, left + radical.bar_width as f64 * scale, top + radical.bar_thickness as f64 * scale);
+            scene.fill(Fill::NonZero, self.transform, color, None, &rect);
+        }
+        if let Some(sign) = &radical.sign {
+            let origin_x = x(sign.start, sign.width);
+            let glyphs = std::iter::once(anyrender::Glyph { id: sign.glyph as _, x: 0.0, y: 0.0 });
+            scene.draw_glyphs(
+                &sign.font,
+                sign.size * self.scale as f32,
+                false,
+                &[],
+                kurbo::Vec2::default(),
+                Fill::NonZero,
+                &anyrender::Paint::from(color),
+                1.0,
+                self.transform * Affine::translate((origin_x, sign.baseline as f64 * scale)),
+                None,
+                glyphs,
+            );
+        }
     }
 
     /// pyro: Chromium's 16x16 broken-image icon (its `IDR_BROKENIMAGE` resource, as Chrome draws it at

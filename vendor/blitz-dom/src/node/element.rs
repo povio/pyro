@@ -52,6 +52,36 @@ pub type SampledBlocks = (
     Option<ServoArc<Locked<PropertyDeclarationBlock>>>,
 );
 
+/// pyro: what a MathML radical (`msqrt`, `mroot`) paints beside its content, as its last layout
+/// placed it (`layout::math::radical`; drawn by blitz-paint). Lengths are CSS px; the horizontal
+/// ones from the content box's start edge (its end edge when `rtl`), the vertical ones from the
+/// border box's top.
+#[derive(Clone)]
+pub struct MathRadical {
+    pub rtl: bool,
+    /// The overbar over the radicand: where it starts, its width, top and thickness.
+    pub bar_start: f32,
+    pub bar_width: f32,
+    pub bar_top: f32,
+    pub bar_thickness: f32,
+    /// The radical sign, when the box's font has the glyph.
+    pub sign: Option<MathRadicalSign>,
+}
+
+/// The glyph of a [`MathRadical`]'s sign.
+#[derive(Clone)]
+pub struct MathRadicalSign {
+    pub font: linebender_resource_handle::FontData,
+    pub glyph: u16,
+    /// The font size.
+    pub size: f32,
+    /// Where the glyph's origin is: its start edge's offset, and the baseline's.
+    pub start: f32,
+    /// The glyph's advance width.
+    pub width: f32,
+    pub baseline: f32,
+}
+
 pub struct ElementData {
     /// The elements tag name, namespace and prefix
     pub name: QualName,
@@ -115,6 +145,8 @@ pub struct ElementData {
     /// pyro: an ordinary MathML fraction's bar, as its last layout placed it: its top (from the
     /// border box's top) and thickness, CSS px (`layout::math`). `None` without one.
     pub math_fraction_bar: Option<[f32; 2]>,
+    /// pyro: a MathML radical's bar and sign, as its last layout placed them (`layout::math::radical`).
+    pub math_radical: Option<MathRadical>,
     /// pyro: the class of a MathML box built with a layout of its own (`layout::math`, set with
     /// `NodeFlags::IS_MATH_BOX` by its construction); `None` for any other element.
     pub(crate) math_kind: Option<crate::layout::math::MathKind>,
@@ -473,6 +505,7 @@ impl Clone for ElementData {
             image_failed: self.image_failed,
             content_gradient: self.content_gradient,
             math_fraction_bar: None,
+            math_radical: None,
             math_kind: None,
             math_italic_correction: 0.0,
             reference_images: self.reference_images.clone(),
@@ -617,6 +650,7 @@ impl ElementData {
             image_failed: false,
             content_gradient: false,
             math_fraction_bar: None,
+            math_radical: None,
             math_kind: None,
             math_italic_correction: 0.0,
             reference_images: ThinVec::new(),

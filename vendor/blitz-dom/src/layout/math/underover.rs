@@ -133,6 +133,30 @@ impl MathFace {
         super::types::top_accent_attachment(math.as_bytes(), glyph).map(|value| f32::from(value) * scale)
     }
 
+    /// The font as a paintable font (for the glyphs a class draws itself).
+    pub(crate) fn font_data(&self) -> parley::FontData {
+        parley::FontData::new(self.font.blob.clone(), self.font.index)
+    }
+
+    /// The font size, CSS px.
+    pub(crate) fn size(&self) -> f32 {
+        self.size
+    }
+
+    /// The advance width and the ink's ascent and descent over and under the baseline of a glyph,
+    /// CSS px (the ink extents are 0 for a glyph without an outline).
+    pub(crate) fn glyph_extents(&self, glyph: u16) -> Option<(f32, f32, f32)> {
+        use skrifa::MetadataProvider as _;
+        use skrifa::instance::{LocationRef, Size};
+        let font_ref = self.font_ref()?;
+        let scale = self.scale(&font_ref)?;
+        let metrics = font_ref.glyph_metrics(Size::unscaled(), LocationRef::default());
+        let id = skrifa::GlyphId::new(u32::from(glyph));
+        let advance = metrics.advance_width(id)? * scale;
+        let (ascent, descent) = metrics.bounds(id).map_or((0.0, 0.0), |bounds| ((bounds.y_max * scale).max(0.0), (-bounds.y_min * scale).max(0.0)));
+        Some((advance, ascent, descent))
+    }
+
     /// The fallbacks' parts of the font (`Fallbacks`).
     pub(crate) fn fallbacks(&self) -> Fallbacks {
         use skrifa::instance::{LocationRef, Size};
