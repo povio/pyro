@@ -142,6 +142,8 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
         }
         o.set("type", s.string(n.nav_type))?;
         o.set("redirectCount", s.number(redirect_count(n)))?;
+        // Pyro has no back/forward cache: a document is never "not restored".
+        o.set("notRestoredReasons", s.null())?;
     }
     Ok(o.value())
 }
