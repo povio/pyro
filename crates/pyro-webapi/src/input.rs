@@ -2859,8 +2859,9 @@ pub struct PenState {
     pub tangential_pressure: f64,
 }
 
-/// The `pointerId` of the pen (the mouse is 1; touches count up from 2).
-pub const PEN_POINTER_ID: i32 = 2;
+/// The `pointerId` of the pen (the mouse is 1; touches count up from 2 and skip this one, so no
+/// touch pointer can share the pen's id: `setPointerCapture` and friends route by id).
+pub const PEN_POINTER_ID: i32 = 1 << 30;
 
 pub(crate) fn mouse_event(
     page: &Rc<PageDom>,
@@ -4438,6 +4439,9 @@ pub fn dispatch_touch(
         }
         if seq.next_pointer_id < 2 {
             seq.next_pointer_id = 2;
+        }
+        if seq.next_pointer_id == PEN_POINTER_ID {
+            seq.next_pointer_id += 1;
         }
         let t = ActiveTouch {
             input,
