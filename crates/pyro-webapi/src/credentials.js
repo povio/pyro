@@ -879,7 +879,8 @@
           throw dom('The options name no credential type this browser can request, or an unsupported combination.', 'NotSupportedError');
         }
         if (kinds.includes('publicKey')) return getPublicKey(o.publicKey, o.signal, o.mediation, o.uiMode);
-        // Passwords and federated identities: there is no password manager or identity provider to ask. A
+        // Passwords and federated identities: there is no password manager or identity provider to ask, and headless
+        // Chrome's get() for them resolves null the same way (checked against stable). A
         // request that is not silent needs the user's activation first (it would show the account chooser),
         // then finds nothing.
         if (o.mediation !== 'silent') {
@@ -901,7 +902,9 @@
         needTuple();
         const type = credentialSlots.get(credential).type;
         if (type !== 'password' && type !== 'federated') throw dom(`Credentials of type '${type}' cannot be stored.`, 'NotSupportedError');
-        // No password manager backs this browser: nothing to save the credential to.
+        // Parity with Chrome, not a save: headless Chrome has no password manager UI and its store() for a Password or
+        // Federated credential resolves undefined (checked against stable, document focused). Pyro has no password
+        // manager either, so nothing is kept and the credential is never offered by get().
         return resolve(undefined);
       } catch (e) {
         return reject(e);
@@ -929,7 +932,8 @@
         const inactive = activeOrReject();
         if (inactive !== null) throw inactive;
         needTuple();
-        // Silent access is only ever granted by a password manager, which this browser has none of.
+        // Parity with Chrome (checked against stable, headless: resolves undefined). Silent access is only ever granted
+        // by a password manager and this browser has none, so there is no stored mediation state to change.
         return resolve(undefined);
       } catch (e) {
         return reject(e);
