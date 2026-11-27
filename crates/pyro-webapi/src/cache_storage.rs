@@ -189,8 +189,10 @@ fn cache_error(e: BucketError) -> JsError {
 /// A request/response pair, in insertion order.
 #[derive(Clone)]
 pub struct Entry {
-    /// Without its fragment.
+    /// Without its fragment: what matching and replacing compare.
     url: String,
+    /// The request's URL as `put` got it, fragment included (what `keys()` returns).
+    request_url: String,
     method: String,
     headers: Vec<(String, String)>,
     response: Arc<Stored>,
@@ -483,7 +485,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         };
         let mut items = Vec::with_capacity(found.len());
         for e in &found {
-            items.push(s.array(&[s.string(&e.url), s.string(&e.method), pairs_value(s, &e.headers)?])?.value());
+            items.push(s.array(&[s.string(&e.request_url), s.string(&e.method), pairs_value(s, &e.headers)?])?.value());
         }
         Ok(s.array(&items)?.value())
     })?;
@@ -528,8 +530,9 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
                     redirected: at(9)?.to_bool(),
                     body,
                 };
+                let request_url = url.clone();
                 let url = strip_fragment(&url).to_owned();
-                ops.push(Op::Put(Entry { url, method, headers, response: Arc::new(response) }));
+                ops.push(Op::Put(Entry { url, request_url, method, headers, response: Arc::new(response) }));
             } else {
                 ops.push(Op::Delete(Query {
                     url,
@@ -632,6 +635,7 @@ mod tests {
     fn put(url: &str, body: &'static [u8]) -> Op {
         Op::Put(Entry {
             url: url.into(),
+            request_url: url.into(),
             method: "GET".into(),
             headers: Vec::new(),
             response: Arc::new(Stored {
