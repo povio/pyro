@@ -3494,6 +3494,59 @@ fn dispatch_boundary_events(
     }
 }
 
+/// The pointer left this document for another frame's content (CDP routes a mouse event to the innermost frame
+/// under it, so the document it came from is told here): `pointerout` at what was hovered and `pointerleave` along
+/// its chain up to the document, then the mouse twins, as when the pointer leaves the page. The document is then
+/// hovered by nothing and has no pointer (its next `movementX/Y` start from zero). `relatedTarget` is null: the
+/// element across the boundary is in another document. A pointer captured in this document stays with it.
+pub fn pointer_left_document(page: &Rc<PageDom>, fallback: &MouseInput) {
+    let c = page.mouse_capture.get();
+    if page.is_disposed() || c.current.is_some() || c.pending.is_some() {
+        return;
+    }
+    let last = page.pointer.borrow_mut().take();
+    let Some(prev) = page.hovered_raw() else { return };
+    let m = MouseInput { x: last.as_ref().map_or(fallback.x, |p| p.x), y: last.as_ref().map_or(fallback.y, |p| p.y), movement: (0.0, 0.0), ..fallback.clone() };
+    let prev_removed = refresh_hover_trail(page);
+    let prev_connected = !prev_removed && page.dom.borrow().is_connected(prev).unwrap_or(false);
+    let chain = if prev_removed { page.hover_trail.borrow().chain.clone() } else { hover_chain(page, prev) };
+    let doc = page.document();
+    let _ = page.dom.borrow_mut().set_hovered(doc, None);
+    page.set_hovered(None);
+    *page.hover_trail.borrow_mut() = HoverTrail::default();
+    page.layout().set_pointer(None);
+    let connected = |n: NodeId| page.dom.borrow().is_connected(n).unwrap_or(false);
+    let boundary = |iface: EventInterface, ty: &str, at: TargetKey, cancelable: bool| {
+        if crate::target::unheard_input(page, ty, at, cancelable, None) {
+            return;
+        }
+        fire(page, at, &mouse_event(page, iface, ty, &m, cancelable));
+    };
+    for (iface, [out, leave]) in [
+        (EventInterface::PointerEvent, ["pointerout", "pointerleave"]),
+        (EventInterface::MouseEvent, ["mouseout", "mouseleave"]),
+    ] {
+        if let Some(k) = key_of(page, prev).filter(|_| prev_connected) {
+            boundary(iface, out, k, true);
+        }
+        for &n in chain.iter().filter(|&&n| connected(n)) {
+            if let Some(k) = key_of(page, n) {
+                boundary(iface, leave, k, false);
+            }
+        }
+    }
+}
+
+/// The pointer is over a child frame's content: in this (the parent) document it is over the frame's owner element
+/// `owner`, which gets the boundary events from what was hovered before (no-op when it already is hovered).
+pub fn pointer_over_frame_owner(page: &Rc<PageDom>, owner: NodeId, m: &MouseInput) {
+    let c = page.mouse_capture.get();
+    if page.is_disposed() || c.current.is_some() || c.pending.is_some() {
+        return;
+    }
+    hover_capture_target(page, owner, m);
+}
+
 /// The pointer is now over `target`, the node that captured it: boundary events from what was
 /// hovered (pointer capture §4.1.1; no-op when it already is).
 pub(crate) fn hover_capture_target(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {

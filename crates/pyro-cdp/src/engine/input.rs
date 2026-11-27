@@ -317,7 +317,8 @@ impl EngineHost {
                 // A point over an iframe goes to its document, in its own
                 // viewport coordinates (recursively); only the innermost
                 // document receives the mouse events.
-                let (page, x, y) = self.descend_into_frames(native_id, page, p.x, p.y);
+                let frames = self.frame_chain(native_id, page, p.x, p.y);
+                let Some((page, x, y, _)) = frames.last().cloned() else { return Err(CdpError::server("page is gone")) };
                 let mouse = MouseInput {
                     x,
                     y,
@@ -330,6 +331,11 @@ impl EngineHost {
                     pen,
                     ..MouseInput::default()
                 };
+                // The documents around the innermost one hear the pointer too: the frames it left see it go, the
+                // parents see it over the frame's element.
+                if kind != MouseKind::Wheel {
+                    self.update_frame_hover(cmd.page, &frames, &mouse);
+                }
                 let intercept = self.pages.get(&cmd.page).is_some_and(|state| state.intercept_drags);
                 let dragged = input::dispatch_mouse_intercepting_drags(&page, kind, &mouse, intercept)
                     .map_err(CdpError::server)?;
@@ -502,6 +508,64 @@ impl EngineHost {
             state.touches = touches;
         }
         result.map_err(CdpError::server)
+    }
+
+    /// The documents of the frames under (x, y), outermost (the page's) first, each with the point in its own viewport
+    /// coordinates and, for all but the innermost, the element of it that owns the next frame.
+    fn frame_chain(
+        &self,
+        page_id: pyro_browser::PageId,
+        mut page: Rc<pyro_webapi::PageDom>,
+        mut x: f64,
+        mut y: f64,
+    ) -> Vec<(Rc<pyro_webapi::PageDom>, f64, f64, Option<pyro_dom::NodeId>)> {
+        let mut chain = Vec::new();
+        for _ in 0..32 {
+            let next = if self.thread.browser.has_child_frames(page_id) {
+                (|| {
+                    let node = pyro_webapi::layout_api::hit_test(&page, x, y)?;
+                    let frame_id = self.thread.browser.frame_of_owner(page_id, node)?;
+                    let child = self.thread.browser.with_frame(page_id, &frame_id, |f| f.page_dom.clone()).flatten()?;
+                    // The child viewport starts at the iframe's content box.
+                    let local = super::dom::FrameTransform::of_owner(&page, node)?.inverse_point(x, y)?;
+                    Some((node, child, local))
+                })()
+            } else {
+                None
+            };
+            match next {
+                Some((owner, child, (lx, ly))) => {
+                    chain.push((page.clone(), x, y, Some(owner)));
+                    (page, x, y) = (child, lx, ly);
+                }
+                None => {
+                    chain.push((page, x, y, None));
+                    break;
+                }
+            }
+        }
+        chain
+    }
+
+    /// Mouse hover across frames: a document the pointer was over and no longer is hears it leave, deepest first
+    /// (`pointerout`/`pointerleave`), then each document above the innermost has its frame's owner element hovered.
+    fn update_frame_hover(
+        &mut self,
+        key: crate::target::PageKey,
+        chain: &[(Rc<pyro_webapi::PageDom>, f64, f64, Option<pyro_dom::NodeId>)],
+        mouse: &MouseInput,
+    ) {
+        let now: Vec<Rc<pyro_webapi::PageDom>> = chain.iter().map(|c| c.0.clone()).collect();
+        let Some(state) = self.pages.get_mut(&key) else { return };
+        let before = std::mem::replace(&mut state.hover_documents, now.clone());
+        for doc in before.iter().rev().filter(|d| !now.iter().any(|n| Rc::ptr_eq(n, d))) {
+            input::pointer_left_document(doc, mouse);
+        }
+        for (doc, x, y, owner) in chain {
+            if let Some(owner) = owner {
+                input::pointer_over_frame_owner(doc, *owner, &MouseInput { x: *x, y: *y, ..mouse.clone() });
+            }
+        }
     }
 
     /// The innermost frame document under (x, y) and the point in its

@@ -419,6 +419,8 @@ pub(crate) struct PageState {
     /// viewport (all touches of a sequence go to that document).
     pub(crate) touches: pyro_webapi::input::TouchSequence,
     touch_document: Option<(Rc<pyro_webapi::PageDom>, Vec<dom::FrameTransform>)>,
+    /// The documents the mouse pointer is over, outermost first (the page's, then each frame down to the innermost).
+    hover_documents: Vec<Rc<pyro_webapi::PageDom>>,
     network: network::NetworkPage,
     dom_nodes: dom::BackendNodes,
     /// Downloads the page started, newest last (`Pyro.run` `download` steps).
@@ -704,6 +706,7 @@ impl EngineHost {
                 intercept_drags: false,
                 touches: Default::default(),
                 touch_document: None,
+                hover_documents: Vec::new(),
                 network: network::NetworkPage::new(self.body_budget.clone()),
                 dom_nodes: dom::BackendNodes::default(),
                 downloads: Vec::new(),
