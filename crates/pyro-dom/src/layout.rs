@@ -2256,8 +2256,11 @@ impl Layout {
             sticky.limit.map(|(x, y, width, height)| Rect { x: x + cb_shift.0, y: y + cb_shift.1, width, height });
         let inset = |side: usize, basis: f64| sticky.insets[side].map(|(px, fraction)| px + fraction * basis);
         let r = Rect { x: b.rect.x + box_shift.0, y: b.rect.y + box_shift.1, ..b.rect };
-        // One axis: start inset pulls forward, end inset pulls back, both
-        // bounded by the containing block (`lo`..`hi` along the axis).
+        // One axis: start inset pulls forward, end inset pulls back, both bounded by the containing
+        // block (`lo`..`hi` along the axis). When the box is taller than the port between the two insets
+        // the inset applied last wins and keeps its edge where it asks: the start one, or `end_wins` for
+        // the end one (`right` in a right-to-left containing block, whose inline start is its right edge);
+        // the other edge overflows (WPT css-position `sticky/position-sticky-*-overconstrained`).
         let axis = |start: Option<f64>,
                     end: Option<f64>,
                     pos: f64,
@@ -2265,30 +2268,45 @@ impl Layout {
                     port0: f64,
                     port_size: f64,
                     lo: f64,
-                    hi: f64| {
-            if let Some(s) = start {
-                let need = port0 + s - pos;
-                if need > 0.0 {
-                    return need.min(hi - (pos + size)).max(0.0);
+                    hi: f64,
+                    end_wins: bool| {
+            let push_forward = |offset: f64| match start {
+                Some(s) => {
+                    let need = port0 + s - (pos + offset);
+                    if need > 0.0 { (offset + need).min(hi - (pos + size)).max(offset) } else { offset }
                 }
-            }
-            if let Some(e) = end {
-                let need = port0 + port_size - e - (pos + size);
-                if need < 0.0 {
-                    return need.max(lo - pos).min(0.0);
+                None => offset,
+            };
+            let pull_back = |offset: f64| match end {
+                Some(e) => {
+                    let need = port0 + port_size - e - (pos + offset + size);
+                    if need < 0.0 { (offset + need).max(lo - pos).min(offset) } else { offset }
                 }
-            }
-            0.0
+                None => offset,
+            };
+            if end_wins { pull_back(push_forward(0.0)) } else { push_forward(pull_back(0.0)) }
         };
         let (lo_x, hi_x, lo_y, hi_y) = match limit {
             Some(l) => (l.x, l.x + l.width, l.y, l.y + l.height),
             None => (f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY),
         };
+        // `left` and `right` are physical: in a right-to-left containing block (the nearest ancestor with a
+        // box) the inline start is the right edge, which wins.
+        let rtl = {
+            let mut parent = dom.parent_element(el).ok().flatten();
+            while let Some(p) = parent.filter(|&p| self.computed(dom, p).display_contents) {
+                parent = dom.parent_element(p).ok().flatten();
+            }
+            parent.is_some_and(|p| {
+                self.style.computed_value(dom, p, "direction").as_deref() == Some("rtl")
+                    && self.style.computed_value(dom, p, "writing-mode").is_none_or(|w| w.starts_with("horizontal"))
+            })
+        };
         let dy = axis(
-            inset(TOP, port_y.height), inset(BOTTOM, port_y.height), r.y, r.height, port_y.y, port_y.height, lo_y, hi_y,
+            inset(TOP, port_y.height), inset(BOTTOM, port_y.height), r.y, r.height, port_y.y, port_y.height, lo_y, hi_y, false,
         );
         let dx = axis(
-            inset(LEFT, port_x.width), inset(RIGHT, port_x.width), r.x, r.width, port_x.x, port_x.width, lo_x, hi_x,
+            inset(LEFT, port_x.width), inset(RIGHT, port_x.width), r.x, r.width, port_x.x, port_x.width, lo_x, hi_x, rtl,
         );
         (dx, dy)
     }
