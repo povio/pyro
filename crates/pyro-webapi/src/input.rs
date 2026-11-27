@@ -3289,6 +3289,13 @@ fn dispatch_mouse_inner(
                         if let Some(f) = focused {
                             blur_element(page, f);
                         }
+                        // The press still makes this document's frame the focused one (Chrome's
+                        // `FocusController::SetFocusedFrame` on mouse down): an iframe's owner becomes
+                        // the parent's activeElement and keys go to the frame (WPT css-overscroll-behavior
+                        // `overscroll-behavior-keyboard-scroll-child-frame`).
+                        if !page.is_disposed() {
+                            focus_window(page);
+                        }
                     }
                 }
             }
