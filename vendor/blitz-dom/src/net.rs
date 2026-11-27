@@ -995,9 +995,15 @@ impl NetHandler for ResourceHandler<ImageHandler> {
             };
         if opaque || redirected {
             match &result {
-                Ok(Resource::Image(_, _, _, pixels, _)) => note_opaque_image(image_key(pixels)),
+                Ok(Resource::Image(_, _, _, pixels, _)) => {
+                    let weak = pixels.downgrade();
+                    note_opaque_image(image_key(pixels), Box::new(move || weak.upgrade().is_some()));
+                }
                 #[cfg(feature = "svg")]
-                Ok(Resource::Svg(_, svg)) => note_opaque_image(svg_image_key(svg)),
+                Ok(Resource::Svg(_, svg)) => {
+                    let weak = std::sync::Arc::downgrade(&svg.tree);
+                    note_opaque_image(svg_image_key(svg), Box::new(move || weak.strong_count() > 0));
+                }
                 _ => {}
             }
         }
@@ -1012,8 +1018,28 @@ pub use pyro_raster::decode_jpeg;
 /// pyro: the images whose response was opaque (a no-cors response tainted by another origin, a
 /// redirect through one included), by [`image_key`]/[`svg_image_key`]: HTML-in-Canvas privacy
 /// (blitz-paint `Privacy`) leaves them out of what a page can read back from a canvas.
-static OPAQUE_IMAGES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
-    std::sync::LazyLock::new(Default::default);
+///
+/// Bounded by what is alive: each key is kept with a weak handle to its image and forgotten once
+/// the image is dropped (swept when the set doubles), never while the image lives, so an opaque
+/// image cannot read as clean because the set filled up. (A weak handle also keeps an SVG tree's
+/// address from being reused by another image while its key is here.)
+static OPAQUE_IMAGES: std::sync::LazyLock<std::sync::Mutex<OpaqueImages>> = std::sync::LazyLock::new(Default::default);
+
+type Alive = Box<dyn Fn() -> bool + Send>;
+
+struct OpaqueImages {
+    keys: std::collections::HashMap<u64, Alive>,
+    /// The size at which the next sweep of dropped images runs.
+    sweep_at: usize,
+}
+
+impl Default for OpaqueImages {
+    fn default() -> Self {
+        Self { keys: Default::default(), sweep_at: OPAQUE_SWEEP_MIN }
+    }
+}
+
+const OPAQUE_SWEEP_MIN: usize = 1024;
 
 /// pyro: the key of a decoded raster image's pixels (its `Blob` id, kept by every clone).
 pub fn image_key(pixels: &linebender_resource_handle::Blob<u8>) -> u64 {
@@ -1029,12 +1055,17 @@ pub fn svg_image_key(svg: &crate::node::SvgImageData) -> u64 {
 
 /// pyro: whether the image with `key` came from an opaque response ([`OPAQUE_IMAGES`]).
 pub fn is_opaque_image(key: u64) -> bool {
-    OPAQUE_IMAGES.lock().is_ok_and(|set| set.contains(&key))
+    OPAQUE_IMAGES.lock().is_ok_and(|set| set.keys.contains_key(&key))
 }
 
-fn note_opaque_image(key: u64) {
+/// Notes the image with `key` as opaque while `alive` says it lives.
+fn note_opaque_image(key: u64, alive: Alive) {
     if let Ok(mut set) = OPAQUE_IMAGES.lock() {
-        set.insert(key);
+        set.keys.insert(key, alive);
+        if set.keys.len() >= set.sweep_at {
+            set.keys.retain(|_, alive| alive());
+            set.sweep_at = OPAQUE_SWEEP_MIN.max(set.keys.len() * 2);
+        }
     }
 }
 
