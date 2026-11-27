@@ -51,7 +51,7 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'
     }
     let natives = s.object();
     // The realm's pristine Set and Map operations, captured with its intrinsics (lib.rs `install`).
-    let primitives = s.get_hidden(s.global(), "lpHighlightPrimitives")?.ok_or_else(unavailable)?;
+    let primitives = s.kept_value("highlight primitives").ok_or_else(unavailable)?;
     natives.set_atom("primitives", primitives)?;
     let is_range = s.function("isRange", |s, _this, a| {
         let v = a.get(0);
