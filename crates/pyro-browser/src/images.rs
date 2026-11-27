@@ -734,7 +734,11 @@ impl Browser {
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: bindings.dom.borrow().get_attribute(node, "crossorigin").ok().flatten().map(str::to_owned),
-            initiator: Some(pyro_webapi::resource_timing::Initiator::Img),
+            initiator: Some(pyro_webapi::resource_timing::element_initiator(
+                &bindings.dom.borrow(),
+                node,
+                pyro_webapi::resource_timing::Initiator::Img,
+            )),
             module: None,
             part: None,
         };
@@ -1338,7 +1342,11 @@ impl Browser {
                 2 => Some("use-credentials".to_owned()),
                 _ => Some("anonymous".to_owned()),
             },
-            initiator: Some(pyro_webapi::resource_timing::Initiator::Other),
+            initiator: Some(pyro_webapi::resource_timing::element_initiator(
+                &bindings.dom.borrow(),
+                node,
+                pyro_webapi::resource_timing::Initiator::Other,
+            )),
             module: None,
             part: None,
         };

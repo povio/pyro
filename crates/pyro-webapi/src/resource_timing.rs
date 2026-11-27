@@ -47,6 +47,11 @@ pub enum Initiator {
     Css,
     Img,
     Iframe,
+    Frame,
+    Input,
+    Image,
+    Embed,
+    Object,
     Video,
     Audio,
     Track,
@@ -64,11 +69,34 @@ impl Initiator {
             Initiator::Css => "css",
             Initiator::Img => "img",
             Initiator::Iframe => "iframe",
+            Initiator::Frame => "frame",
+            Initiator::Input => "input",
+            Initiator::Image => "image",
+            Initiator::Embed => "embed",
+            Initiator::Object => "object",
             Initiator::Video => "video",
             Initiator::Audio => "audio",
             Initiator::Track => "track",
             Initiator::Other => "other",
         }
+    }
+}
+
+/// The initiator type of an image-like fetch an element started (Resource Timing: the element's
+/// local name where it has one of its own): `<input type=image>` is "input", an SVG `<image>`
+/// "image", a `<video poster>` "video", `<object>` "object", `<embed>` "embed"; `<img>` (and a
+/// `<picture>`'s) "img"; anything else the caller's `fallback`.
+pub fn element_initiator(dom: &pyro_dom::Dom, node: pyro_dom::NodeId, fallback: Initiator) -> Initiator {
+    let Ok(el) = dom.element(node) else { return fallback };
+    let svg = &*el.name.ns == "http://www.w3.org/2000/svg";
+    match (&*el.name.local, svg) {
+        ("img", false) => Initiator::Img,
+        ("input", false) => Initiator::Input,
+        ("image", true) => Initiator::Image,
+        ("video", false) => Initiator::Video,
+        ("object", false) => Initiator::Object,
+        ("embed", false) => Initiator::Embed,
+        _ => fallback,
     }
 }
 
@@ -525,7 +553,7 @@ fn timed_sink_with(
     // A navigation's response is the frame's, not the document's: another
     // origin's (or one reached through another origin) keeps its status and
     // type to itself.
-    let navigation_origin = (initiator == Initiator::Iframe)
+    let navigation_origin = matches!(initiator, Initiator::Iframe | Initiator::Frame)
         .then(|| page.document_url_parsed().map_or_else(|| "null".to_owned(), |u| u.origin().ascii_serialization()));
     let start = Instant::now();
     let mut report = Some(FetchReport {

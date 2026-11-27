@@ -2136,8 +2136,16 @@ impl Browser {
             // (`src` processing) is reported, to the parent. One the frame's
             // document starts, a reload or a traversal stays the frame's own:
             // its URLs are not the parent's to read.
-            initiator: (page.child.is_some() && opts.reason == crate::NavigationReason::InitialFrameNavigation)
-                .then_some(pyro_webapi::resource_timing::Initiator::Iframe),
+            initiator: (page.child.is_some() && opts.reason == crate::NavigationReason::InitialFrameNavigation).then(|| {
+                // The initiator type is the container's element name: "frame" for a <frame>.
+                let frame = self.doc(page).and_then(|d| d.main_frame.owner).zip(self.page(page.page).map(|p| p.frames.clone()));
+                match frame {
+                    Some((owner, host)) if host.dom.borrow().element(owner).is_ok_and(|e| &*e.name.local == "frame") => {
+                        pyro_webapi::resource_timing::Initiator::Frame
+                    }
+                    _ => pyro_webapi::resource_timing::Initiator::Iframe,
+                }
+            }),
             module: None,
             part: None,
         };
