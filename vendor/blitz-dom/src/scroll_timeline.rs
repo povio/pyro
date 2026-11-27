@@ -259,7 +259,18 @@ fn view_ranges(doc: &BaseDocument, subject: NodeId, resolved: &Resolved, scroll:
     let start = subject_start - port_start;
     let end = start + subject_size;
     let (inset_start, inset_end) = match &resolved.inset {
-        Some(inset) => (inset_px(&inset.start, scroll.port), inset_px(&inset.end, scroll.port)),
+        Some(inset) => {
+            // An `auto` inset is the scroll container's `scroll-padding` on that side: the snapport
+            // is the view progress visibility range (Scroll-driven Animations 1).
+            let padding = resolved.source.and_then(|id| doc.get_node(id)).or_else(|| doc.try_root_element()).and_then(|n| n.primary_styles()).map(|style| {
+                let padding = style.get_padding();
+                let basis = app_units::Au::from_f64_px(scroll.port);
+                let sides = if resolved.vertical { [&padding.scroll_padding_top, &padding.scroll_padding_bottom] } else { [&padding.scroll_padding_left, &padding.scroll_padding_right] };
+                sides.map(|value| value.to_used_value(basis).map_or(0.0, app_units::Au::to_f64_px))
+            });
+            let [auto_start, auto_end] = padding.unwrap_or([0.0, 0.0]);
+            (inset_px(&inset.start, scroll.port, auto_start), inset_px(&inset.end, scroll.port, auto_end))
+        }
         None => (0.0, 0.0),
     };
     let port = scroll.port;
@@ -462,9 +473,9 @@ fn sticky_travel(doc: &BaseDocument, subject: NodeId, resolved: &Resolved, port:
     Some(StickyTravel { top: origin, size: axis(layout.size), margin: (margin.0 as f64, margin.1 as f64), inset: (first, second), block: range, port })
 }
 
-fn inset_px(value: &LengthPercentageOrAuto, port: f64) -> f64 {
+fn inset_px(value: &LengthPercentageOrAuto, port: f64, auto: f64) -> f64 {
     match value {
-        LengthPercentageOrAuto::Auto => 0.0,
+        LengthPercentageOrAuto::Auto => auto,
         LengthPercentageOrAuto::LengthPercentage(lp) => lp.resolve(app_units::Au::from_f64_px(port).into()).px() as f64,
     }
 }
