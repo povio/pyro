@@ -450,7 +450,7 @@ fn sticky_travel(doc: &BaseDocument, subject: NodeId, resolved: &Resolved, port:
     while let Some(id) = block {
         let node = doc.get_node(id)?;
         if node.primary_styles().is_some_and(|s| {
-            let display = s.clone_display();
+            let display = s.slow_clone_display();
             !(display.is_inline_flow() || display.is_contents())
         }) {
             break;
