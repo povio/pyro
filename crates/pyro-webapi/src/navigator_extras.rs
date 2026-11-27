@@ -203,8 +203,14 @@ struct OriginPermissions {
 type ClipboardEntry = (String, String, bool);
 
 /// Permissions follow a browser context across its owner and worker threads.
+///
+/// The table also holds the context's storage access rules (WebDriver "Set Storage Access"):
+/// they follow the context the same way, and `Browser.resetPermissions` leaves them alone.
 #[derive(Clone, Default)]
-pub(crate) struct PermissionTable(Arc<RwLock<FxHashMap<Option<String>, OriginPermissions>>>);
+pub(crate) struct PermissionTable(
+    Arc<RwLock<FxHashMap<Option<String>, OriginPermissions>>>,
+    Arc<RwLock<Arc<Vec<pyro_net::cookies::CookieAccessRule>>>>,
+);
 
 /// State a browser context's pages share: its permission table and its
 /// clipboard (in memory; nothing reaches the system clipboard).
@@ -274,6 +280,43 @@ impl ContextServices {
     /// `Browser.setPermission`: one permission's setting for `origin`.
     pub fn set(&self, origin: Option<String>, name: &str, setting: PermissionSetting) {
         self.permissions.0.write().unwrap_or_else(|e| e.into_inner()).entry(origin).or_default().settings.insert(name.to_owned(), setting);
+    }
+
+    /// `Browser.setStorageAccess`: a rule blocking or allowing the unpartitioned cookies of a
+    /// third-party origin under an embedding site. A later rule with the same two patterns
+    /// replaces the earlier; of the rest the latest that matches decides. A list that blocks
+    /// nothing is dropped, so a context whose rules were all lifted is as free as one without.
+    pub fn set_cookie_access(&self, rule: pyro_net::cookies::CookieAccessRule) {
+        let mut rules = self.permissions.1.write().unwrap_or_else(|e| e.into_inner());
+        let mut next: Vec<_> = rules.iter().filter(|r| !r.same_patterns(&rule)).cloned().collect();
+        next.push(rule);
+        if next.iter().all(|r| !r.blocked) {
+            next.clear();
+        }
+        *rules = Arc::new(next);
+    }
+
+    /// The context's storage access rules (empty: no document is a third party for cookies).
+    pub(crate) fn cookie_access_rules(&self) -> Arc<Vec<pyro_net::cookies::CookieAccessRule>> {
+        self.permissions.1.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The `storage-access` permission of a document of origin `own` embedded under `top`. The
+    /// setting is made for the top-level origin (testdriver's `set_permission` is the top-level
+    /// context's) or for the embedded one (a window of that origin, as top-level, set it): the
+    /// document's own entry decides first, then the embedding's, then the every-origin one.
+    pub(crate) fn storage_access_state(&self, own: Option<&str>, top: Option<&str>) -> PermissionSetting {
+        let table = self.permissions.0.read().unwrap_or_else(|e| e.into_inner());
+        let keys = [own.map(|o| Some(o.to_owned())), top.map(|t| Some(t.to_owned())), Some(None)];
+        for entry in keys.iter().flatten().filter_map(|k| table.get(k)) {
+            if let Some(setting) = entry.settings.get("storage-access") {
+                return *setting;
+            }
+            if entry.deny_others {
+                return PermissionSetting::Denied;
+            }
+        }
+        PermissionSetting::Prompt
     }
 
     /// `Browser.resetPermissions`.
@@ -495,6 +538,13 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
 }
 
 pub(crate) fn permission_state(page: &PageDom, name: &str) -> PermissionSetting {
+    if name == "storage-access" {
+        // What `query()` reports: a denial is hidden behind "prompt" (Storage Access API, privacy).
+        return match crate::storage_access::permission(page) {
+            PermissionSetting::Denied => PermissionSetting::Prompt,
+            state => state,
+        };
+    }
     let origin = crate::storage::document_origin(page);
     page.context_services().state(origin.as_deref(), name)
 }

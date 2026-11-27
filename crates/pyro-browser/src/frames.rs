@@ -285,6 +285,10 @@ pub(crate) struct FrameHost {
     /// Lazy iframes whose navigation waits for the lazy load check (`Browser::resume_lazy_frames`),
     /// each with the parent's observation stamp, `load` state and laziness at its last check.
     pub(crate) lazy_frames: RefCell<Vec<(FrameKey, Option<LazyFrameStamp>)>>,
+    /// Loaders of navigations that keep the storage access of the document they replace (Storage
+    /// Access API: a frame's own same-origin navigation), with the origin it keeps it for:
+    /// `bindings::create` hands the grant to the document that loader commits, if it is of that origin.
+    pub(crate) storage_access_carry: RefCell<std::collections::HashMap<String, String>>,
     /// Lazy iframes the check let go: their next attribute processing navigates.
     pub(crate) lazy_approved: RefCell<Vec<FrameKey>>,
     /// The request each deferred lazy iframe fixed when its attributes were processed.
@@ -499,6 +503,7 @@ impl FrameHost {
             hidden_objects: RefCell::new(Vec::new()),
             lazy_frames: RefCell::new(Vec::new()),
             lazy_approved: RefCell::new(Vec::new()),
+            storage_access_carry: RefCell::new(Default::default()),
             lazy_requests: RefCell::new(Vec::new()),
             media_policy_frames: Cell::new(false),
             pointer_rules: Cell::new(false),
@@ -598,6 +603,7 @@ impl FrameHost {
             hidden_objects: RefCell::new(Vec::new()),
             lazy_frames: RefCell::new(Vec::new()),
             lazy_approved: RefCell::new(Vec::new()),
+            storage_access_carry: RefCell::new(Default::default()),
             lazy_requests: RefCell::new(Vec::new()),
             media_policy_frames: Cell::new(false),
             pointer_rules: Cell::new(false),
@@ -959,6 +965,7 @@ impl FrameHost {
         sandbox.forms_blocked |= ancestor.sandbox.forms_blocked;
         sandbox.propagates_to_popups |= ancestor.sandbox.propagates_to_popups;
         sandbox.downloads_blocked |= ancestor.sandbox.downloads_blocked;
+        sandbox.storage_access_blocked |= ancestor.sandbox.storage_access_blocked;
         // Blink's Page::kMaxNumberOfFrames: a page holds at most 1000 subframes.
         if self.children.borrow().len() >= 1000 {
             return Err(JsError::Range("child frame limit reached".into()));
@@ -1392,6 +1399,9 @@ pub(crate) struct Sandbox {
     pub propagates_to_popups: bool,
     /// The sandboxed downloads browsing context flag (no `allow-downloads`): no download starts.
     pub downloads_blocked: bool,
+    /// The sandboxed storage access browsing context flag (no `allow-storage-access-by-user-activation`):
+    /// `document.requestStorageAccess()` rejects.
+    pub storage_access_blocked: bool,
 }
 impl Sandbox {
     pub fn parse(value: Option<&str>) -> Self {
@@ -1413,6 +1423,7 @@ impl Sandbox {
             forms_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-forms")),
             propagates_to_popups: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-popups-to-escape-sandbox")),
             downloads_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-downloads")),
+            storage_access_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-storage-access-by-user-activation")),
         }
     }
 
@@ -1430,6 +1441,7 @@ impl Sandbox {
             self.forms_blocked,
             self.propagates_to_popups,
             self.downloads_blocked,
+            self.storage_access_blocked,
         ]
         .iter()
         .enumerate()
@@ -1449,6 +1461,7 @@ impl Sandbox {
             forms_blocked: set(8),
             propagates_to_popups: set(9),
             downloads_blocked: set(10),
+            storage_access_blocked: set(11),
         }
     }
 

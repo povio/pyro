@@ -557,6 +557,15 @@ impl ResourceLoader for NetLoader {
                     // Its cross-origin embedder policy: a no-cors subresource's response check, and
                     // for a nested navigation the embedding document's (HTML § 7.1.4).
                     req.defaults.embedder_policy = d.embedder_policy();
+                    // Storage Access API: the embedding document's third-party cookie decision (none
+                    // unless its context has a blocking rule), and for a frame's navigation that keeps
+                    // the frame's storage access its grant.
+                    req.defaults.cookie_blocking = d.cookie_blocking().map(|b| {
+                        if request.kind != ResourceKind::Iframe {
+                            return b;
+                        }
+                        std::sync::Arc::new(if keeps_storage_access(browser, &request, &req.url) { b.granted_for(&req.url) } else { b.without_grant() })
+                    });
                 }
             }
             if request.kind == ResourceKind::Document {
@@ -1465,6 +1474,35 @@ fn requesting_document(browser: &Browser, request: &FetchRequest) -> Option<Rc<p
         _ => key,
     };
     frames.page_dom(key)
+}
+
+/// Storage Access API: whether the navigation of a child frame that `request` is keeps the storage
+/// access its current document was granted: to a document of the same origin, started by the frame
+/// itself or by a document of the target's site (its container's `src` change included; one from
+/// another site, the top-level page's, does not keep it). The loader is noted, so that
+/// the document it commits takes the grant (`bindings::create`).
+fn keeps_storage_access(browser: &Browser, request: &FetchRequest, url: &pyro_net::Url) -> bool {
+    let (Some(frame_id), Some(loader_id)) = (request.frame_id.as_deref(), request.loader_id.as_ref()) else { return false };
+    let Some(host) = browser.page(request.page).map(|p| p.frames.clone()) else { return false };
+    let Some(key) = host.key_of(frame_id) else { return false };
+    if !host.page_dom(key).is_some_and(|d| d.storage_access_granted()) {
+        return false;
+    }
+    let same_origin = frame_origin(browser, request.page, frame_id).is_some_and(|o| o != "null" && o == origin_of(url.as_str()));
+    let same_site_initiator = request
+        .referrer
+        .as_deref()
+        .and_then(|r| pyro_net::Url::parse(r).ok())
+        .is_some_and(|r| pyro_net::cookies::partition_key(&r).is_some() && pyro_net::cookies::partition_key(&r) == pyro_net::cookies::partition_key(url));
+    if !(same_origin && same_site_initiator) {
+        return false;
+    }
+    let mut carry = host.storage_access_carry.borrow_mut();
+    if carry.len() >= 64 {
+        carry.clear();
+    }
+    carry.insert(loader_id.clone(), origin_of(url.as_str()));
+    true
 }
 
 /// `Object` or `Embed` when the child frame `request` navigates is the nested browsing context of
@@ -3157,9 +3195,13 @@ impl Browser {
                 sandbox.forms_blocked |= flags.forms_blocked;
                 sandbox.propagates_to_popups |= flags.propagates_to_popups;
                 sandbox.downloads_blocked |= flags.downloads_blocked;
+                sandbox.storage_access_blocked |= flags.storage_access_blocked;
             }
             if flags.forms_blocked {
                 page_dom.set_forms_sandboxed(true);
+            }
+            if flags.storage_access_blocked {
+                page_dom.set_storage_access_sandboxed(true);
             }
             if flags.scripts_disabled {
                 page_dom.set_scripting_disabled(true);

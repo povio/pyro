@@ -1848,7 +1848,7 @@ impl Host for EngineHost {
                     Err(error) => out.send(msg::error_frame(Some(command.id), &error, command.session_id())),
                 }
             }
-            "Browser.grantPermissions" | "Browser.resetPermissions" | "Browser.setPermission" => {
+            "Browser.grantPermissions" | "Browser.resetPermissions" | "Browser.setPermission" | "Browser.setStorageAccess" => {
                 let result = self.permissions_command(command, context);
                 match result {
                     Ok(()) => out.send(msg::result_frame(command.id, &Empty {}, command.session_id())),

@@ -5399,6 +5399,10 @@ pub(crate) fn ready_state(page: &PageDom, doc: NodeId) -> &'static str {
 pub(crate) fn document_cookie(page: &PageDom, doc: NodeId) -> String {
     let url = page.dom.borrow().document_data(doc).map(|d| d.url.to_string()).unwrap_or_default();
     let (Some(net), Ok(url)) = (page.net.borrow().clone(), pyro_net::Url::parse(&url)) else { return String::new() };
+    // A third party without storage access sees no unpartitioned cookies (`crate::storage_access`).
+    if page.cookie_blocking().is_some_and(|b| b.blocks(&url)) {
+        return String::new();
+    }
     let jar = net.cookies().clone();
     let mut jar = jar.lock().unwrap();
     jar.document_cookie_in(&url, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
@@ -5407,7 +5411,7 @@ pub(crate) fn document_cookie(page: &PageDom, doc: NodeId) -> String {
 pub(crate) fn set_document_cookie(page: &PageDom, doc: NodeId, value: &str) {
     let url = page.dom.borrow().document_data(doc).map(|d| d.url.to_string()).unwrap_or_default();
     let (Some(net), Ok(url)) = (page.net.borrow().clone(), pyro_net::Url::parse(&url)) else { return };
-    if !matches!(url.scheme(), "http" | "https") {
+    if !matches!(url.scheme(), "http" | "https") || page.cookie_blocking().is_some_and(|b| b.blocks(&url)) {
         return;
     }
     let jar = net.cookies().clone();

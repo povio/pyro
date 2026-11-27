@@ -176,6 +176,10 @@ pub struct RequestDefaults {
     /// document, which its `embedder_policy`'s Cross-Origin Resource Policy check on the response
     /// protects (the request itself has no `origin`: it is not a requester's fetch).
     pub embedder_origin: Option<String>,
+    /// The requesting document's third-party cookie decision, when its browser context has storage
+    /// access rules (`Browser.setStorageAccess`): a request to a URL it blocks sends no cookies and
+    /// stores none. `None` (every context without rules): cookies as the SameSite rules say.
+    pub cookie_blocking: Option<std::sync::Arc<crate::cookies::CookieBlocking>>,
 }
 
 #[derive(Clone, Debug)]

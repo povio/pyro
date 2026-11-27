@@ -238,7 +238,11 @@ fn deliver(key: u64, event: WsEvent) {
             drop(socket.handshake_abort.borrow_mut().take());
             // The handshake's cookies become visible to script now.
             if let Some(page) = socket.page.upgrade() {
-                if let Some(net) = page.net.borrow().as_ref() {
+                // The handshake's cookies of a third party without storage access are not stored.
+                let mut http_url = socket.url.clone();
+                let _ = http_url.set_scheme(if socket.url.scheme() == "wss" { "https" } else { "http" });
+                let blocked = page.cookie_blocking().is_some_and(|b| b.blocks(&http_url));
+                if let Some(net) = page.net.borrow().as_ref().filter(|_| !blocked) {
                     net.store_websocket_cookies_for(&socket.url, &headers, socket.top_level_site.as_deref(), socket.cookie_site);
                 }
             }

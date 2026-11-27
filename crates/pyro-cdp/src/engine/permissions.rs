@@ -148,6 +148,21 @@ impl EngineHost {
                 services.grant(origin(p.origin)?, &names);
             }
             "Browser.resetPermissions" => services.reset(),
+            // WebDriver "Set Storage Access" (Pyro's own method): the context's rule for the unpartitioned
+            // cookies of `origin` embedded under `embeddingOrigin` (`*`: any), `blocked` or allowed.
+            "Browser.setStorageAccess" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    origin: String,
+                    embedding_origin: String,
+                    blocked: bool,
+                }
+                let p: P = command.params()?;
+                let rule = pyro_net::cookies::CookieAccessRule::parse(&p.origin, &p.embedding_origin, p.blocked)
+                    .ok_or_else(|| CdpError::invalid_params("origin and embeddingOrigin must be `*` or an http(s) origin"))?;
+                services.set_cookie_access(rule);
+            }
             "Browser.setPermission" => {
                 #[derive(Deserialize)]
                 #[serde(rename_all = "camelCase")]

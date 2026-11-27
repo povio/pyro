@@ -209,6 +209,12 @@ impl PageHooks for Hooks {
         out
     }
 
+    fn top_level_origin(&self) -> Option<String> {
+        let host = self.frames.upgrade()?;
+        let origin = host.frame(FrameKey { page: self.page.page, child: None })?.origin;
+        (origin != "null").then_some(origin)
+    }
+
     fn frame_detached(&self) -> bool {
         // Only a child frame can leave its page.
         self.page.child.is_some()
@@ -1526,6 +1532,10 @@ pub(crate) fn create(
         let same = own_site.is_some();
         (own_site, same)
     };
+    // Storage Access API: the grant of a same-origin navigation the frame started itself is kept.
+    if host.storage_access_carry.borrow_mut().remove(&loader.0).is_some_and(|origin| origin == crate::loader::origin_of(url)) {
+        bindings.set_storage_access_granted(true);
+    }
     bindings.set_cookie_context(top_level_site, if same_site { pyro_net::cookies::SiteContext::SameSite } else { pyro_net::cookies::SiteContext::CrossSite });
     // The origin's identity, which an opaque origin needs (`PageDom::origin_key`).
     bindings.set_opaque_origin_token(frame.opaque_origin);
@@ -1585,6 +1595,7 @@ pub(crate) fn create(
     bindings.set_popups_sandboxed(frame.sandbox.popups_blocked);
     bindings.set_document_domain_sandboxed(frame.sandbox.document_domain_blocked);
     bindings.set_forms_sandboxed(frame.sandbox.forms_blocked);
+    bindings.set_storage_access_sandboxed(frame.sandbox.storage_access_blocked);
     bindings.set_request_context(pyro_webapi::RequestContext {
         frame_id: Some(frame.id.0),
         loader_id: Some(loader.0.clone()),

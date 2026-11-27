@@ -1289,6 +1289,7 @@ impl<H: Host> Browser<H> {
                         | "Browser.grantPermissions"
                         | "Browser.resetPermissions"
                         | "Browser.setPermission"
+                        | "Browser.setStorageAccess"
                         | "Browser.cancelDownload"
                 ) {
                     let params: ContextParam = cmd.params()?;
@@ -1356,7 +1357,7 @@ impl<H: Host> Browser<H> {
             }
             // Permission overrides sent on a page session (testdriver's set_permission does) apply
             // to the page's browser context, as on the browser session with its browserContextId.
-            "Browser.grantPermissions" | "Browser.resetPermissions" | "Browser.setPermission" => {
+            "Browser.grantPermissions" | "Browser.resetPermissions" | "Browser.setPermission" | "Browser.setStorageAccess" => {
                 let context_id = self.targets[index].context_id.clone();
                 let key = self.context(&context_id)?.key;
                 self.host.browser_command(cmd, Some(key), out);

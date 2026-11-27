@@ -2442,6 +2442,7 @@ impl Browser {
                 flags.forms_blocked |= parent.sandbox.forms_blocked;
                 flags.propagates_to_popups |= parent.sandbox.propagates_to_popups;
                 flags.downloads_blocked |= parent.sandbox.downloads_blocked;
+                flags.storage_access_blocked |= parent.sandbox.storage_access_blocked;
             }
             flags
         } else {

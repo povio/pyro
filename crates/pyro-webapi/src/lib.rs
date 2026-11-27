@@ -136,6 +136,7 @@ pub mod smooth_scroll;
 pub mod signature_sri;
 pub mod sri;
 pub mod storage;
+mod storage_access;
 mod storage_manager;
 mod storage_buckets;
 mod streams;
@@ -218,6 +219,7 @@ pub fn register(engine: &pyro_js::Engine) {
     engine.register::<target::EventTarget>();
     trusted_types::register(engine);
     engine.register::<scheduler::WebScheduler>();
+    storage_access::register(engine);
     event::register(engine);
     perf::register(engine);
     popup::register(engine);

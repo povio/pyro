@@ -118,6 +118,8 @@ pub struct PageDom {
     /// The sandboxed forms browsing context flag (no `allow-forms`): forms submit nothing.
     /// Set by the embedder.
     forms_sandboxed: Cell<bool>,
+    /// The sandboxed storage access browsing context flag (`Sandbox::storage_access_blocked`).
+    storage_access_sandboxed: Cell<bool>,
     /// The document's origin is opaque although its URL's is not (a sandboxed
     /// frame without `allow-same-origin`). Set by the embedder before the
     /// context services.
@@ -131,6 +133,10 @@ pub struct PageDom {
     /// Schemeful site of this environment's top-level document at creation.
     cookie_partition_key: RefCell<Option<String>>,
     cookie_site_context: Cell<pyro_net::cookies::SiteContext>,
+    /// The document has storage access (Storage Access API): `requestStorageAccess()` was granted
+    /// to it, or a same-origin navigation of its own frame kept the previous document's. Its
+    /// unpartitioned cookies are then not blocked (`crate::storage_access`).
+    pub(crate) storage_access_granted: Cell<bool>,
     agent_cluster: RefCell<AgentCluster>,
     /// HTML "sticky activation": the user interacted with the document.
     sticky_activation: Cell<bool>,
@@ -824,6 +830,11 @@ pub trait PageHooks {
     fn frame_tree(&self) -> Vec<Rc<PageDom>> {
         Vec::new()
     }
+    /// The serialized origin of the top-level document of this document's frame tree (the
+    /// embedding origin of the Storage Access API); `None` when the embedder cannot tell.
+    fn top_level_origin(&self) -> Option<String> {
+        None
+    }
     /// HTML "secure context" for this document, ancestors included (the embedder knows the frame
     /// chain); `None` when it cannot tell (the document's own URL decides then).
     fn is_secure_context(&self) -> Option<bool> {
@@ -1129,6 +1140,7 @@ impl PageDom {
             popups_sandboxed: Cell::new(false),
             document_domain_sandboxed: Cell::new(false),
             forms_sandboxed: Cell::new(false),
+            storage_access_sandboxed: Cell::new(false),
             opaque_origin: Cell::new(false),
             csp_precursor_origin: RefCell::new(None),
             connection_allowlist: RefCell::new(None),
@@ -1138,6 +1150,7 @@ impl PageDom {
                 pyro_net::cookies::SiteContext::CrossSite
             }),
             cookie_partition_key: RefCell::new(cookie_partition_key),
+            storage_access_granted: Cell::new(false),
             agent_cluster: RefCell::new(AgentCluster { group: AgentClusterGroup::default(), origin: "".into() }),
             sticky_activation: Cell::new(false),
             flushing_iframes: Cell::new(false),
@@ -1658,6 +1671,12 @@ impl PageDom {
         self.document_domain_sandboxed.get()
     }
     /// Browser-owned sandbox policy: the sandboxed forms browsing context flag.
+    pub fn set_storage_access_sandboxed(&self, sandboxed: bool) {
+        self.storage_access_sandboxed.set(sandboxed);
+    }
+    pub fn storage_access_sandboxed(&self) -> bool {
+        self.storage_access_sandboxed.get()
+    }
     pub fn set_forms_sandboxed(&self, sandboxed: bool) {
         self.forms_sandboxed.set(sandboxed);
     }

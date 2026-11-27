@@ -1976,6 +1976,10 @@ impl JsClass for Document {
             d.reject(s, JsError::Type("Document not active or no fullscreen element".into()).to_value(s))?;
             Ok(promise)
         });
+        // Storage Access API (`crate::storage_access`); `hasUnpartitionedCookieAccess` is Chrome's alias.
+        def.promise_method("hasStorageAccess", 0, |s, n, _a| crate::storage_access::has(s, n.page(), n.id));
+        def.promise_method("hasUnpartitionedCookieAccess", 0, |s, n, _a| crate::storage_access::has(s, n.page(), n.id));
+        def.promise_method("requestStorageAccess", 0, |s, n, a| crate::storage_access::request(s, n.page(), n.id, a.get(0)));
         crate::html::define_document_reflection(def);
         def.constructor(0, |s, nt, _a| {
             let page = page_of(s)?;

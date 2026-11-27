@@ -118,6 +118,8 @@
   def('create_virtual_pressure_source');
   def('update_virtual_pressure_source');
   def('remove_virtual_pressure_source');
+  // WebDriver's Set Storage Access (td/storage_access.mjs).
+  def('set_storage_access');
   // WebDriver's Virtual Authenticators (td/webauthn.mjs).
   for (const name of ['add_virtual_authenticator', 'remove_virtual_authenticator', 'add_credential', 'get_credentials', 'remove_credential', 'remove_all_credentials', 'set_user_verified', 'set_credential_properties']) def(name);
   def('create_virtual_sensor'); def('update_virtual_sensor'); def('remove_virtual_sensor'); def('get_virtual_sensor_information');

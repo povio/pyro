@@ -614,7 +614,7 @@ impl Shared {
         // Cookies.
         // (`same_origin` is the hop's response tainting being "basic": `includes_credentials`.)
         let send_cookies = includes_credentials(req.hop_credentials(same_origin), same_origin);
-        if send_cookies && !req.cross_site_prefetch && !h.contains_key(header::COOKIE) {
+        if send_cookies && !req.cross_site_prefetch && !h.contains_key(header::COOKIE) && !cookies_blocked(req, &req.url) {
             let top = matches!(req.destination, Destination::Document);
             let safe = matches!(req.method, Method::GET | Method::HEAD);
             let ancestor = cookie_partition_cross_site(req, &req.url);
@@ -687,6 +687,13 @@ fn request_cookie_partition<'a>(request: &'a Request, url: &Url) -> Option<Cow<'
     } else {
         request.top_level_site.as_deref().map(Cow::Borrowed)
     }
+}
+
+/// The requesting document's storage access rules refuse `url` its unpartitioned cookies (a third
+/// party the document has no access to). Free for a request without a `CookieBlocking`, which is
+/// every request of a context that set no rule.
+fn cookies_blocked(request: &Request, url: &Url) -> bool {
+    request.defaults.cookie_blocking.as_ref().is_some_and(|b| b.blocks(url))
 }
 
 fn cookie_partition_cross_site(request: &Request, url: &Url) -> bool {
@@ -2147,7 +2154,7 @@ impl Io {
     }
 
     fn store_cookies(&self, request: &Request, url: &Url, headers: &HeaderMap, allowed: bool) {
-        if !allowed || !headers.contains_key(header::SET_COOKIE) {
+        if !allowed || !headers.contains_key(header::SET_COOKIE) || cookies_blocked(request, url) {
             return;
         }
         let partition = request_cookie_partition(request, url);

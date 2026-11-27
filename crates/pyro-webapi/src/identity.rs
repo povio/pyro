@@ -27,6 +27,7 @@ impl UserAgentOverride {
             insecure: pyro_net::InsecurePolicy::default(),
             embedder_policy: pyro_net::EmbedderPolicy::default(),
             embedder_origin: None,
+            cookie_blocking: None,
         })
     }
 }
@@ -163,8 +164,10 @@ impl PageDom {
     pub(crate) fn apply_request_defaults(&self, request: &mut Request) {
         request.top_level_site = self.cookie_partition_key();
         request.cross_site_ancestor = self.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite;
+        let cookie_blocking = self.cookie_blocking();
         let identity = self.identity.borrow();
         request.defaults = RequestDefaults {
+            cookie_blocking,
             extra_headers: identity.extra_headers.clone(),
             cache_disabled: identity.cache_disabled,
             insecure: self.insecure_policy(),

@@ -183,6 +183,99 @@ pub fn partition_key(url: &Url) -> Option<String> {
     Some(format!("{scheme}://{}", site_of(&host_str(url)?)))
 }
 
+/// One storage access rule of a browser context (the WebDriver "Set Storage Access" command):
+/// unpartitioned cookies of `origin` embedded in a third-party context under `embedding` are
+/// blocked or allowed. `None` is the pattern `*`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CookieAccessRule {
+    /// The embedded (third-party) origin, serialized.
+    pub origin: Option<String>,
+    /// The embedding (top-level) site, as [`partition_key`] spells it.
+    pub embedding: Option<String>,
+    pub blocked: bool,
+}
+
+impl CookieAccessRule {
+    /// A rule from its two patterns: `*`, or a URL whose origin (embedded) and site (embedding) it
+    /// names. `None` when a pattern is neither.
+    pub fn parse(origin: &str, embedding: &str, blocked: bool) -> Option<Self> {
+        let origin = match origin {
+            "*" => None,
+            o => Some(Url::parse(o).ok().map(|u| u.origin()).filter(|o| o.is_tuple())?.ascii_serialization()),
+        };
+        let embedding = match embedding {
+            "*" => None,
+            e => Some(partition_key(&Url::parse(e).ok()?)?),
+        };
+        Some(Self { origin, embedding, blocked })
+    }
+
+    /// Whether `other` has the same patterns (a later rule for them replaces this one).
+    pub fn same_patterns(&self, other: &Self) -> bool {
+        self.origin == other.origin && self.embedding == other.embedding
+    }
+}
+
+/// A document's third-party cookie decision, made when a request or a script access starts. It
+/// exists only while the browser context has storage access rules, so a context without them
+/// pays nothing: a first-party or same-site request has no `CookieBlocking` to ask.
+#[derive(Clone, Debug)]
+pub struct CookieBlocking {
+    rules: Arc<Vec<CookieAccessRule>>,
+    /// Schemeful site of the top-level document.
+    top_site: String,
+    /// Schemeful site of the requesting document (`None`: opaque, which no grant covers).
+    own_site: Option<String>,
+    /// The document sits below a cross-site ancestor: a third party even at the top's site
+    /// (an A(B(A)) frame tree).
+    cross_site_ancestor: bool,
+    /// The document was granted storage access (`requestStorageAccess()`, kept by a
+    /// same-origin navigation of its own): its own site's cookies are not blocked.
+    granted: bool,
+}
+
+impl CookieBlocking {
+    pub fn new(
+        rules: Arc<Vec<CookieAccessRule>>, top_site: String, own_site: Option<String>, cross_site_ancestor: bool, granted: bool,
+    ) -> Self {
+        Self { rules, top_site, own_site, cross_site_ancestor, granted }
+    }
+
+    /// The same decision without the document's own grant: a nested navigation's request is not
+    /// the embedding document's.
+    pub fn without_grant(&self) -> Self {
+        Self { granted: false, ..self.clone() }
+    }
+
+    /// The same decision for a navigation that keeps the frame's storage access (a same-origin
+    /// navigation the frame started itself): `url`'s site is granted.
+    pub fn granted_for(&self, url: &Url) -> Self {
+        Self { own_site: partition_key(url), granted: true, ..self.clone() }
+    }
+
+    /// Whether the unpartitioned cookies of `url` are unavailable to the document: `url` is a
+    /// third party (another site than the top-level one, or the document has a cross-site
+    /// ancestor), the document has no storage access grant for `url`'s site, and the last rule
+    /// that matches blocks. Without a matching rule the cookies are available (Chrome's default
+    /// does not block third-party cookies).
+    pub fn blocks(&self, url: &Url) -> bool {
+        let site = partition_key(url);
+        let third_party = self.cross_site_ancestor || site.as_deref() != Some(self.top_site.as_str());
+        if !third_party {
+            return false;
+        }
+        if self.granted && site.is_some() && site == self.own_site {
+            return false;
+        }
+        let origin = url.origin().ascii_serialization();
+        self.rules
+            .iter()
+            .rev()
+            .find(|r| r.origin.as_deref().is_none_or(|o| o == origin) && r.embedding.as_deref().is_none_or(|e| e == self.top_site))
+            .is_some_and(|r| r.blocked)
+    }
+}
+
 fn default_path(url: &Url) -> String {
     let p = url.path();
     if !p.starts_with('/') {
@@ -1420,5 +1513,30 @@ mod tests {
         let v6 = Url::parse("http://[::1]:8080/").unwrap();
         assert!(jar.set_from_header(&v6, "j=1", Access::Http, 5.0));
         assert_eq!(jar.header_for(&v6, SiteContext::SameSite, 6.0).as_deref(), Some("j=1"));
+    }
+    #[test]
+    fn storage_access_rules_block_third_parties_until_granted() {
+        let top = partition_key(&Url::parse("https://example.com/").unwrap()).unwrap();
+        let rules = Arc::new(vec![CookieAccessRule::parse("*", "*", true).unwrap()]);
+        let own = Url::parse("https://embedded.test/").unwrap();
+        let first_party = Url::parse("https://www.example.com/").unwrap();
+        let blocking = CookieBlocking::new(rules.clone(), top.clone(), partition_key(&own), false, false);
+        // A third party's own site is blocked, the top-level site is not.
+        assert!(blocking.blocks(&own));
+        assert!(!blocking.blocks(&first_party));
+        // A grant covers the document's own site only.
+        let granted = CookieBlocking::new(rules.clone(), top.clone(), partition_key(&own), false, true);
+        assert!(!granted.blocks(&own));
+        assert!(granted.blocks(&Url::parse("https://other.test/").unwrap()));
+        // Below a cross-site ancestor even the top-level site is a third party.
+        let aba = CookieBlocking::new(rules.clone(), top.clone(), partition_key(&first_party), true, false);
+        assert!(aba.blocks(&first_party));
+        assert!(!aba.without_grant().granted_for(&first_party).blocks(&first_party));
+        // A later allowing rule for the origin wins; none at all blocks nothing.
+        let allow = CookieAccessRule::parse("https://embedded.test", "https://example.com", false).unwrap();
+        let both = Arc::new(vec![CookieAccessRule::parse("*", "*", true).unwrap(), allow]);
+        assert!(!CookieBlocking::new(both, top.clone(), partition_key(&own), false, false).blocks(&own));
+        assert!(!CookieBlocking::new(Arc::new(Vec::new()), top, partition_key(&own), false, false).blocks(&own));
+        assert_eq!(CookieAccessRule::parse("not a url", "*", true), None);
     }
 }
