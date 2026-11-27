@@ -149,6 +149,9 @@ pub struct FetchRequest {
     /// Only part of the body is needed (a media element's headers):
     /// `Resource::partial` says when the body was cut.
     pub part: Option<pyro_webapi::BodyPart>,
+    /// The `Accept-Signature` value of a request with Ed25519 integrity metadata (Signature-based
+    /// SRI, `pyro_webapi::signature_sri::accept_signature_for`), which the network loader sends.
+    pub accept_signature: Option<String>,
     /// The CSP guard of a request its initiator checked (`pyro_webapi::csp`): the client
     /// checks each redirect against it. `None`: unchecked, or no policy.
     pub csp: Option<std::sync::Arc<pyro_net::csp::RequestCsp>>,
@@ -231,6 +234,10 @@ pub struct Resource {
     /// A document's `Link` header relations that fetch (`preload`, `modulepreload`, `prefetch`),
     /// started when it commits.
     pub link_fetches: Vec<crate::preload::LinkFetch>,
+    /// The response's `Unencoded-Digest` / `Signature` headers and what its signatures cover, kept
+    /// for the element's integrity check (`pyro_webapi::signature_sri`); `None` for a response with
+    /// neither header.
+    pub integrity_headers: Option<Box<pyro_webapi::signature_sri::Facts>>,
     /// A document's `Link: <url>; rel="compression-dictionary"` headers, resolved: fetched after
     /// its `load` event.
     pub dictionary_links: Vec<String>,
@@ -491,6 +498,10 @@ impl ResourceLoader for NetLoader {
         let mut req = pyro_net::Request::get(url, destination);
         req.parser_priority = request.parser_priority;
         req.csp = request.csp.clone();
+        // Signature-based SRI: the request asks for a signature by the keys of its integrity metadata.
+        if let Some(value) = request.accept_signature.as_deref().and_then(|v| v.parse().ok()) {
+            req.headers.insert(http::header::HeaderName::from_static("accept-signature"), value);
+        }
         if let Some(page) = browser.page(request.page) {
             req.defaults = page.request_defaults.clone();
             // Mixed Content / Upgrade Insecure Requests: the requesting document's state (for a
@@ -644,6 +655,7 @@ impl ResourceLoader for NetLoader {
                 reporting_endpoints: None,
                 connection_allowlist: None,
                 link_fetches: Vec::new(),
+                integrity_headers: None,
                 dictionary_links: Vec::new(),
                 speculation_rules: Vec::new(),
                 no_vary_search: None,
@@ -741,6 +753,7 @@ impl ResourceLoader for NetLoader {
                     reporting_endpoints: None,
                     connection_allowlist: None,
                     link_fetches: Vec::new(),
+                    integrity_headers: None,
                     dictionary_links: Vec::new(),
                     speculation_rules: Vec::new(),
                     no_vary_search: None,
@@ -841,6 +854,7 @@ impl ResourceLoader for NetLoader {
                                 pyro_net::connection_allowlist::ConnectionPolicy::from_headers(enforce.as_deref(), report_only.as_deref(), &h.url)
                             })
                             .flatten(),
+                        integrity_headers: pyro_webapi::signature_sri::capture(&h.url, h.status.as_u16(), &h.headers),
                         link_fetches: if document {
                             crate::preload::link_header_fetches(
                                 h.headers.get_all(http::header::LINK).iter().filter_map(|v| v.to_str().ok()),
@@ -1482,6 +1496,7 @@ impl ResourceLoader for StaticLoader {
                         reporting_endpoints: None,
                         connection_allowlist: None,
                         link_fetches: Vec::new(),
+                        integrity_headers: None,
                         dictionary_links: Vec::new(),
                         speculation_rules: Vec::new(),
                         no_vary_search: None,
@@ -2006,7 +2021,11 @@ impl ScriptFetch {
     fn of(info: &pyro_dom::script::ScriptInfo) -> ScriptFetch {
         ScriptFetch {
             parser_priority: false,
-            integrity: info.integrity.clone().filter(|v| !pyro_webapi::sri::is_empty(v)),
+            // (Metadata with an Ed25519 key counts too: Signature-based SRI.)
+            integrity: info
+                .integrity
+                .clone()
+                .filter(|v| !pyro_webapi::sri::is_empty(v) || !pyro_webapi::signature_sri::parse_keys(v).is_empty()),
             crossorigin: info.crossorigin.clone(),
             module: None,
             referrer_policy: pyro_net::ReferrerPolicy::from_attribute(info.referrerpolicy.as_deref()),
@@ -2060,6 +2079,24 @@ pub(crate) fn integrity_error(
     cors: bool,
     document_origin: &str,
 ) -> Option<String> {
+    // Signature-based SRI and `Unencoded-Digest`: Ed25519 keys of the metadata must have signed the
+    // response, and what the response says about its own body must hold, with or without metadata.
+    let keys = integrity.map(pyro_webapi::signature_sri::parse_keys).unwrap_or_default();
+    if !keys.is_empty() && is_opaque(resource, cors, document_origin) {
+        return Some(format!(
+            "Subresource Integrity: The resource '{}' has an integrity attribute, but the resource requires the \
+             request to be CORS enabled to check the integrity, and it is not. The resource has been blocked \
+             because the integrity cannot be enforced.",
+            resource.url
+        ));
+    }
+    if !pyro_webapi::signature_sri::verify_facts(resource.integrity_headers.as_deref(), &resource.body, &keys) {
+        return Some(format!(
+            "Subresource Integrity: The resource '{}' failed its signature or Unencoded-Digest check. The \
+             resource has been blocked.",
+            resource.url
+        ));
+    }
     let integrity = integrity.filter(|v| !pyro_webapi::sri::is_empty(v))?;
     if is_opaque(resource, cors, document_origin) {
         return Some(format!(
@@ -2223,6 +2260,7 @@ impl Browser {
             }),
             module: None,
             part: None,
+            accept_signature: None,
         };
         let pending_id = loader_id.clone();
         // A speculation-rules prefetch of this URL, made by the document that navigates, answers it
@@ -2523,6 +2561,7 @@ impl Browser {
             reporting_endpoints: None,
             connection_allowlist: None,
             link_fetches: Vec::new(),
+            integrity_headers: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,
@@ -3541,6 +3580,7 @@ impl Browser {
             initiator,
             module,
             part: None,
+            accept_signature: integrity.as_deref().and_then(pyro_webapi::signature_sri::accept_signature_for),
         };
         let cancel = self.fetch_document_resource(
             page,
@@ -3557,12 +3597,9 @@ impl Browser {
                 }
                 let res = match res {
                     Ok(r) if (200..300).contains(&r.status) => {
-                        let blocked = integrity
-                            .as_deref()
-                            .and_then(|i| {
-                                let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
-                                integrity_error(&r, Some(i), cors, &origin)
-                            })
+                        // (Without `integrity` too: the response's own `Unencoded-Digest` and signatures.)
+                        let origin = b.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_default();
+                        let blocked = integrity_error(&r, integrity.as_deref(), cors, &origin)
                             .or_else(|| {
                                 module.and_then(|ty| pyro_webapi::module_script::mime_error(ty, &r.mime, &r.url))
                             })
@@ -4116,6 +4153,7 @@ impl Browser {
                     initiator: None,
                     module: None,
                     part: None,
+                    accept_signature: None,
                 };
                 loader.fetch(
                     self,
@@ -5238,6 +5276,7 @@ mod disposition_tests {
             reporting_endpoints: None,
             connection_allowlist: None,
             link_fetches: Vec::new(),
+            integrity_headers: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,

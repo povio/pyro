@@ -140,6 +140,8 @@ struct Job {
     /// `integrity` metadata: the response is held until the whole body has
     /// arrived and matched (SRI), then delivered.
     integrity: Option<crate::integrity::Integrity>,
+    /// The Ed25519 keys of the request's integrity metadata ([`FetchExtras::signature_keys`]).
+    signature_keys: Vec<crate::signature_sri::Key>,
     held_head: RefCell<Option<ResponseHead>>,
     /// The request's CSP guard: what its redirect checks found is reported as it progresses.
     csp: Option<Arc<pyro_net::csp::RequestCsp>>,
@@ -522,6 +524,9 @@ pub(crate) fn attach_blob(page: &PageDom, request: &mut Request) {
 /// What a fetch does beyond its `pyro_net::Request`.
 pub(crate) struct FetchExtras {
     integrity: Option<crate::integrity::Integrity>,
+    /// The Ed25519 keys of the `integrity` metadata (Signature-based SRI): a signature of one of
+    /// them must have verified ([`crate::signature_sri`]).
+    signature_keys: Vec<crate::signature_sri::Key>,
     /// Keepalive: the reserved body bytes, held until the request ends.
     keepalive: Option<KeepaliveGuard>,
 }
@@ -710,6 +715,15 @@ pub(crate) fn parse_request<'s>(
             return Err(JsError::Type("Failed to fetch: integrity metadata on a no-cors request".into()));
         }
     }
+    let signature_keys = crate::signature_sri::parse_keys(&integrity);
+    if !signature_keys.is_empty() && request.mode == RequestMode::NoCors {
+        return Err(JsError::Type("Failed to fetch: integrity metadata on a no-cors request".into()));
+    }
+    // Signature-based SRI: the request asks for a signature by those keys (added after the CORS
+    // checks of the author's headers: it takes no preflight).
+    if let Some(value) = crate::signature_sri::accept_signature(&signature_keys).and_then(|v| v.parse().ok()) {
+        request.headers.insert(pyro_net::http::HeaderName::from_static("accept-signature"), value);
+    }
     let keepalive = match option(s, init, "keepalive")? {
         v if v.is_undefined() => request_input.as_ref().is_some_and(|r| r.keepalive),
         v => v.to_bool(),
@@ -723,7 +737,7 @@ pub(crate) fn parse_request<'s>(
     } else {
         None
     };
-    let extras = FetchExtras { integrity: crate::integrity::Integrity::parse(&integrity), keepalive };
+    let extras = FetchExtras { integrity: crate::integrity::Integrity::parse(&integrity), signature_keys, keepalive };
     request.cache = match string_option(s, init, "cache", &default_string("cache", "default"))?.as_str() {
         "default" => pyro_net::CacheMode::Default,
         "no-store" => pyro_net::CacheMode::NoStore,
@@ -1067,10 +1081,11 @@ fn fetch_call<'s>(
                 credentials: request.credentials,
                 body,
                 integrity: extras.integrity,
+                signature_keys: extras.signature_keys,
                 held_head: RefCell::new(None),
                 csp: request.csp.clone(),
             });
-            if job.integrity.is_some() {
+            if job.integrity.is_some() || !job.signature_keys.is_empty() {
                 // Nothing is delivered before the whole body is checked.
                 job.body.wire.lock().unwrap().streaming = false;
             }
@@ -1245,26 +1260,41 @@ fn pump(page_id: u64, id: RequestId) {
     if page.is_disposed() || job.body.disposed.get() || job.body.aborted.get() {
         return;
     }
-    let head = match &job.integrity {
-        None => head,
-        Some(integrity) => {
-            if let Some(head) = head {
-                if matches!(head.kind, pyro_net::ResponseKind::Opaque | pyro_net::ResponseKind::OpaqueRedirect) {
+    // SRI (`integrity` metadata, Ed25519 keys) and the response's own `Unencoded-Digest` and
+    // `Signature` headers: the response is held until the whole body has arrived and passed,
+    // then delivered. A response with neither is not touched.
+    let asserted = job.integrity.is_some() || !job.signature_keys.is_empty();
+    let checked = asserted
+        || job.held_head.borrow().is_some()
+        || head.as_ref().is_some_and(|head| crate::signature_sri::wants_check(&head.headers));
+    let head = if !checked {
+        head
+    } else {
+        if let Some(head) = head {
+            if asserted && matches!(head.kind, pyro_net::ResponseKind::Opaque | pyro_net::ResponseKind::OpaqueRedirect) {
+                fail_integrity(&s, &page, &job, id);
+                return;
+            }
+            *job.held_head.borrow_mut() = Some(head);
+        }
+        if matches!(terminal, Some(Ok(()))) {
+            let held = job.held_head.borrow_mut().take();
+            if let Some(held) = &held {
+                let wire = job.body.wire.lock().unwrap();
+                let body: Vec<&[u8]> = wire.chunks.iter().map(|chunk| &chunk[..]).collect();
+                let matched = job.integrity.as_ref().is_none_or(|integrity| integrity.matches(&wire.chunks));
+                if !matched
+                    || !crate::signature_sri::verify(&held.url, held.status.as_u16(), &held.headers, &body, &job.signature_keys)
+                {
+                    drop(body);
+                    drop(wire);
                     fail_integrity(&s, &page, &job, id);
                     return;
                 }
-                *job.held_head.borrow_mut() = Some(head);
             }
-            if matches!(terminal, Some(Ok(()))) {
-                let held = job.held_head.borrow_mut().take();
-                if held.is_some() && !integrity.matches(&job.body.wire.lock().unwrap().chunks) {
-                    fail_integrity(&s, &page, &job, id);
-                    return;
-                }
-                held
-            } else {
-                None
-            }
+            held
+        } else {
+            None
         }
     };
     if let Some(head) = head {

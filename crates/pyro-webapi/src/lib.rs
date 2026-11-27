@@ -129,6 +129,7 @@ mod service_worker_scope;
 mod smil;
 mod svg_animation_element;
 pub mod smooth_scroll;
+pub mod signature_sri;
 pub mod sri;
 pub mod storage;
 mod storage_manager;

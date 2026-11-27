@@ -546,6 +546,11 @@ impl Prescan {
         if !module && attr(attrs, "nomodule").is_some() {
             return;
         }
+        // Signature-based SRI: a script asserting Ed25519 keys asks for its signature in its own
+        // request (`Accept-Signature`), which only the element's fetch makes.
+        if attr(attrs, "integrity").is_some_and(|v| v.to_ascii_lowercase().contains("ed25519-")) {
+            return;
+        }
         let crossorigin = attr(attrs, "crossorigin").map(str::to_owned);
         let referrer_policy = attr(attrs, "referrerpolicy").map(str::to_owned);
         emit(Prescanned::Script { src: src.to_owned(), module, crossorigin, referrer_policy });

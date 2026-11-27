@@ -556,6 +556,7 @@ impl Browser {
             initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
             module: None,
             part: None,
+            accept_signature: None,
         };
         // CSP for the preload's destination, with the link's nonce.
         let Some(finish) = self.element_csp_check(page, &mut request, node, Box::new(finish)) else { return };
@@ -603,6 +604,7 @@ fn dictionary_request(
         initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
         module: None,
         part: None,
+        accept_signature: None,
     }
 }
 
@@ -670,6 +672,7 @@ impl Browser {
                 initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
                 module: None,
                 part: None,
+                accept_signature: None,
             };
             if let Some(cancel) = self.fetch_document_resource(page, &resource_loader, request, Box::new(|_, _| {})) {
                 cancel.disarm();
@@ -853,6 +856,7 @@ impl Browser {
             initiator: Some(pyro_webapi::resource_timing::Initiator::Link),
             module: None,
             part: None,
+            accept_signature: None,
         };
         // CSP: default-src or any fetch directive (`RequestDest::Prefetch`), with the link's
         // nonce.

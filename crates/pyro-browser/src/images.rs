@@ -709,6 +709,7 @@ impl Browser {
                     reporting_endpoints: None,
                     connection_allowlist: None,
                     link_fetches: Vec::new(),
+                    integrity_headers: None,
                     dictionary_links: Vec::new(),
                     speculation_rules: Vec::new(),
                     no_vary_search: None,
@@ -752,6 +753,7 @@ impl Browser {
             )),
             module: None,
             part: None,
+            accept_signature: None,
         };
         let key = Shape::of(self, &request);
         let cancel = self.dispatch_image(page, &resource_loader, request, Box::new(move |browser, result| finish(browser, result, key)), false);
@@ -1326,7 +1328,7 @@ impl Browser {
         if url.starts_with("blob:") || about {
             let ok = about || bindings.blob_url(&url).is_some();
             self.scheduler().post(TaskSource::Networking, move |b| {
-                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, allow_csp_from: None, refresh: None, content_language: None, last_modified: None, reporting_endpoints: None, dictionary_links: Vec::new(), speculation_rules: Vec::new(), no_vary_search: None, referrer_policy: None, sent_referrer: None, origin_agent_cluster: false, force_load_at_top: false, embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone, coop: Vec::new(), timing: None, partial: None, nosniff: false, opaque: false, connection_allowlist: None, link_fetches: Vec::new() }) } else { Err("revoked or unknown blob URL".into()) })
+                finish(b, if ok { Ok(Resource { url: String::new(), status: 200, mime: String::new(), charset: None, body: Default::default(), immutable_local: false, content_disposition: None, header_csp: None, allow_csp_from: None, refresh: None, content_language: None, last_modified: None, reporting_endpoints: None, dictionary_links: Vec::new(), speculation_rules: Vec::new(), no_vary_search: None, referrer_policy: None, sent_referrer: None, origin_agent_cluster: false, force_load_at_top: false, embedder_policy: pyro_net::EmbedderPolicy::UnsafeNone, coop: Vec::new(), timing: None, partial: None, nosniff: false, opaque: false, connection_allowlist: None, link_fetches: Vec::new(), integrity_headers: None }) } else { Err("revoked or unknown blob URL".into()) })
             });
             return;
         }
@@ -1361,6 +1363,7 @@ impl Browser {
             )),
             module: None,
             part: None,
+            accept_signature: None,
         };
         *key.borrow_mut() = Some(crate::layout_key_of(&frame, &request, None));
         let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));

@@ -837,6 +837,7 @@ impl Browser {
                 initiator: None,
                 module: None,
                 part: None,
+                accept_signature: None,
             };
             if let Some(cancel) = self.fetch_document_resource(page, &loader, request, Box::new(finish)) {
                 cancel.disarm();

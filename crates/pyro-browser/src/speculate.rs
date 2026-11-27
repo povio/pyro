@@ -220,6 +220,7 @@ impl Requester {
             initiator: Some(initiator),
             module,
             part: None,
+            accept_signature: None,
         }
     }
 }

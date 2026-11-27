@@ -560,7 +560,7 @@ impl PolicyList {
             return true;
         }
         if request.dest.is_script_like() {
-            if integrity_matches(list, &request.integrity) {
+            if integrity_matches(list, &request.integrity) || ed25519_matches(list, &request.integrity) {
                 return true;
             }
             if has_keyword(list, "'strict-dynamic'") {
@@ -999,6 +999,38 @@ fn integrity_matches(list: &[String], integrity: &str) -> bool {
     any
 }
 
+/// The unpadded standard-base64 form of the Ed25519 public keys (32 bytes) of `integrity`
+/// metadata (`ed25519-<base64>` tokens; others and malformed keys are not keys).
+fn ed25519_keys(integrity: &str) -> Vec<String> {
+    integrity
+        .split(is_ascii_ws)
+        .filter_map(|item| {
+            let (algorithm, value) = item.split('?').next()?.split_once('-')?;
+            algorithm.eq_ignore_ascii_case("ed25519").then(|| normalize_base64(value))
+        })
+        // 32 bytes are 43 characters of unpadded base64.
+        .filter(|key| key.len() == 43 && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/'))
+        .collect()
+}
+
+/// Signature-based SRI's `'ed25519-<key>'` source expressions: the request's integrity metadata has
+/// at least one Ed25519 key, and every one of them is in `list`.
+fn ed25519_matches(list: &[String], integrity: &str) -> bool {
+    let keys = ed25519_keys(integrity);
+    if keys.is_empty() {
+        return false;
+    }
+    let sources: Vec<String> = list
+        .iter()
+        .filter_map(|e| {
+            let value = e.strip_prefix('\'')?.strip_suffix('\'')?;
+            let (algorithm, key) = value.split_once('-')?;
+            algorithm.eq_ignore_ascii_case("ed25519").then(|| normalize_base64(key))
+        })
+        .collect();
+    keys.iter().all(|key| sources.contains(key))
+}
+
 /// CSP3 §6.7.3.2 "Does a source list allow all inline behavior for type?".
 fn allows_all_inline(list: &[String], kind: InlineKind) -> bool {
     let mut allow = false;
@@ -1174,6 +1206,25 @@ mod tests {
         assert!(reports("script-src-elem 'self'; script-src 'report-sha256'").is_empty());
         assert!(reports("img-src 'report-sha256'").is_empty());
         assert!(hash_expression("sha256", b"").unwrap().starts_with("sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="));
+    }
+
+    #[test]
+    fn ed25519_source_expressions() {
+        let key = "JrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs=";
+        let other = "xDnP380zcL4rJ76rXYjeHlfMyPZEOqpJYjsjEppbuXE=";
+        let list = list(&format!("script-src 'ed25519-{key}'"), "https://a.test/page.html");
+        let check = |integrity: &str| {
+            let mut request = CspRequest::new(Url::parse("https://a.test/x.js").unwrap(), RequestDest::Script);
+            request.integrity = integrity.to_owned();
+            list.pre_request(&request).allowed()
+        };
+        assert!(check(&format!("ed25519-{key}")));
+        assert!(check(&format!("ed25519-{key} malformed-thing")));
+        // No key, a malformed one, or one the policy does not list: blocked.
+        assert!(!check(""));
+        assert!(!check("ed25519-???"));
+        assert!(!check(&format!("ed25519-{other}")));
+        assert!(!check(&format!("ed25519-{key} ed25519-{other}")));
     }
 
     #[test]

@@ -94,6 +94,7 @@ impl Browser {
             initiator: Some(initiator),
             module: None,
             part,
+            accept_signature: None,
         };
         resource_loader.fetch_cancellable(
             self,

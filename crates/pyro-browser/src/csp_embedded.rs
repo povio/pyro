@@ -1267,6 +1267,7 @@ mod tests {
             reporting_endpoints: None,
             connection_allowlist: None,
             link_fetches: Vec::new(),
+            integrity_headers: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,

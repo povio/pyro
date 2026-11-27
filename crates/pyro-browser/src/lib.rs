@@ -174,6 +174,7 @@ fn subresource_request_with(
         initiator: None,
         module: None,
         part: None,
+        accept_signature: None,
     }
 }
 

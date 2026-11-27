@@ -124,12 +124,20 @@ pub fn is_cors_safelisted_header(name: &str, value: &HeaderValue) -> bool {
             && crate::range::parse_single_range_with(value.as_bytes(), false).is_some_and(|(start, _)| start.is_some()))
 }
 
+/// The `Accept-Signature` the browser adds to a request with Ed25519 integrity metadata
+/// (`sig0=("unencoded-digest";sf);keyid="...";tag="ed25519-integrity"`, Signature-based SRI): not
+/// one of the author's headers, it takes no preflight.
+fn is_sri_accept_signature(name: &str, value: &HeaderValue) -> bool {
+    name == "accept-signature"
+        && value.to_str().is_ok_and(|v| v.starts_with("sig0=(\"unencoded-digest\";sf);keyid=\"") && v.ends_with("tag=\"ed25519-integrity\""))
+}
+
 /// Fetch "CORS-unsafe request-header names" of `headers`: those that need a
 /// preflight, lowercased and sorted.
 pub fn cors_unsafe_header_names(headers: &HeaderMap) -> Vec<String> {
     let mut names: Vec<String> = headers
         .iter()
-        .filter(|(n, v)| !is_cors_safelisted_header(n.as_str(), v))
+        .filter(|(n, v)| !is_cors_safelisted_header(n.as_str(), v) && !is_sri_accept_signature(n.as_str(), v))
         .map(|(n, _)| n.as_str().to_owned())
         .collect();
     names.sort();
