@@ -19,6 +19,8 @@ pub const MAX_NODES: usize = 100_000;
 pub const MAX_DEPTH: usize = 256;
 const MAX_ATTRIBUTES: usize = 256;
 const XMLNS: &str = "http://www.w3.org/2000/xmlns/";
+/// The error of a resource with no root element or an unclosed one.
+const NO_ROOT: &str = "Missing or unclosed XML root";
 const PARSERERROR: &str = "http://www.mozilla.org/newlayout/xml/parsererror.xml";
 type Result<T> = std::result::Result<T, &'static str>;
 
@@ -165,6 +167,13 @@ fn prepare_with(source: &str, scripting: bool) -> Result<Vec<Prepared>> {
 }
 
 fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>) -> Result<Vec<Prepared>> {
+    let mut nodes = Vec::new();
+    read_nodes_into(source, scripting, context, &mut nodes)?;
+    Ok(nodes)
+}
+
+/// `read_nodes` that leaves the nodes read so far in `nodes` when it fails.
+fn read_nodes_into(source: &str, scripting: bool, context: Option<NamespaceResolver>, nodes: &mut Vec<Prepared>) -> Result<()> {
     let fragment = context.is_some();
     if source.len() > MAX_INPUT_BYTES {
         return Err("XML input limit exceeded");
@@ -176,7 +185,6 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
     reader.config_mut().check_comments = true;
     let mut namespaces = context.unwrap_or_default();
     namespaces.set_max_namespace_bindings(256);
-    let mut nodes = Vec::new();
     let mut stack = Vec::new();
     let mut roots = 0;
     let mut first = true;
@@ -246,7 +254,7 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                     }
                     element.push_attr(Attr { name, value: value.into() });
                 }
-                let index = push(&mut nodes, parent, NodeKind::Element(Box::new(element)))?;
+                let index = push(nodes, parent, NodeKind::Element(Box::new(element)))?;
                 if empty {
                     namespaces.pop();
                 } else {
@@ -261,7 +269,7 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                 if value.as_ref().contains("]]>") {
                     return Err("Invalid XML text delimiter");
                 }
-                text(&mut nodes, parent, &value.xml10_content(), fragment)?;
+                text(nodes, parent, &value.xml10_content(), fragment)?;
             }
             Event::GeneralRef(value) => {
                 if parent.is_none() && !fragment {
@@ -271,20 +279,20 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                     if !xml_char(c) {
                         return Err("Invalid XML character reference");
                     }
-                    text(&mut nodes, parent, c.encode_utf8(&mut [0; 4]), fragment)?;
+                    text(nodes, parent, c.encode_utf8(&mut [0; 4]), fragment)?;
                 } else {
                     let value = entity(value.as_ref(), html_entities).ok_or("Unknown XML entity")?;
-                    text(&mut nodes, parent, value, fragment)?;
+                    text(nodes, parent, value, fragment)?;
                 }
             }
             Event::CData(value) => {
                 if parent.is_none() && !fragment {
                     return Err("CDATA outside XML root");
                 }
-                push(&mut nodes, parent, NodeKind::CData(value.xml10_content().into_owned()))?;
+                push(nodes, parent, NodeKind::CData(value.xml10_content().into_owned()))?;
             }
             Event::Comment(value) => {
-                push(&mut nodes, parent, NodeKind::Comment(value.xml10_content().into_owned()))?;
+                push(nodes, parent, NodeKind::Comment(value.xml10_content().into_owned()))?;
             }
             Event::PI(value) => {
                 validate_name(value.target()).map_err(|_| "Invalid XML processing instruction")?;
@@ -292,7 +300,7 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                     return Err("Reserved XML processing instruction");
                 }
                 push(
-                    &mut nodes,
+                    nodes,
                     parent,
                     NodeKind::ProcessingInstruction(Box::new(PiData {
                         target: value.target().into(),
@@ -347,16 +355,16 @@ fn read_nodes(source: &str, scripting: bool, context: Option<NamespaceResolver>)
                 }
                 let doctype = doctype(&value.xml10_content())?;
                 html_entities = HTML_ENTITY_PUBLIC_IDS.contains(&&*doctype.public_id);
-                push(&mut nodes, None, NodeKind::Doctype(Box::new(doctype)))?;
+                push(nodes, None, NodeKind::Doctype(Box::new(doctype)))?;
             }
             Event::Eof => break,
         }
         first = false;
     }
     if (!fragment && roots != 1) || !stack.is_empty() {
-        return Err("Missing or unclosed XML root");
+        return Err(NO_ROOT);
     }
-    Ok(nodes)
+    Ok(())
 }
 
 /// `encoding="..."` of a leading XML declaration.
@@ -736,14 +744,24 @@ fn parser_error(dom: &mut Dom, document: NodeId, message: &str) {
 /// or an explicit parser limit. Validation finishes before allocating DOM nodes,
 /// so failed parses retain no partial arena trees. Never performs I/O.
 pub fn parse_document(dom: &mut Dom, url: &str, source: &str, content_type: &str) -> NodeId {
-    let prepared = prepare(source);
+    let mut nodes = Vec::new();
+    let prepared = read_nodes_into(source, false, None, &mut nodes);
     let document = new_document(dom, url, content_type);
     match prepared {
-        Ok(nodes) => {
+        Ok(()) => {
             let registry = dom.registry_idx(document.index());
             attach(dom, document, nodes, registry);
         }
-        Err(message) => parser_error(dom, document, message),
+        Err(message) => {
+            // A resource with a prolog but no root element keeps its prolog (processing
+            // instructions, comments, doctype) ahead of the parsererror, as Chrome's parser
+            // had already inserted them; any other failure keeps no partial tree.
+            if message == NO_ROOT && nodes.iter().all(|n| n.parent.is_none() && !matches!(n.kind, NodeKind::Element(_))) {
+                let registry = dom.registry_idx(document.index());
+                attach(dom, document, nodes, registry);
+            }
+            parser_error(dom, document, message)
+        }
     }
     document
 }
