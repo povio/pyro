@@ -50,8 +50,7 @@ impl EngineHost {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct P {
-            #[serde(default)]
-            enabled: bool,
+            enabled: Option<bool>,
             r#type: String,
             metadata: Option<Metadata>,
             reading: Option<Reading>,
@@ -62,7 +61,9 @@ impl EngineHost {
         let services = self.thread.browser.context_services(context).ok_or_else(|| CdpError::server("page is gone"))?;
         match action {
             "setSensorOverrideEnabled" => {
-                if p.enabled {
+                // `enabled` is required (Chrome: "Invalid parameters", `enabled: boolean value expected`).
+                let enabled = p.enabled.ok_or_else(|| CdpError::invalid_params("Invalid parameters: enabled: boolean value expected"))?;
+                if enabled {
                     let metadata = p.metadata;
                     let available = metadata.as_ref().and_then(|m| m.available).unwrap_or(true);
                     let min = metadata.as_ref().and_then(|m| m.minimum_frequency);
