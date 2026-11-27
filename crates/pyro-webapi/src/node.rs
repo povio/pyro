@@ -483,7 +483,13 @@ impl JsClass for Node {
                 // as a property key can swap its buffer for an atom's, and a
                 // GC can then free the old one.
                 let blur = || crate::input::blur_before_removal(n.page(), n.id, true);
-                let set = |text: &str| n.page().dom.borrow_mut().set_text_content(n.id, text).js();
+                let set = |text: &str| {
+                    let mut dom = n.page().dom.borrow_mut();
+                    // Trusted Types: this path trusts nothing, so a script loses its [[ScriptText]]
+                    // (a text equal to it must not stay trusted). A no-op for any other node.
+                    dom.set_script_text(n.id, "");
+                    dom.set_text_content(n.id, text).js()
+                };
                 // An Attr's textContent is its value: a Trusted Types sink as `Attr.value` is.
                 if is_attr_node(n) {
                     let text = if v.is_nullish() { String::new() } else { dom_string(v)? };
