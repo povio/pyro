@@ -4263,6 +4263,17 @@ fn effect_allowed_of(mask: i64) -> &'static str {
     }
 }
 
+/// The `effectAllowed` a drag target's DataTransfer reports. Chrome keeps
+/// "uninitialized" there while the in-page source never assigned a valid
+/// effectAllowed (the mask round trip alone cannot tell that from "all");
+/// otherwise the mask decides.
+fn target_effect_allowed(source: &Option<(NodeId, Rc<NativeTransfer>)>, mask: i64) -> String {
+    match source {
+        Some((_, transfer)) if mask < 0 && transfer.effect_allowed() == "uninitialized" => "uninitialized".to_string(),
+        _ => effect_allowed_of(mask).to_string(),
+    }
+}
+
 /// Chrome's default operation for what the source allows: copy, then move,
 /// then link; None when it allows nothing.
 fn default_operation(mask: i64) -> Option<&'static str> {
@@ -4419,7 +4430,7 @@ fn update_drag(
         page,
         &target_strings(data),
         files,
-        effect_allowed_of(data.drag_operations_mask),
+        &target_effect_allowed(&source, data.drag_operations_mask),
         Mode::Protected,
     )
     .ok_or("no script context for the drag")?;
@@ -4507,7 +4518,7 @@ pub fn dispatch_drag_files(
                         page,
                         &target_strings(data),
                         files,
-                        effect_allowed_of(data.drag_operations_mask),
+                        &target_effect_allowed(&session.source, data.drag_operations_mask),
                         Mode::ReadOnly,
                     )
                     .ok_or("no script context for the drag")?;
@@ -4522,7 +4533,7 @@ pub fn dispatch_drag_files(
                             page,
                             &target_strings(data),
                             files,
-                            effect_allowed_of(data.drag_operations_mask),
+                            &target_effect_allowed(&session.source, data.drag_operations_mask),
                             Mode::Protected,
                         ) {
                             fire_drag(page, t, "dragleave", &m, false, &transfer, Mode::Protected);
