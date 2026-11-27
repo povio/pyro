@@ -23,8 +23,9 @@
 //                           `onEvent(name, fn)` registers listeners); a frame that is gone is ignored
 //   element(id), windowPage(arg), see above
 import * as core from './core.mjs';
+import * as cookies from './cookies.mjs';
 
-const GROUPS = [core];
+const GROUPS = [core, cookies];
 
 export const commands = new Map();
 for (const g of GROUPS) {
