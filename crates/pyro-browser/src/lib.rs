@@ -21,6 +21,7 @@ mod quiet;
 mod refresh;
 mod responsive_frames;
 mod speculate;
+mod speculation_document_rules;
 mod speculation_rules;
 mod stylesheets;
 mod viewport;
@@ -862,6 +863,8 @@ pub struct Browser {
     /// response's (a `javascript:` result: those of the document it replaces, whose policies it
     /// has), taken by that commit.
     csp_sandbox_next: Option<(FrameKey, frames::Sandbox)>,
+    /// Speculation rules' document rules and eagerness triggers, per top-level document.
+    pub(crate) document_rules: speculation_document_rules::DocumentRulesState,
 }
 
 impl LoopState for Browser {
@@ -970,6 +973,8 @@ impl Browser {
                 self.note_first_paint(key);
             }
         }
+        // Document rules of speculation rules follow the links the tasks above changed.
+        self.document_rules_after_task();
     }
 }
 
@@ -1099,6 +1104,7 @@ impl BrowserThread {
             ready_responses: Default::default(),
             csp_inherit_next: None,
             csp_sandbox_next: None,
+            document_rules: Default::default(),
         };
         // The VM's deferred work (WebAssembly.compile/instantiate settling, finished on a
         // compilation thread) runs in a task of this loop: JavaScriptCore would run it from a WTF

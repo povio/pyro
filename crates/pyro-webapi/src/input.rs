@@ -2747,6 +2747,28 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
     }
 }
 
+/// The `<a>` or `<area>` with an `href` that is `el` or its nearest flat-tree ancestor.
+fn closest_link(page: &PageDom, el: NodeId) -> Option<NodeId> {
+    let dom = page.dom.borrow();
+    let mut cur = Some(el);
+    while let Some(n) = cur {
+        let is_link = dom.element(n).is_ok_and(|e| e.is_html() && matches!(&*e.name.local, "a" | "area"));
+        if is_link && dom.get_attribute(n, "href").ok().flatten().is_some() {
+            return Some(n);
+        }
+        cur = flat_parent_element(&dom, n);
+    }
+    None
+}
+
+/// Tells the embedder a press went down on a link (speculation rules' `conservative` eagerness).
+fn note_link_pointer_down(page: &PageDom, target: NodeId) {
+    let Some(hooks) = page.hooks() else { return };
+    if let Some(link) = closest_link(page, target) {
+        hooks.link_pointer_down(link);
+    }
+}
+
 /// The parent element in the flat tree: a slottable's slot, a shadow
 /// root's host, else the parent element.
 pub(crate) fn flat_parent_element(dom: &Dom, el: NodeId) -> Option<NodeId> {
@@ -3141,6 +3163,10 @@ fn dispatch_boundary_events(
     let doc = page.document();
     let _ = page.dom.borrow_mut().set_hovered(doc, Some(target));
     page.set_hovered(Some(target));
+    // pyro: speculation rules' hover eagerness (a hook that only posts a task).
+    if let Some(hooks) = page.hooks() {
+        hooks.link_hover(closest_link(page, target));
+    }
     // An event nobody listens for is not made (see `fire_mouse`).
     let boundary = |iface: EventInterface, ty: &str, at: TargetKey, cancelable: bool, related: Option<TargetKey>| {
         if crate::target::unheard_input(page, ty, at, cancelable, None) {
@@ -3521,6 +3547,7 @@ fn dispatch_mouse_inner(
             // Any button's press activates `:active`, as in Chrome (WPT css/selectors
             // `active-observable`: right and middle presses too).
             set_active(page, page.document(), Some(target));
+            note_link_pointer_down(page, target);
             let pd = if chorded {
                 fire_pointer_move(page, tkey, m, Some(m.button.dom_button()), pseudo);
                 // A pointermove cannot suppress the compatibility mouse events; a canceled
@@ -4419,6 +4446,7 @@ pub fn dispatch_touch(
         };
         seq.next_pointer_id += 1;
         let state = PointerState::pressed(&t.input);
+        note_link_pointer_down(page, target);
         // Implicit capture of the touchstart target is pending from the start of pointerdown
         // (Pointer Events §4.1.3.2); script may override or release it there.
         crate::pointer_capture::touch_capture_begin(page, t.pointer_id, target);

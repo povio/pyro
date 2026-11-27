@@ -230,6 +230,33 @@ impl PageHooks for Hooks {
         self.frames.upgrade().is_some_and(|host| host.request_focus(self.page, &self.loader, target, token))
     }
 
+    fn link_hover(&self, link: Option<pyro_dom::NodeId>) {
+        // Only a top-level document's rule sets start speculation (see `speculation_document_rules`).
+        if self.page.child.is_some() {
+            return;
+        }
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::UserInteraction, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.speculation_link_hover(page, link);
+            }
+        });
+    }
+
+    fn link_pointer_down(&self, link: pyro_dom::NodeId) {
+        if self.page.child.is_some() {
+            return;
+        }
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::UserInteraction, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.speculation_link_pointer_down(page, link);
+            }
+        });
+    }
+
     fn post_task(&self, task: Box<dyn FnOnce()>) {
         let page = self.page;
         let loader = self.loader.clone();

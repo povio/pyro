@@ -142,6 +142,7 @@ mod origin_globals;
 mod origin_urls;
 pub mod url;
 mod url_pattern;
+pub use url_pattern::{href_matches, PatternInput};
 pub mod url_search_params;
 mod user_activation;
 pub mod util;

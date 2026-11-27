@@ -1079,6 +1079,13 @@ impl Layout {
         !self.style.is_hidden(dom, el, opts)
     }
 
+    /// pyro: whether `el` is in contents a `content-visibility: hidden` ancestor skips (display
+    /// locked: the engine displays them, but no one sees them). Speculation rules' document
+    /// rules take no link of such contents.
+    pub fn in_display_locked_contents(&self, dom: &Dom, el: NodeId) -> bool {
+        self.in_hidden_contents(dom, el)
+    }
+
     // ----- boxes -------------------------------------------------------------
 
     /// Element.zig:1639-1649: the document's `<html>`, or a `<body>` under it.

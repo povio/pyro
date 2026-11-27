@@ -908,6 +908,15 @@ pub trait PageHooks {
     /// `window.close()`: the embedder closes the page if its top-level
     /// browsing context is script-closable (a popup). The default ignores it.
     fn close_window(&self) {}
+    /// The hovered element changed: `link` is the `<a>`/`<area>` with an `href` that is it or
+    /// its nearest flat-tree ancestor (`None`: the pointer is over no link). Speculation rules'
+    /// `moderate` and `eager` eagerness start on a hovered link. Runs inside the pointer event's
+    /// dispatch: it must not run script or borrow the DOM.
+    fn link_hover(&self, _link: Option<NodeId>) {}
+    /// A mouse button or touch went down on `link` (as [`PageHooks::link_hover`] names it), before
+    /// `pointerdown` is dispatched. Speculation rules' `conservative` eagerness starts on it, even
+    /// when the page cancels the event.
+    fn link_pointer_down(&self, _link: NodeId) {}
     /// Thread-safe poster that runs a closure as a task on the page's
     /// browser thread (pyro-net sinks run on the I/O thread). `None` when the
     /// embedder cannot post across threads (network APIs then fail).
