@@ -1784,7 +1784,9 @@ impl JsClass for WorkerGlobalScope {
                 // A response without a Content-Type is let through, as before.
                 let mut muted = false;
                 if let Some((mime, final_url)) = &response {
-                    if !mime.is_empty() && !pyro_net::is_javascript_mime(mime) {
+                    // A service worker's imports must have a JavaScript MIME type, an absent one fails too.
+                    let sw = s.global_data::<ServiceWorkerGlobalScope>().is_some();
+                    if (!mime.is_empty() || sw) && !pyro_net::is_javascript_mime(mime) {
                         return Err(JsError::dom(
                             "NetworkError",
                             format!("Failed to execute 'importScripts': The script at '{name}' failed to load: MIME type ('{mime}') is not executable."),
