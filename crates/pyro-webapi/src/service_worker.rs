@@ -177,6 +177,11 @@ pub struct Registry {
     /// their creation URL: every document is a client, made when a worker first asks for the
     /// clients (`live_clients`: `claim`, `matchAll`, `get`).
     unregistered: RefCell<Vec<(Weak<PageDom>, pyro_net::Url)>>,
+    /// The dedicated and shared workers of this context's documents (browser thread): clients too.
+    worker_clients: RefCell<Vec<Weak<WorkerClient>>>,
+    /// In a worker's own context (its thread): the link its requests take to the service worker that
+    /// controls it. The browser thread's registry has none.
+    remote: RefCell<Option<Arc<ControlLink>>>,
     /// Registration is blocked in this context
     /// ([`ContextServices::set_service_workers_blocked`]).
     blocked: Cell<bool>,
@@ -197,6 +202,12 @@ impl Registry {
         }
         let mut clients = self.clients.borrow_mut();
         clients.retain(|c| c.upgrade().and_then(|c| c.page.upgrade()).is_some_and(|p| !p.is_disposed()));
+        clients.iter().filter_map(Weak::upgrade).collect()
+    }
+
+    fn live_worker_clients(&self) -> Vec<Rc<WorkerClient>> {
+        let mut clients = self.worker_clients.borrow_mut();
+        clients.retain(|c| c.upgrade().is_some_and(|c| (c.alive)()));
         clients.iter().filter_map(Weak::upgrade).collect()
     }
 
@@ -301,6 +312,118 @@ pub(crate) struct ClientInner {
     site: SiteContext,
     nested: bool,
     controller: RefCell<Option<Rc<Version>>>,
+}
+
+/// What a worker's thread needs to send its requests through the service worker that controls it
+/// (HTML/Service Workers "control and use worker client"): the browser thread owns the versions
+/// (`Rc`), so the worker names its controller by id and asks the browser thread to dispatch.
+pub(crate) struct ControlLink {
+    /// The controlling version's id; 0: none. The browser thread sets it (a claim, an activation).
+    version: AtomicU64,
+    /// The worker client's id: the `clientId` of its fetch events.
+    client_id: String,
+    /// Runs a task on the browser thread.
+    poster: crate::page::RemotePoster,
+}
+
+/// A dedicated or shared worker as a service worker client (browser thread): `Clients` lists it
+/// with type `worker` or `sharedworker`, and its requests go through its controller (`ControlLink`).
+pub(crate) struct WorkerClient {
+    id: String,
+    /// The creation URL: the worker's script URL (a `blob:` URL stays one).
+    url: String,
+    /// The URL the registration is matched with: the script's, or for a `blob:` script its
+    /// creator's (it inherits the creator's controller).
+    scope_url: String,
+    kind: &'static str,
+    origin: String,
+    partition: Option<String>,
+    site: SiteContext,
+    /// The worker still runs.
+    alive: Box<dyn Fn() -> bool>,
+    controller: RefCell<Option<Rc<Version>>>,
+    link: Arc<ControlLink>,
+}
+
+impl WorkerClient {
+    fn set_controller(&self, version: Option<Rc<Version>>) {
+        self.link.version.store(version.as_ref().map_or(0, |v| v.id), Ordering::Release);
+        *self.controller.borrow_mut() = version;
+    }
+
+    /// The link the worker's thread keeps.
+    pub(crate) fn link(&self) -> Arc<ControlLink> {
+        self.link.clone()
+    }
+
+    fn json(&self) -> String {
+        format!(
+            "{{\"id\":{},\"url\":{},\"type\":\"{}\",\"frameType\":\"none\"}}",
+            quote(&self.id),
+            quote(&self.url),
+            self.kind,
+        )
+    }
+}
+
+/// A new dedicated (`"worker"`) or shared (`"sharedworker"`) worker of `page`, whose script is
+/// `url`: a client, controlled by the active worker of the registration its script URL matches (a
+/// `blob:` script inherits its creator's controller). `None` for what is never a client (an opaque
+/// origin, a `data:` script, no way back to this thread). The caller keeps the `Rc` as long as the
+/// worker lives.
+pub(crate) fn worker_client(
+    page: &Rc<PageDom>,
+    url: &pyro_net::Url,
+    kind: &'static str,
+    alive: Box<dyn Fn() -> bool>,
+) -> Option<Rc<WorkerClient>> {
+    if !matches!(url.scheme(), "http" | "https" | "blob") {
+        return None;
+    }
+    let creator = client_of(page)?;
+    let poster = page.remote_poster()?;
+    let context = page.context_services();
+    let registry = &context.service_workers;
+    let controller = if url.scheme() == "blob" {
+        creator.controller.borrow().clone()
+    } else {
+        registry
+            .matching(url.as_str(), creator.partition.as_deref(), creator.site)
+            .and_then(|r| r.active.borrow().clone())
+    };
+    let controller = controller.filter(|v| v.state.get() != State::Redundant);
+    let link = Arc::new(ControlLink {
+        version: AtomicU64::new(controller.as_ref().map_or(0, |v| v.id)),
+        client_id: random_id(),
+        poster,
+    });
+    let client = Rc::new(WorkerClient {
+        id: link.client_id.clone(),
+        url: url.to_string(),
+        scope_url: if url.scheme() == "blob" { creator.url.clone() } else { url.to_string() },
+        kind,
+        origin: creator.origin.clone(),
+        partition: creator.partition.clone(),
+        site: creator.site,
+        alive,
+        controller: RefCell::new(controller),
+        link,
+    });
+    let mut clients = registry.worker_clients.borrow_mut();
+    clients.retain(|c| c.upgrade().is_some_and(|c| (c.alive)()));
+    clients.push(Rc::downgrade(&client));
+    Some(client)
+}
+
+/// The link a worker created by a worker takes over from its creator (it shares its controller);
+/// `None` when the creating page is a document.
+pub(crate) fn inherited_control(page: &PageDom) -> Option<Arc<ControlLink>> {
+    page.context_services().service_workers.remote.borrow().clone()
+}
+
+/// Gives a worker's own context its link (the worker's thread, before its script runs).
+pub(crate) fn set_worker_control(page: &PageDom, link: Option<Arc<ControlLink>>) {
+    *page.context_services().service_workers.remote.borrow_mut() = link;
 }
 
 pub(crate) struct Registration {
@@ -420,6 +543,11 @@ impl Version {
         let Some(context) = registration.context.upgrade() else { return false };
         let clients = context.service_workers.live_clients();
         clients.iter().any(|c| c.controller.borrow().as_ref().is_some_and(|v| Rc::ptr_eq(v, self)))
+            || context
+                .service_workers
+                .live_worker_clients()
+                .iter()
+                .any(|c| c.controller.borrow().as_ref().is_some_and(|v| Rc::ptr_eq(v, self)))
     }
 }
 
@@ -665,8 +793,32 @@ pub(crate) fn client_gone(page: &PageDom) {
 
 /// `fetch()` and asynchronous XHR: the controller's `fetch` event, or the network.
 pub(crate) fn route(page: &PageDom, net: &NetClient, id: RequestId, request: Request, sink: ResponseSink) {
+    // A controlled worker's thread cannot hold the version: its controller's id and the browser
+    // thread's poster take the request there.
+    let link = page.context_services().service_workers.remote.borrow().clone();
+    if let Some(link) = link {
+        let version = link.version.load(Ordering::Acquire);
+        if version != 0 && !request.skip_interception && matches!(request.url.scheme(), "http" | "https") && !is_embedded_content(&request) {
+            let (client_id, net) = (link.client_id.clone(), net.clone());
+            (link.poster)(Box::new(move || remote_route(version, client_id, net, id, request, sink)));
+            return;
+        }
+        net.fetch_with_id(id, request, sink);
+        return;
+    }
     match subresource_route(page, &request) {
         Some(route) => route.dispatch(net, id, request, sink),
+        None => net.fetch_with_id(id, request, sink),
+    }
+}
+
+/// A controlled worker's request, on the browser thread: the controller's `fetch` event, or the
+/// network when the version is gone.
+fn remote_route(version: u64, client_id: String, net: NetClient, id: RequestId, request: Request, sink: ResponseSink) {
+    let version = VERSIONS.with(|v| v.borrow().get(&version).and_then(Weak::upgrade)).filter(|v| v.state.get() != State::Redundant);
+    match version {
+        Some(version) => LoadRoute { version, client_id, resulting_client_id: String::new(), preload: None }
+            .dispatch(&net, id, request, sink),
         None => net.fetch_with_id(id, request, sink),
     }
 }
@@ -927,6 +1079,24 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
                     });
                 }
             }
+            // Its dedicated and shared workers whose script URL it covers, too.
+            for worker in registry.live_worker_clients() {
+                if worker.origin != registration.origin || worker.partition != registration.partition || worker.site != registration.site {
+                    continue;
+                }
+                if !registry.matching(&worker.scope_url, worker.partition.as_deref(), worker.site).is_some_and(|r| Rc::ptr_eq(&r, &registration)) {
+                    continue;
+                }
+                if worker.controller.borrow().as_ref().is_some_and(|c| Rc::ptr_eq(c, version)) {
+                    continue;
+                }
+                if let Some(old) = worker.controller.borrow().as_ref().and_then(|v| v.registration.upgrade()) {
+                    if !losers.iter().any(|r| Rc::ptr_eq(r, &old)) {
+                        losers.push(old);
+                    }
+                }
+                worker.set_controller(Some(version.clone()));
+            }
             // A registration that lost a controllee may have a waiting worker that was waiting for it.
             for old in losers {
                 if old.waiting.borrow().is_some() {
@@ -952,6 +1122,25 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
                     out.push_str(&client_json(&client));
                 }
             }
+            if matches!(kind.as_str(), "worker" | "sharedworker" | "all") {
+                for worker in registry.live_worker_clients() {
+                    if (kind != "all" && worker.kind != kind)
+                        || worker.origin != registration.origin
+                        || worker.partition != registration.partition
+                        || worker.site != registration.site
+                    {
+                        continue;
+                    }
+                    let controlled = worker.controller.borrow().as_ref().is_some_and(|c| Rc::ptr_eq(c, version));
+                    if !include_uncontrolled && !controlled {
+                        continue;
+                    }
+                    if out.len() > 1 {
+                        out.push(',');
+                    }
+                    out.push_str(&worker.json());
+                }
+            }
             out.push(']');
             Ok(out)
         }
@@ -959,7 +1148,15 @@ fn query(version: &Rc<Version>, kind: QueryKind) -> Result<String, (String, Stri
             .live_clients()
             .iter()
             .find(|c| c.id == id && registration.shares_storage(c))
-            .map_or_else(|| "null".to_owned(), |c| client_json(c))),
+            .map(|c| client_json(c))
+            .or_else(|| {
+                registry
+                    .live_worker_clients()
+                    .iter()
+                    .find(|w| w.id == id && w.origin == registration.origin && w.partition == registration.partition && w.site == registration.site)
+                    .map(|w| w.json())
+            })
+            .unwrap_or_else(|| "null".to_owned())),
         QueryKind::Unregister => Ok(unregister(&registration).to_string()),
         // A worker's own update() changes nothing: its script is what it runs.
         QueryKind::Update => Ok(String::new()),
@@ -1090,6 +1287,11 @@ fn try_activate(registration: &Rc<Registration>) {
                         call(s, glue, "controller", &[s.string(&json), s.boolean(true)]);
                     });
                 }
+            }
+        }
+        for worker in context.service_workers.live_worker_clients() {
+            if worker.controller.borrow().as_ref().is_some_and(|c| Rc::ptr_eq(c, old)) {
+                worker.set_controller(Some(waiting.clone()));
             }
         }
         old.redundant();

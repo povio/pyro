@@ -143,6 +143,9 @@ pub(crate) struct WorkerStart {
     /// The owner document's CSP: its script's redirects and its module graph's static imports
     /// are checked against it ([`crate::worker::csp_check`]).
     pub(crate) csp: crate::worker::WorkerCsp,
+    /// A dedicated or shared worker that is a service worker client: the link its requests take to
+    /// the worker that controls it (a nested worker shares its creator's).
+    pub(crate) control: Option<Arc<crate::service_worker::ControlLink>>,
 }
 
 impl WorkerStart {
@@ -205,6 +208,7 @@ impl WorkerStart {
             service: None,
             shared_worker: false,
             csp: Default::default(),
+            control: None,
         })
     }
 
@@ -262,6 +266,7 @@ impl WorkerStart {
             service: Some(service),
             shared_worker: false,
             csp: Default::default(),
+            control: None,
         })
     }
 }
@@ -757,6 +762,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(
         start.permissions.clone(), start.web_locks.clone(), start.pressure.clone(),
     )));
+    // A controlled worker's requests go through its controller (`service_worker::route`).
+    crate::service_worker::set_worker_control(&page, start.control.clone());
     // The worker's time origin: `performance.now()`, `Event.timeStamp` and
     // its Resource Timing entries count from here.
     let started = Instant::now();

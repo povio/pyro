@@ -352,7 +352,7 @@
     }
   }
   tag(WindowClient, 'WindowClient');
-  const client = (c) => (c === null ? undefined : new WindowClient(token, c));
+  const client = (c) => (c === null ? undefined : c.type === 'window' ? new WindowClient(token, c) : new Client(token, c));
 
   class Clients {
     constructor(t) {

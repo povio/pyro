@@ -81,6 +81,8 @@ struct SharedInner {
     shared: Arc<Shared>,
     state: RefCell<State>,
     clients: RefCell<Vec<Client>>,
+    /// The worker as a service worker client.
+    sw_client: Option<Rc<crate::service_worker::WorkerClient>>,
 }
 
 thread_local! {
@@ -368,7 +370,17 @@ impl JsClass for SharedWorker {
                         down_bytes: AtomicUsize::new(0),
                         up_bytes: AtomicUsize::new(0),
                     });
+                    // A service worker client, controlled by the registration its script URL matches.
+                    let alive = shared.clone();
+                    let sw_client = crate::service_worker::worker_client(
+                        &page,
+                        &url,
+                        "sharedworker",
+                        Box::new(move || !alive.closing.load(Ordering::Acquire)),
+                    );
+                    let control = sw_client.as_ref().map(|c| c.link());
                     let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).map(|mut start| {
+                        start.control = control;
                         start.shared_worker = true;
                         start.module = module;
                         start.credentials = credentials;
@@ -391,6 +403,7 @@ impl JsClass for SharedWorker {
                         shared,
                         state: RefCell::new(state),
                         clients: RefCell::new(Vec::new()),
+                        sw_client,
                     });
                     WORKERS.with(|w| w.borrow_mut().insert(key, worker.clone()));
                     BY_ID.with(|b| b.borrow_mut().insert(id, Rc::downgrade(&worker)));

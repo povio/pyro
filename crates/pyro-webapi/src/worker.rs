@@ -303,6 +303,8 @@ pub(crate) struct WorkerInner {
     state: RefCell<State>,
     /// Whether the embedder was told (`WorkerEvent::Created`).
     announced: Cell<bool>,
+    /// The worker as a service worker client (a document's worker; `None` for a nested one).
+    sw_client: Option<Rc<crate::service_worker::WorkerClient>>,
 }
 
 /// The embedder's handle on a live worker.
@@ -666,6 +668,22 @@ impl JsClass for Worker {
             let nested = worker_scope::is_worker(s);
             let slot = if nested { NestedSlot::take() } else { None };
             let refused = nested && slot.is_none();
+            // A service worker client: a document's worker is controlled by the registration its
+            // script URL matches (a `blob:` one by its creator's controller) and a controlled
+            // one's requests go through its controller; a worker's worker shares its creator's link.
+            let (sw_client, control) = if nested {
+                (None, crate::service_worker::inherited_control(&page))
+            } else {
+                let alive = shared.clone();
+                let client = crate::service_worker::worker_client(
+                    &page,
+                    &url,
+                    "worker",
+                    Box::new(move || !alive.closing.load(Ordering::Acquire)),
+                );
+                let control = client.as_ref().map(|c| c.link());
+                (client, control)
+            };
             // A script CSP blocked fails to load, as one that never arrived.
             let blocked = csp.is_err();
             let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).filter(|_| !blocked).map(|mut start| {
@@ -673,6 +691,7 @@ impl JsClass for Worker {
                 start.referrer = referrer;
                 start.nested = slot;
                 start.csp = csp.unwrap_or_default();
+                start.control = control;
                 start
             });
             let full = page.workers.borrow().len() >= MAX_WORKERS_PER_DOCUMENT
@@ -686,6 +705,7 @@ impl JsClass for Worker {
                 shared,
                 state: RefCell::new(start.map_or(State::Failed, |start| State::Held(Box::new(start)))),
                 announced: Cell::new(false),
+                sw_client,
             });
             let object = s.wrap_new::<Worker>(WorkerData(inner.clone()), nt, Some(key))?;
             pin_target(s, &page, inner.target.key, object);
