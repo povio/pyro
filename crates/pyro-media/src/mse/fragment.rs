@@ -163,17 +163,35 @@ fn sample_encryption(
     // Where the per-sample records are: (bytes, whether `senc` says they carry subsamples,
     // the per-sample record sizes of `saiz` when that gave the location).
     let mut sizes: Option<(u8, &[u8])> = None;
+    // The record count disagrees with the fragment's samples: its protected samples cannot be decrypted
+    // (they get an undecryptable `SampleEnc`), the fragment's clear samples and the rest of the stream are fine.
+    let mut broken = false;
+    // `senc` flag 0x1 (ISO/IEC 23001-7:2011 7.2.1 override_TrackEncryptionBox_parameters): the box carries an
+    // IV size and key ID that replace the `tenc` ones for the samples of the default group. (Later editions
+    // dropped the flag; the IV size varies per sample only through `seig` sample groups, handled by `group_entry`.)
+    let mut overridden: Option<(u8, [u8; 16], bool)> = None;
     let (aux, subsamples_flag): (Option<&[u8]>, Option<bool>) = if let Some(b) = senc {
         let flags = u32at(b, 0)?;
-        if u32at(b, 4)? as usize != count {
-            return Err(Error::Invalid);
+        let mut at = 4;
+        if flags & 1 != 0 {
+            // AlgorithmID (24 bits), IV_size (8 bits), KID (16 bytes).
+            let kid: [u8; 16] = b.get(8..24).and_then(|k| k.try_into().ok()).ok_or(Error::Invalid)?;
+            // AlgorithmID 0: the box's samples are not encrypted.
+            let unencrypted = b.get(4..7) == Some(&[0, 0, 0][..]);
+            overridden = Some((*b.get(7).ok_or(Error::Invalid)?, kid, unencrypted));
+            at = 24;
         }
-        (Some(b.get(8..).ok_or(Error::Invalid)?), Some(flags & 2 != 0))
+        if u32at(b, at)? as usize != count {
+            broken = true;
+            (None, None)
+        } else {
+            (Some(b.get(at + 4..).ok_or(Error::Invalid)?), Some(flags & 2 != 0))
+        }
     } else if let (Some(saiz), Some(saio)) = (saiz, saio) {
         let skip = if u32at(saiz, 0)? & 1 != 0 { 8 } else { 0 };
         let default = *saiz.get(4 + skip).ok_or(Error::Invalid)?;
         if u32at(saiz, 5 + skip)? as usize != count {
-            return Err(Error::Invalid);
+            broken = true;
         }
         sizes = Some((default, saiz.get(9 + skip..).ok_or(Error::Invalid)?));
         let version = *saio.first().ok_or(Error::Invalid)?;
@@ -190,15 +208,22 @@ fn sample_encryption(
     } else {
         (None, None)
     };
+    let aux = if broken { None } else { aux };
     let mut out = Vec::with_capacity(count);
     let mut p = 0;
     for k in 0..count {
         let entry = group_entry(k, &assigned, protection, &local)?;
+        // The `senc` override replaces the IV size and key ID of the samples of the default group.
+        let default_group = assigned.get(k).copied().unwrap_or(0) == 0;
+        let (iv_size, kid, protected) = match overridden {
+            Some((size, kid, unencrypted)) if default_group => (size, kid, entry.protected && !unencrypted),
+            _ => (entry.iv_size, entry.kid, entry.protected),
+        };
         let mut iv = Vec::new();
         let mut subsamples = Vec::new();
         if let Some(aux) = aux {
             let start = p;
-            let size = usize::from(entry.iv_size);
+            let size = usize::from(iv_size);
             iv = aux.get(p..p + size).ok_or(Error::Invalid)?.to_vec();
             p += size;
             let with_subsamples = match (subsamples_flag, &sizes) {
@@ -222,8 +247,20 @@ fn sample_encryption(
                 p = start + info;
             }
         }
-        if !entry.protected {
+        if !protected {
             out.push(None);
+            continue;
+        }
+        if broken {
+            // No usable record for this sample: an empty IV never decrypts.
+            out.push(Some(Box::new(SampleEnc {
+                scheme: protection.scheme,
+                kid,
+                iv: Vec::new(),
+                subsamples: Vec::new(),
+                crypt_blocks: entry.crypt_blocks,
+                skip_blocks: entry.skip_blocks,
+            })));
             continue;
         }
         if iv.is_empty() {
@@ -235,7 +272,7 @@ fn sample_encryption(
         }
         out.push(Some(Box::new(SampleEnc {
             scheme: protection.scheme,
-            kid: entry.kid,
+            kid,
             iv,
             subsamples,
             crypt_blocks: entry.crypt_blocks,
