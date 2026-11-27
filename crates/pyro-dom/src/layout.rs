@@ -3148,6 +3148,13 @@ impl Layout {
     fn window_scroll_write(&mut self, dom: &Dom, left: Option<i32>, top: Option<i32>, dir: Option<[i64; 2]>) -> bool {
         // A scroll without a target (CSS Overflow 5 § 2.1).
         self.scroll_targets.remove(&None);
+        // pyro: a write past the origin lays out first, which adjusts for what changed since the
+        // anchor was selected (the offset it then replaces is the adjusted one) and selects the
+        // anchor again below, whether or not the offset moves (WPT `position-change-heuristic`
+        // writes the same `scrollTop` after changing the content).
+        if top.is_some_and(|t| t != 0) || left.is_some_and(|l| l != 0) || dir.is_some() {
+            self.apply_scroll_anchors(dom, &mut Vec::new());
+        }
         // pyro: the viewport's snap positions (CSS Scroll Snap 1 § 6.2).
         let current = self.window_scroll;
         let (left, top) = {
@@ -3167,6 +3174,7 @@ impl Layout {
         let new_x = left.map_or(self.window_scroll.0, |l| l.clamp(rx.0, rx.1));
         let new_y = top.map_or(self.window_scroll.1, |t| t.clamp(ry.0, ry.1));
         if (new_x, new_y) == self.window_scroll {
+            self.capture_scroll_anchor(dom, None);
             return false;
         }
         self.window_scroll = (new_x, new_y);
@@ -3367,6 +3375,11 @@ impl Layout {
         }
         // A scroll without a target (CSS Overflow 5 § 2.1).
         self.scroll_targets.remove(&Some(el));
+        // (As `window_scroll_write`: what changed since the anchor was selected is adjusted for
+        // before the offset is compared and the anchor selected again.)
+        if !matches!(write, ScrollWrite::To { left: None | Some(0), top: None | Some(0) }) {
+            self.apply_scroll_anchors(dom, &mut Vec::new());
+        }
         let current = self.element_scroll.get(&el).copied().unwrap_or((0, 0));
         let mut x = current.0;
         let mut y = current.1;
@@ -3382,6 +3395,7 @@ impl Layout {
             y = self.clamp_scroll(dom, el, Axis::Height, t);
         }
         if (x, y) == current {
+            self.capture_scroll_anchor(dom, Some(el));
             return false;
         }
         self.element_scroll.insert(el, (x, y));
