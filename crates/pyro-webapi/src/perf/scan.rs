@@ -330,7 +330,9 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                     waiting = true;
                     continue;
                 }
-                let border_box = layout.bounding_client_rect(&dom, el);
+                // The root element's background (the body's when the root has none) is the canvas
+                // background: it paints the whole viewport, whatever size the element has.
+                let border_box = if paints_canvas(&dom, &layout, el) { view } else { layout.bounding_client_rect(&dom, el) };
                 let Some(visible) = visible_rect(&dom, &layout, el, border_box, view) else { continue };
                 candidates.push(Candidate { node: el, kind: Kind::BackgroundImage, url: Some(url), natural: None, border_box, visible, area: visible.width * visible.height, load_time, first_painted: 0.0 });
             }
@@ -439,6 +441,23 @@ fn has_painted_shape(dom: &Dom, svg: NodeId) -> bool {
                 && e.attr("fill").is_none_or(|f| f != "none")
         })
     })
+}
+
+/// Whether `el`'s background image is the canvas background (CSS Backgrounds § 2.11.2): `html`'s,
+/// or `body`'s when `html` has no background image.
+fn paints_canvas(dom: &Dom, layout: &pyro_dom::layout::Layout, el: NodeId) -> bool {
+    if !layout.is_root_container(dom, el) {
+        return false;
+    }
+    let is_html = dom.element(el).is_ok_and(|e| &*e.name.local == "html");
+    if is_html {
+        return true;
+    }
+    // The body: the canvas takes its background only when the root element has none.
+    match dom.parent_element(el).ok().flatten() {
+        Some(root) => layout.computed_style_value(dom, root, "background-image").trim() == "none",
+        None => true,
+    }
 }
 
 /// The first `url(...)` of a computed `background-image` (gradients have none).
