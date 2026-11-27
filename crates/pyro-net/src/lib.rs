@@ -12,6 +12,7 @@ pub mod csp;
 pub mod data_url;
 mod h2_probe;
 mod inflate;
+pub mod nvs;
 pub mod proxy;
 pub mod range;
 pub mod referrer;
