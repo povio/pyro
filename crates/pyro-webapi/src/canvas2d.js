@@ -1049,6 +1049,176 @@
   });
   webidl(TextMetrics, 'TextMetrics');
 
+
+  // ---- CanvasFilter -----------------------------------------------------
+  // `new CanvasFilter(init)`: filter primitives as dictionaries (a dictionary or a sequence of
+  // them, applied in order), checked as Chrome does and kept as the SVG <filter> that draws
+  // them: canvas.rs renders a draw through it as it does through `url(#id)` (`filterMarkup`).
+  // The primitives work in sRGB, as a canvas filter does.
+  const filters = new WeakMap();
+  const FILTER_ID = 'pyro-canvas-filter';
+  const hasOwn = Object.prototype.hasOwnProperty;
+  const ArrayFrom = Array.from;
+  const StringC = String;
+  function isObject(v) { return v !== null && (typeof v === 'object' || typeof v === 'function'); }
+  function isSequence(v) { return isObject(v) && typeof v[Symbol.iterator] === 'function'; }
+  function nonNegative(n) { return n < 0 ? 0 : n; }
+  function filterAttr(v) { return StringC(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+  // A `double` member: the value must convert to a finite number.
+  function filterDouble(v, what) {
+    const n = +v;
+    if (!isFinite(n)) throw new TypeErrorC(`The provided value for '${what}' is not a finite number.`);
+    return n;
+  }
+  // A member that may be left out (`fallback`); one that is present, even as undefined, must be valid.
+  function filterNumber(dict, key, fallback) {
+    return key in dict ? filterDouble(dict[key], key) : fallback;
+  }
+  // sequence<double>.
+  function filterSequence(v, what) {
+    if (!isSequence(v)) throw new TypeErrorC(`The provided value for '${what}' is not a sequence.`);
+    return ArrayFrom(v, (x) => filterDouble(x, what));
+  }
+  // (double or sequence<double>): an iterable object is a sequence of at most two numbers, any
+  // other value is one number.
+  function filterNumbers(v, what) {
+    if (!isSequence(v)) return [filterDouble(v, what)];
+    const list = filterSequence(v, what);
+    if (list.length > 2) throw new TypeErrorC(`The provided value for '${what}' has more than two numbers.`);
+    return list.length ? list : [0];
+  }
+  function filterEnum(dict, key, values, fallback) {
+    if (!(key in dict)) return fallback;
+    const value = StringC(dict[key]);
+    if (!values.includes(value)) throw new TypeErrorC(`The provided value '${value}' is not a valid enum value for '${key}'.`);
+    return value;
+  }
+  const NO_EFFECT = '<feOffset dx="0" dy="0"/>';
+  // Each primitive of a CanvasFilter: its dictionary to the markup of the SVG primitive.
+  const PRIMITIVES = {
+    gaussianBlur(o) {
+      if (!('stdDeviation' in o)) throw new TypeErrorC("A gaussianBlur filter needs a 'stdDeviation'.");
+      const [x, y = x] = filterNumbers(o.stdDeviation, 'stdDeviation');
+      return `<feGaussianBlur stdDeviation="${nonNegative(x)} ${nonNegative(y)}"/>`;
+    },
+    dropShadow(o) {
+      const dx = filterNumber(o, 'dx', 2);
+      const dy = filterNumber(o, 'dy', 2);
+      const [sx, sy = sx] = 'stdDeviation' in o ? filterNumbers(o.stdDeviation, 'stdDeviation') : [2];
+      const opacity = filterNumber(o, 'floodOpacity', 1);
+      let color = 'black';
+      if ('floodColor' in o) {
+        const given = o.floodColor;
+        const parsed = typeof given === 'string' ? parseColor(given) : null;
+        if (parsed === null) throw new TypeErrorC(`The provided value for 'floodColor' is not a color.`);
+        color = parsed;
+      }
+      return `<feDropShadow dx="${dx}" dy="${dy}" stdDeviation="${nonNegative(sx)} ${nonNegative(sy)}" flood-color="${filterAttr(color)}" flood-opacity="${opacity < 0 ? 0 : opacity > 1 ? 1 : opacity}"/>`;
+    },
+    colorMatrix(o) {
+      const type = filterEnum(o, 'type', ['matrix', 'saturate', 'hueRotate', 'luminanceToAlpha'], 'matrix');
+      if (type === 'luminanceToAlpha') return '<feColorMatrix type="luminanceToAlpha"/>';
+      if (type === 'matrix') {
+        if (!('values' in o)) throw new TypeErrorC("A colorMatrix filter of type 'matrix' needs 'values'.");
+        const values = filterSequence(o.values, 'values');
+        if (values.length !== 20) throw new TypeErrorC("The 'values' of a colorMatrix filter of type 'matrix' must have 20 numbers.");
+        return `<feColorMatrix type="matrix" values="${values.join(' ')}"/>`;
+      }
+      const value = filterNumber(o, 'values', type === 'saturate' ? 1 : 0);
+      return `<feColorMatrix type="${type}" values="${type === 'saturate' ? nonNegative(value) : value}"/>`;
+    },
+    componentTransfer(o) {
+      let out = '';
+      for (const member of ['funcR', 'funcG', 'funcB', 'funcA']) {
+        const f = o[member];
+        if (f === undefined) continue;
+        if (!isObject(f)) throw new TypeErrorC(`The provided value for '${member}' is not a dictionary.`);
+        let type = filterEnum(f, 'type', ['identity', 'table', 'discrete', 'linear', 'gamma'], 'identity');
+        let attrs = '';
+        if ('tableValues' in f) {
+          const table = filterSequence(f.tableValues, 'tableValues');
+          // An empty table is the identity (SVG feFunc).
+          if (table.length) attrs += ` tableValues="${table.join(' ')}"`;
+          else if (type === 'table' || type === 'discrete') type = 'identity';
+        } else if (type === 'table' || type === 'discrete') {
+          type = 'identity';
+        }
+        for (const key of ['slope', 'intercept', 'amplitude', 'exponent', 'offset']) {
+          if (key in f) attrs += ` ${key}="${filterDouble(f[key], key)}"`;
+        }
+        out += `<feFunc${member.slice(4)} type="${type}"${attrs}/>`;
+      }
+      return `<feComponentTransfer>${out}</feComponentTransfer>`;
+    },
+    convolveMatrix(o) {
+      if (!('kernelMatrix' in o)) throw new TypeErrorC("A convolveMatrix filter needs a 'kernelMatrix'.");
+      if (!isSequence(o.kernelMatrix)) throw new TypeErrorC("The 'kernelMatrix' is not a sequence.");
+      const rows = ArrayFrom(o.kernelMatrix, (row) => filterSequence(row, 'kernelMatrix'));
+      const height = rows.length;
+      const width = height ? rows[0].length : 0;
+      if (height === 0 || (width === 0 && height > 1) || rows.some((row) => row.length !== width)) {
+        throw new TypeErrorC("The 'kernelMatrix' must be a non-empty, rectangular matrix.");
+      }
+      const divisor = filterNumber(o, 'divisor', undefined);
+      if (divisor === 0) throw new TypeErrorC("The 'divisor' of a convolveMatrix filter cannot be 0.");
+      const bias = filterNumber(o, 'bias', 0);
+      const target = (key, size) => {
+        if (!(key in o)) return MathC.floor(size / 2);
+        const n = MathC.trunc(filterDouble(o[key], key));
+        if (n < 0 || n >= size) throw new TypeErrorC(`The '${key}' of a convolveMatrix filter is outside its kernel.`);
+        return n;
+      };
+      const targetX = target('targetX', width);
+      const targetY = target('targetY', height);
+      const edgeMode = filterEnum(o, 'edgeMode', ['duplicate', 'wrap', 'none'], 'duplicate');
+      const preserveAlpha = 'preserveAlpha' in o ? !!o.preserveAlpha : false;
+      // A kernel without cells changes nothing.
+      if (width === 0) return NO_EFFECT;
+      return `<feConvolveMatrix order="${width} ${height}" kernelMatrix="${rows.flat().join(' ')}"${divisor === undefined ? '' : ` divisor="${divisor}"`} bias="${bias}" targetX="${targetX}" targetY="${targetY}" edgeMode="${edgeMode}" preserveAlpha="${preserveAlpha}"/>`;
+    },
+    turbulence(o) {
+      const [fx, fy = fx] = 'baseFrequency' in o ? filterNumbers(o.baseFrequency, 'baseFrequency') : [0];
+      if (fx < 0 || fy < 0) throw new TypeErrorC("The 'baseFrequency' of a turbulence filter cannot be negative.");
+      let octaves = 1;
+      if ('numOctaves' in o) {
+        octaves = filterDouble(o.numOctaves, 'numOctaves');
+        if (octaves < 0) throw new TypeErrorC("The 'numOctaves' of a turbulence filter cannot be negative.");
+        // Octaves past the 24th add less than one 8-bit step.
+        octaves = MathC.min(MathC.trunc(octaves), 24);
+      }
+      const seed = filterNumber(o, 'seed', 0);
+      const stitch = filterEnum(o, 'stitchTiles', ['stitch', 'noStitch'], 'noStitch');
+      const type = filterEnum(o, 'type', ['fractalNoise', 'turbulence'], 'turbulence');
+      return `<feTurbulence baseFrequency="${fx} ${fy}" numOctaves="${octaves}" seed="${seed}" stitchTiles="${stitch}" type="${type}"/>`;
+    },
+  };
+  // The primitives of `init` (a dictionary or a sequence of them) as SVG markup. A dictionary
+  // naming no filter is an error for `new CanvasFilter` and, `lenient` (the `filter` option of
+  // beginLayer, which also takes a CSS string), left out, so that the option names no filter.
+  function filterPrimitives(init, lenient) {
+    let markup = '';
+    for (const item of isSequence(init) ? ArrayFrom(init) : [init]) {
+      const name = isObject(item) && 'name' in item ? item.name : undefined;
+      if (typeof name !== 'string' || !hasOwn.call(PRIMITIVES, name)) {
+        if (lenient) return null;
+        throw new TypeErrorC(isObject(item) ? 'A filter needs the name of a known filter.' : 'A filter must be a dictionary.');
+      }
+      markup += PRIMITIVES[name](item);
+    }
+    return markup;
+  }
+  // The filter region is the canvas (the bounding box of the picture it filters): what a primitive
+  // moves or spreads past the canvas could not show.
+  function filterElement(primitives) {
+    return `<filter id="${FILTER_ID}" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB">${primitives || NO_EFFECT}</filter>`;
+  }
+  class CanvasFilter {
+    constructor(init = []) {
+      filters.set(this, filterElement(filterPrimitives(init, false)));
+    }
+  }
+  webidl(CanvasFilter, 'CanvasFilter');
+
   return {
     DOMRectList, DOMRectReadOnly, DOMRect, SVGRect: DOMRect, DOMQuad, DOMPointReadOnly, DOMPoint, DOMMatrixReadOnly, DOMMatrix, WebKitCSSMatrix: DOMMatrix,
     geometryParts(value) {
@@ -1081,7 +1251,7 @@
     svgRectValue(x,y,width,height) { return new SvgRectValue(x,y,width,height); },
     viewBoxRect,
     rectValue(x,y,width,height,readonly) { return readonly ? new DOMRectReadOnly(x,y,width,height) : new DOMRect(x,y,width,height); },
-    Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics,
+    Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics, CanvasFilter,
     ImageBitmap, ImageBitmapRenderingContext, OffscreenCanvas, createImageBitmap,
     // Helpers for canvas.rs.
     // A <canvas>'s bitmaprenderer context, and what one shows ([handle, width, height] or null).
@@ -1167,6 +1337,26 @@
       return [m[0], m[1], m[4], m[5], m[12], m[13]];
     },
     matrix(a, b, c, d, e, f) { return make(DOMMatrix, from2D(a, b, c, d, e, f), true); },
+    // The <filter> markup of a CanvasFilter (`ctx.filter = value`), or null for any other value.
+    filterMarkup(value) { const markup = filters.get(value); return markup === undefined ? null : markup; },
+    // The `filter` of beginLayer's options: undefined without one, else `[0, css]` for a value
+    // taken as a CSS filter, `[1, markup]` for a CanvasFilter or filter dictionaries. Throws a
+    // TypeError for options that are not a dictionary and for an invalid filter dictionary.
+    layerFilter(options) {
+      if (options !== undefined && options !== null && !isObject(options)) {
+        throw new TypeErrorC("The provided value is not of type 'CanvasLayerOptions'.");
+      }
+      const value = options === undefined || options === null ? undefined : options.filter;
+      if (value === undefined) return undefined;
+      if (isObject(value)) {
+        const made = filters.get(value);
+        if (made !== undefined) return [1, made];
+        const primitives = filterPrimitives(value, true);
+        if (primitives) return [1, filterElement(primitives)];
+        // (DOMString or CanvasFilter): any other object is its string.
+      }
+      return [0, StringC(value)];
+    },
     pathOps(value) { return paths.get(value) || null; },
     isFillStyle(value) { return gradients.has(value) || patterns.has(value); },
     imageSize(value) { const s = images.get(value); return s ? [s.width, s.height, s.colorSpace, s.pixelFormat] : null; },

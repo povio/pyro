@@ -115,6 +115,7 @@ where
         "CanvasGradient",
         "CanvasPattern",
         "TextMetrics",
+        "CanvasFilter",
         "ImageBitmap",
         "ImageBitmapRenderingContext",
         "OffscreenCanvas",
@@ -143,6 +144,7 @@ where
         "CanvasGradient",
         "CanvasPattern",
         "TextMetrics",
+        "CanvasFilter",
         "ImageBitmap",
         "ImageBitmapRenderingContext",
         "OffscreenCanvas",
@@ -238,6 +240,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     natives.set_atom("resizeContext", resize.value())?;
     let transfer = s.function("transferContext", |s, _this, a| {
         let c = s.unwrap::<OffscreenCanvasRenderingContext2D>(a.get(0)).ok_or(JsError::ContextDestroyed)?;
+        c.no_open_layer("transferToImageBitmap()")?;
         let handle = {
             let mut surface = c.surface.borrow_mut();
             let handle = ImageHandle {
@@ -260,6 +263,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let (encoding, mime) = pyro_canvas::codec::encoding_for(&mime, quality);
         let bytes = match s.unwrap::<OffscreenCanvasRenderingContext2D>(a.get(0)) {
             Some(c) => {
+                c.no_open_layer("convertToBlob()")?;
                 if !c.clean.get() {
                     return Err(security_error());
                 }
@@ -423,6 +427,9 @@ pub(crate) struct State {
     /// pyro: drawing with `filter` taints the canvas (a filter primitive
     /// colored from a link's visited-dependent `currentcolor`).
     filter_taints: bool,
+    /// pyro: the `CanvasFilter` object `filter` was set to (what the getter returns); its
+    /// rendering is `filter_spec`, `filter` then reads "none".
+    filter_object: Option<Persistent>,
     letter_spacing: String,
     word_spacing: String,
     /// pyro: `lang` (any string; `inherit` by default). Stored only: text is shaped without it.
@@ -462,6 +469,7 @@ impl State {
             filter: "none".into(),
             filter_spec: None,
             filter_taints: false,
+            filter_object: None,
             letter_spacing: "0px".into(),
             word_spacing: "0px".into(),
             lang: "inherit".into(),
@@ -528,6 +536,8 @@ pub struct ContextData {
     placeholder_canvas: Cell<Option<NodeId>>,
     state: RefCell<State>,
     stack: RefCell<Vec<State>>,
+    /// pyro: the layers `beginLayer` opened (innermost last); their pixels are in `surface`.
+    layers: RefCell<Vec<Layer>>,
     path: RefCell<Path>,
     surface: Rc<RefCell<Surface>>,
     /// HTML "origin-clean": nothing cross-origin was drawn.
@@ -542,7 +552,28 @@ pub struct ContextData {
     float16: bool,
 }
 
+/// pyro: an open layer (HTML canvas layers): what `beginLayer` saved of the state, like a
+/// `save()` entry that only `endLayer` pops, and the filter `endLayer` applies to the layer.
+struct Layer {
+    saved: State,
+    /// The length of the `save()` stack when the layer was opened: a `restore()` or `endLayer()`
+    /// that finds the stack this long has the layer on top.
+    depth: usize,
+    filter: Option<pyro_canvas::CanvasFilter>,
+    /// The filter paints with a color that `:visited` may decide (`canvas_filter`).
+    taints: bool,
+}
+
 impl ContextData {
+    /// HTML: an operation that would read the canvas's pixels or share them throws
+    /// InvalidStateError while a layer is open.
+    fn no_open_layer(&self, what: &str) -> JsResult<()> {
+        if self.layers.borrow().is_empty() {
+            return Ok(());
+        }
+        Err(JsError::dom("InvalidStateError", format!("{what} cannot be used while a layer is open: call endLayer() first.")))
+    }
+
     /// The space pixels of space `other` are converted to on their way into or out of the
     /// bitmap: the context's color space, or `other` itself (no conversion) for a float16
     /// canvas.
@@ -557,6 +588,8 @@ impl ContextData {
     fn reset(&self) {
         *self.state.borrow_mut() = State::new();
         self.stack.borrow_mut().clear();
+        // The layers' pixels go with the surface's reset (`Surface::resize`).
+        self.layers.borrow_mut().clear();
         *self.path.borrow_mut() = Path::default();
     }
 
@@ -630,6 +663,31 @@ fn canvas_filter(page: &PageDom, value: &str) -> (Option<pyro_canvas::CanvasFilt
     (Some(spec), taints)
 }
 
+/// pyro: `value` as a canvas `filter` string: the filter to draw with and whether it taints, or
+/// `None` when HTML ignores it: a value that does not parse as a <filter-value-list> or `none`
+/// (CSS-wide keywords are not values here, WPT 2d.filter.value).
+fn css_filter(c: &ContextData, value: &str) -> Option<(Option<pyro_canvas::CanvasFilter>, bool)> {
+    let keyword = value.trim();
+    if ["inherit", "initial", "unset", "revert", "revert-layer"].iter().any(|k| keyword.eq_ignore_ascii_case(k))
+        || !pyro_dom::stylo::supports_declaration("filter", value)
+    {
+        return None;
+    }
+    Some(canvas_filter(&c.page, value))
+}
+
+/// pyro: the filter of a `CanvasFilter` object: `markup` is the `<filter>` canvas2d.js made of
+/// its primitives, which the renderer puts in the SVG that filters a draw's output.
+fn object_filter(page: &PageDom, markup: &str) -> Option<pyro_canvas::CanvasFilter> {
+    let dom = page.dom.borrow();
+    let data = dom.document_data(page.document()).ok()?;
+    Some(pyro_canvas::CanvasFilter {
+        page: data.raster_budget.clone(),
+        value: "url(#pyro-canvas-filter)".to_string(),
+        defs: markup.to_string(),
+    })
+}
+
 /// Whether the filter `el` (serialized as `markup`) has a flood or lighting
 /// color taken from `currentcolor` while inside a link, whose `color` the
 /// `:visited` state may set.
@@ -683,6 +741,7 @@ fn new_context<'s>(
         placeholder_canvas: Cell::new(None),
         state: RefCell::new(State::new()),
         stack: RefCell::new(Vec::new()),
+        layers: RefCell::new(Vec::new()),
         path: RefCell::new(Path::default()),
         surface: Rc::new(RefCell::new(Surface::new(w, h))),
         clean: Rc::new(Cell::new(true)),
@@ -828,6 +887,7 @@ fn encode_canvas(
     let (encoding, mime) = pyro_canvas::codec::encoding_for(mime, quality);
     let bytes = match element_context(s, page, canvas)?.and_then(|v| s.unwrap::<CanvasRenderingContext2D>(v)) {
         Some(c) => {
+            c.no_open_layer("Encoding the canvas")?;
             if !c.clean.get() {
                 return Err(security_error());
             }
@@ -1131,6 +1191,7 @@ fn image_source(
                 };
                 let handle = match context.and_then(|v| s.unwrap::<CanvasRenderingContext2D>(v)) {
                     Some(c) => {
+                        c.no_open_layer("Using the canvas as an image")?;
                         c.sync_size();
                         let pixmap = c.surface.borrow_mut().snapshot();
                         ImageHandle { pixmap, width: w, height: h, clean: c.clean.get(), space: c.space }
@@ -1252,6 +1313,7 @@ fn image_source(
             }
             Ok(Some(match s.unwrap::<OffscreenCanvasRenderingContext2D>(desc.get_index(1)?) {
                 Some(c) => {
+                    c.no_open_layer("Using the OffscreenCanvas as an image")?;
                     let pixmap = c.surface.borrow_mut().snapshot();
                     ImageHandle { pixmap, width: w, height: h, clean: c.clean.get(), space: c.space }
                 }
@@ -1944,6 +2006,7 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
             format!("The source {} is 0.", if w == 0 { "width" } else { "height" }),
         ));
     }
+    c.no_open_layer("getImageData()")?;
     // ImageDataSettings.colorSpace: the context's when absent.
     let space = space_member(a.get(4), c.space)?;
     // ImageDataSettings.pixelFormat (validated by canvas2d.js): float data
@@ -1980,6 +2043,7 @@ fn put_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
                 .into(),
         ));
     };
+    c.no_open_layer("putImageData()")?;
     let (iw, ih) = (info.get_index(0)?.to_number()? as i64, info.get_index(1)?.to_number()? as i64);
     let (dx, dy) = (long(a.get(1))?, long(a.get(2))?);
     let (mut bx, mut by, mut bw, mut bh) = (0, 0, iw, ih);
@@ -2413,24 +2477,35 @@ impl ContextData {
         number_state!(def, "shadowOffsetY", shadow_offset_y, |_| true);
         def.accessor(
             "filter",
-            |s, c| Ok(s.string(&c.state.borrow().filter)),
-            |_s, c, v| {
-                let value = dom_string(v)?;
-                // pyro: HTML ignores a value that does not parse as a <filter-value-list> or
-                // `none`; CSS-wide keywords are not values here (WPT 2d.filter.value).
-                let keyword = value.trim();
-                if ["inherit", "initial", "unset", "revert", "revert-layer"]
-                    .iter()
-                    .any(|k| keyword.eq_ignore_ascii_case(k))
-                    || !pyro_dom::stylo::supports_declaration("filter", &value)
-                {
-                    return Ok(());
+            |s, c| {
+                let state = c.state.borrow();
+                Ok(match &state.filter_object {
+                    Some(object) => object.get(s),
+                    None => s.string(&state.filter),
+                })
+            },
+            |s, c, v| {
+                // pyro: `(DOMString or CanvasFilter)`: a CanvasFilter is kept as the object (the
+                // getter returns it) and drawn through the <filter> it made.
+                if v.is_object() {
+                    let markup = module_helper(s, c, "filterMarkup", &[v])?;
+                    if markup.is_string() {
+                        let spec = object_filter(&c.page, &markup.to_string()?);
+                        let mut state = c.state.borrow_mut();
+                        state.filter = "none".into();
+                        state.filter_spec = spec;
+                        state.filter_taints = false;
+                        state.filter_object = Some(Persistent::new(s, v));
+                        return Ok(());
+                    }
                 }
-                let (spec, taints) = canvas_filter(&c.page, &value);
+                let value = dom_string(v)?;
+                let Some((spec, taints)) = css_filter(c, &value) else { return Ok(()) };
                 let mut state = c.state.borrow_mut();
                 state.filter = value;
                 state.filter_spec = spec;
                 state.filter_taints = taints;
+                state.filter_object = None;
                 Ok(())
             },
         );
@@ -2516,9 +2591,81 @@ impl ContextData {
             Ok(s.undefined())
         });
         def.method("restore", 0, |s, c, _a| {
+            // pyro: HTML canvas layers: a layer opened since the last `save()` is not popped by
+            // `restore()`, only by `endLayer()`.
+            let layer_on_top = c.layers.borrow().last().is_some_and(|l| l.depth == c.stack.borrow().len());
+            if layer_on_top {
+                return Err(JsError::dom("InvalidStateError", "restore() cannot close a layer: call endLayer() first."));
+            }
             if let Some(state) = c.stack.borrow_mut().pop() {
                 *c.state.borrow_mut() = state;
             }
+            Ok(s.undefined())
+        });
+
+        def.method("beginLayer", 0, |s, c, a| {
+            // The options (and so any exception of reading them) before the state is touched.
+            let given = module_helper(s, c, "layerFilter", &[a.get(0)])?;
+            let option = match given.as_object() {
+                Some(pair) => {
+                    let text = pair.get_index(1)?.to_string()?;
+                    if pair.get_index(0)?.to_number()? == 1.0 {
+                        Some((object_filter(&c.page, &text), false))
+                    } else {
+                        // A string HTML would ignore as `filter` names no filter here.
+                        Some(css_filter(c, &text).unwrap_or((None, false)))
+                    }
+                }
+                None => None,
+            };
+            c.sync_size();
+            let saved = c.state.borrow().clone();
+            // The layer is drawn with `filter` of the options, else with the context's.
+            let (filter, taints) = option.unwrap_or_else(|| (saved.filter_spec.clone(), saved.filter_taints));
+            {
+                // A layer draws with the compositing, shadow and filter of the state that
+                // opened it once, as a whole (`endLayer`): inside it they start over.
+                let mut state = c.state.borrow_mut();
+                state.global_alpha = 1.0;
+                state.composite = "source-over";
+                state.shadow_blur = 0.0;
+                state.shadow_color = "rgba(0, 0, 0, 0)".into();
+                state.shadow_rgba = Color::TRANSPARENT;
+                state.shadow_offset_x = 0.0;
+                state.shadow_offset_y = 0.0;
+                state.filter = "none".into();
+                state.filter_spec = None;
+                state.filter_taints = false;
+                state.filter_object = None;
+            }
+            let depth = c.stack.borrow().len();
+            c.layers.borrow_mut().push(Layer { saved, depth, filter, taints });
+            c.surface.borrow_mut().begin_layer();
+            Ok(s.undefined())
+        });
+        def.method("endLayer", 0, |s, c, _a| {
+            c.sync_size();
+            let layer = {
+                let mut layers = c.layers.borrow_mut();
+                if !layers.last().is_some_and(|l| l.depth == c.stack.borrow().len()) {
+                    return Err(JsError::dom(
+                        "InvalidStateError",
+                        "endLayer() needs the layer opened by beginLayer() to be the latest of save() and beginLayer().",
+                    ));
+                }
+                layers.pop().expect("a layer on top")
+            };
+            // The state `beginLayer` saved, as `restore()` brings back a saved one.
+            *c.state.borrow_mut() = layer.saved;
+            if layer.taints {
+                c.clean.set(false);
+            }
+            let state = c.state.borrow();
+            // The layer is composited with what the state had when it opened: its alpha,
+            // operator and shadow, the layer's filter, and no clip (the layer's pixels were
+            // clipped as they were drawn).
+            let draw = DrawState { clip: &[], filter: layer.filter.as_ref(), ..state.draw_state() };
+            c.surface.borrow_mut().end_layer(&draw);
             Ok(s.undefined())
         });
 

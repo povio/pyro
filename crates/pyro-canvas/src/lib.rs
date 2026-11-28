@@ -266,6 +266,10 @@ pub struct Surface {
     /// The straight-alpha RGBA of [`Surface::straight_rgba`], for the
     /// generation it was made at.
     straight: Option<(u64, Arc<Vec<u8>>)>,
+    /// pyro: the surfaces `beginLayer` set aside: the bitmap and batch of each enclosing level,
+    /// outermost first. The fields above are the innermost layer's (transparent black when
+    /// it starts), so every draw goes to the open layer without the callers knowing.
+    layers: Vec<(Option<Bitmap>, Option<Box<Batch>>)>,
 }
 
 /// Bytes of the process's live [`Bitmap`]s: surfaces' bitmaps and every
@@ -361,7 +365,7 @@ pub fn valid_size(width: u32, height: u32) -> bool {
 
 impl Surface {
     pub fn new(width: u32, height: u32) -> Surface {
-        Surface { width, height, pixmap: None, batch: None, generation: 0, straight: None }
+        Surface { width, height, pixmap: None, batch: None, generation: 0, straight: None, layers: Vec::new() }
     }
 
     pub fn width(&self) -> u32 {
@@ -374,7 +378,38 @@ impl Surface {
 
     /// Whether the bitmap exists (something was drawn or written).
     pub fn is_allocated(&self) -> bool {
-        self.pixmap.is_some() || self.batch.as_ref().is_some_and(|b| b.ops > 0)
+        self.pixmap.is_some()
+            || self.batch.as_ref().is_some_and(|b| b.ops > 0)
+            || self.layers.iter().any(|(pixmap, _)| pixmap.is_some())
+    }
+
+    /// HTML `beginLayer()`: later draws go to a new transparent layer, which `end_layer`
+    /// composites onto what is drawn now.
+    pub fn begin_layer(&mut self) {
+        self.flush();
+        let parent = (self.pixmap.take(), self.batch.take());
+        self.layers.push(parent);
+        self.straight = None;
+    }
+
+    /// HTML `endLayer()`: the innermost layer is drawn onto its parent, whole and in device
+    /// space, with `state`'s alpha, composite operator, shadow, clip and filter (the layer's
+    /// own transform is already in its pixels, so `state.transform` is not used).
+    pub fn end_layer(&mut self, state: &DrawState<'_>) {
+        let Some((parent_pixmap, parent_batch)) = self.layers.pop() else { return };
+        self.flush();
+        let layer = std::mem::replace(&mut self.pixmap, parent_pixmap);
+        self.batch = parent_batch;
+        self.changed();
+        let whole = Rect::new(0.0, 0.0, f64::from(self.width), f64::from(self.height));
+        // One layer pixel lands on one canvas pixel: nothing to smooth.
+        let state = DrawState { transform: Affine::IDENTITY, smoothing: false, ..state.clone() };
+        match layer {
+            Some(layer) => self.draw_image(&layer, whole, whole, &state),
+            // Nothing was drawn in it: a transparent layer, which a filter (feFlood, a
+            // drop shadow's flood) or an operator such as `copy` still changes.
+            None => self.draw_transparent_image(self.width, self.height, whole, whole, &state),
+        }
     }
 
     /// Changes whenever the pixels may have.
@@ -389,6 +424,7 @@ impl Surface {
         self.pixmap = None;
         self.batch = None;
         self.straight = None;
+        self.layers.clear();
         self.generation += 1;
     }
 
@@ -447,13 +483,25 @@ impl Surface {
     /// drawn (transparent black).
     pub fn snapshot(&mut self) -> Option<Bitmap> {
         self.flush();
-        self.pixmap.clone()
+        // pyro: with layers open the canvas shows what was drawn before the first one (a layer
+        // is part of the drawing only once `endLayer` composites it).
+        match self.layers.first() {
+            Some((base, _)) => base.clone(),
+            None => self.pixmap.clone(),
+        }
     }
 
     /// Straight-alpha RGBA rows of the whole bitmap, `None` while nothing
     /// was drawn. Made once per change of the pixels.
     pub fn straight_rgba(&mut self) -> Option<Arc<Vec<u8>>> {
         self.flush();
+        if let Some((base, _)) = self.layers.first() {
+            // Open layers: the base as snapshot() gives it, not cached (the pixels it counts do
+            // not change until the layers close).
+            let mut data = base.as_ref()?.data_as_u8_slice().to_vec();
+            unpremultiply(&mut data);
+            return Some(Arc::new(data));
+        }
         let pixmap = self.pixmap.as_ref()?;
         if let Some((generation, data)) = &self.straight {
             if *generation == self.generation {

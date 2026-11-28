@@ -432,3 +432,61 @@ fn transparent_image_source() {
     s.draw_transparent_image(5, 5, Rect::new(6.0, 6.0, 8.0, 8.0), dst, &st);
     assert_eq!(px(&mut s, 7, 7), [0, 255, 0, 255]);
 }
+
+/// Whether two pixels agree within the rounding of compositing.
+fn near(got: [u8; 4], want: [u8; 4]) -> bool {
+    got.iter().zip(want).all(|(g, w)| g.abs_diff(w) <= 2)
+}
+
+/// The canvas's own pixels (what is shown), whatever layers are open.
+fn shown(s: &mut Surface, x: usize, y: usize) -> [u8; 4] {
+    match s.snapshot() {
+        Some(bitmap) => {
+            let d = bitmap.data_as_u8_slice();
+            let at = (y * usize::from(bitmap.width()) + x) * 4;
+            [d[at], d[at + 1], d[at + 2], d[at + 3]]
+        }
+        None => [0; 4],
+    }
+}
+
+#[test]
+fn layers_draw_apart_and_composite_on_end() {
+    let mut s = Surface::new(10, 10);
+    s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &rgb(255, 0, 0), &state(&[]));
+    s.begin_layer();
+    s.fill(&rect(0.0, 0.0, 5.0, 10.0), false, &rgb(0, 0, 255), &state(&[]));
+    assert_eq!(px(&mut s, 2, 2), [0, 0, 255, 255], "draws go to the layer");
+    assert_eq!(px(&mut s, 7, 2), [0, 0, 0, 0], "a layer starts transparent");
+    assert!(near(shown(&mut s, 2, 2), [255, 0, 0, 255]), "the layer is not shown before endLayer");
+    // A nested layer is composited onto the layer, not the canvas.
+    s.begin_layer();
+    s.fill(&rect(5.0, 0.0, 5.0, 10.0), false, &rgb(0, 255, 0), &state(&[]));
+    s.end_layer(&state(&[]));
+    assert!(near(shown(&mut s, 7, 2), [255, 0, 0, 255]));
+    s.end_layer(&state(&[]));
+    assert!(near(shown(&mut s, 2, 2), [0, 0, 255, 255]));
+    assert!(near(shown(&mut s, 7, 2), [0, 255, 0, 255]));
+    // Closing with no layer open does nothing; the layer's alpha applies to it as a whole.
+    s.end_layer(&state(&[]));
+    s.begin_layer();
+    s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &rgb(255, 255, 255), &state(&[]));
+    s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &rgb(255, 255, 255), &state(&[]));
+    let mut half = state(&[]);
+    half.alpha = 0.5;
+    s.end_layer(&half);
+    let [r, g, b, a] = shown(&mut s, 2, 2);
+    assert!(a >= 253 && (126..=130).contains(&r) && (126..=130).contains(&g) && b >= 253, "{r},{g},{b},{a}");
+}
+
+#[test]
+fn resizing_closes_layers() {
+    let mut s = Surface::new(10, 10);
+    s.begin_layer();
+    s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &rgb(255, 0, 0), &state(&[]));
+    s.resize(10, 10);
+    s.fill(&rect(0.0, 0.0, 10.0, 10.0), false, &rgb(0, 255, 0), &state(&[]));
+    assert!(near(shown(&mut s, 1, 1), [0, 255, 0, 255]), "draws after the reset go to the canvas");
+    s.end_layer(&state(&[]));
+    assert!(near(shown(&mut s, 1, 1), [0, 255, 0, 255]));
+}

@@ -801,3 +801,75 @@ fn a_canvas_whose_control_went_offscreen_shows_its_frames() {
     let bitmaps = e.page.canvas_bitmaps();
     assert!(bitmaps.iter().all(|(_, w, _, _)| *w != 2), "a cleared frame has no pixels");
 }
+
+#[test]
+fn layers_nest_with_save_and_composite_on_end() {
+    let env = env(CANVAS);
+    let r = &env.main;
+    // The canvas has one context: reset() starts each case with no layer open.
+    let c = "var x = c.getContext('2d'); x.reset(); ";
+    let err = |code: &str| eval(r, &format!("{c} try {{ {code}; 'none' }} catch (e) {{ e.name }}"));
+    assert_eq!(err("x.endLayer()"), "InvalidStateError");
+    assert_eq!(err("x.beginLayer(); x.restore()"), "InvalidStateError");
+    assert_eq!(err("x.save(); x.beginLayer(); x.restore()"), "InvalidStateError");
+    assert_eq!(err("x.beginLayer(); x.save(); x.endLayer()"), "InvalidStateError");
+    assert_eq!(err("x.save(); x.endLayer()"), "InvalidStateError");
+    assert_eq!(err("x.beginLayer(); x.reset(); x.endLayer()"), "InvalidStateError");
+    assert_eq!(err("x.beginLayer(); x.save(); x.restore(); x.endLayer()"), "none");
+    assert_eq!(err("x.beginLayer(1)"), "TypeError");
+    assert_eq!(err("x.beginLayer({filter: {name: 'colorMatrix', values: 'foo'}})"), "TypeError");
+    assert_eq!(
+        err("try { x.beginLayer({filter: {name: 'colorMatrix', values: 'foo'}}) } catch (e) {} x.endLayer()"),
+        "InvalidStateError",
+        "a beginLayer that threw opened nothing"
+    );
+    assert_eq!(err("x.beginLayer(); x.getImageData(0, 0, 1, 1)"), "InvalidStateError");
+    assert_eq!(err("x.beginLayer(); c.toDataURL()"), "InvalidStateError");
+    assert_eq!(err("x.beginLayer(); x.createPattern(c, 'repeat')"), "InvalidStateError");
+    // Rendering state starts over in a layer and is back after it; the transform carries in.
+    assert_eq!(
+        eval(
+            r,
+            "var y = document.createElement('canvas').getContext('2d'); y.globalAlpha = 0.5; y.translate(10, 20); \
+             y.beginLayer(); y.scale(2, 3); var m = y.getTransform(); var inside = [y.globalAlpha, m.a, m.d, m.e, m.f].join(); \
+             y.endLayer(); inside + '|' + y.globalAlpha + '|' + y.getTransform().a"
+        ),
+        "1,2,3,10,20|0.5|1"
+    );
+    // A layer drawn with globalAlpha 0.5 composites as one: overlapping shapes do not add up.
+    assert_eq!(
+        eval(
+            r,
+            "var z = c.getContext('2d'); z.reset(); z.fillStyle = '#fff'; z.globalAlpha = 0.5; z.beginLayer(); \
+             z.fillRect(0, 0, 10, 10); z.fillRect(0, 0, 10, 10); z.endLayer(); \
+             var a = z.getImageData(1, 1, 1, 1).data[3]; a >= 127 && a <= 128"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn canvas_filter_objects_are_validated_and_kept() {
+    let env = env(CANVAS);
+    let r = &env.main;
+    let c = "var x = c.getContext('2d'); x.reset(); ";
+    let err = |code: &str| eval(r, &format!("{c} try {{ {code}; 'none' }} catch (e) {{ e.name }}"));
+    assert_eq!(err("new CanvasFilter({name: 'gaussianBlur'})"), "TypeError");
+    assert_eq!(err("new CanvasFilter({name: 'gaussianBlur', stdDeviation: [1, 2, 3]})"), "TypeError");
+    assert_eq!(err("new CanvasFilter({name: 'gaussianBlur', stdDeviation: [1, 2]})"), "none");
+    assert_eq!(err("new CanvasFilter({name: 'colorMatrix', values: [1, 2, 3]})"), "TypeError");
+    assert_eq!(err("new CanvasFilter({name: 'convolveMatrix', kernelMatrix: [[1, 0], [0]]})"), "TypeError");
+    assert_eq!(err("new CanvasFilter({name: 'convolveMatrix', kernelMatrix: [[1]]})"), "none");
+    assert_eq!(err("new CanvasFilter({name: 'turbulence', baseFrequency: -1})"), "TypeError");
+    assert_eq!(err("new CanvasFilter({name: 'dropShadow', floodColor: 10})"), "TypeError");
+    assert_eq!(err("new CanvasFilter({name: 'dropShadow', dx: undefined})"), "TypeError");
+    assert_eq!(
+        eval(
+            r,
+            "var f = new CanvasFilter([{name: 'gaussianBlur', stdDeviation: 5}]); var x = c.getContext('2d'); x.filter = f; \
+             var kept = x.filter === f; x.filter = 'no filter at all'; var ignored = x.filter === f; x.filter = 'none'; \
+             [String(f), kept, ignored, x.filter].join()"
+        ),
+        "[object CanvasFilter],true,true,none"
+    );
+}
