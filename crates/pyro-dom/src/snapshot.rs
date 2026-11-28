@@ -167,6 +167,9 @@ pub const LIGHT_INDEX_ATTR: &str = "light-index";
 /// Name ([`STATE_NS`]) of the attribute an `<svg>` panned or zoomed by script carries in render
 /// trees (`currentTranslate`, `currentScale`): `tx ty scale`.
 pub const SVG_PAN_ATTR: &str = "svg-pan";
+/// pyro: name ([`STATE_NS`]) of the attribute an `<img>` carries in render trees when its load never
+/// delays `load` (`Dom::image_lazy`); blitz-dom's `referenced_images_with` reads it.
+pub const LAZY_IMAGE_ATTR: &str = "lazy-image";
 /// pyro: name ([`STATE_NS`]) of the attribute that marks the slot a `<details>` element's content
 /// renders in (the render tree gives a `<details>` the user-agent shadow tree Chromium gives it: a
 /// slot for its first `<summary>`, then this one for the rest), which the renderer styles as its
@@ -805,6 +808,15 @@ impl Dom {
                             name: Cow::Owned(QualName::new(None, STATE_NS.into(), "inline-declarations".into())),
                             value: Cow::Borrowed(style),
                             valueless: false,
+                        });
+                    }
+                    // pyro: an `<img>` whose load never delays `load` (lazy, or let go from deferral by
+                    // `loading` turning eager): the renderer does not wait for its request either.
+                    if html && local == "img" && self.image_lazy(id) {
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), LAZY_IMAGE_ATTR.into())),
+                            value: Cow::Borrowed(""),
+                            valueless: true,
                         });
                     }
                     if let Some(href) = href {

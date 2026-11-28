@@ -564,6 +564,7 @@ impl Browser {
                 let mut dom = bindings.dom.borrow_mut();
                 dom.set_image_source(node, candidate.as_ref().map(|c| c.url.as_str()));
                 dom.set_image_deferred(node, true);
+                dom.set_image_lazy(node, true);
             }
             if let Some(mut p) = self.doc_mut(page) {
                 p.images.deferred.insert(node, candidate);
@@ -577,6 +578,8 @@ impl Browser {
         {
             let mut dom = bindings.dom.borrow_mut();
             dom.set_image_deferred(node, false);
+            // A lazy image, or one let go from deferral, never delays `load`: not the renderer's request either.
+            dom.set_image_lazy(node, lazy || from_deferral);
             dom.set_image_source(node, picture_source.as_deref());
         }
         let source = {

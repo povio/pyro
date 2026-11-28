@@ -2351,8 +2351,11 @@ impl BaseDocument {
     pub fn referenced_images_with(&self, elements: bool) -> Vec<(String, blitz_traits::net::FetchOptions)> {
         let mut out = Vec::new();
         for element in self.image_owners() {
+            // Lazy by its `loading` now, or by the image loader's mark (`lazy-image`: it was lazy and
+            // `loading` turned eager, or it is lazy: neither delays `load`).
             let lazy_img = element.name.local == local_name!("img")
-                && element.attr(LocalName::from("loading")).is_some_and(|value| value.trim().eq_ignore_ascii_case("lazy"));
+                && (element.attr(LocalName::from("loading")).is_some_and(|value| value.trim().eq_ignore_ascii_case("lazy"))
+                    || element.attrs.state("lazy-image").is_some());
             if elements || !lazy_img {
                 out.extend(element.source_image_request.as_deref().cloned());
             }

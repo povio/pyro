@@ -371,6 +371,10 @@ pub struct Dom {
     /// The lazy `<img>`s whose fetch waits for the lazy load check (HTML "lazy loading
     /// attributes"): a render snapshot gives them no `src`, so the renderer does not fetch them.
     image_deferred: rustc_hash::FxHashSet<NodeId>,
+    /// The `<img>`s whose load never delays `load`: lazy ones, and ones let go from deferral when
+    /// `loading` became eager (HTML "lazy loading attributes"). A render snapshot marks them so
+    /// the renderer's own request of the image is not waited for either, whatever `loading` is now.
+    image_lazy: rustc_hash::FxHashSet<NodeId>,
     /// Named access on the Window, per document (see `window_names`).
     pub(crate) window_names: std::cell::RefCell<rustc_hash::FxHashMap<u32, crate::window_names::WindowNames>>,
     /// Attr nodes of an element's attributes, by element slot (see `attr_node`).
@@ -473,6 +477,7 @@ impl Dom {
             reported_natural_sizes: Default::default(),
             image_sources: Default::default(),
             image_deferred: Default::default(),
+            image_lazy: Default::default(),
             window_names: Default::default(),
             attr_nodes: Default::default(),
         }
@@ -618,6 +623,20 @@ impl Dom {
     pub fn set_image_deferred(&mut self, el: NodeId, deferred: bool) {
         let Ok(i) = self.check(el) else { return };
         let changed = if deferred { self.image_deferred.insert(el) } else { self.image_deferred.remove(&el) };
+        if changed {
+            self.bump();
+            self.note(Change::Attr(i, 0, false));
+        }
+    }
+    /// Whether the `<img>` `el`'s load never delays `load` ([`Dom::set_image_lazy`]).
+    pub fn image_lazy(&self, el: NodeId) -> bool {
+        self.image_lazy.contains(&el)
+    }
+    /// Records that the image loader lets `el`'s load not delay `load` (lazy, or let go from
+    /// deferral); a change is journaled like an attribute change of the image.
+    pub fn set_image_lazy(&mut self, el: NodeId, lazy: bool) {
+        let Ok(i) = self.check(el) else { return };
+        let changed = if lazy { self.image_lazy.insert(el) } else { self.image_lazy.remove(&el) };
         if changed {
             self.bump();
             self.note(Change::Attr(i, 0, false));
