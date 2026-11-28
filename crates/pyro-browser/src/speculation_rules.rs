@@ -710,8 +710,14 @@ impl Browser {
     /// A rule set was added to or removed from `page`'s document (see the module header). THE
     /// hook point of the lanes that act on rules: they call their driver from here. The registry
     /// already reflects the change; `Browser::speculation_candidates` is the current state.
+    ///
+    /// The drivers run in a task of their own, not inside the script that inserted the rule set:
+    /// several `<script type=speculationrules>` inserted by one script all register before the
+    /// first driver reads the candidates, so one request carries the tags of every rule that
+    /// asked for the URL (Speculation Rules "process speculation rules" is queued after the
+    /// update). One idle task per change; nothing is kept when no rule set changes.
     pub(crate) fn speculation_changed(&mut self, page: FrameKey, change: SpeculationChange) {
-        self.prefetch_rules_changed(page, change);
+        self.scheduler().post(pyro_runtime::TaskSource::DomManipulation, move |b| b.prefetch_rules_changed(page, change));
     }
 
     /// Registers `set` for `page`'s document, warns about what it skipped, and notifies.
