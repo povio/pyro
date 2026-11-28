@@ -238,3 +238,5 @@ idna = { path = "vendor/idna" }
 url = { path = "vendor/url" }
 # `<?target data>` in HTML is a processing instruction; see vendor/html5ever/README.pyro.md.
 html5ever = { path = "vendor/html5ever" }
+# AAC-LC up to 5.1 (channel configurations 3 to 6); see vendor/symphonia-codec-aac/README.pyro.md.
+symphonia-codec-aac = { path = "vendor/symphonia-codec-aac" }
