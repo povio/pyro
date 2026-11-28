@@ -120,8 +120,10 @@ impl BaseDocument {
         let area = pos.position_area.to_physical(wm, style.writing_mode);
         let layout = container.final_layout();
         let (width, height) = (layout.size.width - layout.border.left - layout.border.right, layout.size.height - layout.border.top - layout.border.bottom);
-        let (left, right, _) = area_axis(area.first.track()?, point.x, point.x + extent.width, 0.0, width);
-        let (top, bottom, _) = area_axis(area.second.track()?, point.y, point.y + extent.height, 0.0, height);
+        // The anchor's rect is in the container's border-box coordinates, the area in its padding box's.
+        let (point_x, point_y) = (point.x - layout.border.left, point.y - layout.border.top);
+        let (left, right, _) = area_axis(area.first.track()?, point_x, point_x + extent.width, 0.0, width);
+        let (top, bottom, _) = area_axis(area.second.track()?, point_y, point_y + extent.height, 0.0, height);
         Some([left, top, right, bottom])
     }
 
