@@ -172,6 +172,9 @@
       if (t !== token) throw illegal('Permissions');
     }
     query(descriptor) {
+      // Permissions "query": a document that is not fully active rejects InvalidStateError (in this realm's
+      // DOMException) before the descriptor is looked at.
+      if (!native.active()) return rejected(new DOMExceptionC("Failed to execute 'query' on 'Permissions': The document is not fully active.", 'InvalidStateError'));
       if (arguments.length === 0) return rejected(queryError('1 argument required, but only 0 present.'));
       if (descriptor === null || typeof descriptor !== 'object') {
         return rejected(queryError('parameter 1 is not of type \'object\'.'));
@@ -183,7 +186,13 @@
       if (!NAMES.has(String(name))) {
         return rejected(queryError(`Failed to read the 'name' property from 'PermissionDescriptor': The provided value '${String(name)}' is not a valid enum value of type PermissionName.`));
       }
-      if (String(name) === 'push' && !descriptor.userVisibleOnly) {
+      // "query": the descriptor is converted twice, first to PermissionDescriptor and then to the dictionary of its
+      // name's descriptor type: a type with members of its own (midi's sysex, push's userVisibleOnly) reads `name`
+      // again, which a page observes through a getter (permissions/midi-permission.html).
+      let typed = descriptor;
+      if (String(name) === 'midi') typed = { name: descriptor.name, sysex: !!descriptor.sysex };
+      else if (String(name) === 'push') typed = { name: descriptor.name, userVisibleOnly: !!descriptor.userVisibleOnly };
+      if (String(name) === 'push' && !typed.userVisibleOnly) {
         return rejected(new DOMExceptionC("Failed to execute 'query' on 'Permissions': Push Permission without userVisibleOnly:true isn't supported yet.", 'NotSupportedError'));
       }
       return resolved(new PermissionStatus(token, String(name)));
@@ -801,6 +810,9 @@
   defineHandler(VirtualKeyboard, 'geometrychange', virtualData);
   enumerate(VirtualKeyboard);
   tag(VirtualKeyboard, 'VirtualKeyboard');
+
+  enumerate(Permissions);
+  enumerate(PermissionStatus);
 
   // The navigator's [SameObject] members, made when first read.
   let keyboard = null;

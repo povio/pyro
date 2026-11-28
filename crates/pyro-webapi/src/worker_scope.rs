@@ -1720,22 +1720,6 @@ impl JsClass for WorkerGlobalScope {
             },
             |s, g, v| crate::lazy_module::replace(s, &g.target.page, "Notification", v),
         );
-        // `Permissions` and `PermissionStatus` are exposed to workers too.
-        macro_rules! permission_interface {
-            ($name:literal) => {
-                def.global_value_accessor(
-                    $name,
-                    |s, g| {
-                        let value = crate::navigator_extras::member(s, &g.target.page, $name)?;
-                        crate::lazy_module::replace(s, &g.target.page, $name, value)?;
-                        Ok(value)
-                    },
-                    |s, g, v| crate::lazy_module::replace(s, &g.target.page, $name, v),
-                );
-            };
-        }
-        permission_interface!("Permissions");
-        permission_interface!("PermissionStatus");
         // [Replaceable] (WindowOrWorkerGlobalScope): assignment shadows it
         // with an own data property; the realm's origin is left as it is.
         def.accessor(
@@ -2199,6 +2183,27 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     engine.register::<DedicatedWorkerGlobalScope>()
 }
 
+/// `Permissions` and `PermissionStatus` are exposed to workers too, as own data properties of the global (an
+/// interface object has no getter; a member of WorkerGlobalScope would sit on its prototype).
+fn install_permission_interfaces(s: &Scope<'_>) -> JsResult<()> {
+    macro_rules! interface {
+        ($name:ident) => {{
+            struct $name;
+            impl pyro_js::LazyGlobalInterface for $name {
+                const NAME: &'static str = stringify!($name);
+                fn value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+                    let page = crate::target::page_of(s)?;
+                    crate::navigator_extras::member(s, &page, Self::NAME)
+                }
+            }
+            s.define_lazy_global_interface::<$name>()?;
+        }};
+    }
+    interface!(Permissions);
+    interface!(PermissionStatus);
+    Ok(())
+}
+
 /// These secure-context interface objects belong on the worker global itself.
 fn install_lock_interfaces(s: &Scope<'_>) -> JsResult<()> {
     macro_rules! interface {
@@ -2246,6 +2251,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
         page.define_properties.borrow_mut().insert(s.realm_id(), Persistent::new(s, define));
     }
     crate::reporting::install_worker(s)?;
+    install_permission_interfaces(s)?;
     if secure_worker(s) == Some(true) {
         crate::storage_manager::install_worker_file_system_globals(s)?;
         install_lock_interfaces(s)?;

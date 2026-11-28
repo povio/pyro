@@ -216,11 +216,9 @@ where
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
     def.getter("Clipboard", |s, w| crate::navigator_extras::member(s, w.page(), "Clipboard"));
-    def.getter("Permissions", |s, w| crate::navigator_extras::member(s, w.page(), "Permissions"));
-    def.getter("PermissionStatus", |s, w| crate::navigator_extras::member(s, w.page(), "PermissionStatus"));
-    // Keyboard Lock/Map and the Virtual Keyboard API (navigator_extras.js): interface objects are data
-    // properties of the global, made on first read; `Keyboard` and `VirtualKeyboard` are [SecureContext]
-    // (secure_context.rs removes them from an insecure window).
+    // Interfaces made by navigator_extras.js (Keyboard Lock/Map, the Virtual Keyboard API, Permissions): data
+    // properties of the global, made on first read (WebIDL: an interface object has no getter). `Keyboard` and
+    // `VirtualKeyboard` are [SecureContext] (secure_context.rs removes them from an insecure window).
     macro_rules! extras_interface {
         ($($name:literal),+) => {$(
             def.global_value_accessor(
@@ -234,7 +232,7 @@ where
             );
         )+};
     }
-    extras_interface!("Keyboard", "KeyboardLayoutMap", "VirtualKeyboard");
+    extras_interface!("Keyboard", "KeyboardLayoutMap", "VirtualKeyboard", "Permissions", "PermissionStatus");
     crate::streams::define_globals(def);
     crate::scheduler::define_global(def);
     crate::observable::define_globals(def);

@@ -209,6 +209,11 @@ fn attribute_reflection_kinds() {
     }
     // inputMode is global, nonce never reaches the content attribute.
     assert_eq!(eval(r, "const u = document.createElement('foo'); u.inputMode = 'TEL'; u.inputMode"), "tel");
+    // virtualKeyboardPolicy is limited to its two keywords: "" when missing or invalid, the content attribute kept.
+    assert_eq!(eval(r, "u.virtualKeyboardPolicy"), "");
+    assert_eq!(eval(r, "u.setAttribute('virtualkeyboardpolicy', 'MANUAL'); u.virtualKeyboardPolicy"), "manual");
+    assert_eq!(eval(r, "u.virtualKeyboardPolicy = 'bogus'; u.virtualKeyboardPolicy + ':' + u.getAttribute('virtualkeyboardpolicy')"), ":bogus");
+    assert_eq!(eval(r, "u.removeAttribute('virtualkeyboardpolicy'); u.virtualKeyboardPolicy"), "");
     assert_eq!(eval(r, "u.nonce = 'a'; u.nonce + ':' + u.getAttribute('nonce')"), "a:null");
     assert_eq!(eval(r, "u.setAttribute('nonce', 'b'); u.nonce"), "b");
     assert_eq!(eval(r, "u.nonce = 'c'; u.nonce + ':' + u.getAttribute('nonce')"), "c:b");

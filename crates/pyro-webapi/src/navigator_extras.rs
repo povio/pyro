@@ -460,6 +460,11 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     let state = s.function("permissionState", |s, _, args| {
         let page = crate::target::page_of(s)?;
         let name = args.get(0).to_string()?;
+        // Permissions "permission state": a permission whose policy-controlled feature the document's permissions
+        // policy does not allow (a cross-origin frame without `allow="geolocation"`) is "denied".
+        if !crate::permissions_policy::feature_allowed(&page, &name) {
+            return Ok(s.string("denied"));
+        }
         Ok(s.string(permission_state(&page, &name).as_str()))
     })?;
     native.set_atom("permissionState", state.value())?;
