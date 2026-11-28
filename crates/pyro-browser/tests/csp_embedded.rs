@@ -297,6 +297,7 @@ fn the_required_policy_is_snapshot_when_the_navigation_starts() {
             connection_allowlist: None,
             link_fetches: Vec::new(),
             integrity_headers: None,
+            x_frame_options: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,

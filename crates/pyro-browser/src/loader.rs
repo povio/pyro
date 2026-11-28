@@ -283,6 +283,10 @@ pub struct Resource {
     /// for the element's integrity check (`pyro_webapi::signature_sri`); `None` for a response with
     /// neither header.
     pub integrity_headers: Option<Box<pyro_webapi::signature_sri::Facts>>,
+    /// A document navigation's `X-Frame-Options` response header lines joined by `, ` (HTML "get,
+    /// decode, and split" reads them as one list; empty lines kept); `None`: no such header. Only the
+    /// final response's (a redirect hop's is ignored). `Browser::x_frame_options_block` reads it.
+    pub x_frame_options: Option<String>,
     /// A document's `Permissions-Policy` response header, with its `Permissions-Policy-Report-Only`
     /// header after a newline (`pyro_webapi::permissions_policy::pack_headers`; its declared
     /// policy, `PageDom::set_permissions_policy_headers`). The legacy `Feature-Policy` is not read.
@@ -801,6 +805,7 @@ impl ResourceLoader for NetLoader {
                 connection_allowlist: None,
                 link_fetches: Vec::new(),
                 integrity_headers: None,
+                x_frame_options: None,
                 dictionary_links: Vec::new(),
                 speculation_rules: Vec::new(),
                 no_vary_search: None,
@@ -893,6 +898,7 @@ impl ResourceLoader for NetLoader {
                         connection_allowlist: None,
                         link_fetches: Vec::new(),
                         integrity_headers: None,
+                        x_frame_options: None,
                         dictionary_links: Vec::new(),
                         speculation_rules: Vec::new(),
                         no_vary_search: None,
@@ -942,6 +948,7 @@ impl ResourceLoader for NetLoader {
                     connection_allowlist: None,
                     link_fetches: Vec::new(),
                     integrity_headers: None,
+                    x_frame_options: None,
                     dictionary_links: Vec::new(),
                     speculation_rules: Vec::new(),
                     no_vary_search: None,
@@ -1048,6 +1055,7 @@ impl ResourceLoader for NetLoader {
                             })
                             .flatten(),
                         integrity_headers: pyro_webapi::signature_sri::capture(&h.url, h.status.as_u16(), &h.headers),
+                        x_frame_options: if document { x_frame_options_header(&h.headers) } else { None },
                         link_fetches: if document {
                             crate::preload::link_header_fetches(
                                 h.headers.get_all(http::header::LINK).iter().filter_map(|v| v.to_str().ok()),
@@ -2016,6 +2024,7 @@ impl ResourceLoader for StaticLoader {
                         connection_allowlist: None,
                         link_fetches: Vec::new(),
                         integrity_headers: None,
+                        x_frame_options: None,
                         dictionary_links: Vec::new(),
                         speculation_rules: Vec::new(),
                         no_vary_search: None,
@@ -2398,6 +2407,64 @@ impl ModuleFetcher for PageModuleFetcher {
                 b.fetch_imported_module(page, url, opts, Box::new(complete));
             }
         });
+    }
+}
+
+/// A response's `X-Frame-Options` lines joined by `, ` (`None`: absent). A value is decoded as
+/// isomorphic bytes (Fetch "decode"), so a non-ASCII byte makes its item invalid, never an error.
+fn x_frame_options_header(headers: &http::HeaderMap) -> Option<String> {
+    let values: Vec<String> = headers
+        .get_all("x-frame-options")
+        .iter()
+        .map(|v| v.as_bytes().iter().map(|&b| b as char).collect())
+        .collect();
+    (!values.is_empty()).then(|| values.join(", "))
+}
+
+/// What a framed response's `X-Frame-Options` allows (HTML "check a navigation response's
+/// adherence to X-Frame-Options").
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum FrameOptions {
+    Allow,
+    Deny,
+    SameOrigin,
+}
+
+/// Reads an `X-Frame-Options` value list: split on `,`, items trimmed of HTTP whitespace only (so a
+/// `\x0B` prefix makes a value invalid) and ASCII-lowercased. Items of different kinds conflict and
+/// refuse the frame (Chrome: `SAMEORIGIN, DENY`, `SAMEORIGIN, ` and `ALLOWALL, INVALID` all block); a
+/// list of one kind (`INVALID, ` is two invalid items) means that kind. `ALLOWALL` and unknown values
+/// (`ALLOW-FROM`, a quoted `"DENY"`) allow.
+fn frame_options(value: &str) -> FrameOptions {
+    #[derive(PartialEq, Clone, Copy)]
+    enum Item {
+        Deny,
+        SameOrigin,
+        AllowAll,
+        Invalid,
+    }
+    let mut kind = None;
+    for item in value.split(',') {
+        let item = item.trim_matches(|c: char| matches!(c, '\t' | ' '));
+        let item = if item.eq_ignore_ascii_case("deny") {
+            Item::Deny
+        } else if item.eq_ignore_ascii_case("sameorigin") {
+            Item::SameOrigin
+        } else if item.eq_ignore_ascii_case("allowall") {
+            Item::AllowAll
+        } else {
+            Item::Invalid
+        };
+        match kind {
+            None => kind = Some(item),
+            Some(k) if k == item => {}
+            Some(_) => return FrameOptions::Deny,
+        }
+    }
+    match kind {
+        Some(Item::Deny) => FrameOptions::Deny,
+        Some(Item::SameOrigin) => FrameOptions::SameOrigin,
+        _ => FrameOptions::Allow,
     }
 }
 
@@ -2888,6 +2955,13 @@ impl Browser {
                         b.prepare_required_csp(page, required_csp, None);
                         b.commit_error_document(page, opts, loader_id, BLOCKED_BY_RESPONSE.into(), history);
                     }
+                    Ok(resource) if b.x_frame_options_block(page, &resource) => {
+                        // `X-Frame-Options` refuses the frame (HTML "check a navigation
+                        // response's adherence to X-Frame-Options"): the same opaque error
+                        // document as `frame-ancestors`.
+                        b.prepare_required_csp(page, required_csp, None);
+                        b.commit_error_document(page, opts, loader_id, BLOCKED_BY_RESPONSE.into(), history);
+                    }
                     Ok(resource) if (200..300).contains(&resource.status) || resource.status == 0 => {
                         let mut opts = opts;
                         opts.url = resource.url.clone();
@@ -3090,7 +3164,7 @@ impl Browser {
     /// violations are not fired at any document: the response never becomes one, and Chrome
     /// fires no `securitypolicyviolation` at the embedder (they only go to the response
     /// policy's `report-uri` / `report-to`, sent from here, report-only ones too).
-    /// `X-Frame-Options` is not checked.
+    /// (`X-Frame-Options` is [`Browser::x_frame_options_block`].)
     fn frame_ancestors_block(&self, page: FrameKey, resource: &Resource) -> bool {
         if page.child.is_none() || self.page(page.page).is_some_and(|p| p.bypass_csp) {
             return false;
@@ -3104,14 +3178,7 @@ impl Browser {
         let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));
         list.add_header(enforce, pyro_net::csp::Disposition::Enforce);
         list.add_header(report_only, pyro_net::csp::Disposition::Report);
-        // The ancestors' origins, parent first (an opaque one, a sandboxed frame's, as `None`).
-        let mut ancestors = Vec::new();
-        let mut next = self.doc(page).and_then(|p| p.main_frame.parent.clone());
-        while let Some(id) = next.take() {
-            let Some(frame) = self.frame(page.page, &id) else { break };
-            ancestors.push(if frame.origin == "null" { None } else { url::Url::parse(&frame.origin).ok() });
-            next = frame.parent;
-        }
+        let ancestors = self.ancestor_origins(page);
         let outcome = list.frame_ancestors_check(&ancestors);
         if !outcome.violations.is_empty() {
             // The frame's current document supplies the network the reports go out on.
@@ -3120,6 +3187,49 @@ impl Browser {
             }
         }
         outcome.blocked
+    }
+
+    /// The origins of every frame above child frame `page`, parent first (an opaque one, a
+    /// sandboxed frame's, as `None`).
+    fn ancestor_origins(&self, page: FrameKey) -> Vec<Option<url::Url>> {
+        let mut ancestors = Vec::new();
+        let mut next = self.doc(page).and_then(|p| p.main_frame.parent.clone());
+        while let Some(id) = next.take() {
+            let Some(frame) = self.frame(page.page, &id) else { break };
+            ancestors.push(if frame.origin == "null" { None } else { url::Url::parse(&frame.origin).ok() });
+            next = frame.parent;
+        }
+        ancestors
+    }
+
+    /// Whether `X-Frame-Options` blocks `resource`, the response of child frame `page`'s
+    /// navigation (HTML "check a navigation response's adherence to X-Frame-Options"). Not for a
+    /// page that bypasses CSP, a local-scheme response, or one with an enforced `frame-ancestors`
+    /// directive, which supersedes it. `DENY` blocks; `SAMEORIGIN` blocks unless the response's
+    /// origin is the origin of EVERY ancestor up to the top (an opaque origin is never the same);
+    /// conflicting values block, unknown ones allow ([`frame_options`]). A blocked response commits
+    /// the opaque error document, as `frame-ancestors` does.
+    fn x_frame_options_block(&self, page: FrameKey, resource: &Resource) -> bool {
+        let Some(value) = resource.x_frame_options.as_deref() else { return false };
+        if page.child.is_none() || self.page(page.page).is_some_and(|p| p.bypass_csp) {
+            return false;
+        }
+        let Ok(url) = url::Url::parse(&resource.url) else { return false };
+        if matches!(url.scheme(), "about" | "blob" | "data") {
+            return false;
+        }
+        let enforced = resource.header_csp.as_deref().map_or("", |csp| csp.split_once('\n').map_or(csp, |(e, _)| e));
+        if enforced.to_ascii_lowercase().contains("frame-ancestors") {
+            return false;
+        }
+        match frame_options(value) {
+            FrameOptions::Allow => false,
+            FrameOptions::Deny => true,
+            FrameOptions::SameOrigin => {
+                let origin = url.origin();
+                !origin.is_tuple() || self.ancestor_origins(page).iter().any(|a| a.as_ref().map(url::Url::origin).as_ref() != Some(&origin))
+            }
+        }
     }
 
     /// The document request of a navigation failed on the network. A new
@@ -3205,6 +3315,7 @@ impl Browser {
             connection_allowlist: None,
             link_fetches: Vec::new(),
             integrity_headers: None,
+            x_frame_options: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,
@@ -6052,6 +6163,26 @@ fn disposition_filename(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod disposition_tests {
+    /// `X-Frame-Options` value lists (WPT x-frame-options/{multiple,get-decode-split,invalid}.html).
+    #[test]
+    fn x_frame_options_values() {
+        use super::{frame_options, FrameOptions::*};
+        assert_eq!(frame_options("DENY"), Deny);
+        assert_eq!(frame_options("  denY "), Deny);
+        assert_eq!(frame_options("sameOriGin"), SameOrigin);
+        assert_eq!(frame_options("SAMEORIGIN, sameorigin"), SameOrigin);
+        assert_eq!(frame_options("SAMEORIGIN, DENY"), Deny);
+        assert_eq!(frame_options("SAMEORIGIN, "), Deny);
+        assert_eq!(frame_options(",SAMEORIGIN,,DENY,"), Deny);
+        assert_eq!(frame_options("ALLOWALL, INVALID"), Deny);
+        assert_eq!(frame_options("INVALID, INVALID"), Allow);
+        assert_eq!(frame_options("INVALID, "), Allow);
+        assert_eq!(frame_options("ALLOWALL"), Allow);
+        assert_eq!(frame_options("\"DENY\""), Allow);
+        assert_eq!(frame_options("ALLOW-FROM https://example.com/"), Allow);
+        assert_eq!(frame_options("\u{b}DENY"), Allow);
+    }
+
     /// Subresource Integrity refuses an opaque response (a no-cors request whose redirect chain
     /// went through another origin) though it ends at the document's own origin and its digest
     /// matches: opacity was read off the final URL.
@@ -6077,6 +6208,7 @@ mod disposition_tests {
             connection_allowlist: None,
             link_fetches: Vec::new(),
             integrity_headers: None,
+            x_frame_options: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,

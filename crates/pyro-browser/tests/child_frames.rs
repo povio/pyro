@@ -277,6 +277,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
             connection_allowlist: None,
             link_fetches: Vec::new(),
             integrity_headers: None,
+            x_frame_options: None,
             dictionary_links: Vec::new(),
             speculation_rules: Vec::new(),
             no_vary_search: None,
