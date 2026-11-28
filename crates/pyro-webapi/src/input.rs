@@ -5145,14 +5145,15 @@ fn effect_allowed_of(mask: i64) -> &'static str {
 }
 
 /// The `effectAllowed` a drag target's DataTransfer reports. In a drag the engine drives (no
-/// client between the source and the target) Chrome keeps "uninitialized" there while the
-/// in-page source never assigned a valid effectAllowed (the mask round trip alone cannot tell
-/// that from "all"); in one a client dispatches (`Input.dispatchDragEvent`) the target's
-/// allowed operations are the mask the client sent, -1 being "all".
-fn target_effect_allowed(source: &Option<(NodeId, Rc<NativeTransfer>)>, data: &DragData) -> String {
+/// client between the source and the target) the `drop` event's store keeps "uninitialized"
+/// while the in-page source never assigned a valid effectAllowed (measured in Chrome: its
+/// dragenter and dragover still read "all"; the mask round trip alone cannot tell that from
+/// "all"); in one a client dispatches (`Input.dispatchDragEvent`) the target's allowed
+/// operations are the mask the client sent, -1 being "all".
+fn target_effect_allowed(source: &Option<(NodeId, Rc<NativeTransfer>)>, data: &DragData, drop: bool) -> String {
     let mask = data.drag_operations_mask;
     match source {
-        Some((_, transfer)) if data.from_source && mask < 0 && transfer.effect_allowed() == "uninitialized" => {
+        Some((_, transfer)) if drop && data.from_source && mask < 0 && transfer.effect_allowed() == "uninitialized" => {
             "uninitialized".to_string()
         }
         _ => effect_allowed_of(mask).to_string(),
@@ -5315,10 +5316,17 @@ fn update_drag(
         page,
         &target_strings(data),
         files,
-        &target_effect_allowed(&source, data),
+        &target_effect_allowed(&source, data, false),
         Mode::Protected,
     )
     .ok_or("no script context for the drag")?;
+    // Chrome's engine-driven drag starts dragenter and dragover with the default operation the
+    // source allows as their dropEffect (copy for "all"), where a client-dispatched one reads "none".
+    if data.from_source {
+        if let Some(op) = default_operation(data.drag_operations_mask) {
+            transfer.set_drop_effect(op);
+        }
+    }
     let mut accepted = false;
     if target != current {
         if let Some(t) = target {
@@ -5326,6 +5334,7 @@ fn update_drag(
             accepted = !fire_drag(page, t, "dragenter", m, true, &transfer, Mode::Protected);
         }
         if let Some(c) = current {
+            transfer.set_drop_effect("none");
             fire_drag(page, c, "dragleave", m, false, &transfer, Mode::Protected);
         }
         if target.is_some() {
@@ -5351,7 +5360,8 @@ fn update_drag(
 fn end_drag(page: &Rc<PageDom>, source: &Option<(NodeId, Rc<NativeTransfer>)>, m: &MouseInput, effect: &str) {
     if let Some((node, transfer)) = source {
         transfer.set_drop_effect(effect);
-        fire_drag(page, *node, "dragend", m, false, transfer, Mode::Protected);
+        let released = MouseInput { buttons: 0, ..m.clone() };
+        fire_drag(page, *node, "dragend", &released, false, transfer, Mode::Protected);
     }
 }
 
@@ -5380,7 +5390,9 @@ pub fn dispatch_drag_files(
     files: &[crate::file::FileEntry],
     modifiers: Modifiers,
 ) -> Result<(), String> {
-    let m = MouseInput { x, y, modifiers, ..MouseInput::default() };
+    // (The drag the engine drives is a held left button: Chrome's drag events carry it until the
+    // `dragend`, which `end_drag` sends without.)
+    let m = MouseInput { x, y, modifiers, buttons: u16::from(data.from_source), ..MouseInput::default() };
     if page.drag.borrow().is_none() {
         match kind {
             DragKind::Cancel => return Ok(()),
@@ -5391,7 +5403,15 @@ pub fn dispatch_drag_files(
             Some(DragSession { source: None, target: None, only_dragover: false, operation: None });
     }
     match kind {
-        DragKind::Enter | DragKind::Over => update_drag(page, &m, data, files),
+        DragKind::Enter | DragKind::Over => {
+            update_drag(page, &m, data, files)?;
+            // The drag the engine drives follows a dragenter with the target's first dragover at
+            // once (Chrome's DragController does, in the same update; a client sends its own).
+            if data.from_source && page.drag.borrow().as_ref().is_some_and(|s| s.only_dragover) {
+                update_drag(page, &m, data, files)?;
+            }
+            Ok(())
+        }
         DragKind::Drop => {
             if page.drag.borrow().as_ref().is_some_and(|s| s.only_dragover) {
                 update_drag(page, &m, data, files)?;
@@ -5403,7 +5423,7 @@ pub fn dispatch_drag_files(
                         page,
                         &target_strings(data),
                         files,
-                        &target_effect_allowed(&session.source, data),
+                        &target_effect_allowed(&session.source, data, true),
                         Mode::ReadOnly,
                     )
                     .ok_or("no script context for the drag")?;
@@ -5418,7 +5438,7 @@ pub fn dispatch_drag_files(
                             page,
                             &target_strings(data),
                             files,
-                            &target_effect_allowed(&session.source, data),
+                            &target_effect_allowed(&session.source, data, false),
                             Mode::Protected,
                         ) {
                             fire_drag(page, t, "dragleave", &m, false, &transfer, Mode::Protected);

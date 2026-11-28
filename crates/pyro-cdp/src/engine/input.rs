@@ -337,10 +337,41 @@ impl EngineHost {
                     self.update_frame_hover(cmd.page, &frames, &mouse);
                 }
                 let intercept = self.pages.get(&cmd.page).is_some_and(|state| state.intercept_drags);
-                let dragged = input::dispatch_mouse_intercepting_drags(&page, kind, &mouse, intercept)
+                // A drag the engine drives: the pointer stream ended at its start, moves feed the
+                // target under the pointer and the release drops (Chrome's own drag loop).
+                let native = self.pages.get_mut(&cmd.page).and_then(|state| state.native_drag.take());
+                if let Some((source, data)) = native {
+                    if source.is_disposed() || kind == MouseKind::Pressed {
+                        let _ = input::dispatch_drag(&source, DragKind::Cancel, mouse.x, mouse.y, &data, mouse.modifiers);
+                    } else {
+                        let result = match kind {
+                            MouseKind::Moved => input::dispatch_drag(&source, DragKind::Over, mouse.x, mouse.y, &data, mouse.modifiers),
+                            MouseKind::Released => input::dispatch_drag(&source, DragKind::Drop, mouse.x, mouse.y, &data, mouse.modifiers),
+                            _ => Ok(()),
+                        };
+                        if kind != MouseKind::Released && result.is_ok() {
+                            if let Some(state) = self.pages.get_mut(&cmd.page) {
+                                state.native_drag = Some((source, data));
+                            }
+                        } else if kind == MouseKind::Released {
+                            // (A drop that failed has nothing left to end.)
+                            let _ = result;
+                        }
+                        return Ok(Some(json!({})));
+                    }
+                }
+                // Without interception a drag that starts is still started, and driven here.
+                let dragged = input::dispatch_mouse_intercepting_drags(&page, kind, &mouse, true)
                     .map_err(CdpError::server)?;
                 if let Some(data) = dragged {
-                    self.event("Input.dragIntercepted", &drag_data_json(&data), cmd.session_id);
+                    if intercept {
+                        self.event("Input.dragIntercepted", &drag_data_json(&data), cmd.session_id);
+                    } else {
+                        let _ = input::dispatch_drag(&page, DragKind::Enter, mouse.x, mouse.y, &data, mouse.modifiers);
+                        if let Some(state) = self.pages.get_mut(&cmd.page) {
+                            state.native_drag = Some((page.clone(), data));
+                        }
+                    }
                 }
             }
             "dispatchTouchEvent" => self.dispatch_touch(cmd, native_id, page)?,

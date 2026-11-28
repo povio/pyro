@@ -417,6 +417,10 @@ pub(crate) struct PageState {
     /// Input.setInterceptDrags: native drags started by mouse input are
     /// reported through Input.dragIntercepted.
     pub(crate) intercept_drags: bool,
+    /// A drag the engine drives itself (a left-button move started it with no interception, as
+    /// in Chrome): the source's document and the data. Moves feed it dragenter/dragover and the
+    /// release drops it; no mouse or pointer events reach the page meanwhile.
+    pub(crate) native_drag: Option<(Rc<pyro_webapi::PageDom>, pyro_webapi::input::DragData)>,
     /// Input.dispatchTouchEvent: the touches down, and the frame document
     /// the sequence's first touch landed in with its transforms to the page's
     /// viewport (all touches of a sequence go to that document).
@@ -707,6 +711,7 @@ impl EngineHost {
                 uncommitted_popup_of: None,
                 suppress_next_char: false,
                 intercept_drags: false,
+                native_drag: None,
                 touches: Default::default(),
                 touch_document: None,
                 hover_documents: Vec::new(),
