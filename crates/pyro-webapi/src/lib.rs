@@ -71,6 +71,7 @@ pub mod permissions_policy;
 mod web_locks;
 mod media_devices;
 mod media_stream;
+mod media_recorder;
 mod media_session;
 mod media_capabilities;
 mod eme;

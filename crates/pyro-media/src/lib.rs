@@ -21,4 +21,5 @@ pub mod cenc;
 pub mod convolution;
 pub mod mse;
 pub mod mse_buffer;
+pub mod mux;
 pub mod video;

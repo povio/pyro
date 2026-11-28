@@ -252,6 +252,7 @@ where
     crate::credentials::define_globals(def);
     crate::sensors::define_globals(def);
     crate::media_stream::define_globals(def);
+    crate::media_recorder::define_globals(def);
     crate::media_session::define_globals(def);
     crate::media_capabilities::define_globals(def);
     crate::paint_worklet::define_globals(def);
