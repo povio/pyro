@@ -633,10 +633,10 @@ fn review_a_large_document_with_no_observer_costs_no_per_element_work_per_frame(
     let page_dom = t.browser.page(id).unwrap().main_frame.page_dom.clone().unwrap();
     eval(
         &root,
-        "document.head.appendChild(document.createElement('style')).textContent = '.k span { color: red }';
-         const f = document.createDocumentFragment(); for (let i = 0; i < 66000; i++) f.appendChild(document.createElement('span'));
+        "const f = document.createDocumentFragment(); for (let i = 0; i < 66000; i++) f.appendChild(document.createElement('span'));
          document.body.appendChild(f);
-         globalThis.frames = (n, change) => { globalThis.ticks = 0; const tick = () => { if (change) document.body.classList.toggle('k'); if (++ticks < n) requestAnimationFrame(tick); }; requestAnimationFrame(tick); };
+         const a = document.body.appendChild(document.createElement('div')); a.style.cssText = 'width:10px;height:10px';
+         globalThis.frames = (n, change) => { globalThis.ticks = 0; const tick = () => { if (change) a.style.width = (10 + ticks) + 'px'; if (++ticks < n) requestAnimationFrame(tick); }; requestAnimationFrame(tick); };
          frames(6, true); 0",
     );
     run_until(&mut t, &root, "globalThis.ticks >= 6");
@@ -644,6 +644,10 @@ fn review_a_large_document_with_no_observer_costs_no_per_element_work_per_frame(
     let (walks, reads) = pyro_webapi::perf::shift::work(&page_dom);
     assert!(walks > 0, "the module walked {walks} times");
     assert!(reads <= 16 * walks, "{reads} style reads in {walks} walks of 66,000 empty boxes");
+    // Measuring every box of the run asks which anonymous block holds each span: the block's child
+    // list is indexed (a few times: per list built), not scanned once per span.
+    let indexed = pyro_render::child_index_builds();
+    assert!((1..=64).contains(&indexed), "{indexed} child lists indexed for {walks} walks");
     // Frames of an unchanged document: no walk at all, no new judgement of the scan.
     let (scans, judged) = (pyro_webapi::perf::scan::walks(&page_dom), pyro_webapi::perf::scan::paint_judgements(&page_dom));
     eval(&root, "frames(6, false); 0");

@@ -62,7 +62,7 @@ use peniko::{Color, Fill};
 pub use compare::{
     compare, decode_png, diff_image, encode_jpeg, encode_png, encode_rgb24, encode_yuv420p, CompareResult,
 };
-pub use geometry::{BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
+pub use geometry::{child_index_builds, BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
 pub use hit::{HitProbe, HitVisit};
 pub use blitz_paint::HitShape;

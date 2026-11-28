@@ -21,6 +21,7 @@ use stylo_taffy::CopyStyleGetters;
 
 use blitz_dom::{BaseDocument, NodeId};
 use kurbo::{Affine, Rect};
+use rustc_hash::FxHashMap;
 use style::values::specified::box_::DisplayInside;
 
 /// One element's boxes, CSS px.
@@ -1083,7 +1084,7 @@ impl Geometry {
                 return None;
             }
             if let Some(anon) = n.anonymous_blocks.iter().copied().find(|&a| {
-                doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child))
+                doc.get_node(a).is_some_and(|n| n.flags.is_inline_root() && holds_child(a, &n.children, child))
             }) {
                 return self.in_layout_tree(doc, anon).then_some(anon);
             }
@@ -1127,7 +1128,7 @@ impl Geometry {
                 .anonymous_blocks
                 .iter()
                 .copied()
-                .filter(|&a| doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child)))
+                .filter(|&a| doc.get_node(a).is_some_and(|n| n.flags.is_inline_root() && holds_child(a, &n.children, child)))
                 .collect();
             if !anon.is_empty() {
                 break anon;
@@ -1722,6 +1723,53 @@ fn utf16_offsets(source: &str, laid: &str) -> Vec<u32> {
     }
     map[laid.len()] = at;
     map
+}
+
+/// Child lists shorter than this are scanned; longer ones are indexed ([`holds_child`]).
+const INDEXED_CHILDREN: usize = 64;
+/// Indexed child lists kept at once.
+const CHILD_INDEXES: usize = 16;
+
+thread_local! {
+    /// Position of each child in a long child list, by the list's owner: the list's address and
+    /// length it was built from, and the map. Only ever a hint: [`holds_child`] checks the list.
+    static CHILD_INDEX: std::cell::RefCell<FxHashMap<NodeId, (usize, usize, FxHashMap<NodeId, usize>)>> =
+        std::cell::RefCell::new(FxHashMap::default());
+    /// Child lists indexed so far (a counter: tests assert work, never time).
+    static CHILD_INDEX_BUILDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Child lists [`holds_child`] indexed on this thread so far.
+pub fn child_index_builds() -> u64 {
+    CHILD_INDEX_BUILDS.with(|c| c.get())
+}
+
+/// Whether `children` (the child list of `owner`) contains `child`. A long list is asked once
+/// per element of it when every box of an inline run is measured (66,000 sibling spans: 66,000
+/// scans of 66,000 entries), so it is indexed; the index only says where to look, and the answer
+/// is always read from the list itself (a hit is checked there, a miss scans it), so a list
+/// changed since it was indexed cannot give a wrong answer.
+fn holds_child(owner: NodeId, children: &[NodeId], child: NodeId) -> bool {
+    if children.len() < INDEXED_CHILDREN {
+        return children.contains(&child);
+    }
+    let key = (children.as_ptr() as usize, children.len());
+    let hint = CHILD_INDEX.with(|index| {
+        let mut index = index.borrow_mut();
+        if !index.get(&owner).is_some_and(|(ptr, len, _)| (*ptr, *len) == key) {
+            if index.len() >= CHILD_INDEXES {
+                index.clear();
+            }
+            let map = children.iter().enumerate().map(|(i, &c)| (c, i)).collect();
+            index.insert(owner, (key.0, key.1, map));
+            CHILD_INDEX_BUILDS.with(|c| c.set(c.get() + 1));
+        }
+        index.get(&owner).and_then(|(_, _, map)| map.get(&child).copied())
+    });
+    match hint {
+        Some(i) if children.get(i) == Some(&child) => true,
+        _ => children.contains(&child),
+    }
 }
 
 /// Whether `id` is a box of the current layout: the root element, or a
