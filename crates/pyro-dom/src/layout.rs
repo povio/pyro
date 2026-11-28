@@ -1508,7 +1508,7 @@ impl Layout {
     /// `scrollExtent` (Element.zig:1845-1858): how far `el` scrolls on
     /// `axis`; `None` for the root containers (the window scrolls).
     fn scroll_extent(&self, dom: &Dom, el: NodeId, axis: Axis) -> Option<f64> {
-        if self.is_root_container(dom, el) {
+        if self.is_root_container(dom, el) && !self.body_potentially_scrollable(dom, el) {
             return None;
         }
         // Only scroll containers scroll; others stay at 0 (as in Chrome).
