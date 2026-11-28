@@ -1752,7 +1752,12 @@ impl Browser {
         // Only for the document that is still the frame's (the key names it).
         let live = self.doc(frame).is_some_and(|d| document_client(&d.main_frame) == key.document());
         let Some(p) = self.page(frame.page).filter(|_| live) else { return };
-        if p.frames.layout_bodies.start(&key) {
+        // A layout that asked first has its own fetch of the same request in flight: the document's
+        // body completes that slot (the fetch's later answer finds it ready and writes nothing), so a
+        // script that measures right after the document's load sees the layout with the body, not
+        // one that still waits for a second request (an `@import` a frame's layout reached before
+        // the import event did).
+        if p.frames.layout_bodies.start(&key) || p.frames.layout_bodies.pending(&key) {
             p.frames.layout_bodies.finish(key, body);
         }
     }
