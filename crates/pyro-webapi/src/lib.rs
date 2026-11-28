@@ -68,6 +68,7 @@ pub mod formdata;
 pub mod fullscreen;
 pub(crate) mod pointer_lock;
 pub mod permissions_policy;
+mod wake_lock;
 mod web_locks;
 mod media_devices;
 mod media_stream;

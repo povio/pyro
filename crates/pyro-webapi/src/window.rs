@@ -271,6 +271,7 @@ where
     crate::web_locks::define_globals(def);
     crate::media_devices::define_globals(def);
     crate::credentials::define_globals(def);
+    crate::wake_lock::define_globals(def);
     crate::sensors::define_globals(def);
     crate::media_stream::define_globals(def);
     crate::media_recorder::define_globals(def);
@@ -628,6 +629,7 @@ impl JsClass for Navigator {
         def.getter("locks", |s, p| crate::web_locks::locks(s, p));
         def.getter("mediaDevices", |s, p| crate::media_devices::media_devices(s, p));
         def.getter("credentials", |s, p| crate::credentials::credentials(s, p));
+        def.getter("wakeLock", |s, p| crate::wake_lock::wake_lock(s, p));
         def.getter("mediaSession", |s, p| crate::media_session::media_session(s, p));
         def.getter("mediaCapabilities", |s, p| crate::media_capabilities::media_capabilities(s, p));
         def.getter("ml", |s, p| crate::webnn::ml(s, p));
