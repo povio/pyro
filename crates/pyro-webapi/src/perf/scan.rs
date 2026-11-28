@@ -188,6 +188,21 @@ pub(crate) fn note_image_loaded(page: &PageDom, el: NodeId, src: &str) {
     state.dirty = true;
 }
 
+/// A fetch of the document finished and its Resource Timing entry was added
+/// (`PageDom::add_finished_fetches`). While the last walk awaited a poster or CSS image, that may
+/// be the one: the next walk is forced and its budget of waiting walks starts over (an image that
+/// finishes after the budget ran out, many frames into a slow load, must not be missed).
+pub(crate) fn note_fetch_finished(page: &PageDom) {
+    if !WANTED {
+        return;
+    }
+    if let Ok(mut state) = page.timeline().scan.try_borrow_mut() {
+        if state.waiting {
+            state.dirty = true;
+        }
+    }
+}
+
 /// How many times the document was walked (a counter: tests assert on it, never on time).
 pub fn walks(page: &PageDom) -> u64 {
     page.timeline().scan.borrow().walks

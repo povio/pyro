@@ -477,6 +477,7 @@ impl PageDom {
         for report in &reports {
             self.add_resource_timing(report);
         }
+        crate::perf::scan::note_fetch_finished(self);
     }
 
     /// Adds the entry of a finished fetch of this document (Resource Timing
