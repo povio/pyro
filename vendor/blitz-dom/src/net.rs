@@ -775,7 +775,7 @@ pub(crate) fn fetch_font_face_rules<'a>(
                     slant_range: style.and_then(|style| match style {
                         FontStyleRange::Italic => None,
                         FontStyleRange::Oblique(min, max) => {
-                            Some((min.degrees().unwrap_or(0.0), max.degrees().unwrap_or(0.0)))
+                            Some((descriptor_angle(min).unwrap_or(0.0), descriptor_angle(max).unwrap_or(0.0)))
                         }
                     }),
                     unicode_range: descriptor.unicode_range.as_deref().map(unicode_range),
@@ -943,6 +943,19 @@ fn font_format_from_extension(url: &Url) -> FontFaceSourceFormatKeyword {
         .map_or(FontFaceSourceFormatKeyword::None, |(_, format)| *format)
 }
 
+/// pyro: the degrees of an angle of a `font-style` descriptor for font matching: an explicit `oblique 14deg`
+/// is stored one fixed-point step above the keyword so the two serialize apart (`SpecifiedFontStyle::parse`),
+/// but is 14deg for matching (CSS Fonts 4 § 5.2).
+pub(crate) fn descriptor_angle(angle: &style::values::specified::Angle) -> Option<f32> {
+    angle.degrees().map(|degrees| {
+        if degrees == style::values::computed::font::FontStyle::EXPLICIT_DEFAULT_OBLIQUE_DEGREES {
+            style::values::computed::font::FontStyle::DEFAULT_OBLIQUE_DEGREES as f32
+        } else {
+            degrees
+        }
+    })
+}
+
 /// Translate stylo's `@font-face` `font-style` descriptor into the fontique
 /// `FontStyle` enum used by parley. Stylo encodes Italic and Oblique-with-
 /// angle distinctly; CSS's bare `normal` is parsed as `Oblique(0deg, 0deg)`
@@ -953,13 +966,13 @@ fn stylo_to_fontique_style(style: &FontStyleRange) -> parley::fontique::FontStyl
     match style {
         FontStyleRange::Italic => Fq::Italic,
         FontStyleRange::Oblique(min, max) => {
-            let angle = min.degrees();
+            let angle = descriptor_angle(min);
             // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
             // keyword. Map that back to `Normal` so parley's font matching
             // doesn't misclassify upright fonts.
             // pyro: a range that has 0deg in it (`oblique 0deg 15deg`, a variable font's `slnt`
             // axis) is an upright face that can slant (`FontFaceOverrides::slant_range`).
-            let (low, high) = (angle.unwrap_or(0.0), max.degrees().unwrap_or(0.0));
+            let (low, high) = (angle.unwrap_or(0.0), descriptor_angle(max).unwrap_or(0.0));
             if low.min(high) <= 0.0 && low.max(high) >= 0.0 {
                 Fq::Normal
             } else {

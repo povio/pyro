@@ -120,6 +120,11 @@ pub(crate) fn font_style(input: stylo::FontStyle) -> parley::FontStyle {
     match input {
         stylo::FontStyle::NORMAL => parley::FontStyle::Normal,
         stylo::FontStyle::ITALIC => parley::FontStyle::Italic,
+        // pyro: an explicit `oblique 14deg` is stored a step above the keyword (so they serialize apart);
+        // font matching takes it as 14deg.
+        val if val == stylo::FontStyle::oblique(stylo::FontStyle::EXPLICIT_DEFAULT_OBLIQUE_DEGREES) => {
+            parley::FontStyle::Oblique(Some(stylo::FontStyle::DEFAULT_OBLIQUE_DEGREES as f32))
+        }
         val => parley::FontStyle::Oblique(Some(val.oblique_degrees())),
     }
 }
