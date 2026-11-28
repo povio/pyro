@@ -594,7 +594,17 @@ pub fn script_blur(page: &Rc<PageDom>, el: NodeId) {
 
 pub fn focus_window(page: &Rc<PageDom>) {
     if let Some(token) = request_focus(page, FocusTarget::Window, false) {
-        focus_window_with_transition(page, &token);
+        // A script's `window.focus()` leaves the document's own focused element alone (Chrome: the
+        // frame becomes the focused one, `document.activeElement` stays); only one that is a frame
+        // owner, because the focus was in that child frame and has now come back, is cleared (WPT
+        // focus/activeelement-after-calling-window-focus).
+        let in_child_frame = {
+            let dom = page.dom.borrow();
+            dom.focused(page.document()).ok().flatten().is_some_and(|el| is_frame_owner(&dom, el))
+        };
+        if in_child_frame {
+            focus_window_with_transition(page, &token);
+        }
     }
 }
 
