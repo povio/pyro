@@ -2871,10 +2871,13 @@ impl LayoutPassState<'_> {
                     let m = line.metrics();
                     // pyro: Blink's `FontMetrics` rounds the font's ascent and descent to whole pixels
                     // each, and the central baseline is half of their sum from the top of the content
-                    // area: a whole or a half pixel (WPT css-flexbox `flex-align-baseline-001`).
+                    // area. When the sum is odd that is a half pixel, and Blink rounds the central
+                    // baseline up to a whole pixel (measured against Chrome for font sizes 8..40: its
+                    // offset equals the floor of the half-pixel one; WPT css-flexbox
+                    // `flex-align-baseline-001`, css-grid `grid-align-baseline-001`).
                     let ascent = ((m.baseline - m.content_block_min_coord) / scale).round();
                     let descent = ((m.content_block_max_coord - m.baseline) / scale).round();
-                    let central = m.content_block_min_coord / scale + (ascent + descent) / 2.0;
+                    let central = m.content_block_min_coord / scale + ((ascent + descent) / 2.0).ceil();
                     let central = if wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED) {
                         (m.block_min_coord + m.block_max_coord) / scale - central
                     } else {
