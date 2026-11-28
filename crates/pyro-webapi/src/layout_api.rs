@@ -1295,9 +1295,22 @@ pub fn hit_test_box(page: &PageDom, x: f64, y: f64) -> Option<NodeId> {
     page.layout().box_from_point(&page.dom.borrow(), x, y)
 }
 
-pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
-    a.require(2, "Document.elementFromPoint")?;
+/// The `double x, double y` of `elementFromPoint`/`elementsFromPoint` (CSSOM View: plain `double`,
+/// not `unrestricted`): both are required and a non-finite one (NaN included, which is what an
+/// absent argument passed on as `undefined` converts to) is a TypeError (WPT `elementFromPoint-parameters`).
+fn point_args(a: &Args<'_>, what: &str) -> JsResult<(f64, f64)> {
+    a.require(2, what)?;
     let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
+    if !x.is_finite() || !y.is_finite() {
+        return Err(pyro_js::JsError::type_error(format!(
+            "Failed to execute '{what}': The provided double value is non-finite."
+        )));
+    }
+    Ok((x, y))
+}
+
+pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let (x, y) = point_args(&a, "Document.elementFromPoint")?;
     let page = n.page();
     if n.id != page.document() {
         return Ok(s.null());
@@ -1332,8 +1345,7 @@ pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -
 /// `ShadowRoot.elementFromPoint`: the document's hit, retargeted against
 /// the shadow root (a host's for anything deeper, null outside its tree).
 pub(crate) fn shadow_element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
-    a.require(2, "ShadowRoot.elementFromPoint")?;
-    let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
+    let (x, y) = point_args(&a, "ShadowRoot.elementFromPoint")?;
     let page = n.page();
     let hit = hit_test(page, x, y);
     let retargeted = hit.and_then(|h| page.dom.borrow().retarget_node(h, n.id));
@@ -1341,8 +1353,7 @@ pub(crate) fn shadow_element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args
 }
 
 pub(crate) fn shadow_elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
-    a.require(2, "ShadowRoot.elementsFromPoint")?;
-    let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
+    let (x, y) = point_args(&a, "ShadowRoot.elementsFromPoint")?;
     let page = n.page();
     let ids = page.layout().elements_from_point(&page.dom.borrow(), x, y);
     let mut out: Vec<NodeId> = Vec::new();
@@ -1364,8 +1375,7 @@ pub(crate) fn shadow_elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Arg
 }
 
 pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
-    a.require(2, "Document.elementsFromPoint")?;
-    let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
+    let (x, y) = point_args(&a, "Document.elementsFromPoint")?;
     let page = n.page();
     let mut ids =
         if n.id == page.document() { page.layout().elements_from_point(&page.dom.borrow(), x, y) } else { Vec::new() };

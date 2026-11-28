@@ -931,6 +931,11 @@ impl JsClass for VisualViewport {
 }
 
 fn screen(p: &PageDom) -> (u32, u32) {
+    // CSSOM View "Screen" (`width`/`height`/`availWidth`/`availHeight`): 0 for a Window with no
+    // browsing context (its frame was removed), as Chrome answers (WPT screen-detached-frame).
+    if !p.is_fully_active() {
+        return (0, 0);
+    }
     let v = p.device_viewport();
     (v.screen_width.unwrap_or(v.width), v.screen_height.unwrap_or(v.height))
 }
