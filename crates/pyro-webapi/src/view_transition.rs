@@ -159,16 +159,18 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
             Default::default()
         };
         let Some(record) = captures.as_mut().and_then(|map| map.get_mut(&scope_key)) else { return Ok(s.boolean(false)); };
-        // A document's transition runs in the snapshot containing block of its old state: a window resized
-        // before the new state is captured skips it (css-view-transitions-1 "capture the new state").
-        if scope.id != root.id {
-            let size = page.layout().viewport_metrics().layout;
-            if old { record.size = Some(size); } else if record.size.is_some_and(|before| before != size) { return Ok(s.boolean(false)); }
-        }
         let Some(reservation) = Arc::get_mut(&mut record.reservation) else { return Ok(s.boolean(false)); };
         let prep = u64::from(page.dom.borrow().slot_count()) + 1;
         let Some(mut attempt) = reservation.attempt(prep, old) else { return Ok(s.boolean(false)); };
         let mut work = attempt.work - prep;
+        // A document's transition runs in the snapshot containing block of its old state: a window resized
+        // before the new state is captured skips it (css-view-transitions-1 "capture the new state").
+        // (After the attempt is debited: one refused for want of budget lays nothing out and syncs no
+        // viewport, however often it is tried.)
+        if scope.id != root.id {
+            let size = page.layout().viewport_metrics().layout;
+            if old { record.size = Some(size); } else if record.size.is_some_and(|before| before != size) { attempt.failed(work); return Ok(s.boolean(false)); }
+        }
         let dom = page.dom.borrow();
         if page.is_hidden() || !dom.is_connected(root.id).unwrap_or(false) { attempt.failed(work); return Ok(s.boolean(false)); }
         drop(dom);
