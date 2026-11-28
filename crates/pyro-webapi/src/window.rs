@@ -272,6 +272,7 @@ where
     crate::media_devices::define_globals(def);
     crate::credentials::define_globals(def);
     crate::wake_lock::define_globals(def);
+    crate::battery::define_globals(def);
     crate::sensors::define_globals(def);
     crate::media_stream::define_globals(def);
     crate::media_recorder::define_globals(def);
@@ -647,6 +648,7 @@ impl JsClass for Navigator {
             same_object(s, p, key, || s.wrap::<MimeTypeArray>((), Some(key)))
         });
         def.method("javaEnabled", 0, |s, _p, _a| Ok(s.boolean(false)));
+        def.method("getBattery", 0, |s, p, _a| crate::battery::get_battery(s, p));
         def.method("sendBeacon", 1, |s, p, a| {
             a.require(1, "Navigator.sendBeacon")?;
             let url = crate::util::dom_string(a.get(0))?;
