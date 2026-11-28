@@ -63,6 +63,8 @@ fn whitespace_and_hidden_content_are_not_contentful() {
 fn a_background_colour_is_a_first_paint_only() {
     let (t, page) = load("<body><div style='width:100px;height:100px;background:red'></div></body>");
     assert_eq!(eval(&t, page, NAMES), "first-paint");
+    // One engine per thread: the first browser goes before the second starts.
+    drop(t);
     // A gradient is no content either.
     let (t, page) = load("<body><div style='width:100px;height:100px;background-image:linear-gradient(red,blue)'></div></body>");
     assert_eq!(eval(&t, page, NAMES), "first-paint");
