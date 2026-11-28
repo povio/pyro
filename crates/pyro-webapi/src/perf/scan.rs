@@ -345,7 +345,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                 if !visible_el(el) {
                     continue;
                 }
-                let border_box = layout.bounding_client_rect(&dom, el);
+                let border_box = layout.laid_out_client_rect(&dom, el);
                 let Some(visible) = visible_rect(&dom, &layout, el, border_box, view) else { continue };
                 candidates.push(Candidate { node: el, kind: Kind::VideoPoster, url: Some(url), natural: None, border_box, visible, area: visible.width * visible.height, load_time: Some(load_time), first_painted: 0.0 });
             }
@@ -357,7 +357,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                 let Some((nw, nh)) = dom.reported_natural_size(el) else { continue };
                 let url = info.source.as_ref().map(|s| crate::html::resolve_url(&dom, el, s));
                 let load_time = state.loaded.get(&(el, info.loading.clone())).copied();
-                let border_box = layout.bounding_client_rect(&dom, el);
+                let border_box = layout.laid_out_client_rect(&dom, el);
                 let Some(visible) = visible_rect(&dom, &layout, el, border_box, view) else { continue };
                 candidates.push(Candidate { node: el, kind, url, natural: Some((nw, nh)), border_box, visible, area: visible.width * visible.height, load_time, first_painted: 0.0 });
             }
@@ -379,7 +379,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                     }
                     // The root element's background (the body's when the root has none) is the canvas
                     // background: it paints the whole viewport, whatever size the element has.
-                    let border_box = if kind == Kind::BackgroundImage && paints_canvas(&dom, &layout, el) { view } else { layout.bounding_client_rect(&dom, el) };
+                    let border_box = if kind == Kind::BackgroundImage && paints_canvas(&dom, &layout, el) { view } else { layout.laid_out_client_rect(&dom, el) };
                     let Some(visible) = visible_rect(&dom, &layout, el, border_box, view) else { continue };
                     candidates.push(Candidate { node: el, kind, url: Some(url), natural: None, border_box, visible, area: visible.width * visible.height, load_time, first_painted: 0.0 });
                 }
@@ -388,7 +388,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                 if !visible_el(el) || !has_painted_shape(&dom, el) {
                     continue;
                 }
-                let border_box = layout.bounding_client_rect(&dom, el);
+                let border_box = layout.laid_out_client_rect(&dom, el);
                 let Some(visible) = visible_rect(&dom, &layout, el, border_box, view) else { continue };
                 candidates.push(Candidate { node: el, kind: Kind::Svg, url: None, natural: None, border_box, visible, area: visible.width * visible.height, load_time: None, first_painted: 0.0 });
             }
@@ -400,7 +400,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                 if !visible_el(el) {
                     continue;
                 }
-                let border_box = layout.bounding_client_rect(&dom, el);
+                let border_box = layout.laid_out_client_rect(&dom, el);
                 let Some(visible) = visible_rect(&dom, &layout, el, border_box, view) else { continue };
                 candidates.push(Candidate { node: el, kind: Kind::Canvas, url: None, natural: None, border_box, visible, area: visible.width * visible.height, load_time: None, first_painted: 0.0 });
             }

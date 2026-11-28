@@ -1635,6 +1635,26 @@ impl Layout {
         self.bounding_client_rect_for_visible(dom, el)
     }
 
+    /// pyro: [`Self::bounding_client_rect`] of what is laid out now: an element with no box (in
+    /// contents `content-visibility: auto` skips, a `display: none` subtree) is not rendered to
+    /// answer, and has an empty rect. For the engine's own scans (paint timing), which must not
+    /// change what a page shows by looking at it: a geometry query that renders skipped contents
+    /// changes their remembered size and what a scroll to them reaches (WPT css-contain
+    /// `content-visibility-075`).
+    pub fn laid_out_client_rect(&self, dom: &Dom, el: NodeId) -> Rect {
+        self.sync_before_rect_query(dom);
+        let has_box = self.synced_geometry_source(dom).is_some_and(|source| {
+            source.element_box(crate::snapshot::render_key(el)).is_some_and(|b| b.width > 0.0 || b.height > 0.0)
+        });
+        // (SVG content has no CSS box of its own and its geometry is its bbox: asked as usual.)
+        let svg = dom.element(el).is_ok_and(|e| e.name.ns == markup5ever::ns!(svg));
+        if has_box || svg {
+            self.bounding_client_rect(dom, el)
+        } else {
+            Rect::default()
+        }
+    }
+
     /// A text node's line-box rect (the union of its words) in client
     /// coordinates; `None` when it is not laid out. Range geometry over text
     /// uses it (Chromium reports text boxes, even inside a `display:

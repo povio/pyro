@@ -144,7 +144,7 @@ fn text_control_painted(page: &PageDom, viewport: (f64, f64)) -> bool {
     controls.into_iter().any(|id| {
         dom.value(id).is_ok_and(|v| !v.trim().is_empty())
             && layout.check_visibility(&dom, id, shown)
-            && on_screen(layout.bounding_client_rect(&dom, id), viewport)
+            && on_screen(layout.laid_out_client_rect(&dom, id), viewport)
     })
 }
 
@@ -171,7 +171,7 @@ fn non_default_paint(page: &PageDom, viewport: (f64, f64)) -> bool {
         if !layout.check_visibility(&dom, id, shown) {
             continue;
         }
-        let rect = layout.bounding_client_rect(&dom, id);
+        let rect = layout.laid_out_client_rect(&dom, id);
         if !on_screen(rect, (view.width, view.height)) {
             continue;
         }
