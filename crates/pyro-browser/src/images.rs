@@ -96,6 +96,7 @@ impl Images {
     /// Tracks `node`'s request (`image.url`), replacing its previous one.
     fn track(&mut self, node: NodeId, image: Image) {
         self.offers.retain(|(_, owner, ..)| *owner != node);
+        self.failures.retain(|(_, owner, _)| *owner != node);
         if self.requested.len() < 4096 {
             self.requested.insert(image.url.clone());
         }
@@ -117,6 +118,11 @@ pub(crate) struct Images {
     flights: Rc<RefCell<HashMap<Shape, Rc<RefCell<ImageFlight>>>>>,
     offers: VecDeque<(Shape, NodeId, Resource, std::sync::Arc<pyro_raster::SourceLease>)>,
     offers_tree_version: Option<u64>,
+    /// The failures of connected `<img>` requests in a document a service worker controls (a CORS
+    /// check that failed, a status or body that is no image), by request: the layout engine asks
+    /// for the image of an element that failed too, and that second request would be a second
+    /// `fetch` event of the worker; it is answered with the element's failure instead.
+    failures: VecDeque<(Shape, NodeId, String)>,
     entries: HashMap<NodeId, Image>,
     /// pyro: every URL the document's elements requested as images (`<img>`, SVG `<image>`,
     /// `<object>`), kept after the request ends (a loaded `<img>`'s entry goes): a capture
@@ -237,6 +243,15 @@ impl Browser {
                         self.scheduler().post(TaskSource::Networking, move |browser| { let _lease = lease; done(browser, Ok(resource)); });
                         return None;
                     }
+                }
+            }
+            // The same for an element whose request failed: not asked for again (see `Images::failures`).
+            if layout && !doc.images.flights.borrow().contains_key(&shape) {
+                let failure = doc.images.failures.iter().find(|(key, owner, _)| key == &shape && doc.main_frame.page_dom.as_ref().is_some_and(|page| page.dom.borrow().is_connected(*owner) == Ok(true))).map(|(_, _, error)| error.clone());
+                if let Some(error) = failure {
+                    drop(doc);
+                    self.scheduler().post(TaskSource::Networking, move |browser| done(browser, Err(error)));
+                    return None;
                 }
             }
             doc.images.flights.clone()
@@ -675,6 +690,7 @@ impl Browser {
                 let mut state = self.doc_mut(page).expect("page");
                 state.images.entries.remove(&node);
                 state.images.offers.retain(|(_, owner, ..)| *owner != node);
+                state.images.failures.retain(|(_, owner, _)| *owner != node);
                 drop(state);
                 // A source that does not parse is a broken current request: `complete` (it stays
                 // false until these steps ran, as HTML's await a stable state).
@@ -876,6 +892,7 @@ impl Browser {
         let mut reported = None;
         // As Chromium, a response whose body is an image is shown and fires `load` whatever its
         // status (a 404 page that is an image); otherwise only a 2xx `image/*` one loads.
+        let error = result.as_ref().err().cloned();
         let outcome = result.ok().filter(|r| !r.body.is_empty()).and_then(|r| {
             let ok_status = (200..300).contains(&r.status);
             let body = &r.body[..r.body.len().min(MAX_IMAGE_BYTES)];
@@ -947,7 +964,14 @@ impl Browser {
             }
             if !used && bindings.dom.borrow().is_connected(node) == Ok(true) {
                 if let (Some(mut state), Some(resource)) = (self.doc_mut(page), raster.as_ref()) {
-                    state.images.offer(key, node, resource, &bindings);
+                    state.images.offer(key.clone(), node, resource, &bindings);
+                }
+            }
+            if outcome.is_none() && bindings.is_service_worker_controlled() && bindings.dom.borrow().is_connected(node) == Ok(true) {
+                if let Some(mut state) = self.doc_mut(page) {
+                    state.images.failures.retain(|(old, owner, _)| old != &key && *owner != node);
+                    if state.images.failures.len() >= 64 { state.images.failures.pop_front(); }
+                    state.images.failures.push_back((key, node, error.unwrap_or_else(|| format!("{request_url}: not an image"))));
                 }
             }
         }
