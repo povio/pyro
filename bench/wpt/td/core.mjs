@@ -249,8 +249,11 @@ async function actions(env, sources) {
           if (pen) {
             const from = { x: dev.x, y: dev.y };
             for (let k = 1; k <= steps; k++) await cdp(dev, true, 'mouseMoved', a, from.x + ((t.x - from.x) * k) / steps, from.y + ((t.y - from.y) * k) / steps, dev.button);
-          } else if (dev.buttons.size && [...dev.buttons].some((b) => b > 2)) {
-            // Playwright's mouse does not know the back and forward buttons it would have to report as held.
+          } else if (dev.buttons.size) {
+            // A move with a button held is plain Input.dispatchMouseEvent, as chromedriver sends it: Playwright's
+            // mouse would turn on Input.setInterceptDrags for it and drive a drag itself (client-dispatched drag
+            // events), where the browser starts and drives the drag from plain mouse events. (Playwright's mouse
+            // also does not know the back and forward buttons it would have to report as held.)
             const from = { x: dev.x, y: dev.y };
             for (let k = 1; k <= steps; k++) await cdp(dev, false, 'mouseMoved', a, from.x + ((t.x - from.x) * k) / steps, from.y + ((t.y - from.y) * k) / steps, dev.button);
           } else await page.mouse.move(t.x, t.y, { steps });
@@ -264,16 +267,16 @@ async function actions(env, sources) {
           dev.last = { b, x: dev.x, y: dev.y, t: now };
           dev.buttons.add(b);
           dev.button = CDP_BUTTONS[b] ?? 'left';
-          if (pen || b > 2) await cdp(dev, pen, 'mousePressed', a, dev.x, dev.y, dev.button, { clickCount: dev.clicks });
-          else await page.mouse.down({ button: BUTTONS[b], clickCount: dev.clicks });
+          // Presses and releases are plain Input.dispatchMouseEvent too, like the moves made while a button is held
+          // (above): Playwright's mouse would not know the button it was left holding, nor where the pointer is.
+          await cdp(dev, pen, 'mousePressed', a, dev.x, dev.y, dev.button, { clickCount: dev.clicks });
           break;
         }
         case 'pointerUp': {
           const b = a.button ?? 0;
           dev.buttons.delete(b);
           const name = CDP_BUTTONS[b] ?? 'left';
-          if (pen || b > 2) await cdp(dev, pen, 'mouseReleased', a, dev.x, dev.y, name, { clickCount: dev.clicks });
-          else await page.mouse.up({ button: BUTTONS[b], clickCount: dev.clicks });
+          await cdp(dev, pen, 'mouseReleased', a, dev.x, dev.y, name, { clickCount: dev.clicks });
           dev.button = 'none';
           break;
         }
