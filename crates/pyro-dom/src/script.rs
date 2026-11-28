@@ -145,8 +145,11 @@ pub(crate) struct ResourceQueue {
     pub(crate) prepared_scripts: rustc_hash::FxHashMap<NodeId, (ScriptInfo, NodeId)>,
     /// Elements with `autofocus` connected since the embedder last took them, in insertion
     /// (tree) order: HTML's autofocus insertion steps, which the embedder completes by
-    /// appending them to their top-level document's autofocus candidates.
-    pub(crate) autofocus: Vec<NodeId>,
+    /// appending them to their top-level document's autofocus candidates. Each is paired with the
+    /// document it was inserted into (its node document then): a script may adopt it into another
+    /// top-level browsing context's document before the next rendering update, but the candidate
+    /// stays the first one's.
+    pub(crate) autofocus: Vec<(NodeId, NodeId)>,
     /// `<img>` elements with a relevant mutation (HTML "update the image data") since the
     /// embedder last took them: their current request, and so `currentSrc`, changes in the
     /// microtask the mutation queues (`Dom::take_current_src_updates`).
@@ -175,8 +178,9 @@ impl Dom {
     }
 
     /// The elements with `autofocus` inserted into a document since the last call, in
-    /// insertion order (each insertion again; the embedder keeps the last).
-    pub fn take_autofocus_insertions(&mut self) -> Vec<NodeId> {
+    /// insertion order (each insertion again; the embedder keeps the last), each with the document
+    /// it was inserted into.
+    pub fn take_autofocus_insertions(&mut self) -> Vec<(NodeId, NodeId)> {
         std::mem::take(&mut self.resources.autofocus)
     }
 
@@ -417,7 +421,7 @@ impl Dom {
             }
         }
         if self.is_connected_idx(node) && self.is_autofocus_idx(node) {
-            self.resources.autofocus.push(self.id_of(node));
+            self.resources.autofocus.push((self.id_of(node), self.id_of(self.n(node).owner_doc)));
         }
         if meta {
             self.process_viewport_meta(node);
@@ -623,7 +627,7 @@ impl Dom {
         let mut autofocus = Vec::new();
         while i != NIL {
             if track_autofocus && self.is_autofocus_idx(i) {
-                autofocus.push(self.id_of(i));
+                autofocus.push((self.id_of(i), self.id_of(self.n(i).owner_doc)));
             }
             if let Some(k) = self.resource_kind(i) {
                 // Parser-inserted scripts are driven by ParseStep::Script.
@@ -918,10 +922,10 @@ mod language_attribute_tests {
         let mut dom = dom_ref.borrow_mut();
         let id = |dom: &Dom, name: &str| dom.get_element_by_id(doc, name).unwrap().unwrap();
         let (a, b) = (id(&dom, "a"), id(&dom, "b"));
-        assert_eq!(dom.take_autofocus_insertions(), [a, b]);
+        assert_eq!(dom.take_autofocus_insertions(), [(a, doc), (b, doc)]);
         let div = dom.parent(b).unwrap().unwrap();
         dom.append_child(div, a).unwrap();
-        assert_eq!(dom.take_autofocus_insertions(), [a]);
+        assert_eq!(dom.take_autofocus_insertions(), [(a, doc)]);
         assert!(!dom.has_autofocus_insertions());
     }
 

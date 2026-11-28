@@ -80,6 +80,11 @@ pub(crate) fn request_top_level_frames(page: &Rc<PageDom>) {
 /// none in a cross-origin frame or a document without a browsing context.
 fn autofocus_top_page(page: &Rc<PageDom>, el: NodeId) -> Option<Rc<PageDom>> {
     let doc = page.dom.borrow().node_document(el).ok()?;
+    autofocus_top_page_of(page, doc)
+}
+
+/// [`autofocus_top_page`] for the document `doc` itself.
+fn autofocus_top_page_of(page: &Rc<PageDom>, doc: NodeId) -> Option<Rc<PageDom>> {
     let owner = crate::custom::document_page(page, doc)?;
     if !owner.is_nested_frame() {
         return Some(owner);
@@ -106,8 +111,11 @@ pub(crate) fn dialog_processed_autofocus(page: &Rc<PageDom>, dialog: NodeId) {
 /// processed autofocus.
 fn collect_autofocus_candidates(page: &Rc<PageDom>) {
     let inserted = page.dom.borrow_mut().take_autofocus_insertions();
-    for el in inserted {
-        let Some(top) = autofocus_top_page(page, el) else { continue };
+    for (el, inserted_into) in inserted {
+        // The document it was inserted into, as the insertion steps ran there (a script may have
+        // adopted it into another top-level browsing context's document since: it stays this
+        // one's candidate and the flush skips it); none when that document has no page any more.
+        let Some(top) = autofocus_top_page_of(page, inserted_into) else { continue };
         if top.autofocus_processed.get() {
             continue;
         }
@@ -170,6 +178,11 @@ fn autofocus_target(page: &Rc<PageDom>, el: NodeId) -> Option<(Rc<PageDom>, Node
     let doc = page.dom.borrow().node_document(el).ok()?;
     let owner = crate::custom::document_page(page, doc)?;
     if !owner.is_fully_active() {
+        return None;
+    }
+    // HTML "flush autofocus candidates": a candidate whose node document now belongs to another
+    // top-level browsing context's document is skipped (a child frame of this page's is fine).
+    if !Rc::ptr_eq(&owner, page) && !owner.is_nested_frame() {
         return None;
     }
     let target = {
