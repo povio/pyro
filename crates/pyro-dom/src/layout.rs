@@ -993,6 +993,13 @@ impl Layout {
         b.map(|b| LayoutBox::from_external(&b, 0))
     }
 
+    /// Asks the layout engine for `el`'s box as a geometry query does, laying out the contents a
+    /// `content-visibility` ancestor skips that hold it (a query renders them, unpainted): what
+    /// the text of such contents needs before its rect is read.
+    pub fn laid_out_box_for_query(&self, dom: &Dom, el: NodeId) -> bool {
+        self.layout_box(dom, el).is_some()
+    }
+
     /// Changes when DOM/style/viewport/focus/hover or a scroll offset changes.
     pub fn observation_stamp(&self, dom: &Dom) -> ((u64, u64, u32, u32), u64) {
         (self.style.observation_stamp(dom), self.scroll_generation)

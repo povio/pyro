@@ -63,6 +63,14 @@ pub(crate) fn range_rect<'s>(
         }
     };
     if let Some(t) = text {
+        // A text node in the skipped contents of a `content-visibility: hidden` ancestor has no
+        // line box until a query lays them out, as an element's box query does (its parent's here).
+        {
+            let dom = page.dom.borrow();
+            if let Some(parent) = dom.parent_element(t).js()? {
+                let _ = page.layout().laid_out_box_for_query(&dom, parent);
+            }
+        }
         if t == start && start == end {
             if let Some(rect) = page.layout().text_range_rect(&page.dom.borrow(), t, start_offset, end_offset) {
                 return crate::canvas::rect_value(s, page, false, rect.layout_units());
@@ -78,7 +86,10 @@ pub(crate) fn range_rect<'s>(
     // children; empty rects add nothing, none at all is an empty rect).
     if start == end && start_offset < end_offset {
         let dom = page.dom.borrow();
-        if matches!(dom.node_type(start).js()?, pyro_dom::NodeType::Element | pyro_dom::NodeType::DocumentFragment) {
+        if matches!(
+            dom.node_type(start).js()?,
+            pyro_dom::NodeType::Element | pyro_dom::NodeType::DocumentFragment | pyro_dom::NodeType::Document
+        ) {
             let layout = page.layout();
             let children: Vec<NodeId> = dom
                 .children(start)
