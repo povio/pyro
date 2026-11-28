@@ -177,12 +177,14 @@ fn non_default_paint(page: &PageDom, viewport: (f64, f64)) -> bool {
         if !matches!(dom.node_type(id), Ok(NodeType::Element)) {
             continue;
         }
-        // Cheap first: only a box that shows and reaches the viewport is looked at.
-        if !layout.check_visibility(&dom, id, shown) {
-            continue;
-        }
+        // Cheap first: only a box that reaches the viewport is looked at, and only then is its
+        // style read to see whether it shows (a document of tens of thousands of empty inline
+        // boxes, scanned at every frame of an animation, must not resolve a style for each).
         let rect = layout.laid_out_client_rect(&dom, id);
         if !on_screen(rect, (view.width, view.height)) {
+            continue;
+        }
+        if !layout.check_visibility(&dom, id, shown) {
             continue;
         }
         if paints_own_box(&dom, &layout, id) {
