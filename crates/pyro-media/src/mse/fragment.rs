@@ -51,6 +51,7 @@ pub(super) fn parse(data: &[u8], moof: u64, payload: u64, tracks: &BTreeMap<u32,
         let scale = f64::from(info.track.timescale);
         let first = spans.len();
         let mut offset = base;
+        let mut last_delta: Option<u32> = None;
         for item in Boxes(traf) {
             let (kind, b) = item?;
             if kind != b"trun" {
@@ -76,7 +77,16 @@ pub(super) fn parse(data: &[u8], moof: u64, payload: u64, tracks: &BTreeMap<u32,
                 let sf = r.optional(flags, 0x400, if i == 0 { first_flags } else { default_flags })?;
                 let cto = r.optional(flags, 0x800, 0)?;
                 let cto = if version == 1 { i64::from(cto as i32) } else { i64::from(cto) };
-                if length == 0 || delta == 0 {
+                // A zero duration is the usual way a muxer closes a stream whose last frame has no
+                // successor to measure (WPT's test-boxes-video.mp4 ends with one). Chrome's MP4
+                // parser estimates such a frame from the one before it; a first frame has none.
+                let delta = match (delta, last_delta) {
+                    (0, Some(previous)) => previous,
+                    (0, None) => return Err(Error::Unsupported),
+                    (delta, _) => delta,
+                };
+                last_delta = Some(delta);
+                if length == 0 {
                     return Err(Error::Unsupported);
                 }
                 if length as usize > MAX_BOX {
