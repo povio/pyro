@@ -218,8 +218,8 @@ where
     def.getter("Clipboard", |s, w| crate::navigator_extras::member(s, w.page(), "Clipboard"));
     def.getter("Permissions", |s, w| crate::navigator_extras::member(s, w.page(), "Permissions"));
     def.getter("PermissionStatus", |s, w| crate::navigator_extras::member(s, w.page(), "PermissionStatus"));
-    // Keyboard Lock/Map (navigator_extras.js): interface objects are data
-    // properties of the global, made on first read; `Keyboard` is [SecureContext]
+    // Keyboard Lock/Map and the Virtual Keyboard API (navigator_extras.js): interface objects are data
+    // properties of the global, made on first read; `Keyboard` and `VirtualKeyboard` are [SecureContext]
     // (secure_context.rs removes them from an insecure window).
     macro_rules! extras_interface {
         ($($name:literal),+) => {$(
@@ -234,7 +234,7 @@ where
             );
         )+};
     }
-    extras_interface!("Keyboard", "KeyboardLayoutMap");
+    extras_interface!("Keyboard", "KeyboardLayoutMap", "VirtualKeyboard");
     crate::streams::define_globals(def);
     crate::scheduler::define_global(def);
     crate::observable::define_globals(def);
@@ -601,6 +601,7 @@ impl JsClass for Navigator {
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
         // [SecureContext, SameObject]: removed from an insecure window's Navigator (secure_context.rs).
         def.getter("keyboard", |s, p| crate::navigator_extras::member(s, p, "keyboard"));
+        def.getter("virtualKeyboard", |s, p| crate::navigator_extras::member(s, p, "virtualKeyboard"));
         def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
         def.getter("storageBuckets", |s, p| crate::storage_buckets::manager(s, p));
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));

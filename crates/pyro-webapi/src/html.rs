@@ -429,6 +429,8 @@ const INPUT_MODE: EnumAttr = EnumAttr {
     missing: "",
     invalid: "",
 };
+/// `virtualkeyboardpolicy` (Virtual Keyboard API, ElementContentEditable): limited to known values, no default.
+const VIRTUAL_KEYBOARD_POLICY: EnumAttr = EnumAttr { keywords: &["auto", "manual"], missing: "", invalid: "" };
 const ENTER_KEY_HINT: EnumAttr =
     EnumAttr { keywords: &["enter", "done", "go", "next", "previous", "search", "send"], missing: "", invalid: "" };
 const ENCTYPE_KEYWORDS: &[&str] = &["application/x-www-form-urlencoded", "multipart/form-data", "text/plain"];
@@ -1740,6 +1742,7 @@ impl JsClass for HtmlElement {
         reflect_str!(def, "accessKey", "accesskey");
         reflect_enum!(def, "inputMode", "inputmode", INPUT_MODE);
         reflect_enum!(def, "enterKeyHint", "enterkeyhint", ENTER_KEY_HINT);
+        reflect_enum!(def, "virtualKeyboardPolicy", "virtualkeyboardpolicy", VIRTUAL_KEYBOARD_POLICY);
         define_nonce(def);
         // `hidden` is (boolean or unrestricted double or DOMString)?: the
         // "until-found" state reads back as that string.

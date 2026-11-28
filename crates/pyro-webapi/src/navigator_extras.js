@@ -766,8 +766,45 @@
   enumerate(Keyboard);
   tag(Keyboard, 'Keyboard');
 
+  // Virtual Keyboard API (https://w3c.github.io/virtual-keyboard/): there is no on-screen keyboard on a headless
+  // desktop, so (as in headless Chrome) its geometry is the empty rect at the origin and show()/hide() have no keyboard
+  // to move. `overlaysContent` is the page's opt-in; without a keyboard the env(keyboard-inset-*) values stay 0.
+  const virtualData = new WeakMap();
+  class VirtualKeyboard extends EventTargetC {
+    constructor(t) {
+      if (t !== token) throw illegal('VirtualKeyboard');
+      super();
+      ownTag(this, 'VirtualKeyboard');
+      virtualData.set(this, { handler: null, installed: false, overlays: false });
+    }
+    get boundingRect() {
+      if (!virtualData.has(this)) throw new TypeErrorC("Failed to read the 'boundingRect' property from 'VirtualKeyboard': Illegal invocation");
+      return new DOMRect(0, 0, 0, 0);
+    }
+    get overlaysContent() {
+      const d = virtualData.get(this);
+      if (d === undefined) throw new TypeErrorC("Failed to read the 'overlaysContent' property from 'VirtualKeyboard': Illegal invocation");
+      return d.overlays;
+    }
+    set overlaysContent(v) {
+      const d = virtualData.get(this);
+      if (d === undefined) throw new TypeErrorC("Failed to set the 'overlaysContent' property on 'VirtualKeyboard': Illegal invocation");
+      d.overlays = !!v;
+    }
+    show() {
+      if (!virtualData.has(this)) throw illegalOp('show', 'VirtualKeyboard');
+    }
+    hide() {
+      if (!virtualData.has(this)) throw illegalOp('hide', 'VirtualKeyboard');
+    }
+  }
+  defineHandler(VirtualKeyboard, 'geometrychange', virtualData);
+  enumerate(VirtualKeyboard);
+  tag(VirtualKeyboard, 'VirtualKeyboard');
+
   // The navigator's [SameObject] members, made when first read.
   let keyboard = null;
+  let virtualKeyboard = null;
   return {
     geolocation: new Geolocation(token),
     userAgentData: new NavigatorUAData(token),
@@ -776,6 +813,9 @@
     get keyboard() {
       return keyboard ??= new Keyboard(token);
     },
+    get virtualKeyboard() {
+      return virtualKeyboard ??= new VirtualKeyboard(token);
+    },
     ClipboardItem,
     Notification,
     Clipboard,
@@ -783,5 +823,6 @@
     PermissionStatus,
     Keyboard,
     KeyboardLayoutMap,
+    VirtualKeyboard,
   };
 })
