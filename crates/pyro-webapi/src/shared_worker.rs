@@ -396,6 +396,19 @@ impl JsClass for SharedWorker {
                     let start = WorkerStart::new(id, &page, s, url, name, shared.clone()).map(|mut start| {
                         start.control = control;
                         start.shared_worker = true;
+                        // A Document-Isolation-Policy does not apply to a shared worker: it does not start with
+                        // its creator's (a `blob:` one inherits the creator's COEP, which a DIP is not).
+                        let reporting = &mut start.embedder_reporting;
+                        if reporting.dip {
+                            start.embedder_policy = pyro_net::EmbedderPolicy::UnsafeNone;
+                            reporting.report_to = None;
+                            reporting.dip = false;
+                        }
+                        if reporting.report_only_dip {
+                            reporting.report_only = pyro_net::EmbedderPolicy::UnsafeNone;
+                            reporting.report_only_report_to = None;
+                            reporting.report_only_dip = false;
+                        }
                         start.owner_embedder = worker_scope::OwnerEmbedder::of(&page, true);
                         start.module = module;
                         start.credentials = credentials;

@@ -217,6 +217,14 @@ pub fn obtain_embedder(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Url)
     (policy, reporting)
 }
 
+/// [`obtain_embedder`] without the Document-Isolation-Policy headers: a shared worker's script response
+/// has its Cross-Origin-Embedder-Policy (and its report-only twin) alone.
+pub fn obtain_coep(headers: &pyro_net::http::HeaderMap, url: &pyro_net::Url) -> (pyro_net::EmbedderPolicy, pyro_net::EmbedderReporting) {
+    let (policy, report_to) = embedder_policy_field(headers, url, "cross-origin-embedder-policy");
+    let (report_only, report_only_report_to) = embedder_policy_field(headers, url, "cross-origin-embedder-policy-report-only");
+    (policy, pyro_net::EmbedderReporting { report_to, dip: false, report_only, report_only_report_to, report_only_dip: false })
+}
+
 /// The first item of a structured field value that is a bare item (RFC 8941 `sf-item`), when it is
 /// a Token: the text of that token. `None` for a string, byte sequence, number or boolean first
 /// item and for a field that does not parse (malformed parameters included).

@@ -937,6 +937,9 @@ struct MainRequest {
     /// The worker keeps its owner's embedder policy whatever its script's response says (a worker of
     /// a document with a Document-Isolation-Policy shares the document's isolation).
     inherit_embedder: bool,
+    /// A shared worker: a Document-Isolation-Policy applies to documents and dedicated workers, not to it,
+    /// so only the COEP headers of its script response make its embedder policy.
+    coep_only: bool,
     /// The worker is not a secure context: HTML "obtain an embedder policy" gives its script response the
     /// default policy, whatever the response says.
     insecure: bool,
@@ -947,7 +950,8 @@ fn load_main_script(page: &Rc<PageDom>, start: &WorkerStart) -> (Option<String>,
     let main = MainRequest {
         referrer: start.referrer.clone(),
         response_url: RefCell::new(None),
-        inherit_embedder: start.embedder_reporting.dip || start.embedder_reporting.report_only_dip,
+        inherit_embedder: !start.shared_worker && (start.embedder_reporting.dip || start.embedder_reporting.report_only_dip),
+        coep_only: start.shared_worker,
         insecure: !(pyro_net::is_potentially_trustworthy_url(&start.url) && (start.creator_secure || start.shared_worker || start.service.is_some())),
     };
     let script = load_main_bytes(page, start, &main).map(|bytes| script_text(&bytes));
@@ -1376,7 +1380,7 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                             };
                                             let import = referrer_url
                                                 .clone()
-                                                .map(|url| MainRequest { referrer: Some((url, policy)), response_url: RefCell::new(None), inherit_embedder: false, insecure: false });
+                                                .map(|url| MainRequest { referrer: Some((url, policy)), response_url: RefCell::new(None), inherit_embedder: false, coep_only: false, insecure: false });
                                             fetch_script(
                                                 &page,
                                                 &net,
@@ -1522,7 +1526,11 @@ fn fetch_script(
                     // The worker global's embedder policy is its script response's (HTML "run a
                     // worker"); a `data:` script's stays its owner's.
                     if matches!(head.url.scheme(), "http" | "https") && !main_request.is_some_and(|m| m.inherit_embedder || m.insecure) {
-                        let (policy, reporting) = crate::coep_report::obtain_embedder(&head.headers, &head.url);
+                        let (policy, reporting) = if main_request.is_some_and(|m| m.coep_only) {
+                            crate::coep_report::obtain_coep(&head.headers, &head.url)
+                        } else {
+                            crate::coep_report::obtain_embedder(&head.headers, &head.url)
+                        };
                         page.set_embedder_policy(policy);
                         page.set_embedder_reporting(reporting);
                     }
