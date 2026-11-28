@@ -10811,6 +10811,8 @@
   "css/css-grid/grid-item-non-auto-height-stretch-002.html": {"status":"complete","ms":60,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-grid/grid-item-non-auto-height-stretch-003.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-grid/grid-item-non-auto-height-stretch-004.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
+  "css/css-grid/grid-item-percentage-quirk-001.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
+  "css/css-grid/grid-item-percentage-quirk-002.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-grid/grid-items/anonymous-grid-item-001.html": {"status":"complete","ms":110,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-grid/grid-items/anonymous-grid-item-002.html": {"status":"complete","ms":100,"n":1,"fail":[],"h":"0e440bf2"},
   "css/css-grid/grid-items/aspect-ratio-001.html": {"status":"complete","ms":50,"n":1,"fail":[],"h":"0e440bf2"},
