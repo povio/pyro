@@ -93,6 +93,14 @@ fn live_element(page: &PageDom, doc: NodeId, el: NodeId) -> bool {
     dom.node_document(el).ok() == Some(doc) && dom.is_connected(el).unwrap_or(false)
 }
 
+/// [`live_element`] and still being rendered (not in a `display: none` subtree). A text control a
+/// `keydown`, `keypress` or `beforeinput` listener hid takes no more of the user input (Chrome:
+/// the hidden control is no longer an editor, WPT editing/other
+/// edit-in-textcontrol-immediately-after-hidden).
+fn live_rendered_element(page: &PageDom, doc: NodeId, el: NodeId) -> bool {
+    live_element(page, doc, el) && page.layout().is_visible(&page.dom.borrow(), el)
+}
+
 /// The sibling page (an iframe's document sharing this `Dom`) whose document
 /// `el` belongs to, when that is not `page`'s own. A node created by one
 /// document and adopted into a frame's keeps its wrapper's page, so its
@@ -2534,7 +2542,7 @@ fn fire_control_change(page: &Rc<PageDom>, el: NodeId) {
 /// it or removed the document or element; else whether the value changed.
 fn number_step(page: &Rc<PageDom>, el: NodeId, up: bool) -> Option<bool> {
     let doc = page.document();
-    if !fire_input_event(page, el, "beforeinput", "", None, true) || page.document() != doc || !live_element(page, doc, el) {
+    if !fire_input_event(page, el, "beforeinput", "", None, true) || page.document() != doc || !live_rendered_element(page, doc, el) {
         return None;
     }
     Some(step_by_key(page, el, |dom| dom.step_value(el, 1.0, up)))
@@ -2881,7 +2889,7 @@ fn delete(page: &Rc<PageDom>, el: NodeId, input_type: &str, backward: bool) {
     if !fire_input_event(page, el, "beforeinput", input_type, None, true)
         || page.document() != doc
         || !accepts_keyboard(page)
-        || !live_element(page, doc, el)
+        || !live_rendered_element(page, doc, el)
     {
         return;
     }
@@ -2980,7 +2988,7 @@ fn insert_text_at(page: &Rc<PageDom>, el: NodeId, text: &str) {
     if !fire_input_event(page, el, "beforeinput", input_type, data, true)
         || page.document() != doc
         || !accepts_keyboard(page)
-        || !live_element(page, doc, el)
+        || !live_rendered_element(page, doc, el)
     {
         return;
     }

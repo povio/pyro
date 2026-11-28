@@ -1160,6 +1160,20 @@ fn requires_rich_selection(cmd: &str) -> bool {
         )
 }
 
+thread_local! {
+    /// The documents an `execCommand` is running in (see [`exec_command`]).
+    static EXEC_COMMAND_RUNNING: std::cell::RefCell<Vec<NodeId>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Ends [`EXEC_COMMAND_RUNNING`] for a document, also when the command unwinds.
+struct ExecCommandScope(NodeId);
+
+impl Drop for ExecCommandScope {
+    fn drop(&mut self) {
+        EXEC_COMMAND_RUNNING.with(|running| running.borrow_mut().retain(|doc| *doc != self.0));
+    }
+}
+
 /// `document.execCommand(command, showUI, value)`: whether it ran.
 /// `paste` is not available to script (as in Chromium, where reading the
 /// clipboard from the DOM is off for web pages). `copy` and `cut` run as
@@ -1171,6 +1185,14 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
     if doc != page.document() {
         return false;
     }
+    // Recursive calls (from the `input`, `selectionchange`... listeners of a command that is
+    // running) do nothing and return false, as in Chrome (w3c/editing#200; WPT editing/other
+    // recursive-exec-command-calls).
+    if EXEC_COMMAND_RUNNING.with(|running| running.borrow().contains(&doc)) {
+        return false;
+    }
+    EXEC_COMMAND_RUNNING.with(|running| running.borrow_mut().push(doc));
+    let _running = ExecCommandScope(doc);
     match cmd.as_str() {
         "stylewithcss" | "usecss" => {
             let css = value.eq_ignore_ascii_case("false") == (cmd == "usecss");
