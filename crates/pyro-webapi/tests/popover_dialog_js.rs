@@ -526,6 +526,9 @@ fn details_toggle_events_and_exclusive_accordion() {
 #[test]
 fn dialog_close_requests_and_closed_by() {
     let e = env("<body><button id=out>out</button><dialog id=d><p>hi</p></dialog></body>");
+    // (A close request's `cancel` is cancelable only while the window has history-action activation,
+    // which Escape itself is no input for: Chrome fires `cancel false` for a dialog a script opened
+    // and nothing the user did since. A key press before each Escape gives the activation.)
     assert_eq!(
         e.eval(
             "window.log = [];
@@ -537,6 +540,7 @@ fn dialog_close_requests_and_closed_by() {
         ),
         "closerequest,true"
     );
+    e.key("Shift");
     e.key("Escape");
     assert_eq!(e.eval("[d.open, d.matches(':modal'), log.join()].join()"), "false,false,cancel true");
     e.run_tasks();
@@ -544,9 +548,11 @@ fn dialog_close_requests_and_closed_by() {
     assert_eq!(e.eval("[log.join(), document.activeElement === out].join()"), "cancel true,close,true");
     // A canceled cancel keeps it open; closedby=none ignores Escape.
     e.eval("log.length = 0; d.showModal(); d.addEventListener('cancel', ev => ev.preventDefault(), {once: true});");
+    e.key("Shift");
     e.key("Escape");
     assert_eq!(e.eval("d.open"), "true");
     e.eval("d.setAttribute('closedby', 'none')");
+    e.key("Shift");
     e.key("Escape");
     assert_eq!(e.eval("[d.open, d.closedBy].join()"), "true,none");
     // requestClose fires cancel whatever closedby says.
@@ -554,9 +560,11 @@ fn dialog_close_requests_and_closed_by() {
     assert_eq!(e.eval("[d.open, d.returnValue, (d.removeAttribute('closedby'), d.closedBy)].join()"), "false,rv,none");
     // A non-modal dialog listens to Escape only with closedby.
     e.eval("d.show()");
+    e.key("Shift");
     e.key("Escape");
     assert_eq!(e.eval("d.open"), "true");
     e.eval("d.close(); d.closedBy = 'ANY'; d.show()");
+    e.key("Shift");
     e.key("Escape");
     assert_eq!(e.eval("[d.open, d.closedBy].join()"), "false,any");
     e.page.dispose();
