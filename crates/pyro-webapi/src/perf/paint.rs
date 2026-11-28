@@ -87,8 +87,10 @@ pub fn on_frame(page: &Rc<PageDom>, frame: &FrameInfo) {
     }
     if contentful {
         report("first-contentful-paint");
-    } else if scan.waiting {
-        // A CSS image or poster is on its way and nothing in the document will say so.
+    } else if scan.waiting && scan::stale(page) {
+        // A CSS image or poster is on its way and nothing in the document will say so (for as
+        // long as the scan's budget of walks lasts: a load that never reports, a poster the
+        // loader fails, must not keep frames coming for ever, as `element` and `lcp` do not).
         request_rendering(page);
     }
 }
