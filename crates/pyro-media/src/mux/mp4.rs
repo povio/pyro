@@ -1,10 +1,9 @@
 //! A fragmented MP4 writer (ISO/IEC 14496-12 movie fragments): at most one H.264 video track (`avcC`
 //! of ISO/IEC 14496-15) and one Opus audio track (`dOps` of "Encapsulation of Opus in ISO Base Media").
-//! The first [`FragmentWriter::flush`] that has samples returns `ftyp` + `moov` (no samples, `mvex`
-//! announces the fragments) followed by one `moof` + `mdat`; every later flush returns one more
-//! fragment, so the concatenation of all flushes is one playable file and each flush is a
-//! MediaRecorder `dataavailable` chunk. Nothing is written for a flush without samples, so an
-//! immediate `requestData()` yields an empty blob.
+//! The first [`FragmentWriter::flush`] that has samples returns the initialization segment (`ftyp` +
+//! `moov`: no samples, `mvex` announces the fragments) and then one `moof` + `mdat`; every later flush
+//! returns one more fragment, so the concatenation of everything returned is one playable file. A
+//! flush without samples returns nothing, so an immediate `requestData()` yields an empty blob.
 
 /// What a track carries.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -104,10 +103,11 @@ impl FragmentWriter {
         self.tracks[track].samples.push(sample);
     }
 
-    /// The bytes of everything pushed since the last flush: empty when there are no samples, or while a
-    /// declared track still lacks its configuration (unless `last`: a track that never produced
-    /// anything is then left out of the file).
-    pub fn flush(&mut self, last: bool) -> Vec<u8> {
+    /// The pieces of file written for everything pushed since the last flush: [initialization segment
+    /// (the first time)], fragment. Empty when there are no samples, or while a declared track still
+    /// lacks its configuration (unless `last`: a track that never produced anything is then left out of
+    /// the file).
+    pub fn flush(&mut self, last: bool) -> Vec<Vec<u8>> {
         if self.tracks.iter().any(|t| t.config.is_none()) {
             if !last {
                 return Vec::new();
@@ -117,14 +117,18 @@ impl FragmentWriter {
         if self.tracks.iter().all(|t| t.samples.is_empty()) {
             return Vec::new();
         }
-        let mut out = Vec::new();
+        let mut parts = Vec::new();
         if !self.started {
             self.started = true;
-            write_init(&mut out, &self.tracks);
+            let mut init = Vec::new();
+            write_init(&mut init, &self.tracks);
+            parts.push(init);
         }
         self.sequence += 1;
-        write_fragment(&mut out, &mut self.tracks, self.sequence);
-        out
+        let mut fragment = Vec::new();
+        write_fragment(&mut fragment, &mut self.tracks, self.sequence);
+        parts.push(fragment);
+        parts
     }
 }
 
@@ -409,7 +413,9 @@ mod tests {
         w.set_config(a, head());
         w.push(a, Sample { data: vec![2; 5], time_us: 0, duration_us: 20_000, key: true });
         w.push(a, Sample { data: vec![3; 6], time_us: 20_000, duration_us: 20_000, key: true });
-        let first = w.flush(false);
+        let pieces = w.flush(false);
+        assert_eq!(pieces.len(), 2, "initialization segment, then the fragment");
+        let first = pieces.concat();
         let top = boxes(&first);
         let kinds: Vec<_> = top.iter().map(|b| &b.0).collect();
         assert_eq!(kinds, [b"ftyp", b"moov", b"moof", b"mdat"]);
@@ -424,7 +430,7 @@ mod tests {
         let offset = u32::from_be_bytes(second_trun[8..12].try_into().unwrap()) as usize;
         assert_eq!(first[moof_at + offset], 2, "audio data follows the video data");
         w.push(v, Sample { data: vec![4; 3], time_us: 50_000, duration_us: 50_000, key: false });
-        let next = w.flush(false);
+        let next = w.flush(false).concat();
         let kinds: Vec<_> = boxes(&next).iter().map(|b| b.0).collect();
         assert_eq!(kinds, [*b"moof", *b"mdat"]);
         assert!(w.flush(true).is_empty());
@@ -438,7 +444,7 @@ mod tests {
         w.set_config(a, head());
         w.push(a, Sample { data: vec![9; 4], time_us: 0, duration_us: 20_000, key: true });
         assert!(w.flush(false).is_empty());
-        let file = w.flush(true);
+        let file = w.flush(true).concat();
         let moov = boxes(&file).into_iter().find(|b| &b.0 == b"moov").unwrap().1;
         assert_eq!(boxes(moov).iter().filter(|b| &b.0 == b"trak").count(), 1);
     }

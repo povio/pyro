@@ -146,7 +146,8 @@ fn encoding_error(e: String) -> JsError {
 /// `options.audio` (or null): `{rate, channels, bitrate}`. Returns the session function:
 ///   `s('video', rgba, timeUs, forceKey)`  one picture of the session's size,
 ///   `s('audio', float32Interleaved, timeUs)`  samples, contiguous with the previous call,
-///   `s('flush', last)`  the file bytes since the last flush as a Uint8Array (maybe empty),
+///   `s('flush', last)`  the file pieces since the last flush: an array of Uint8Arrays (initialization
+///   segment the first time, then the fragment; empty when there is nothing),
 ///   `s('codec')`  the video codec string once known, `s('close')`.
 /// Throws NotSupportedError when an encoder cannot take the configuration.
 fn create<'s>(s: &Scope<'s>, options: Value<'s>) -> JsResult<Value<'s>> {
@@ -247,7 +248,9 @@ fn create<'s>(s: &Scope<'s>, options: Value<'s>) -> JsResult<Value<'s>> {
                         }
                     }
                 }
-                crate::encoding::uint8_array(s, &session.mux.flush(last))
+                let parts = session.mux.flush(last);
+                let items = parts.iter().map(|p| crate::encoding::uint8_array(s, p)).collect::<JsResult<Vec<_>>>()?;
+                Ok(s.array(&items)?.value())
             }
             "codec" => Ok(s.string(session.video.as_ref().map_or("", |v| v.codec.as_str()))),
             _ => Err(JsError::Type("Unknown recorder session operation".into())),

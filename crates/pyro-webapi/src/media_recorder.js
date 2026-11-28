@@ -63,9 +63,8 @@
   };
   const handlerState = new WeakMap();
   const handler = (cls, type, check) => {
-    O.defineProperty(cls.prototype, 'on' + type, {
-      configurable: true,
-      enumerable: true,
+    const name = 'on' + type;
+    const accessors = {
       get() {
         check(this);
         const h = handlerState.get(this);
@@ -87,7 +86,10 @@
           });
         }
       },
-    });
+    };
+    O.defineProperty(accessors.get, 'name', { value: 'get ' + name });
+    O.defineProperty(accessors.set, 'name', { value: 'set ' + name });
+    O.defineProperty(cls.prototype, name, { configurable: true, enumerable: true, get: accessors.get, set: accessors.set });
   };
 
   // ---- Types ----------------------------------------------------------------------------------
@@ -215,23 +217,35 @@
   const fire = (st, event) => {
     if (isActive()) native.dispatchTrusted(st.object, event);
   };
-  const fireBlob = (st, blobBytes, mime, firstUs) => {
-    // The timecode is relative to the first chunk this recorder produced.
-    if (blobBytes && st.originUs === null) st.originUs = firstUs;
-    // (Never going back: the audio and the pictures of a chunk are stamped by different clocks' reads.)
-    const timecode = blobBytes ? MathC.max(st.lastTimecode, (firstUs - st.originUs) / 1000) : st.lastTimecode;
+  // `parts`: the pieces of file of the chunk (null: an empty Blob). The timecode is the time of the chunk's
+  // first sample on the recording clock, and 0 for the first chunk (the initialization segment).
+  const fireBlob = (st, parts, mime, firstUs) => {
+    let timecode = st.lastTimecode;
+    if (parts) {
+      timecode = st.sent ? MathC.max(st.lastTimecode, firstUs / 1000) : 0;
+      st.sent = true;
+    }
     st.lastTimecode = timecode;
-    const data = new BlobC(blobBytes ? [blobBytes] : [], { type: mime });
+    const data = new BlobC(parts || [], { type: mime });
     fire(st, new BlobEvent('dataavailable', { data, timecode }));
   };
 
-  // Takes the session's pending chunk: [bytes, firstUs] or null when nothing is ready.
+  // Takes the session's pending chunk: [pieces, firstUs] or null when nothing is ready. The initialization
+  // segment goes out alone first (the first fragment waits for the next chunk), so that a Blob timeline
+  // starts with a small header chunk, as a browser's recorder gives.
   const takeChunk = (s, last) => {
-    const bytes = s.handle('flush', last);
-    if (!bytes.length) return null;
+    const pieces = s.held.concat(Array.from(s.handle('flush', last)));
+    s.held = [];
+    if (!pieces.length) return null;
+    if (!s.headerSent && !last && pieces.length > 1) {
+      s.headerSent = true;
+      s.held = pieces.slice(1);
+      return [pieces.slice(0, 1), 0];
+    }
+    s.headerSent = true;
     const firstUs = s.chunkFirstUs;
     s.chunkFirstUs = null;
-    return [bytes, firstUs === null ? 0 : firstUs];
+    return [pieces, firstUs === null ? 0 : firstUs];
   };
 
   // Ends a session (stop(), all tracks ended, a track-set change or an error): the recorder is inactive
@@ -358,7 +372,9 @@
     const rate = s.audioRate;
     // The samples the media clock owes, at most a second of them at a time; the first pull is 40 ms so
     // that the first packets exist when `start` is fired (a requestData() then has data).
-    const owed = MathC.max(MathC.round((clockUs * rate) / 1000000) - s.audioFrames, s.audioFrames === 0 ? MathC.ceil(rate / 25) : 0);
+    // The audio timeline starts when its first samples are taken (not at the recorder's clock zero).
+    if (s.audioFrames === 0) s.audioBase = MathC.round(clockUs);
+    const owed = MathC.max(MathC.round(((clockUs - s.audioBase) * rate) / 1000000) - s.audioFrames, s.audioFrames === 0 ? MathC.ceil(rate / 25) : 0);
     if (owed < 1) return;
     const count = MathC.min(owed, rate);
     let blocks = null;
@@ -377,7 +393,8 @@
         for (let i = 0; i < count; i++) out[i * n + c] = block[i];
       }
     }
-    const at = MathC.floor((s.audioFrames * 1000000) / rate);
+    // (Exactly the encoder's own count of the time the samples so far span: it restarts on any other value.)
+    const at = s.audioBase + MathC.floor((s.audioFrames * 1000000) / rate);
     if (s.chunkFirstUs === null) s.chunkFirstUs = at;
     s.audioFrames += count;
     s.handle('audio', out, at);
@@ -463,7 +480,7 @@
       recorders.set(this, {
         object: this, stream, mimeType, state: 'inactive', session: null, totalBps, keyMs, keyCount, mode,
         audioBitsPerSecond, videoBitsPerSecond, parsed: mimeType === '' ? null : parseType(mimeType),
-        originUs: null, lastTimecode: 0,
+        sent: false, lastTimecode: 0,
       });
     }
     get stream() { return recOf(this, 'stream').stream; }
@@ -493,7 +510,8 @@
       if (st.totalBps !== undefined) {
         // A total goes to the tracks there are.
         if (!videoTrack) {
-          audioBps = st.totalBps;
+          // (Opus takes up to 510 kbit/s a channel.)
+          audioBps = MathC.min(st.totalBps, 510000);
           videoBps = 0;
         } else if (!audioTrack) {
           videoBps = st.totalBps;
@@ -540,10 +558,10 @@
       }
       const s = {
         recorder: this, handle, mime: st.mimeType, tracks: getTracksOf.call(st.stream),
-        videoTrack, audioTrack, width, height, audioRate, audioChannels, audioFrames: 0,
+        videoTrack, audioTrack, width, height, audioRate, audioChannels, audioFrames: 0, audioBase: 0,
         pictureUs: 1000000 / (fps || 20), nextPicture: 0, videoBusy: false, inflight: 0, deliver: null,
         timer: 0, t0: perfNow(), pausedTotal: 0, pausedAt: 0, timeslice: slice, sliceAt: 0,
-        chunkFirstUs: null, announce: null, waiters: [], closed: false, ctx: null,
+        chunkFirstUs: null, held: [], headerSent: false, announce: null, waiters: [], closed: false, ctx: null,
         period: audioTrack ? 20 : MathC.max(5, MathC.floor(1000 / (fps || 20))),
       };
       if (videoTrack) {
@@ -551,9 +569,11 @@
         s.ctx = canvas.getContext('2d', { willReadFrequently: true });
       }
       if (slice !== undefined) s.sliceAt = perfNow() + slice;
-      // Timecodes count from the first chunk of this recording (its clock starts at 0).
-      st.originUs = null;
+      st.sent = false;
       st.lastTimecode = 0;
+      // The bitrates the recorder now records at (what a total goes to depends on the tracks there are).
+      st.audioBitsPerSecond = audioBps;
+      st.videoBitsPerSecond = videoBps;
       st.session = s;
       st.state = 'recording';
       s.mime = st.mimeType === '' ? defaultType(videoTrack ? 'avc1.42c01e' : '', !!audioTrack) : st.mimeType;
