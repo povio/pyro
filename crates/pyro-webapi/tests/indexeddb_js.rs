@@ -1124,7 +1124,8 @@ fn upgrade_lifecycle_and_exception_order() {
 #[test]
 fn crypto_keys_are_stored_and_read_back_as_usable_keys() {
     let env = Env::new();
-    let a = env.doc("http://idb.test/keys");
+    // (`crypto.subtle` is [SecureContext]: absent over http, as in Chrome.)
+    let a = env.doc("https://idb.test/keys");
     a.eval(HELPERS);
     let got = env.run(
         &a,

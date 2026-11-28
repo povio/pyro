@@ -173,7 +173,9 @@ fn wire_format_carries_errors_dom_exceptions_and_files() {
 
 #[test]
 fn wire_format_carries_crypto_keys_but_not_untransferred_ports() {
-    let env = env();
+    // (`crypto.subtle` is [SecureContext]: absent over http, as in Chrome.)
+    let env = Env::new("https://messaging.test/");
+    env.realm.set_exception_reporter(Some(pyro_webapi::lifecycle::report_exception));
     env.eval(
         r#"globalThis.out = null;
           const tx = new BroadcastChannel('keys'), rx = new BroadcastChannel('keys');
