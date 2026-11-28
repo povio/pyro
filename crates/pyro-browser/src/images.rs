@@ -1200,9 +1200,7 @@ impl Browser {
             if !(all || parent.is_some_and(|p| pyro_webapi::intersection_observer::lazy_load_intersects(&p, owner))) {
                 continue;
             }
-            host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
-            host.lazy_approved.borrow_mut().push(key);
-            host.queue_attributes(key, frame.loader_id.clone());
+            host.approve_lazy_frame(key, frame.loader_id.clone());
             started.frames.push(key);
         }
         started

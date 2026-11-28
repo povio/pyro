@@ -289,8 +289,10 @@ pub(crate) struct FrameHost {
     /// Access API: a frame's own same-origin navigation), with the origin it keeps it for:
     /// `bindings::create` hands the grant to the document that loader commits, if it is of that origin.
     pub(crate) storage_access_carry: RefCell<std::collections::HashMap<String, String>>,
-    /// Lazy iframes the check let go: their next attribute processing navigates.
-    pub(crate) lazy_approved: RefCell<Vec<FrameKey>>,
+    /// Lazy iframes the check let go, with the ordinal of the attribute processing queued for the
+    /// approval: that processing navigates (one queued earlier, by an attribute change, only
+    /// refreshes the request).
+    pub(crate) lazy_approved: RefCell<Vec<(FrameKey, u64)>>,
     /// The request each deferred lazy iframe fixed when its attributes were processed.
     pub(crate) lazy_requests: RefCell<Vec<(FrameKey, LazyFrameRequest)>>,
     /// Some document of this page was made with `media-playback-while-not-visible` disabled by its
@@ -1175,6 +1177,16 @@ impl FrameHost {
             stack.extend(children);
         }
         out
+    }
+    /// The lazy load check let the deferred iframe go: a queued attribute processing navigates it.
+    pub(crate) fn approve_lazy_frame(&self, key: FrameKey, loader: LoaderId) {
+        self.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
+        self.queue_attributes(key, loader);
+        let ordinal = key
+            .child
+            .and_then(|id| self.children.borrow().get(&id).map(|c| c.nav.attributes_queued.get()))
+            .unwrap_or(0);
+        self.lazy_approved.borrow_mut().push((key, ordinal));
     }
     pub fn queue_attributes(&self, key: FrameKey, loader: LoaderId) {
         let Some(id) = key.child else { return };
@@ -2655,11 +2667,18 @@ impl Browser {
         // `resume_lazy_frames`: it navigates to the request it fixed, not to the live attributes.
         let take_request = |host: &FrameHost| {
             let mut approved = host.lazy_approved.borrow_mut();
-            let i = approved.iter().position(|k| *k == key)?;
+            let i = approved.iter().position(|(k, _)| *k == key)?;
             approved.remove(i);
             let mut requests = host.lazy_requests.borrow_mut();
             let request = requests.iter().position(|(k, _)| *k == key).map(|i| requests.remove(i).1);
             Some(request)
+        };
+        // The approval's own processing is the one queued for it; one queued before it (a `src`
+        // set since) is a new processing that fixes a new request, which the approval's
+        // processing then navigates to.
+        let approval_pending = {
+            let run = self.doc(key).map_or(u64::MAX, |d| d.nav.attributes_run.get());
+            host.lazy_approved.borrow().iter().any(|(k, ordinal)| *k == key && run < *ordinal)
         };
         if !lazy {
             return Some(take_request(&**host).flatten());
@@ -2669,8 +2688,10 @@ impl Browser {
         if cancelled {
             return None;
         }
-        if let Some(request) = take_request(&**host) {
-            return Some(request);
+        if !approval_pending {
+            if let Some(request) = take_request(&**host) {
+                return Some(request);
+            }
         }
         // The request is made now (HTML "process the iframe attributes"): its URL against the
         // base URL of now, the container's referrer policy of now. A later `<base href>` or
@@ -2688,6 +2709,9 @@ impl Browser {
             if let Some(request) = request {
                 requests.push((key, request));
             }
+        }
+        if approval_pending {
+            return None;
         }
         {
             let mut pending = host.lazy_frames.borrow_mut();
@@ -2720,7 +2744,7 @@ impl Browser {
             return;
         }
         host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
-        host.lazy_approved.borrow_mut().retain(|k| *k != key);
+        host.lazy_approved.borrow_mut().retain(|(k, _)| *k != key);
         host.lazy_requests.borrow_mut().retain(|(k, _)| *k != key);
         // A script navigation cancels the processings queued when it was asked for (not one a
         // `src` set since queued: WPT iframe-loading-lazy-nav-location-replace-set-src). Tasks
@@ -2777,10 +2801,8 @@ impl Browser {
                 }
                 continue;
             }
-            host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
-            host.lazy_approved.borrow_mut().push(key);
             // In a task, as the attribute processing it resumes.
-            host.queue_attributes(key, frame.loader_id.clone());
+            host.approve_lazy_frame(key, frame.loader_id.clone());
         }
     }
 
