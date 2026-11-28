@@ -444,6 +444,14 @@ pub(crate) fn member<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsRes
     extras.get(name)
 }
 
+/// Interface `name` of this realm's extras as the window's global: the first read makes the accessor
+/// a plain data property, as an interface object is (WebIDL "interface object" property attributes).
+pub(crate) fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'s>> {
+    let value = member(s, page, name)?;
+    crate::lazy_module::replace(s, page, name, value)?;
+    Ok(value)
+}
+
 fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     let native = s.object();
     native.set_atom("worker", s.boolean(crate::worker_scope::is_worker(s)))?;

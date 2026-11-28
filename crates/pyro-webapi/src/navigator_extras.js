@@ -350,44 +350,105 @@
 
   // No location source of its own: without a granted permission the request
   // fails as a declined prompt would, without an override as unavailable.
+  // WebIDL attributes are enumerable accessors on the prototype (getter named
+  // `get <name>`), read from the instance's slot; a foreign receiver throws.
+  const slotOf = (map, self) => {
+    const d = map.get(self);
+    if (d === undefined) throw new TypeErrorC('Illegal invocation');
+    return d;
+  };
+  const attribute = (C, map, name, read) => {
+    const d = O.getOwnPropertyDescriptor({ get [name]() { return read(slotOf(map, this)); } }, name);
+    d.enumerable = true;
+    defineProperty(C.prototype, name, d);
+  };
+  const operation = (C, name) => {
+    const d = O.getOwnPropertyDescriptor(C.prototype, name);
+    d.enumerable = true;
+    defineProperty(C.prototype, name, d);
+  };
+  const coordinateKeys = ['accuracy', 'latitude', 'longitude', 'altitude', 'altitudeAccuracy', 'heading', 'speed'];
+  const coordinatesData = new WeakMap();
   class GeolocationCoordinates {
     constructor(t, c) {
       if (t !== token) throw illegal('GeolocationCoordinates');
-      for (const k of ['latitude', 'longitude', 'accuracy', 'altitude', 'altitudeAccuracy', 'heading', 'speed']) {
-        defineProperty(this, k, { value: c[k], enumerable: true });
-      }
+      coordinatesData.set(this, c);
+    }
+    // [Default] toJSON: the attributes as a plain object.
+    toJSON() {
+      const c = slotOf(coordinatesData, this);
+      const out = {};
+      for (const k of coordinateKeys) out[k] = c[k];
+      return out;
     }
   }
+  for (const k of coordinateKeys) attribute(GeolocationCoordinates, coordinatesData, k, (c) => c[k]);
+  operation(GeolocationCoordinates, 'toJSON');
   tag(GeolocationCoordinates, 'GeolocationCoordinates');
+  const positionData = new WeakMap();
   class GeolocationPosition {
     constructor(t, coords) {
       if (t !== token) throw illegal('GeolocationPosition');
-      defineProperty(this, 'coords', { value: coords, enumerable: true });
-      defineProperty(this, 'timestamp', { value: DateC.now(), enumerable: true });
+      positionData.set(this, { coords, timestamp: DateC.now() });
+    }
+    toJSON() {
+      const p = slotOf(positionData, this);
+      return { coords: p.coords.toJSON(), timestamp: p.timestamp };
     }
   }
+  attribute(GeolocationPosition, positionData, 'coords', (p) => p.coords);
+  attribute(GeolocationPosition, positionData, 'timestamp', (p) => p.timestamp);
+  operation(GeolocationPosition, 'toJSON');
   tag(GeolocationPosition, 'GeolocationPosition');
+  const errorData = new WeakMap();
   class GeolocationPositionError {
     constructor(t, code, message) {
       if (t !== token) throw illegal('GeolocationPositionError');
-      defineProperty(this, 'code', { value: code, enumerable: true });
-      defineProperty(this, 'message', { value: message, enumerable: true });
+      errorData.set(this, { code, message });
     }
   }
+  attribute(GeolocationPositionError, errorData, 'code', (e) => e.code);
+  attribute(GeolocationPositionError, errorData, 'message', (e) => e.message);
   for (const [i, name] of ['PERMISSION_DENIED', 'POSITION_UNAVAILABLE', 'TIMEOUT'].entries()) {
     defineProperty(GeolocationPositionError, name, { value: i + 1, enumerable: true });
     defineProperty(GeolocationPositionError.prototype, name, { value: i + 1, enumerable: true });
   }
   tag(GeolocationPositionError, 'GeolocationPositionError');
+  // WebIDL `[Clamp] unsigned long`: NaN is 0, the value is clamped to
+  // 0..2^32-1 and rounded to the nearest integer, ties to even.
+  const clampUnsignedLong = (value) => {
+    const x = Number(value);
+    if (x !== x || x <= 0) return 0;
+    if (x >= 4294967295) return 4294967295;
+    const r = Math.round(x);
+    return x % 1 === 0.5 && r % 2 === 1 ? r - 1 : r;
+  };
   class Geolocation {
     #next = 1;
     #watches = new Set();
     constructor(t) {
       if (t !== token) throw illegal('Geolocation');
     }
-    #request(success, error, stillWanted) {
-      if (typeof success !== 'function') {
-        throw new TypeErrorC("Failed to execute 'getCurrentPosition' on 'Geolocation': parameter 1 is not a function.");
+    // Arguments are converted as WebIDL does, in order, before anything is
+    // reported: a bad one throws a TypeError from the call itself.
+    #request(method, count, success, error, options, stillWanted) {
+      const where = `Failed to execute '${method}' on 'Geolocation'`;
+      if (count === 0) throw new TypeErrorC(`${where}: 1 argument required, but only 0 present.`);
+      if (typeof success !== 'function') throw new TypeErrorC(`${where}: parameter 1 is not of type 'Function'.`);
+      if (error !== undefined && error !== null && typeof error !== 'function') {
+        throw new TypeErrorC(`${where}: parameter 2 is not of type 'Function'.`);
+      }
+      if (options !== undefined && options !== null && typeof options !== 'object' && typeof options !== 'function') {
+        throw new TypeErrorC(`${where}: parameter 3 ('options') is not an object.`);
+      }
+      // PositionOptions members are read in lexicographic order; only `timeout` changes the outcome here
+      // (enableHighAccuracy and maximumAge: there is one source and no cache of positions).
+      let timeout = 4294967295;
+      if (options !== undefined && options !== null) {
+        void options.enableHighAccuracy;
+        void options.maximumAge;
+        const limit = options.timeout;
+        if (limit !== undefined) timeout = clampUnsignedLong(limit);
       }
       // Permissions Policy `geolocation`: asked (and a refusal reported) in the call, where the caller is on the stack.
       const policyAllows = native.policy('geolocation');
@@ -398,26 +459,42 @@
         };
         if (!policyAllows) return fail(1, 'Geolocation has been disabled in this document by permissions policy.');
         if (native.permissionState('geolocation') !== 'granted') return fail(1, 'User denied Geolocation');
+        // Request a position (Geolocation API): a timeout of 0 has run out before any position can be
+        // acquired, and nothing is cached to satisfy it.
+        if (timeout === 0) return fail(3, 'Timeout expired');
         const position = native.geolocationPosition();
         if (position === null) return fail(2, 'Position update is unavailable');
         success(new GeolocationPosition(token, new GeolocationCoordinates(token, position)));
       });
     }
-    getCurrentPosition(success, error) {
-      this.#request(success, error, () => true);
+    getCurrentPosition(success, error = undefined, options = undefined) {
+      this.#request('getCurrentPosition', arguments.length, success, error, options, () => true);
     }
     // One report per watch: an override changing later does not call back.
-    watchPosition(success, error) {
-      const id = this.#next++;
-      this.#watches.add(id);
-      this.#request(success, error, () => this.#watches.has(id));
+    watchPosition(success, error = undefined, options = undefined) {
+      const watches = this.#watches;
+      const id = this.#next;
+      this.#request('watchPosition', arguments.length, success, error, options, () => watches.has(id));
+      // The id is taken only once the arguments were accepted.
+      this.#next++;
+      watches.add(id);
       return id;
     }
     clearWatch(id) {
-      this.#watches.delete(id);
+      if (arguments.length === 0) {
+        throw new TypeErrorC("Failed to execute 'clearWatch' on 'Geolocation': 1 argument required, but only 0 present.");
+      }
+      this.#watches.delete(id | 0);
     }
   }
+  operation(Geolocation, 'getCurrentPosition');
+  operation(Geolocation, 'watchPosition');
+  operation(Geolocation, 'clearWatch');
   tag(Geolocation, 'Geolocation');
+  // None of the four has a constructor (WebIDL: the interface object's length is 0, the token argument is ours).
+  for (const C of [Geolocation, GeolocationPosition, GeolocationCoordinates, GeolocationPositionError]) {
+    defineProperty(C, 'length', { value: 0, configurable: true });
+  }
 
   // Notification (non-persistent). Nothing is displayed: a notification of
   // a document whose 'notifications' permission is granted reports 'show'
@@ -819,6 +896,10 @@
   let virtualKeyboard = null;
   return {
     geolocation: new Geolocation(token),
+    Geolocation,
+    GeolocationPosition,
+    GeolocationCoordinates,
+    GeolocationPositionError,
     userAgentData: new NavigatorUAData(token),
     permissions: new Permissions(token),
     clipboard: new Clipboard(token),

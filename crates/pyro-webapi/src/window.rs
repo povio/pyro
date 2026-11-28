@@ -233,6 +233,27 @@ where
         )+};
     }
     extras_interface!("Keyboard", "KeyboardLayoutMap", "VirtualKeyboard", "Permissions", "PermissionStatus");
+    // Geolocation interfaces: data properties once read. GeolocationPosition and GeolocationCoordinates are
+    // [SecureContext]; the other two are exposed everywhere.
+    macro_rules! geolocation_global {
+        ($name:literal, $secure:expr) => {
+            def.global_value_accessor(
+                $name,
+                |s, w| {
+                    let page = crate::window::WindowHost::page(w);
+                    if $secure && !crate::secure_context::secure(s, page) {
+                        return Ok(s.undefined());
+                    }
+                    crate::navigator_extras::global(s, page, $name)
+                },
+                |s, w, value| crate::lazy_module::replace(s, crate::window::WindowHost::page(w), $name, value),
+            );
+        };
+    }
+    geolocation_global!("Geolocation", false);
+    geolocation_global!("GeolocationPositionError", false);
+    geolocation_global!("GeolocationPosition", true);
+    geolocation_global!("GeolocationCoordinates", true);
     crate::streams::define_globals(def);
     crate::scheduler::define_global(def);
     crate::observable::define_globals(def);
