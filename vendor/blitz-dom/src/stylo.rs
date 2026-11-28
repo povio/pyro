@@ -704,33 +704,44 @@ impl crate::document::BaseDocument {
     /// no rule applies to the pseudo-element on the element or any ancestor (the plain
     /// originating-element inheritance stands then).
     fn inherited_highlight_style(&self, node_id: NodeId, pseudo: &style::selector_parser::PseudoElement) -> Option<Arc<ComputedValues>> {
-        let node = self.nodes.get(node_id)?;
+        self.inherited_highlight_entry(node_id, pseudo).0
+    }
+
+    /// [`Self::inherited_highlight_style`] and whether a highlight rule of this element or of an
+    /// ancestor sets `color` (so a child highlight inherits that value; without one the colour is
+    /// the initial `currentcolor` of highlights, which each element resolves against its own colour:
+    /// WPT css-pseudo `highlight-currentcolor-root-implicit-default-001`).
+    fn inherited_highlight_entry(&self, node_id: NodeId, pseudo: &style::selector_parser::PseudoElement) -> (Option<Arc<ComputedValues>>, bool) {
+        let Some(node) = self.nodes.get(node_id) else { return (None, false) };
         if !node.is_element() || !node.flags.is_in_document() {
-            return None;
+            return (None, false);
         }
         // No rule for the pseudo-element in any sheet that applies here and no shadow sheet in the
         // document (whose `::slotted()`/`::part()` rules a light-tree ancestor chain can miss):
         // neither this element nor an ancestor has a highlight style, and the walk is skipped.
         if self.shadow_sheet_hosts.is_empty() && !self.stylist.may_have_rules_for_pseudo(node, pseudo) {
-            return None;
+            return (None, false);
         }
         let generation = self.stylesheet_generation;
-        if let Some((known, style)) = self.highlight_style_cache.borrow().get(&(node_id, pseudo.clone())) {
+        if let Some((known, style, explicit)) = self.highlight_style_cache.borrow().get(&(node_id, pseudo.clone())) {
             if *known == generation {
-                return style.clone();
+                return (style.clone(), *explicit);
             }
         }
-        let style = self.compute_inherited_highlight_style(node_id, node, pseudo);
-        self.highlight_style_cache.borrow_mut().insert((node_id, pseudo.clone()), (generation, style.clone()));
-        style
+        let (style, explicit) = self.compute_inherited_highlight_style(node_id, node, pseudo);
+        self.highlight_style_cache.borrow_mut().insert((node_id, pseudo.clone()), (generation, style.clone(), explicit));
+        (style, explicit)
     }
 
-    fn compute_inherited_highlight_style(&self, node_id: NodeId, node: &Node, pseudo: &style::selector_parser::PseudoElement) -> Option<Arc<ComputedValues>> {
-        let parent = node.parent.filter(|&p| self.nodes.get(p).is_some_and(|p| p.is_element()))
-            .and_then(|p| crate::util::ensure_stack(|| self.inherited_highlight_style(p, pseudo)));
+    fn compute_inherited_highlight_style(&self, node_id: NodeId, node: &Node, pseudo: &style::selector_parser::PseudoElement) -> (Option<Arc<ComputedValues>>, bool) {
+        let (parent, parent_explicit) = node.parent.filter(|&p| self.nodes.get(p).is_some_and(|p| p.is_element()))
+            .map_or((None, false), |p| crate::util::ensure_stack(|| self.inherited_highlight_entry(p, pseudo)));
         let primary = match node.try_stylo_element_data().and_then(|d| d.get()).and_then(|d| d.styles.get_primary().cloned()) {
             Some(primary) => primary,
-            None => self.resolve_undisplayed_styles(node_id, None)?.primary().clone(),
+            None => match self.resolve_undisplayed_styles(node_id, None) {
+                Some(styles) => styles.primary().clone(),
+                None => return (None, false),
+            },
         };
         let _layout_thread_scope = LayoutThreadScope::enter();
         let guard = &self.guard;
@@ -762,13 +773,18 @@ impl crate::document::BaseDocument {
             let mut composite = (*primary).clone();
             let text = composite.mutate_inherited_text();
             let from = parent.get_inherited_text();
-            text.copy_color_from(from);
+            // The colour is inherited only where a highlight rule set it: otherwise it is `currentcolor`.
+            if parent_explicit {
+                text.copy_color_from(from);
+            }
             text.copy_text_shadow_from(from);
             text.copy_text_underline_offset_from(from);
             text.copy_text_underline_position_from(from);
             composite
         };
-        match (lazy, parent) {
+        let own_color = lazy.as_ref().is_some_and(|style| Self::rules_set_color(style, &guards));
+        let explicit = parent_explicit || own_color;
+        let result = match (lazy, parent) {
             // Nothing along the chain: the plain originating-element inheritance (the caller's) stands.
             (None, None) => None,
             (Some(style), None) => Some(style),
@@ -791,7 +807,21 @@ impl crate::document::BaseDocument {
                 style::values::specified::color::HIGHLIGHT_ORIGINATING_COLOR.set(previous);
                 Some(cascaded)
             }
-        }
+        };
+        (result, explicit)
+    }
+
+    /// Whether a rule that `style` was cascaded from declares `color`.
+    fn rules_set_color(style: &ComputedValues, guards: &StylesheetGuards) -> bool {
+        use style::properties::{LonghandId, PropertyDeclarationId};
+        let Some(rules) = style.rules.as_ref() else { return false };
+        rules.self_and_ancestors().any(|node| {
+            node.style_source().is_some_and(|source| {
+                source.read(node.cascade_level().guard(guards)).declarations().iter().any(|declaration| {
+                    matches!(declaration.id(), PropertyDeclarationId::Longhand(LonghandId::Color))
+                })
+            })
+        })
     }
 
     /// The styles [`Self::resolve_undisplayed_style`] resolves, eagerly

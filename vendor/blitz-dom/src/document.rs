@@ -572,7 +572,7 @@ pub struct BaseDocument {
     pub(crate) pending_fonts: Vec<crate::net::PendingFont>,
     /// pyro: [`BaseDocument::inherited_highlight_style`] results by (node, highlight pseudo), with the
     /// stylesheet generation they were computed under; cleared whenever styles are resolved.
-    pub(crate) highlight_style_cache: RefCell<HashMap<(NodeId, style::selector_parser::PseudoElement), (u64, Option<ServoArc<ComputedValues>>)>>,
+    pub(crate) highlight_style_cache: RefCell<HashMap<(NodeId, style::selector_parser::PseudoElement), (u64, Option<ServoArc<ComputedValues>>, bool)>>,
     /// Map from form control node ID's to their associated forms node ID's
     pub(crate) controls_to_form: HashMap<NodeId, NodeId>,
     /// Nodes that contain sub documents
