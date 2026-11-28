@@ -4,7 +4,7 @@
 //!
 //! The attribute is a list of ASCII-case-insensitive tokens. The first
 //! recognised behaviour token (`toolbar`, `tablist`, `radiogroup`,
-//! `listbox`, `menu`, `menubar`, `grid`) makes the element a focusgroup
+//! `listbox`, `menu`, `menubar`, `grid`, `feed`) makes the element a focusgroup
 //! owner; without one the attribute does nothing. `none` anywhere opts the
 //! element and its subtree out of every ancestor focusgroup. The modifiers
 //! `inline` / `block` restrict the axes (both together allow both), `wrap`
@@ -33,6 +33,8 @@ pub enum FocusgroupBehavior {
     Menu,
     Menubar,
     Grid,
+    /// A feed: block-axis navigation with hard edges (`aria-role` feed).
+    Feed,
 }
 
 /// A parsed `focusgroup` attribute.
@@ -79,6 +81,7 @@ pub fn parse_focusgroup(value: &str) -> Option<Focusgroup> {
             "menu" => Some(FocusgroupBehavior::Menu),
             "menubar" => Some(FocusgroupBehavior::Menubar),
             "grid" => Some(FocusgroupBehavior::Grid),
+            "feed" => Some(FocusgroupBehavior::Feed),
             "inline" => { inline = true; None }
             "block" => { block = true; None }
             "wrap" => { wrap = true; row_wrap = true; col_wrap = true; None }
@@ -105,6 +108,7 @@ pub fn parse_focusgroup(value: &str) -> Option<Focusgroup> {
         Listbox => (false, true, false),
         Menu => (false, true, true),
         Grid => (true, true, false),
+        Feed => (false, true, false),
     };
     let (inline, block) = if inline || block { (inline, block) } else { (di, db) };
     let wrap = if nowrap { false } else { wrap || dw };
@@ -524,6 +528,9 @@ mod tests {
         assert_eq!(owner("wrap toolbar"), Some((true, false, true)));
         assert_eq!(owner("invalid toolbar"), Some((true, false, false)));
         assert_eq!(owner("toolbar inline block"), Some((true, true, false)));
+        // A feed navigates along the block axis and has hard edges; `noitemcontrols` is no token.
+        assert_eq!(owner("feed"), Some((false, true, false)));
+        assert_eq!(owner("feed noitemcontrols"), Some((false, true, false)));
         assert_eq!(parse_focusgroup(""), None);
         assert_eq!(parse_focusgroup("wrap block"), None);
         let grid = |v: &str| match parse_focusgroup(v) {

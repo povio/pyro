@@ -418,7 +418,13 @@ impl<'a> FocusNavigation<'a> {
 
     /// Navigation enters a scope owner unless its tabindex is negative.
     fn enters(&self, i: u32) -> bool {
-        self.is_scope_owner(i) && self.tabindex_attr(i).unwrap_or(0) >= 0
+        // A shadow host with a negative tabindex is no barrier inside a focusgroup: the items of
+        // its shadow tree and slotted content are the group's too, and Tab can enter the group
+        // through them (WPT focusgroup `focusgroupstart-shadow-tabindex`).
+        self.is_scope_owner(i)
+            && (self.tabindex_attr(i).unwrap_or(0) >= 0
+                || (self.n(i).element().is_some_and(|e| e.shadow_root != NIL)
+                    && self.focusgroup_owner_of(self.id_of(i)).is_some()))
     }
 
     /// Sequential navigation lands on `i`: a focusable area with a

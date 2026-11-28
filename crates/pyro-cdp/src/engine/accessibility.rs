@@ -789,6 +789,14 @@ impl<'a> Builder<'a> {
         }
         // HTML-AAM: an element with the `popover` attribute and no other role is a `group` (as in `role_of`).
         let native = if native_only { implicit_role(dom, el).or_else(|| attr(dom, el, "popover").map(|_| "group".to_owned())) } else { role_of(dom, el) };
+        // Scoped focusgroup implied roles (Open UI focusgroup v2): an element with no role of its own, or
+        // a button (not a feed item), takes the role its focusgroup gives its items, and an owner with no role
+        // the role of its behaviour.
+        if matches!(native.as_deref(), None | Some("button")) {
+            if let Some(role) = self.focusgroup_role(el, native.is_some()) {
+                return node(role);
+            }
+        }
         match native.as_deref() {
             Some("presentation" | "none") => Class::Flatten,
             Some("img") => node("image"),
@@ -796,6 +804,49 @@ impl<'a> Builder<'a> {
             Some("document") => ignored(Ignored::Uninteresting),
             Some(role) => from_role(role),
             None => self.generic(el),
+        }
+    }
+
+    /// The role a `focusgroup` implies for `el`, which has no explicit or native role (`button`: its native role
+    /// is a button, which an item role replaces except in a feed). The owner's own role comes first; an item
+    /// (a focusable element of an owner outside any top-layer or opted-out subtree) takes its owner's item role
+    /// when the owner's role is the one its behaviour implies (an explicit or native role of another kind
+    /// on the owner, `role=list` on a feed, means a mismatch and no inference).
+    fn focusgroup_role(&self, el: NodeId, button: bool) -> Option<&'static str> {
+        use pyro_dom::focus_group::{Focusgroup, FocusgroupBehavior as B};
+        let dom = self.dom;
+        let owner_role = |behavior: B| match behavior {
+            B::Toolbar => Some("toolbar"),
+            B::Tablist => Some("tablist"),
+            B::Radiogroup => Some("radiogroup"),
+            B::Listbox => Some("listbox"),
+            B::Menu => Some("menu"),
+            B::Menubar => Some("menubar"),
+            B::Feed => Some("feed"),
+            B::Grid => None,
+        };
+        if !button {
+            if let Some(Focusgroup::Owner(flags)) = dom.focusgroup(el) {
+                if let Some(role) = owner_role(flags.behavior) {
+                    return Some(role);
+                }
+            }
+        }
+        if !dom.is_focusable(el).unwrap_or(false) {
+            return None;
+        }
+        let (owner, flags) = dom.focusgroup_owner_of(el)?;
+        let item = match flags.behavior {
+            B::Tablist => "tab",
+            B::Radiogroup => "radio",
+            B::Listbox => "option",
+            B::Menu | B::Menubar => "menuitem",
+            B::Feed if !button => "article",
+            B::Feed | B::Toolbar | B::Grid => return None,
+        };
+        match role_of(dom, owner) {
+            Some(r) if Some(r.as_str()) != owner_role(flags.behavior) => None,
+            _ => Some(item),
         }
     }
 

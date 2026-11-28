@@ -3066,6 +3066,24 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
         let current = dom.focused(doc).ok().flatten().or(start);
         let owner_of = |n: NodeId| dom.focusgroup_owner_of(n).map(|(o, _)| o);
         let leaving = current.and_then(owner_of);
+        // Tab out of the end of a popover its invoker opened continues after the invoker, whose
+        // focusgroup is one tab stop: the rest of that group's items are passed over too
+        // (Shift+Tab back to the invoker lands on it, as it is entered from the popover).
+        let popover_exit = if backward || leaving.is_some() {
+            None
+        } else {
+            let mut cur = current;
+            let mut owner = None;
+            while let Some(n) = cur {
+                if let Some(invoker) = dom.popover_invoker(n) {
+                    owner = owner_of(invoker);
+                    break;
+                }
+                cur = flat_parent_element(&dom, n);
+            }
+            owner
+        };
+        let passing = leaving.or(popover_exit);
         let mut next = step(current);
         // Tab from an item that keeps the arrow keys goes to the adjacent
         // item of its focusgroup, the way out of it. An element past the
@@ -3078,7 +3096,7 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
         }
         let mut guard = 0usize;
         // Pass over the rest of the segment being left.
-        while let (Some(n), Some(o)) = (next, leaving) {
+        while let (Some(n), Some(o)) = (next, passing) {
             if owner_of(n) != Some(o) || guard > 100_000 {
                 break;
             }

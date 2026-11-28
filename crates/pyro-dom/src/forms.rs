@@ -2364,6 +2364,9 @@ impl Dom {
                 // the focus (customizable select).
                 "button" => !self.is_select_button_idx(i),
                 "select" | "textarea" | "iframe" => true,
+                // A media element showing its controls takes the focus itself (Chrome's
+                // `HTMLMediaElement::SupportsFocus`; its internal controls are not separate stops here).
+                "video" | "audio" => e.attr_local(&local_name!("controls")).is_some(),
                 // An object showing a document is a navigable container, focusable as an iframe.
                 "object" => self.is_document_object(id),
                 // An option is focusable while its select's picker is open.
