@@ -2177,6 +2177,13 @@ impl BaseDocument {
                 let reach = reach + scale / 64.0;
                 hit = hit.union(lines.inflate(reach, reach));
             }
+            // pyro: an inline box moved by `position: relative` shows (and is hit) where it was
+            // moved to: the lines as each such offset puts them are in the bound too, or a box
+            // moved out of its inline root's (and its ancestors') bound is culled from the descent.
+            for (dx, dy) in self.relative_span_offsets(node_id) {
+                let moved = lines + kurbo::Vec2::new(dx as f64 * scale, dy as f64 * scale);
+                hit = hit.union(moved.inflate(scale / 64.0, scale / 64.0));
+            }
         }
         if let Some(base) = columns_base {
             hit = base.union(self.columns_rect(node_id, hit, scale));
@@ -2188,6 +2195,37 @@ impl BaseDocument {
         let node = &self.nodes[node_id];
         let hit = self.overflow_contribution(node_id, hit, layout.size, scale);
         node.hit_bound_in_parent((location.x, location.y), scale, hit)
+    }
+
+    /// pyro: the distinct non-zero offsets (CSS px) `position: relative` gives the inline boxes
+    /// whose text the inline root `root_id` lays out (`inline_span_offset`, as paint and the
+    /// layout queries place their fragments); empty for a root without relative inline boxes.
+    fn relative_span_offsets(&self, root_id: NodeId) -> Vec<(f32, f32)> {
+        let Some(layout) = self.nodes[root_id]
+            .element_data()
+            .and_then(|element| element.inline_layout_data.as_deref())
+            .filter(|layout| layout.relative_spans)
+        else {
+            return Vec::new();
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut offsets: Vec<(f32, f32)> = Vec::new();
+        for line in layout.layout.lines() {
+            for item in line.items() {
+                let start = match item {
+                    parley::PositionedLayoutItem::GlyphRun(run) => Some(run.style().brush.id),
+                    parley::PositionedLayoutItem::InlineBox(inline_box) => {
+                        self.nodes.get(NodeId::from_u64(inline_box.id)).and_then(|node| node.parent)
+                    }
+                };
+                let Some(start) = start.filter(|&start| seen.insert(start)) else { continue };
+                let offset = self.inline_span_offset(start, root_id, false);
+                if offset != (0.0, 0.0) && !offsets.contains(&offset) {
+                    offsets.push(offset);
+                }
+            }
+        }
+        offsets
     }
 
     /// pyro: what a box adds to its parent's scrollable overflow
