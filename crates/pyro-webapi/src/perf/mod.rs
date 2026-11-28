@@ -230,7 +230,7 @@ thread_local! {
 pub(crate) fn thread_leftover() -> Option<&'static str> {
     NESTED_MS.with(|nested| nested.borrow_mut().clear());
     element::forget_last();
-    lcp::thread_leftover().or_else(shift::thread_leftover)
+    lcp::thread_leftover().or_else(shift::thread_leftover).or_else(softnav::thread_leftover)
 }
 
 /// Accounts a finished task of `depth` (`pyro_runtime::task_depth`, 1 = outermost) that took

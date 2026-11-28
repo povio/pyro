@@ -97,6 +97,9 @@ pub(crate) const WANTED: bool = super::paint::ENABLED || super::lcp::ENABLED || 
 /// not rescan forever.
 const MAX_WAIT_WALKS: u32 = 120;
 
+/// The most nodes a subtree check ([`painted_candidates_in`]) looks at: the rest of a huge subtree is not judged.
+pub const SUBTREE_NODE_CAP: usize = 20_000;
+
 const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
 /// What a candidate paints.
@@ -284,7 +287,7 @@ pub fn painted_candidates(page: &Rc<PageDom>, frame: &FrameInfo) -> Rc<FrameScan
             return last;
         }
     }
-    let scan = Rc::new(walk(page, frame));
+    let scan = Rc::new(walk(page, frame, None));
     let mut state = page.timeline().scan.borrow_mut();
     let changed = stamp != Some(now_stamp) || state.dirty;
     state.wait_walks = if state.waiting && !changed { state.wait_walks + 1 } else { 0 };
@@ -305,18 +308,33 @@ enum Found {
     Text(NodeId),
 }
 
-fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
+/// The painted candidates inside the subtrees of `roots` (connected nodes; others are skipped) as the
+/// document shows them now, in no particular order and not memoized: Soft Navigations asks whether
+/// what a user interaction modified was painted, and a walk of the whole document per frame for that
+/// would cost O(document) where the answer lies in a few nodes. It does not move the scan's state (no
+/// identity is recorded: every candidate reads `first_painted == frame.presented`), so it never changes
+/// what [`painted_candidates`] reports. Cost: the nodes of the subtrees plus a style read for those
+/// that can paint a background image; the caller bounds the roots.
+pub fn painted_candidates_in(page: &Rc<PageDom>, frame: &FrameInfo, roots: &[NodeId]) -> FrameScan {
+    walk(page, frame, Some(roots))
+}
+
+fn walk(page: &Rc<PageDom>, frame: &FrameInfo, roots: Option<&[NodeId]>) -> FrameScan {
     // Pass 1 (DOM only): which elements and text nodes could paint something.
     let mut found: Vec<Found> = Vec::new();
     {
         let dom = page.dom.borrow();
         let document = page.document();
-        let Ok(nodes) = dom.descendants(document) else { return FrameScan { presented: frame.presented, ..Default::default() } };
         // A `background-image` url comes from a sheet, a `style` attribute or the `background` attribute;
         // without one in any sheet, only elements with the latter two need their style read.
         let mut sheets_have_url = false;
         page.layout().style().for_each_author_sheet(&dom, &mut |text| sheets_have_url |= text.contains("url("));
-        for id in nodes {
+        let mut budget = if roots.is_some() { SUBTREE_NODE_CAP } else { usize::MAX };
+        let mut visit = |id: NodeId| {
+            if budget == 0 {
+                return;
+            }
+            budget -= 1;
             match dom.node_type(id) {
                 Ok(NodeType::Text) => {
                     if dom.char_data(id).is_ok_and(|d| !d.trim().is_empty()) {
@@ -324,7 +342,7 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                     }
                 }
                 Ok(NodeType::Element) => {
-                    let Ok(el) = dom.element(id) else { continue };
+                    let Ok(el) = dom.element(id) else { return };
                     let svg = &*el.name.ns == SVG_NS;
                     match (&*el.name.local, svg) {
                         ("img", false) => found.push(Found::Image(id, Kind::Image)),
@@ -346,6 +364,22 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
                     }
                 }
                 _ => {}
+            }
+        };
+        match roots {
+            None => {
+                let Ok(nodes) = dom.descendants(document) else { return FrameScan { presented: frame.presented, ..Default::default() } };
+                nodes.for_each(&mut visit);
+            }
+            Some(roots) => {
+                for &root in roots {
+                    if !dom.is_connected(root).unwrap_or(false) {
+                        continue;
+                    }
+                    if let Ok(nodes) = dom.descendants(root) {
+                        nodes.for_each(&mut visit);
+                    }
+                }
             }
         }
     }
@@ -495,6 +529,15 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
     // Document order of the elements (text blocks come where their container does).
     drop(state);
     drop(layout);
+    if roots.is_some() {
+        // A subtree check: the candidates of overlapping roots are one (an element is met once per
+        // root that holds it), and nothing is remembered.
+        candidates.dedup_by(|a, b| a.node == b.node && a.kind == b.kind && a.url == b.url);
+        for c in &mut candidates {
+            c.first_painted = frame.presented;
+        }
+        return FrameScan { presented: frame.presented, viewport, candidates, waiting };
+    }
     // (Nothing to put in order below two candidates: a document that shows nothing, or one thing,
     // does not number every node.)
     if candidates.len() > 1 {

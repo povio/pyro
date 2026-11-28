@@ -68,6 +68,7 @@ fn policy(entry_type: &str) -> Option<Policy> {
         "first-input" => Policy { limit: 1, min_duration: 0.0 },
         "event" => Policy { limit: 150, min_duration: 104.0 },
         "longtask" | "long-animation-frame" => Policy { limit: 200, min_duration: 0.0 },
+        "soft-navigation" => Policy { limit: 50, min_duration: 0.0 },
         // element, largest-contentful-paint, layout-shift, soft-navigation, ...
         _ => Policy { limit: 150, min_duration: 0.0 },
     })
@@ -110,6 +111,8 @@ pub struct TimelineBuffers {
     /// Paint entries modules reported (`report_paint`).
     paint: RefCell<Vec<PaintRecord>>,
     wants_rendering: Cell<bool>,
+    /// A user interaction is being followed for Soft Navigations (`perf/softnav.rs`).
+    soft_armed: Cell<bool>,
     /// The `navigationId` entries made now carry (0: not taken yet, see [`TimelineBuffers::navigation_id`]).
     navigation_id: Cell<u64>,
     /// The id of the document's own (hard) navigation.
@@ -253,6 +256,15 @@ impl TimelineBuffers {
 
     pub(crate) fn set_last_wheel(&self, time: f64) {
         self.last_wheel.set(Some(time));
+    }
+
+    /// Whether Soft Navigations follows a user interaction of this document now.
+    pub(crate) fn soft_armed(&self) -> bool {
+        self.soft_armed.get()
+    }
+
+    pub(crate) fn set_soft_armed(&self, armed: bool) {
+        self.soft_armed.set(armed);
     }
 
     pub(crate) fn clear_wants_rendering(&self) {

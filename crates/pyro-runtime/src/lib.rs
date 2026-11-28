@@ -496,7 +496,8 @@ impl<S> Clone for Scheduler<S> {
 impl<S: 'static> Scheduler<S> {
     pub fn post(&self, source: TaskSource, task: impl FnOnce(&mut S) + 'static) {
         self.inner.scheduled.set(self.inner.scheduled.get() + 1);
-        self.inner.tasks.borrow_mut().push_back((Instant::now(), source, Box::new(task)));
+        let task = attribute_once::<S>(Box::new(task));
+        self.inner.tasks.borrow_mut().push_back((Instant::now(), source, task));
     }
 
     /// How many tasks this thread has posted and timers (idle ones included)
@@ -517,7 +518,7 @@ impl<S: 'static> Scheduler<S> {
         keeps_alive: bool,
         task: impl Fn(&mut S) + 'static,
     ) -> TimerId {
-        self.set_timer_at(delay, repeat, keeps_alive, task).0
+        self.set_timer_at(delay, repeat, keeps_alive, true, task).0
     }
 
     /// A one-shot timer for a rendering opportunity (an animation frame).
@@ -531,7 +532,9 @@ impl<S: 'static> Scheduler<S> {
     /// at most and cannot starve tasks; until then (and under virtual time)
     /// the timer takes its turn by deadline like any other.
     pub fn set_frame_timer(&self, delay: Duration, keeps_alive: bool, task: impl Fn(&mut S) + 'static) -> TimerId {
-        let (id, at) = self.set_timer_at(delay, false, keeps_alive, task);
+        // (A frame timer is no task of whoever asked for the frame: the callbacks it runs carry their own
+        // attribution, see `ambient`.)
+        let (id, at) = self.set_timer_at(delay, false, keeps_alive, false, task);
         self.inner.frames.borrow_mut().push((at, id, delay));
         id
     }
@@ -541,12 +544,20 @@ impl<S: 'static> Scheduler<S> {
         delay: Duration,
         repeat: bool,
         keeps_alive: bool,
+        attributed: bool,
         task: impl Fn(&mut S) + 'static,
     ) -> (TimerId, Instant) {
         let id = TimerId(self.inner.next_timer.get());
         self.inner.next_timer.set(id.0.wrapping_add(1).max(1));
         self.inner.scheduled.set(self.inner.scheduled.get() + 1);
-        self.inner.insert_timer(id, Timer { task: Rc::new(task), interval: repeat.then_some(delay), keeps_alive });
+        let task: Rc<dyn Fn(&mut S)> = match ambient() {
+            ctx if attributed && ctx != 0 => Rc::new(move |state: &mut S| {
+                set_ambient(ctx);
+                task(state)
+            }),
+            _ => Rc::new(task),
+        };
+        self.inner.insert_timer(id, Timer { task, interval: repeat.then_some(delay), keeps_alive });
         let base = match self.inner.virtual_now.get() {
             Some(now) if repeat || !delay.is_zero() => now,
             _ => Instant::now(),
@@ -1306,6 +1317,34 @@ mod tests {
         assert!(start.elapsed() < Duration::from_millis(120), "late: {:?}", start.elapsed());
         assert!(cpu < Duration::from_millis(15), "spun for {cpu:?} of {:?}", start.elapsed());
         assert!(!lp.remote_open);
+    }
+
+    /// A task and a timer carry the attribution that was ambient when they were posted and have it
+    /// set while they run; one posted without runs with none, and an attribution set inside a task
+    /// is gone with it (`ambient`).
+    #[test]
+    fn tasks_and_timers_carry_the_ambient_attribution_they_were_posted_under() {
+        let mut lp = EventLoop::<St>::new();
+        let mut st = St::default();
+        let s = lp.scheduler();
+        let seen = Rc::new(RefCell::new(Vec::<(&'static str, u64)>::new()));
+        let (s2, seen2) = (s.clone(), seen.clone());
+        s.post(TaskSource::Internal, move |_| {
+            set_ambient(7);
+            let (timer_seen, post_seen) = (seen2.clone(), seen2.clone());
+            s2.set_timer(Duration::from_millis(1), false, true, move |_| timer_seen.borrow_mut().push(("timer", ambient())));
+            s2.post(TaskSource::Internal, move |_| post_seen.borrow_mut().push(("post", ambient())));
+        });
+        assert_eq!(lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(2))), RunOutcome::Idle);
+        let mut got = seen.borrow().clone();
+        got.sort();
+        assert_eq!(got, vec![("post", 7), ("timer", 7)]);
+        assert_eq!(ambient(), 0, "no attribution outside a task");
+        let after = Rc::new(Cell::new(u64::MAX));
+        let a = after.clone();
+        s.post(TaskSource::Internal, move |_| a.set(ambient()));
+        assert_eq!(lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(2))), RunOutcome::Idle);
+        assert_eq!(after.get(), 0, "a task posted with none runs with none");
     }
 
     /// `scheduled` counts what this thread asked the loop to run (a task, a
@@ -2399,6 +2438,35 @@ mod tests {
 thread_local! {
     static TASK_SEQ: Cell<u64> = const { Cell::new(0) };
     static TASK_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static AMBIENT: Cell<u64> = const { Cell::new(0) };
+    /// The ambient values of the tasks a running task interrupted (nested event loops).
+    static AMBIENT_OUTER: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The attribution the code running now carries (0: none): an opaque number an embedder sets with
+/// [`set_ambient`] while it handles something whose follow-up work it wants to recognise (Soft
+/// Navigations: the user interaction a task descends from). Every task and timer posted while it
+/// is non-zero carries it and has it set when it runs, until its task (checkpoint included) ends,
+/// when the value of the task that was interrupted, if any, returns; every task runs with 0 unless
+/// it was posted with a non-zero one. Posting with 0 costs one thread-local read.
+pub fn ambient() -> u64 {
+    AMBIENT.with(Cell::get)
+}
+
+/// Sets what [`ambient`] reads, until the end of the running task.
+pub fn set_ambient(id: u64) {
+    AMBIENT.with(|ambient| ambient.set(id));
+}
+
+/// `task` with the ambient attribution of now set when it runs (itself when there is none).
+fn attribute_once<S: 'static>(task: Task<S>) -> Task<S> {
+    match ambient() {
+        0 => task,
+        ctx => Box::new(move |state: &mut S| {
+            set_ambient(ctx);
+            task(state)
+        }),
+    }
 }
 
 /// While a task of this thread's event loop runs (or its checkpoint), a
@@ -2427,9 +2495,13 @@ fn next_task() {
 fn begin_task() {
     next_task();
     TASK_DEPTH.with(|depth| depth.set(depth.get() + 1));
+    let outer = AMBIENT.with(|ambient| ambient.replace(0));
+    AMBIENT_OUTER.with(|stack| stack.borrow_mut().push(outer));
 }
 
 fn end_task() {
     next_task();
     TASK_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    let outer = AMBIENT_OUTER.with(|stack| stack.borrow_mut().pop()).unwrap_or(0);
+    AMBIENT.with(|ambient| ambient.set(outer));
 }

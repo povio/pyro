@@ -128,7 +128,7 @@ fn observe_validates_its_options() {
               err(() => new PerformanceObserver(f).observe({type: 'resource'})), \
               err(() => new PerformanceObserver()), err(() => PerformanceObserver(f))].join()"
         ),
-        "element|event|first-input|largest-contentful-paint|layout-shift|long-animation-frame|longtask|mark|measure|navigation|paint|resource,true,TypeError,TypeError,TypeError,InvalidModificationError,InvalidModificationError,ok,TypeError,TypeError"
+        "element|event|first-input|largest-contentful-paint|layout-shift|long-animation-frame|longtask|mark|measure|navigation|paint|resource|soft-navigation,true,TypeError,TypeError,TypeError,InvalidModificationError,InvalidModificationError,ok,TypeError,TypeError"
     );
     // buffered: entries from before observe() are delivered too.
     eval(

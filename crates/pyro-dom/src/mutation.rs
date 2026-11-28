@@ -84,7 +84,17 @@ pub(crate) struct MutationState {
     pending: Vec<u32>,
     /// Count of queued-record references per node index.
     pinned: FxHashMap<u32, u32>,
+    /// Soft Navigations' attribution (`Dom::set_touch_watch`): reads the attribution of the code
+    /// running now (0: none). `None` while no interaction is being followed: a mutation then costs
+    /// this one test.
+    watch: Option<fn() -> u64>,
+    /// The nodes mutations made under an attribution touched (`Dom::take_touched`), at most
+    /// [`TOUCHED_CAP`].
+    touched: Vec<(u64, NodeId)>,
 }
+
+/// How many touched nodes the DOM keeps between two [`Dom::take_touched`] calls.
+const TOUCHED_CAP: usize = 1024;
 
 impl MutationState {
     /// Whether any node has an observer registration: no record is queued
@@ -407,7 +417,45 @@ impl Dom {
         }
     }
 
+    /// Soft Navigations: from now on (`Some`) a mutation made while `attribution()` is non-zero records the
+    /// node it changed (an attribute's or character data's target, the nodes a child list gained) with that
+    /// attribution, for [`Dom::take_touched`]. `None` stops and forgets.
+    pub fn set_touch_watch(&mut self, attribution: Option<fn() -> u64>) {
+        self.mutation.watch = attribution;
+        if attribution.is_none() {
+            self.mutation.touched = Vec::new();
+        }
+    }
+
+    /// Whether [`Dom::set_touch_watch`] is on.
+    pub fn touch_watch_on(&self) -> bool {
+        self.mutation.watch.is_some()
+    }
+
+    /// The (attribution, node) pairs touched since the last call (nodes may have been removed since).
+    pub fn take_touched(&mut self) -> Vec<(u64, NodeId)> {
+        std::mem::take(&mut self.mutation.touched)
+    }
+
+    fn note_touched(&mut self, nodes: &[u32]) {
+        let Some(attribution) = self.mutation.watch else { return };
+        let attribution = attribution();
+        if attribution == 0 {
+            return;
+        }
+        for &idx in nodes {
+            if self.mutation.touched.len() >= TOUCHED_CAP {
+                return;
+            }
+            let id = self.id_of(idx);
+            self.mutation.touched.push((attribution, id));
+        }
+    }
+
     pub(crate) fn queue_attribute(&mut self, target: u32, name: &QualName, old: Option<&str>) {
+        if self.mutation.watch.is_some() {
+            self.note_touched(&[target]);
+        }
         if self.mutation.regs.is_empty() {
             return;
         }
@@ -430,6 +478,9 @@ impl Dom {
     }
 
     pub(crate) fn queue_character_data(&mut self, target: u32, old: &str) {
+        if self.mutation.watch.is_some() {
+            self.note_touched(&[target]);
+        }
         if self.mutation.regs.is_empty() {
             return;
         }
@@ -452,6 +503,9 @@ impl Dom {
     }
 
     pub(crate) fn queue_child_list(&mut self, target: u32, added: &[u32], removed: &[u32], prev: u32, next: u32) {
+        if self.mutation.watch.is_some() && !added.is_empty() {
+            self.note_touched(added);
+        }
         if self.mutation.regs.is_empty() {
             return;
         }

@@ -87,6 +87,7 @@ pub const STATICS: &[&str] = &[
     "shared_worker::WORKERS",
     "shift::STATES",
     "smooth_scroll::RUNNING",
+    "softnav::STATES",
     "structured_clone::CLONE_SOURCE",
     "structured_clone::WIRE_BLOBS",
     "structured_clone::WIRE_CANVASES",

@@ -1104,6 +1104,11 @@ impl Browser {
             for key in host.keys() {
                 if let Some(bindings) = host.page_dom(key) {
                     bindings.after_task();
+                    // A task that ran under a followed user interaction (Soft Navigations) asks for the
+                    // rendering update that judges what it changed.
+                    if pyro_webapi::perf::softnav::ENABLED {
+                        pyro_webapi::perf::softnav::after_task(&bindings);
+                    }
                 }
                 if key.child.is_some() {
                     self.apply_same_document_url(key);

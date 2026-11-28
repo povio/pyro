@@ -877,6 +877,9 @@ impl PageNav {
 
     /// Same-document navigation (pushState/replaceState/fragment).
     fn same_document(&self, url: &str, state: Option<HistoryState>, kind: SameDocumentKind) {
+        // Soft Navigations see the URL change (the old URL is read only while a context is followed).
+        let softnav = pyro_webapi::perf::softnav::ENABLED && pyro_runtime::ambient() != 0;
+        let old_url = if softnav { self.state.borrow().url.clone() } else { String::new() };
         // HTML "navigate": a navigation of the initial about:blank document replaces, a fragment
         // navigation included; that leaves the document initial (the next navigation replaces it
         // too).
@@ -936,6 +939,18 @@ impl PageNav {
         let event =
             PageEvent::FrameNavigatedWithinDocument { frame_id: self.frame_id.clone(), url: url.to_string(), kind };
         crate::emit_to(&self.observer, self.page, &event);
+        if softnav && old_url != url {
+            self.softnav_url_changed(url, if kind == SameDocumentKind::Replace { "replace" } else { "push" });
+        }
+    }
+
+    /// Tells the Soft Navigations module the document's URL changed without a navigation
+    /// (`pyro_webapi::perf::softnav::url_changed`: it does nothing unless the code running descends
+    /// from a followed user interaction).
+    fn softnav_url_changed(&self, url: &str, navigation_type: &'static str) {
+        if let Some(page) = self.page_dom.borrow().upgrade() {
+            pyro_webapi::perf::softnav::url_changed(&page, url, navigation_type);
+        }
     }
 
     pub(crate) fn has_pending_frame_url(&self) -> bool {
@@ -1877,6 +1892,9 @@ fn apply_traversal(
         let old_url = nav.url();
         nav.set_url_sync(&entry.url);
         b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
+        if pyro_webapi::perf::softnav::ENABLED && pyro_runtime::ambient() != 0 && old_url != entry.url {
+            nav.softnav_url_changed(&entry.url, "traverse");
+        }
         nav.navigation_committed("traverse");
         // HTML "update document for history step application": popstate fires, then the
         // persisted scroll position is restored, then hashchange (queued) fires. A traversal
@@ -2582,6 +2600,10 @@ fn timeline_entries<'s>(
     // other types of `perf/` are for observers only).
     if pyro_webapi::perf::event::ENABLED && entry_type.is_none_or(|t| t == "first-input") {
         entries.extend(pyro_webapi::perf::event::first_input_entries(s, &p.target.page, name)?);
+    }
+    // Soft navigations are on the timeline too.
+    if pyro_webapi::perf::softnav::ENABLED && entry_type.is_none_or(|t| t == "soft-navigation") {
+        entries.extend(pyro_webapi::perf::softnav::timeline_entries(s, &p.target.page, name)?);
     }
     // Long Animation Frames: the frames are on the timeline too.
     if pyro_webapi::perf::loaf::ENABLED && entry_type.is_none_or(|t| t == "long-animation-frame") {

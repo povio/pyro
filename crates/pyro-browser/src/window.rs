@@ -68,6 +68,9 @@ struct AnimationFrame {
     /// Handle, callback, and how many frame callbacks it was requested
     /// from in a chain (0: from outside a frame).
     callbacks: Vec<(u32, Persistent, u32)>,
+    /// The `pyro_runtime::ambient` attribution (Soft Navigations' user interaction) each callback
+    /// was requested under: only those requested under one have an entry.
+    attribution: Vec<(u32, u64)>,
     native_callbacks: Vec<Rc<Cell<bool>>>,
     timer: Option<TimerId>,
     /// With an eager frame (an idle timer, run when nothing else is ready): the frame interval's
@@ -847,6 +850,10 @@ fn request_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, cb: Persistent) ->
     let mut frame = w.animation.borrow_mut();
     let depth = frame.running.map_or(0, |d| d.saturating_add(1));
     frame.callbacks.push((handle, cb, depth));
+    let attribution = pyro_runtime::ambient();
+    if attribution != 0 {
+        frame.attribution.push((handle, attribution));
+    }
     schedule_animation_frame(s, w, &mut frame);
     Ok(s.number(handle as f64))
 }
@@ -1027,6 +1034,7 @@ fn run_animation_frame(scope: &Scope<'_>, browser: &Browser) {
     pyro_webapi::media::run_video_frame_callbacks(&w.target.page, now_ms);
     let now = scope.number(now_ms);
     let mut suppressed = false;
+    let outer_attribution = pyro_runtime::ambient();
     for handle in handles {
         // A callback that began a view transition's rendering suppression (the update callback runs
         // after its old state was captured, at the start of this frame's callbacks): the callbacks
@@ -1036,18 +1044,26 @@ fn run_animation_frame(scope: &Scope<'_>, browser: &Browser) {
             break;
         }
         // A callback may cancel a later one of the same frame.
-        let cb = {
+        let (cb, attribution) = {
             let mut frame = w.animation.borrow_mut();
             let Some(i) = frame.callbacks.iter().position(|(h, _, _)| *h == handle) else { continue };
             let (_, cb, depth) = frame.callbacks.remove(i);
             frame.running = Some(depth);
-            cb
+            let at = frame.attribution.iter().position(|(h, _)| *h == handle);
+            let attribution = match at {
+                Some(at) => frame.attribution.swap_remove(at).1,
+                None => 0,
+            };
+            (cb, attribution)
         };
         let Some(f) = cb.get(scope).as_object() else { continue };
+        // The callback (and the microtasks its return runs) descends from what requested it.
+        pyro_runtime::set_ambient(attribution);
         if let Err(e) = f.call(None, &[now]) {
             report_in_callback_realm(scope, Some(f), &e);
         }
     }
+    pyro_runtime::set_ambient(outer_attribution);
     w.animation.borrow_mut().running = None;
     for ready in native {
         ready.set(true);
@@ -1103,6 +1119,7 @@ fn cancel_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsR
         let mut frame = w.animation.borrow_mut();
         if let Some(i) = frame.callbacks.iter().position(|(h, _, _)| *h == handle) {
             frame.callbacks.remove(i);
+            frame.attribution.retain(|(h, _)| *h != handle);
             if frame.callbacks.is_empty() && frame.native_callbacks.is_empty() {
                 for id in [frame.timer.take(), frame.backup.take()].into_iter().flatten() {
                     w.sched.clear_timer(id);
@@ -1125,6 +1142,7 @@ pub(crate) fn cancel_timers(realm: &Realm) {
         }
         let mut frame = w.animation.borrow_mut();
         frame.callbacks.clear();
+        frame.attribution.clear();
         for ready in frame.native_callbacks.drain(..) {
             ready.set(true);
         }

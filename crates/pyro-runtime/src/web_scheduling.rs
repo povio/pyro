@@ -134,6 +134,7 @@ impl<S: 'static> Scheduler<S> {
             // cannot become ready. The owner can still abort the task.
             return Box::new(|| {});
         }
+        let task = super::attribute_once::<S>(task);
         let key = (source.key(), continuation);
         let id = self.inner.seq.get();
         self.inner.seq.set(id.wrapping_add(1));

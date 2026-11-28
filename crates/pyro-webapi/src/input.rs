@@ -892,7 +892,12 @@ fn dispatch_click(page: &Rc<PageDom>, target: NodeId, ev: &EventData, handled: b
     // The navigation the activation behavior starts is user-initiated (`NavigateEvent.userInitiated`)
     // when the click is the user's (trusted), not script's (`a.click()`).
     let outer = TRUSTED_ACTIVATION.with(|flag| flag.replace(trusted));
+    // Soft Navigations: what a followed link or a submitted form starts descends from the click.
+    let interaction = if trusted && crate::perf::softnav::ENABLED { crate::perf::softnav::activation_begin(page, ev) } else { None };
     run_activation_behavior(page, el, legacy, target, ev, &rest);
+    if let Some(token) = interaction {
+        crate::perf::softnav::activation_end(page, token);
+    }
     TRUSTED_ACTIVATION.with(|flag| flag.set(outer));
     true
 }
