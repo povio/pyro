@@ -652,7 +652,8 @@ impl JsClass for Navigator {
             same_object(s, p, key, || s.wrap::<MimeTypeArray>((), Some(key)))
         });
         def.method("javaEnabled", 0, |s, _p, _a| Ok(s.boolean(false)));
-        def.method("getBattery", 0, |s, p, _a| crate::battery::get_battery(s, p));
+        // A promise-returning operation: a foreign receiver rejects with the TypeError instead of throwing it.
+        def.promise_method("getBattery", 0, |s, p, _a| crate::battery::get_battery(s, p));
         def.method("sendBeacon", 1, |s, p, a| {
             a.require(1, "Navigator.sendBeacon")?;
             let url = crate::util::dom_string(a.get(0))?;
