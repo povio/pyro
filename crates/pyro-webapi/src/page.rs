@@ -2975,6 +2975,8 @@ impl PageDom {
         // pyro: inline style CSP checks no read ran yet report now (before the stamp: a blocked
         // one changes the DOM's version).
         self.resolve_inline_styles();
+        // pyro: and the `on*` attributes the parser made, under a policy ([`crate::handlers::drain_inline_checked`]).
+        crate::handlers::drain_inline_checked(self);
         // The DOM as this checkpoint saw it (the checkpoint's idle check
         // asks first, so asking does not consume a change).
         if let Ok(dom) = self.dom.try_borrow() {

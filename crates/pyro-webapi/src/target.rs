@@ -1010,12 +1010,7 @@ fn resolve_raw_handler<'s>(
     }
     let body = dom_string(value)?;
     let value_key = format!("__lpHandler_{ty}");
-    let location = handler_get(s, object, &format!("__lpHandlerAt_{ty}"))?
-        .filter(|v| v.is_string())
-        .map(dom_string)
-        .transpose()?
-        .and_then(|at| decode_location(&at));
-    match crate::handlers::compile_handler(s, page, key, ty, &body, location.as_ref()) {
+    match crate::handlers::compile_handler(s, page, key, ty, &body) {
         Ok(handler) => {
             handler_set(s, object, &value_key, handler)?;
             Ok(handler)
@@ -1050,45 +1045,29 @@ pub(crate) fn set_event_handler(
     // EventHandler is [LegacyTreatNonObjectAsNull]: any object is kept
     // (and registers the listener), a non-callable one is never called.
     let value = if value.as_object().is_some() { value } else { s.null() };
-    store_event_handler(s, target, ty, value, None)
+    store_event_handler(s, target, ty, value)
 }
 
 /// An `on*` content attribute's handler: its raw uncompiled body, compiled when the handler is
-/// first read or called ([`resolve_raw_handler`]). `location`: where it was set, for the CSP
-/// violations of that compile.
+/// first read or called ([`resolve_raw_handler`]).
 pub(crate) fn set_raw_event_handler(
     s: &Scope<'_>,
     target: &EventTargetData,
     ty: &'static str,
     body: &str,
-    location: Option<&crate::csp::SourceLocation>,
 ) -> JsResult<()> {
-    store_event_handler(s, target, ty, s.string(body), location)
+    store_event_handler(s, target, ty, s.string(body))
 }
 
-/// A raw handler's set-time location as kept next to it: `line:column:sourceFile`.
-fn encode_location(location: &crate::csp::SourceLocation) -> String {
-    format!("{}:{}:{}", location.line, location.column, location.source_file)
-}
-
-fn decode_location(at: &str) -> Option<crate::csp::SourceLocation> {
-    let mut parts = at.splitn(3, ':');
-    let line = parts.next()?.parse().ok()?;
-    let column = parts.next()?.parse().ok()?;
-    Some(crate::csp::SourceLocation { source_file: parts.next()?.to_owned(), line, column })
-}
-
-/// Stores an event handler's value: null, a callback object, or a raw body (a string) with the
-/// location it was set at (none for the others, clearing a previous raw body's).
+/// Stores an event handler's value: null, a callback object, or a raw body (a string).
 fn store_event_handler(
     s: &Scope<'_>,
     target: &EventTargetData,
     ty: &'static str,
     value: Value<'_>,
-    location: Option<&crate::csp::SourceLocation>,
 ) -> JsResult<()> {
     if let Some(window) = forwarded_target(target, ty) {
-        return store_event_handler(s, &window, ty, value, location);
+        return store_event_handler(s, &window, ty, value);
     }
     let ty = handler_event_type(ty);
     crate::handlers::drain_inline(&target.page);
@@ -1098,8 +1077,6 @@ fn store_event_handler(
     let slot_key = format!("__lpHandlerSlot_{ty}");
     let slot = handler_slot(s, target, object, ty)?;
     handler_set(s, object, &value_key, value)?;
-    let at = location.map_or(s.undefined(), |l| s.string(&encode_location(l)));
-    handler_set(s, object, &format!("__lpHandlerAt_{ty}"), at)?;
     if let Some(slot) = slot {
         if value.is_null() {
             let handle = handler_handle_for(s.realm_id(), slot);

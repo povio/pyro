@@ -265,6 +265,13 @@ where
 
 /// `setAttribute('on<type>', body)` on an element: installs the handler as its raw body, compiled
 /// when first read or called (`target::resolve_raw_handler`); `None` (removeAttribute) clears it.
+///
+/// CSP3 "Should element's inline type behavior be blocked by Content Security Policy?"
+/// (`script-src-attr`; a listed hash of the body counts with 'unsafe-hashes') runs here, when the
+/// attribute is set, as Chrome does (HTML "event handler content attributes" change steps), not
+/// when the handler is first read: a blocked handler is null at once and its violation is queued
+/// now, located at the script that set the attribute (the parser's: none) and targeted at the
+/// element, whichever document it is in by the time the task runs (`csp::dispatch`).
 pub(crate) fn content_attribute_changed(
     s: &Scope<'_>,
     target: &EventTargetData,
@@ -273,11 +280,18 @@ pub(crate) fn content_attribute_changed(
 ) -> JsResult<()> {
     match body {
         Some(body) if !target.page.scripting_disabled() => {
-            // Where the attribute is set (the script that set it, none for the parser's), kept with
-            // the raw body: a CSP violation of its compile is located there, not at whatever reads
-            // the handler first.
-            let location = if crate::csp::has_policies(&target.page) { crate::csp::handler_location(s) } else { None };
-            crate::target::set_raw_event_handler(s, target, ty, body, location.as_ref())
+            if let Some(list) = crate::csp::policy_list(&target.page) {
+                let element = target.page.dom.borrow().key_node(target.key);
+                let mut outcome = list.inline_check(crate::csp::InlineKind::ScriptAttribute, "", body);
+                if !outcome.violations.is_empty() {
+                    crate::csp::locate(&mut outcome.violations, crate::csp::handler_location(s).as_ref());
+                    crate::csp::report(&target.page, outcome.violations, element);
+                }
+                if outcome.blocked {
+                    return set_event_handler(s, target, ty, s.null());
+                }
+            }
+            crate::target::set_raw_event_handler(s, target, ty, body)
         }
         _ => set_event_handler(s, target, ty, s.null()),
     }
@@ -289,30 +303,14 @@ pub(crate) fn content_attribute_changed(
 /// Window) has none of them. Its source text is `function on<type>(<params>) {\n<body>\n}`, which
 /// `Function.prototype.toString` gives back (WPT event-handler-sourcetext,
 /// compile-event-handler-lexical-scopes{,-form-owner}).
-/// `location`: where the attribute was set (kept with the raw body by `content_attribute_changed`).
 pub(crate) fn compile_handler<'s>(
     s: &Scope<'s>,
     page: &crate::page::PageDom,
     key: pyro_dom::events::TargetKey,
     ty: &str,
     body: &str,
-    location: Option<&crate::csp::SourceLocation>,
 ) -> JsResult<Value<'s>> {
-    // CSP `script-src-attr` (a listed hash of the body counts with 'unsafe-hashes'): a blocked
-    // handler's value is null. The violation is at the element, located where the attribute was
-    // set, reported when the bindings can name the page that owns it (the realm's).
-    if let Some(list) = crate::csp::policy_list(page) {
-        let element = page.dom.borrow().key_node(key);
-        let mut outcome = list.inline_check(crate::csp::InlineKind::ScriptAttribute, "", body);
-        crate::csp::locate(&mut outcome.violations, location);
-        let owner = crate::target::page_of(s).ok().filter(|p| std::ptr::eq(std::rc::Rc::as_ptr(p), page));
-        if let Some(owner) = owner {
-            crate::csp::report(&owner, outcome.violations, element);
-        }
-        if outcome.blocked {
-            return Ok(s.null());
-        }
-    }
+    // (CSP `script-src-attr` was checked when the attribute was set: `content_attribute_changed`.)
     let ctor = s.global().get_atom("Function")?;
     let ctor = ctor.as_object().expect("Function constructor");
     let window = page.is_window_key(key);
@@ -397,6 +395,17 @@ pub(crate) fn drain_inline(page: &crate::page::PageDom) {
         return;
     }
     crate::csp::with_handler_location(None, || drain_pending(page));
+}
+
+/// [`drain_inline`] for a document with a CSP policy only: its parser-made `on*` attributes get
+/// their CSP check (CSP3 "Should element's inline type behavior be blocked?" runs when the
+/// attribute is set) before the next parser script runs and after each task, not at the first
+/// read of a handler, so that a violation's event does not wait for one. Without a policy
+/// installing stays lazy: one emptiness check of a list, then a policy-list check, for any page.
+pub(crate) fn drain_inline_checked(page: &crate::page::PageDom) {
+    if page.dom.try_borrow().is_ok_and(|d| d.has_pending_inline_handlers()) && crate::csp::has_policies(page) {
+        drain_inline(page);
+    }
 }
 
 /// Before a fragment parse a script does (`innerHTML`) in a document with a CSP policy: the

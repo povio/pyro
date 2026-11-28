@@ -718,7 +718,13 @@ pub fn dispatch(s: &Scope<'_>, page: &Rc<PageDom>, violation: &Violation, target
         .get_atom("dispatchViolation")?
         .as_object()
         .ok_or_else(|| JsError::Type("SecurityPolicyViolationEvent is unavailable".into()))?;
-    let connected = target.filter(|node| page.dom.borrow().is_connected(*node).unwrap_or(false));
+    // The element is the target while it is connected in this document: one moved to another
+    // document since (a frame's, whose `Dom` this may be) is no longer this document's to name
+    // (WPT securitypolicyviolation/targeting-for-inline-handler-on-main-frame-element-moved-to-subframe).
+    let connected = target.filter(|node| {
+        let dom = page.dom.borrow();
+        dom.is_connected(*node).unwrap_or(false) && dom.node_document(*node).ok() == Some(page.document())
+    });
     let at: Value<'_> = match connected {
         Some(node) => crate::node::wrap_node(s, page, node)?.value(),
         None => s.null(),
