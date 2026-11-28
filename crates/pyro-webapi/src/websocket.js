@@ -11,6 +11,9 @@
   const apply = Reflect.apply;
   const define = Object.defineProperty;
   const getOwn = Object.getOwnPropertyDescriptor;
+  const getProto = Object.getPrototypeOf;
+  const U8 = Uint8Array;
+  const DV = DataView;
   const ownKeys = Reflect.ownKeys;
   const iterator = Symbol.iterator;
   const toStringTag = Symbol.toStringTag;
@@ -363,6 +366,42 @@
     }
   }
 
+  // The chunk of `write()` is `(BufferSource or USVString)`: a buffer source (an ArrayBuffer or a view)
+  // is neither [AllowShared] nor [AllowResizable] in WebIDL, so one over a SharedArrayBuffer or a
+  // resizable ArrayBuffer is a TypeError, not a value to stringify (stringifying a 256 MiB view of a
+  // shared WebAssembly.Memory would also hang the page). Anything that is not a buffer is a string.
+  let bufferCheck;
+  function makeBufferCheck() {
+    const typedProto = getProto(U8.prototype);
+    const viewBuffer = getOwn(typedProto, 'buffer').get;
+    const dataViewBuffer = getOwn(DV.prototype, 'buffer').get;
+    const byteLength = getOwn(ArrayBuffer.prototype, 'byteLength').get;
+    const resizable = getOwn(ArrayBuffer.prototype, 'resizable')?.get;
+    // SharedArrayBuffer.prototype, also where the global is not exposed (not cross-origin isolated):
+    // a shared WebAssembly.Memory still hands out shared buffers.
+    const sharedProto = typeof SharedArrayBuffer === 'function' ? SharedArrayBuffer.prototype : (() => {
+      try {
+        const proto = getProto(new WebAssembly.Memory({ initial: 0, maximum: 0, shared: true }).buffer);
+        return proto === ArrayBuffer.prototype ? undefined : proto;
+      } catch (_) { return undefined; }
+    })();
+    const sharedLength = sharedProto ? getOwn(sharedProto, 'byteLength').get : undefined;
+    return chunk => {
+      let buffer = chunk;
+      try { buffer = apply(viewBuffer, chunk, []); }
+      catch (_) {
+        try { buffer = apply(dataViewBuffer, chunk, []); } catch (_) { /* not a view: the chunk is the buffer */ }
+      }
+      try { apply(byteLength, buffer, []); }
+      catch (_) {
+        if (!sharedLength) return;
+        try { apply(sharedLength, buffer, []); } catch (_) { return; }
+        throw new TE('The provided buffer source must not be backed by a SharedArrayBuffer');
+      }
+      if (resizable && apply(resizable, buffer, [])) throw new TE('The provided buffer source must not be backed by a resizable ArrayBuffer');
+    };
+  }
+
   function openedStreams(st, protocol, extensions) {
     const [Readable, Writable] = streamConstructors();
     const readable = new Readable({
@@ -382,6 +421,7 @@
       start(controller) { st.writer = controller; },
       write(chunk) {
         if (st.phase !== OPEN) throw new DOMEx('The WebSocketStream is closing.', 'InvalidStateError');
+        if (isObject(chunk)) (bufferCheck ??= makeBufferCheck())(chunk);
         const write = deferred();
         st.write = write;
         try { writeStream(st.id, chunk); }
@@ -426,7 +466,10 @@
         if (clean) st.reader.close();
         else st.reader.error(error);
       }
-      if (st.writer && !st.writerClosing) st.writer.error(error ?? invalid);
+      // A write the connection closed under is rejected with InvalidStateError, and the stream is errored
+      // with that same object, so a later write() rejects with it too (WPT write.any.js); with no write
+      // pending the stream is errored with the connection's error.
+      if (st.writer && !st.writerClosing) st.writer.error(st.write ? invalid : (error ?? invalid));
       st.write?.reject(invalid);
       st.write = null;
       st.read?.resolve();

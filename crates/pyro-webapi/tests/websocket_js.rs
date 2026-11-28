@@ -348,6 +348,36 @@ fn close_event_constructor_and_lazy_globals() {
 }
 
 #[test]
+fn stream_write_rejects_resizable_and_shared_buffers() {
+    // A buffer source is neither [AllowShared] nor [AllowResizable]: such a chunk is a TypeError, not a
+    // value to stringify (WPT websockets/stream/tentative/write.any.js).
+    let server = WsServer::new("");
+    let env = Env::new(&format!("{}/page", server.base));
+    env.eval(&format!(
+        r#"globalThis.out = []; globalThis.done = false;
+        (async () => {{
+            const cases = {{
+                resizable: () => new ArrayBuffer(8, {{ maxByteLength: 64 }}),
+                shared: () => new Uint8Array(new WebAssembly.Memory({{ initial: 1, maximum: 2, shared: true }}).buffer),
+                fixed: () => new Uint8Array(4),
+            }};
+            for (const [name, make] of Object.entries(cases)) {{
+                const wss = new WebSocketStream('ws://127.0.0.1:{}/echo');
+                const {{ writable }} = await wss.opened;
+                try {{ await writable.getWriter().write(make()); out.push(name + ':ok'); }}
+                catch (e) {{ out.push(name + ':' + e.name); }}
+                wss.close();
+                await wss.closed.catch(() => {{}});
+            }}
+            done = true;
+        }})();"#,
+        server.port
+    ));
+    env.until("done");
+    assert_eq!(env.eval("out.join()"), "resizable:TypeError,shared:TypeError,fixed:ok");
+}
+
+#[test]
 fn page_dispose_aborts_open_connections() {
     let server = WsServer::new("");
     let env = Env::new(&format!("{}/page", server.base));
