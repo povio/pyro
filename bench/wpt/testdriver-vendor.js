@@ -72,8 +72,9 @@
   // `frames[0].document.body` as an origin) also says which: its frame element gets a marker attribute (`undo` removes it
   // after the call) and the runner maps the point through the frames around it (td/core.mjs `frameMap`), CSS transforms
   // of the frame elements included.
-  let frameMarks = 0;
-  function center(el, undo = []) {
+  let frameMarks = 0, originCount = 0;
+  const originRefs = new Map();
+  function point(el) {
     if (!(el instanceof Element) && !(el && el.nodeType === 1)) throw new Error('testdriver: not an element');
     if (!el.isConnected) throw new Error('testdriver: element is not attached');
     el.scrollIntoView({ block: 'end', inline: 'nearest' });
@@ -81,7 +82,10 @@
     const rect = el.getClientRects()[0] ?? el.getBoundingClientRect();
     const left = Math.max(0, rect.left), right = Math.min(w.innerWidth, rect.right);
     const top = Math.max(0, rect.top), bottom = Math.min(w.innerHeight, rect.bottom);
-    const at = { x: Math.floor((left + right) / 2), y: Math.floor((top + bottom) / 2) };
+    return { w, at: { x: Math.floor((left + right) / 2), y: Math.floor((top + bottom) / 2) } };
+  }
+  function center(el, undo = []) {
+    const { w, at } = point(el);
     if (w !== window) {
       try {
         if (w === w.top && w.top !== window.top) throw new Error('another page');
@@ -180,13 +184,24 @@
 
   internal.action_sequence = async (sources) => {
     // Element origins become the viewport coordinates of the element's center (in its own frame: `at.frame`).
-    const undo = [];
+    // WebDriver computes an element origin's center when the action is performed, not when the sequence is
+    // sent: a drag source removed at `dragstart` moves what follows it, and the runner asks again for the
+    // point (`window.__pyroTdMeasure`, td/core.mjs `actions`) with each action. `at` stays the point at send
+    // time, for an element that is gone by then.
+    const undo = [], mine = [];
+    window.__pyroTdMeasure ??= (ref) => { try { return point(originRefs.get(ref)).at; } catch { return null; } };
     try {
       const out = sources.map((s) => ({
         ...s,
-        actions: s.actions.map((a) => (a.origin && typeof a.origin === 'object' ? { ...a, origin: 'element', at: center(a.origin, undo) } : a)),
+        actions: s.actions.map((a) => {
+          if (!(a.origin && typeof a.origin === 'object')) return a;
+          const ref = ++originCount;
+          originRefs.set(ref, a.origin);
+          mine.push(ref);
+          return { ...a, origin: 'element', at: center(a.origin, undo), ref };
+        }),
       }));
       return await call({ cmd: 'actions', sources: out });
-    } finally { undo.forEach((f) => f()); }
+    } finally { undo.forEach((f) => f()); mine.forEach((ref) => originRefs.delete(ref)); }
   };
 })();

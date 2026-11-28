@@ -155,7 +155,7 @@ function tiltOf(altitude, azimuth) {
 // the cumulative `buttons`). Pointer positions and pressed buttons outlive the call (`devices`), as WebDriver's input
 // state does. Wheel sources send the wheel event at the point without moving the pointer.
 async function actions(env, sources) {
-  const { page, off, touch, touchState, devices, kbd, session, frameOf } = env;
+  const { page, frame, off, touch, touchState, devices, kbd, session, frameOf } = env;
   const ticks = Math.max(0, ...sources.map((s) => s.actions.length));
   const frameMaps = new Map();
   // A frame's viewport in the page's, per call (an element origin names its frame by the page's marker).
@@ -210,7 +210,10 @@ async function actions(env, sources) {
           return { x: from.x + x, y: from.y + y };
         }
         if (a.origin === 'element') {
-          const at = apply(await mapOf(a.at.frame), a.at.x, a.at.y);
+          // The element's center now (WebDriver measures an origin as the action is performed), asked of the
+          // frame that sent the sequence; the point sent with it when the element is gone.
+          const now = a.ref === undefined || !frame ? null : await frame.evaluate((ref) => window.__pyroTdMeasure?.(ref) ?? null, a.ref).catch(() => null);
+          const at = apply(await mapOf(a.at.frame), now?.x ?? a.at.x, now?.y ?? a.at.y);
           return { x: at.x + x, y: at.y + y };
         }
         const at = apply(off, x, y);
@@ -324,7 +327,7 @@ export const commands = {
     const off = await ctx.off();
     const touch = async (type, touchPoints) => (await ctx.session()).send('Input.dispatchTouchEvent', { type, touchPoints });
     await actions({
-      page: ctx.page, off, touch, session: ctx.session, kbd: keyboardOf(ctx), frameOf: (id) => markedFrame(ctx.page, id),
+      page: ctx.page, frame: ctx.frame, off, touch, session: ctx.session, kbd: keyboardOf(ctx), frameOf: (id) => markedFrame(ctx.page, id),
       touchState: ctx.state('touch', () => new Map()), devices: ctx.state('pointers', () => new Map()),
     }, c.sources);
   },
