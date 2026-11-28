@@ -1703,7 +1703,9 @@ impl Layout {
         // that is not the root (one inserted under it) is computed as any other
         // (csswg-drafts#12834).
         if matches!(self.html_local(dom, idx), Some("body"))
-            || (self.html_local(dom, idx) == Some("html") && matches!(dom.n(dom.n(idx).parent).kind, NodeKind::Document(_)))
+            || (self.html_local(dom, idx) == Some("html")
+                && dom.n(idx).parent != NIL
+                && matches!(dom.n(dom.n(idx).parent).kind, NodeKind::Document(_)))
         {
             return None;
         }
