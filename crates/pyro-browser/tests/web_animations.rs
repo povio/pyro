@@ -659,6 +659,38 @@ fn review_a_large_document_with_no_observer_costs_no_per_element_work_per_frame(
 }
 
 #[test]
+fn review_the_spans_of_one_long_paragraph_are_indexed_once_per_layout() {
+    // Count work, not time: measuring each of 1,200 sibling spans of one paragraph walked the whole
+    // paragraph's fragments for every span. The fragments are indexed once per layout, and a change
+    // of layout (a wider first span) is seen by the next measurement.
+    let mut t = crate::browser_thread().unwrap();
+    let id = t.browser.create_page().unwrap();
+    let root = t.browser.page(id).unwrap().main_frame.main_realm().unwrap().clone();
+    let page_dom = t.browser.page(id).unwrap().main_frame.page_dom.clone().unwrap();
+    eval(
+        &root,
+        "const f = document.createDocumentFragment();
+         for (let i = 0; i < 1200; i++) { const s = document.createElement('span'); s.textContent = 'ab'; f.appendChild(s); f.appendChild(document.createTextNode(' ')); }
+         document.body.appendChild(f);
+         globalThis.spans = document.body.querySelectorAll('span');
+         globalThis.frames = (n) => { globalThis.ticks = 0; const tick = () => { spans[0].style.paddingRight = (1 + ticks) + 'px'; if (++ticks < n) requestAnimationFrame(tick); }; requestAnimationFrame(tick); };
+         frames(3); 0",
+    );
+    run_until(&mut t, &root, "globalThis.ticks >= 3");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
+    let (walks, _) = pyro_webapi::perf::shift::work(&page_dom);
+    assert!(walks > 0, "the module walked {walks} times");
+    let built = pyro_render::inline_index_builds();
+    assert!((1..=8 * walks.max(1)).contains(&built), "{built} inline roots indexed for {walks} walks");
+    let before = eval(&root, "spans[1].getBoundingClientRect().x");
+    eval(&root, "spans[0].style.paddingRight = '40px'; 0");
+    let after = eval(&root, "spans[1].getBoundingClientRect().x");
+    let (before, after): (f64, f64) = (before.parse().unwrap(), after.parse().unwrap());
+    assert!(after > before + 20.0, "the second span moved from {before} to {after}");
+    assert!(eval(&root, "spans[1199].getBoundingClientRect().width").parse::<f64>().unwrap() > 0.0);
+}
+
+#[test]
 fn review_an_iframe_candidate_under_display_none_does_not_transition() {
     let (mut t, root) = transition_page(TRANSITION_CSS);
     eval(

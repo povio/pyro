@@ -195,10 +195,49 @@ impl LayoutBox {
     }
 }
 
-/// Layout queries of one persistent document. It holds no state: every
-/// query reads the document.
+/// Layout queries of one persistent document. Every query reads the document; the only state
+/// is [`InlineCache`], which is keyed by the document's geometry generation.
 #[derive(Default)]
-pub(crate) struct Geometry;
+pub(crate) struct Geometry {
+    inline_cache: std::cell::RefCell<InlineCache>,
+}
+
+/// An inline root's text at least this long (bytes) has the fragments of its elements indexed
+/// ([`InlineCache`]); a shorter one is walked for each element it is asked about.
+const INDEXED_INLINE_TEXT: usize = 2048;
+/// Inline roots indexed at once.
+const INLINE_ROOTS: usize = 32;
+
+/// One fragment of an inline root's layout, ready to hand out: where it is (the transform from
+/// the root's text space and the line index) and its rects (the second for the element the
+/// fragment starts in: a span edge without its margin).
+struct IndexedItem {
+    start: Option<NodeId>,
+    origin: Affine,
+    line: usize,
+    rect: Rect,
+    own_rect: Rect,
+}
+
+/// The fragments of one inline root and, by element, which of them are the element's (those of
+/// its descendants included), in layout order.
+struct IndexedRoot {
+    layout: (usize, usize, [u64; 6]),
+    lines: usize,
+    items: Vec<IndexedItem>,
+    by_element: FxHashMap<NodeId, Vec<u32>>,
+}
+
+/// Inline roots whose elements are measured one after the other (layout-shift tracking measures
+/// every box of the document each tracked frame; 17,000 spans in one paragraph) are walked once,
+/// not once per element: the walk is O(items) and was done per element. The index is valid for
+/// one geometry generation of the document (layout, scroll and sticky offsets all bump it) and
+/// the very text layout it was built from.
+#[derive(Default)]
+struct InlineCache {
+    generation: u64,
+    roots: FxHashMap<NodeId, std::rc::Rc<IndexedRoot>>,
+}
 
 impl Geometry {
     /// Whether `id` is a box of the current layout: the root element, or a
@@ -1162,6 +1201,60 @@ impl Geometry {
         let scale = text.layout.scale() as f64;
         // pyro: lines in a multi-column container's columns.
         let columns = line_column_shift(doc, root_id);
+        if text.text.len() >= INDEXED_INLINE_TEXT {
+            let generation = doc.root_node().tree().geometry_generation();
+            let key = (std::ptr::from_ref::<blitz_dom::node::TextLayout>(text) as usize, text.layout.len(), origin.as_coeffs().map(f64::to_bits));
+            let cached = {
+                let mut cache = self.inline_cache.borrow_mut();
+                if cache.generation != generation {
+                    cache.roots.clear();
+                    cache.generation = generation;
+                }
+                cache.roots.get(&root_id).filter(|r| r.layout == key).cloned()
+            };
+            let indexed = cached.unwrap_or_else(|| {
+                let mut items: Vec<IndexedItem> = Vec::new();
+                let mut by_element: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
+                for (index, line) in text.layout.lines().enumerate() {
+                    let mut origin = origin * line_slot(doc, root_id, &line.metrics(), scale);
+                    if let Some(shift) = &columns {
+                        let top = line_origin * kurbo::Point::new(0.0, line.metrics().block_min_coord as f64 / scale);
+                        origin = shift(top.y) * origin;
+                    }
+                    for item in line.items() {
+                        let (start, r) = inline_item_rect(&line, &item, scale, text.layout.is_rtl());
+                        let scaled = |r: Rect| Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale);
+                        let slot = items.len() as u32;
+                        // The element the fragment starts in and its ancestors below the root.
+                        let mut cur = start;
+                        while let Some(n) = cur.filter(|&n| n != root_id) {
+                            by_element.entry(n).or_default().push(slot);
+                            cur = doc.get_node(n).and_then(|n| n.parent);
+                        }
+                        items.push(IndexedItem {
+                            start,
+                            origin: inline_item_origin(doc, root_id, start, text, t, origin),
+                            line: index,
+                            rect: scaled(r),
+                            own_rect: scaled(span_edge_box(doc, &item, r, scale)),
+                        });
+                    }
+                }
+                INLINE_INDEX_BUILDS.with(|c| c.set(c.get() + 1));
+                let built = std::rc::Rc::new(IndexedRoot { layout: key, lines: text.layout.len(), items, by_element });
+                let mut cache = self.inline_cache.borrow_mut();
+                if cache.roots.len() >= INLINE_ROOTS {
+                    cache.roots.clear();
+                }
+                cache.roots.insert(root_id, built.clone());
+                built
+            });
+            for &slot in indexed.by_element.get(&id).map_or(&[][..], |v| &v[..]) {
+                let item = &indexed.items[slot as usize];
+                f(item.origin, first_line + item.line, if item.start == Some(id) { item.own_rect } else { item.rect });
+            }
+            return Some(indexed.lines);
+        }
         // Whether `start` is `id` or inside it (below the root).
         let within = |start: Option<NodeId>| {
             let mut cur = start;
@@ -1737,6 +1830,16 @@ thread_local! {
         std::cell::RefCell::new(FxHashMap::default());
     /// Child lists indexed so far (a counter: tests assert work, never time).
     static CHILD_INDEX_BUILDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    /// Inline roots indexed so far ([`InlineCache`]; a counter: tests assert work, never time).
+    static INLINE_INDEX_BUILDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Inline roots [`InlineCache`] indexed on this thread so far.
+pub fn inline_index_builds() -> u64 {
+    INLINE_INDEX_BUILDS.with(|c| c.get())
 }
 
 /// Child lists [`holds_child`] indexed on this thread so far.
