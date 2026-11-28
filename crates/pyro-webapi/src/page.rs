@@ -2942,6 +2942,13 @@ impl PageDom {
         time
     }
 
+    /// A rendering update starts: the document timeline's time is the update's timestamp (the
+    /// `requestAnimationFrame` time) for the rest of the task, whatever read the clock before
+    /// (Web Animations 1, "update animations and send events": one timeline time per update).
+    pub fn set_timeline_time(&self, ms: f64) {
+        self.timeline_time.set(Some(ms));
+    }
+
     /// The running task ended: the document timeline's time is read afresh by the next one.
     /// Apart from [`PageDom::after_task`], which a browser skips for a page whose DOM the
     /// task left alone: time passes for such a page too (a timer polling an animation).

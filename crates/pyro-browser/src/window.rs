@@ -981,6 +981,12 @@ fn run_animation_frame(scope: &Scope<'_>, browser: &Browser) {
     }
     // The rendering update starts here (long animation frames' `renderStart`).
     let render_start = if pyro_webapi::perf::FRAME_STAGE_TIMES { w.now_ms() } else { 0.0 };
+    // The update's timestamp: the `requestAnimationFrame` callbacks' time and the document
+    // timeline's current time for everything this frame does (Web Animations 1, "update
+    // animations and send events"). Taken first, so that the animation update below, which
+    // reads the timeline, cannot cache an earlier clock reading than the callbacks get.
+    let now_ms = w.now_ms();
+    w.target.page.set_timeline_time(now_ms);
     // HTML "update the rendering": a document's first rendering update reveals it (`pagereveal`),
     // then autofocus candidates flush before the scroll steps.
     pyro_webapi::lifecycle::reveal(&w.target.page);
@@ -1017,7 +1023,6 @@ fn run_animation_frame(scope: &Scope<'_>, browser: &Browser) {
         let mut frame = w.animation.borrow_mut();
         (frame.callbacks.iter().map(|(h, _, _)| *h).collect(), std::mem::take(&mut frame.native_callbacks))
     };
-    let now_ms = w.now_ms();
     // HTML video frame callbacks run before the animation frame callbacks.
     pyro_webapi::media::run_video_frame_callbacks(&w.target.page, now_ms);
     let now = scope.number(now_ms);

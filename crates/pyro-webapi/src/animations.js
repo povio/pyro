@@ -19,7 +19,11 @@
 // style.
 (native => {
   'use strict';
-  const { now, schedule, cssName, report: reportState, reportKey } = native;
+  const { now, schedule: scheduleTask, cssName, report: reportState, reportKey } = native;
+  // (Counts the tasks asked for, so that a pending task may join the one queued last only while no
+  // other task was queued after it: the order of tasks stays as it was asked for.)
+  let scheduled = 0;
+  const schedule = (ms, fn) => { scheduled++; return scheduleTask(ms, fn); };
   const apply = Reflect.apply;
   const P = Promise;
   const promiseThen = P.prototype.then;
@@ -1291,8 +1295,26 @@
     // (At the start of that frame, before its callbacks that script requested later, as the
     // frame's "update animations" step.)
     if (progressBased(a) && requestFrame !== null) apply(requestFrame, globalThis, [attempt]);
-    else schedule(0, attempt);
+    else if (pendingBatch !== null && pendingBatch.at === scheduled) pendingBatch.run.push(attempt);
+    else {
+      // Pending play and pause tasks of animations made together run together, in one task that
+      // reads the timeline once: they start at one time, as the animations made in one frame do
+      // when the next "update animations and send events" runs their tasks (Web Animations 1,
+      // "play an animation": "schedule a task to run as soon as the animation is ready").
+      const run = [attempt];
+      schedule(0, () => {
+        if (pendingBatch !== null && pendingBatch.run === run) pendingBatch = null;
+        // (One that throws does not keep the others from running, as separate tasks would not.)
+        let failure = null;
+        for (const task of run) {
+          try { task(); } catch (e) { if (failure === null) failure = { e }; }
+        }
+        if (failure !== null) throw failure.e;
+      });
+      pendingBatch = { run, at: scheduled };
+    }
   }
+  let pendingBatch = null;
 
   // Animations on progress-based timelines whose state may change as the page scrolls (their
   // finished state, a pending task waiting for an active timeline): looked at again after each
@@ -1560,8 +1582,8 @@
 
   // Events are dispatched as tasks of their own, after the promise
   // reactions of the step that queued them.
-  function queueEvent(a, type, currentTime) {
-    let tt = timelineTime(a.timeline);
+  function queueEvent(a, type, currentTime, time = timelineTime(a.timeline)) {
+    let tt = time;
     // (On a progress-based timeline the times are percentages: CSSNumberish.)
     if (progressBased(a)) {
       if (currentTime !== null) currentTime = percent(currentTime);
@@ -1662,9 +1684,10 @@
     }
     // The remove events go out in composite order, after the finish events of the same tick (one
     // more task hop, so the finishes of animations ending together are dispatched first).
+    // (Their timeline time is the one of the update that removed them, as the finish events'.)
     for (let i = removed.length - 1; i >= 0; i--) {
-      const a = removed[i], ct = currentTimeOf(a);
-      schedule(0, () => queueEvent(a, 'remove', ct));
+      const a = removed[i], ct = currentTimeOf(a), tt = timelineTime(a.timeline);
+      schedule(0, () => queueEvent(a, 'remove', ct, tt));
     }
   }
 
