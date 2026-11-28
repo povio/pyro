@@ -100,6 +100,10 @@ struct State {
     viewport: (f64, f64),
     /// Tracked frames so far.
     frames: u32,
+    /// Walks of the document made so far, and the nodes whose style they read (counters: tests
+    /// assert work, never time; see [`work`]).
+    walks: u64,
+    style_reads: u64,
 }
 
 thread_local! {
@@ -117,9 +121,17 @@ fn with_state<R>(page: &Rc<PageDom>, f: impl FnOnce(&mut State) -> R) -> R {
             prev: FxHashMap::default(),
             viewport: (0.0, 0.0),
             frames: 0,
+            walks: 0,
+            style_reads: 0,
         });
         f(state)
     })
+}
+
+/// `(walks of the document, nodes whose computed style they read)` the module made for `page` so
+/// far: what tests assert instead of time (a static document with nothing observed reads none).
+pub fn work(page: &Rc<PageDom>) -> (u64, u64) {
+    with_state(page, |s| (s.walks, s.style_reads))
 }
 
 fn tracking(page: &Rc<PageDom>, frames: u32) -> bool {
@@ -191,6 +203,8 @@ struct Walk<'a> {
     view: Rect,
     excluded: FxHashMap<NodeId, bool>,
     clips: FxHashMap<NodeId, Option<Rect>>,
+    /// Nodes whose computed style the pass read (a box with an area: nothing else is looked at).
+    reads: u64,
 }
 
 impl Walk<'_> {
@@ -271,17 +285,20 @@ fn paints_own_box(layout: &Layout, dom: &Dom, el: NodeId) -> bool {
     })
 }
 
-/// Every tracked item of the document now, and the viewport.
-fn collect(page: &Rc<PageDom>) -> (FxHashMap<NodeId, Item>, (f64, f64)) {
+/// Every tracked item of the document now, the viewport and the number of nodes whose style was
+/// read. A node's box is asked first: an element without an area (an empty inline, a hidden box)
+/// and a text without line boxes are skipped before any style is read, so a document of tens of
+/// thousands of boxes that paint nothing costs rectangle lookups, not a computed style each.
+fn collect(page: &Rc<PageDom>) -> (FxHashMap<NodeId, Item>, (f64, f64), u64) {
     let dom = page.dom.borrow();
     let layout = page.layout();
     let viewport = (f64::from(layout.inner_width()), f64::from(layout.inner_height()));
     let view = Rect { x: 0.0, y: 0.0, width: viewport.0, height: viewport.1 };
     let scroll = (f64::from(layout.scroll_x()), f64::from(layout.scroll_y()));
     let shown = CheckVisibilityOptions { check_visibility: true, check_opacity: true };
-    let mut walk = Walk { dom: &dom, layout: &layout, view, excluded: FxHashMap::default(), clips: FxHashMap::default() };
+    let mut walk = Walk { dom: &dom, layout: &layout, view, excluded: FxHashMap::default(), clips: FxHashMap::default(), reads: 0 };
     let mut items: FxHashMap<NodeId, Item> = FxHashMap::default();
-    let Ok(nodes) = dom.descendants(page.document()) else { return (items, viewport) };
+    let Ok(nodes) = dom.descendants(page.document()) else { return (items, viewport, 0) };
     for id in nodes {
         let (owner, rect) = match dom.node_type(id) {
             Ok(NodeType::Element) => {
@@ -290,6 +307,11 @@ fn collect(page: &Rc<PageDom>) -> (FxHashMap<NodeId, Item>, (f64, f64)) {
                     // (SVG shapes paint through their `svg` root's box.)
                     continue;
                 }
+                let rect = layout.laid_out_client_rect(&dom, id);
+                if !(rect.width > 0.0 && rect.height > 0.0) {
+                    continue;
+                }
+                walk.reads += 1;
                 let replaced = is_replaced(&el.name.local);
                 if walk.excluded(id) || !layout.check_visibility(&dom, id, shown) {
                     continue;
@@ -297,17 +319,21 @@ fn collect(page: &Rc<PageDom>) -> (FxHashMap<NodeId, Item>, (f64, f64)) {
                 if !replaced && !paints_own_box(&layout, &dom, id) {
                     continue;
                 }
-                (id, layout.laid_out_client_rect(&dom, id))
+                (id, rect)
             }
             Ok(NodeType::Text) => {
                 if !dom.char_data(id).is_ok_and(|d| !d.trim().is_empty()) {
                     continue;
                 }
                 let Some(parent) = dom.parent_element(id).ok().flatten() else { continue };
+                let Some(rect) = layout.text_rect(&dom, id) else { continue };
+                if !(rect.width > 0.0 && rect.height > 0.0) {
+                    continue;
+                }
+                walk.reads += 1;
                 if walk.excluded(parent) || !layout.check_visibility(&dom, parent, shown) {
                     continue;
                 }
-                let Some(rect) = layout.text_rect(&dom, id) else { continue };
                 (parent, rect)
             }
             _ => continue,
@@ -322,7 +348,7 @@ fn collect(page: &Rc<PageDom>) -> (FxHashMap<NodeId, Item>, (f64, f64)) {
         let pos = Rect { x: rect.x + adjust.0, y: rect.y + adjust.1, ..rect };
         items.insert(id, Item { node: id, client: rect, pos, adjust, clip, rtl });
     }
-    (items, viewport)
+    (items, viewport, walk.reads)
 }
 
 // ----- entries ----------------------------------------------------------------
@@ -469,8 +495,10 @@ pub fn on_frame(page: &Rc<PageDom>, frame: &FrameInfo) {
     if stamp == Some(now_stamp) {
         return;
     }
-    let (items, viewport) = collect(page);
+    let (items, viewport, reads) = collect(page);
     let (previous, old_viewport) = with_state(page, |s| {
+        s.walks += 1;
+        s.style_reads += reads;
         s.stamp = Some(now_stamp);
         s.frames = s.frames.saturating_add(1);
         let old = s.viewport;
