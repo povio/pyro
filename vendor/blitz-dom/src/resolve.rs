@@ -1341,7 +1341,10 @@ impl BaseDocument {
                 // pyro: the unrounded box, physical: a container of 100.5px matches
                 // `(width = 100.5px)` (CSS Conditional 5 § 4; Chrome compares the LayoutUnit size,
                 // WPT container-queries `size-feature-fractional`). `final_layout` is pixel-rounded.
+                #[cfg(feature = "writing-mode")]
                 let layout = self.physical_unrounded_layout(*id);
+                #[cfg(not(feature = "writing-mode"))]
+                let layout = *node.unrounded_layout();
                 // pyro: less its scrollbar gutters (`Node::container_query_gutters`)
                 let g = node.container_query_gutters();
                 euclid::default::Size2D::new(

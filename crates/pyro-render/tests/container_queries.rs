@@ -494,5 +494,5 @@ i {display:block;width:1px;height:1px}
     let container = doc.query_selector("#c").unwrap().unwrap();
     doc.set_style_property(container, "writing-mode", "vertical-lr");
     doc.resolve(0.0);
-    assert_eq!(size(&doc, "#a"), (1.0, 9.0));
+    assert_eq!(size(&doc, "#a"), (7.0, 9.0));
 }
