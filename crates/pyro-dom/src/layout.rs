@@ -1227,6 +1227,13 @@ impl Layout {
             let (width, height) = self.untransformed_size(dom, el);
             return if axis == Axis::Width { width } else { height };
         }
+        if let (Some(vertical), Some(b)) = (self.input_inline_clip(dom, el), self.layout_box(dom, el)) {
+            if (axis == Axis::Height) == vertical {
+                let padding = if axis == Axis::Width { b.padding[LEFT] + b.padding[RIGHT] } else { b.padding[TOP] + b.padding[BOTTOM] };
+                let client = if axis == Axis::Width { b.client_width } else { b.client_height };
+                return (client - padding).max(0.0);
+            }
+        }
         self.layout_box(dom, el).map_or(0.0, |b| match axis {
             Axis::Width => b.client_width,
             Axis::Height => b.client_height,
@@ -1341,14 +1348,37 @@ impl Layout {
             return size;
         }
         let text = if axis == Axis::Width { self.text_control_scroll_width(dom, el) } else { None };
+        // A text field's text is clipped at its content box in the inline axis: its scrolling area
+        // there is its text, or the content box when that is shorter.
+        if let Some(vertical) = self.input_inline_clip(dom, el) {
+            if (axis == Axis::Height) == vertical {
+                return self.client_axis(dom, el, axis).max(text.unwrap_or(0.0));
+            }
+        }
         self.layout_box(dom, el).map_or(0.0, |b| match axis {
             Axis::Width => b.scroll_width.max(b.client_width).max(text.unwrap_or(0.0)),
             Axis::Height => b.scroll_height.max(b.client_height),
         })
     }
 
+    /// For a single-line text `<input>`: whether its inline axis is vertical (`writing-mode`).
+    /// Such a field clips its text at the content box in the inline axis, so CSSOM View's client
+    /// and scroll areas leave its inline padding out there (csswg-drafts#13502; WPT
+    /// `client-props-input`). `None` for any other element.
+    fn input_inline_clip(&self, dom: &Dom, el: NodeId) -> Option<bool> {
+        use crate::forms::InputType as T;
+        let e = dom.element(el).ok()?;
+        if !(e.is_html() && &*e.name.local == "input") {
+            return None;
+        }
+        if !matches!(dom.input_type(el).ok()?, T::Text | T::Search | T::Tel | T::Url | T::Email | T::Password) {
+            return None;
+        }
+        Some(self.style.stylo_style(dom, el)?.writing_mode.is_vertical())
+    }
+
     /// The scrollable width of a single-line text `<input>`: its value's
-    /// width plus the padding. The value sits in an inner editor that
+    /// width (the inline padding is outside the clip: [`Self::input_inline_clip`]). The value sits in an inner editor that
     /// scrolls horizontally whatever the input's `overflow` is, and the
     /// input's `scrollLeft` is that editor's (as in Chrome). `None` for
     /// other elements and an empty value.
@@ -1362,7 +1392,7 @@ impl Layout {
             return None;
         }
         let value = dom.value(el).ok().filter(|v| !v.is_empty())?;
-        let b = self.layout_box(dom, el)?;
+        self.layout_box(dom, el)?;
         let size = self.style.computed_font_size(dom, Some(el));
         // A fractional weight (`350.5`) reads as the default, as its
         // serialization did not parse as an integer.
@@ -1372,7 +1402,7 @@ impl Layout {
             .map(|s| s.get_font().font_weight.value())
             .filter(|w| w.fract() == 0.0)
             .map_or(400, |w| w as u16);
-        Some(crate::text_metrics::text_width(&value, size, weight) + b.padding[LEFT] + b.padding[RIGHT])
+        Some(crate::text_metrics::text_width(&value, size, weight))
     }
 
     /// The client rects of the UTF-16 range `[start, end)` of a text control's value (an
@@ -1613,7 +1643,13 @@ impl Layout {
         }
         // (In the element's own CSS px: less its effective `zoom`.)
         let zoom = if self.is_root_container(dom, el) { 1.0 } else { self.effective_zoom(dom, el) };
-        self.layout_box(dom, el).map_or(0.0, |b| round_layout_unit(b.border[side] / zoom))
+        // A text field's client area starts after its inline-start padding too (`input_inline_clip`).
+        let inline_padding = |b: &LayoutBox| match self.input_inline_clip(dom, el) {
+            Some(false) if side == LEFT => b.padding[LEFT],
+            Some(true) if side == TOP => b.padding[TOP],
+            _ => 0.0,
+        };
+        self.layout_box(dom, el).map_or(0.0, |b| round_layout_unit((b.border[side] + inline_padding(&b)) / zoom))
     }
 
     /// `offsetParent`, including positioned ancestors styled through stylesheets.
