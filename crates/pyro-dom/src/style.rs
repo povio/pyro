@@ -33,8 +33,8 @@
 //!
 //! Inheritance: `visibility`, `pointer-events` and the display:none/opacity:0
 //! "in hidden subtree" bits inherit along the flat tree (shadow content from
-//! its host); `touch-action` blocking ORs with ancestors; `text-transform`
-//! inherits along `parentElement`. The others are the element's own value.
+//! its host); `touch-action` is the element's own (the ancestors' count at a touch);
+//! `text-transform` inherits along `parentElement`. The others are the element's own value.
 //!
 //! Memoization: computed values are cached per element and dropped whenever
 //! `Dom::version()`, the engine's own generation (sheets, viewport, popover
@@ -511,27 +511,13 @@ fn is_custom_property(name: &str) -> bool {
     name.starts_with("--")
 }
 
-/// StyleManager.zig:1578-1597: the axes a touch may pan along.
-fn parse_touch_action(value: &str) -> Option<(bool, bool)> {
-    if value.eq_ignore_ascii_case("auto") || value.eq_ignore_ascii_case("manipulation") {
-        return Some((true, true));
-    }
-    if value.eq_ignore_ascii_case("none") {
-        return Some((false, false));
-    }
-    let (mut x, mut y) = (false, false);
-    for t in value.split(is_ascii_ws_char).filter(|s| !s.is_empty()) {
-        let ci = |k: &str| t.eq_ignore_ascii_case(k);
-        if ci("pan-x") || ci("pan-left") || ci("pan-right") {
-            x = true;
-        } else if ci("pan-y") || ci("pan-up") || ci("pan-down") {
-            y = true;
-        } else if !ci("pinch-zoom") {
-            return None;
-        }
-    }
-    Some((x, y))
-}
+/// The scroll directions `touch-action` can deny a touch pan along (Pointer Events 3, "the
+/// touch-action CSS property"): a bit per direction the content would scroll toward, so a finger
+/// moving right scrolls left (`pan-left`) and a finger moving up scrolls down (`pan-down`).
+pub const TOUCH_PAN_LEFT: u8 = 1;
+pub const TOUCH_PAN_RIGHT: u8 = 2;
+pub const TOUCH_PAN_UP: u8 = 4;
+pub const TOUCH_PAN_DOWN: u8 = 8;
 
 /// StyleManager.zig:1536-1540 (`overlay` is Chrome's legacy alias of auto).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -670,9 +656,11 @@ pub struct ComputedStyle {
     pub overscroll_y_contains: bool,
     pub width: Length,
     pub height: Length,
-    /// touch-action, intersected with the ancestors'.
-    pub pan_x_blocked: bool,
-    pub pan_y_blocked: bool,
+    /// The scroll directions (`TOUCH_PAN_*`) this element's own `touch-action` denies; 0 when it
+    /// is `auto` or does not apply to the element. Not intersected with the ancestors': the
+    /// effective value depends on the scroll containers between them and the touch target (see
+    /// `touch_pan_denied` in pyro-webapi's input.rs).
+    pub pan_denied: u8,
     /// Own cascaded text-transform (`Inherit` takes the parent's).
     pub text_transform: TextTransform,
     pub white_space: WhiteSpace,
@@ -2131,11 +2119,6 @@ impl StyleEngine {
             .map_or(ScrollAxes::default(), |c| ScrollAxes { x: c.overscroll_x_contains, y: c.overscroll_y_contains })
     }
 
-    /// StyleManager.zig:722-727.
-    pub fn touch_pan_blocked_axes(&self, dom: &Dom, el: NodeId) -> ScrollAxes {
-        self.computed(dom, el).map_or(ScrollAxes::default(), |c| ScrollAxes { x: c.pan_x_blocked, y: c.pan_y_blocked })
-    }
-
     /// The element's inline declaration of `name` (the `el.style` view),
     /// without the cascade check.
     pub fn inline_declared_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<(String, bool)> {
@@ -2422,11 +2405,42 @@ fn derive_computed(
         _ => Overflow::Scroll,
     };
     let (ox, oy) = (overflow(b.overflow_x), overflow(b.overflow_y));
-    // The initial values typed, anything else through its serialization.
-    let (pan_x, pan_y) = if b.touch_action == TouchAction::AUTO {
-        (true, true)
-    } else {
-        parse_touch_action(&get("touch-action")).unwrap_or((true, true))
+    // touch-action applies to every element but non-replaced inline boxes, table rows, columns
+    // and their groups (Pointer Events 3), and to none that has no box (Chrome's StyleAdjuster).
+    // The SVG elements' own `display: inline` is not such a box.
+    let touch_action_applies = !(d == D::Contents
+        || d == D::TableRow
+        || d == D::TableRowGroup
+        || d == D::TableHeaderGroup
+        || d == D::TableFooterGroup
+        || d == D::TableColumn
+        || d == D::TableColumnGroup
+        || (d == D::Inline
+            && e.is_html()
+            && !matches!(&*e.name.local, "img" | "video" | "audio" | "canvas" | "iframe" | "embed" | "object")));
+    // A direction is denied unless a keyword of its axis allows it (`pan-x` both ways, `pan-left`
+    // one way); `auto` and `manipulation` allow every pan, `none` and `pinch-zoom` none.
+    let pan_denied = {
+        let ta = b.touch_action;
+        if !touch_action_applies || ta.intersects(TouchAction::AUTO | TouchAction::MANIPULATION) {
+            0
+        } else {
+            let allows = |flags: TouchAction| ta.intersects(flags);
+            let mut denied = 0;
+            if !allows(TouchAction::PAN_X | TouchAction::PAN_LEFT) {
+                denied |= TOUCH_PAN_LEFT;
+            }
+            if !allows(TouchAction::PAN_X | TouchAction::PAN_RIGHT) {
+                denied |= TOUCH_PAN_RIGHT;
+            }
+            if !allows(TouchAction::PAN_Y | TouchAction::PAN_UP) {
+                denied |= TOUCH_PAN_UP;
+            }
+            if !allows(TouchAction::PAN_Y | TouchAction::PAN_DOWN) {
+                denied |= TOUCH_PAN_DOWN;
+            }
+            denied
+        }
     };
     let overscroll =
         |o: OverscrollBehavior, name: &str| o != OverscrollBehavior::Auto && overscroll_contains(&get(name));
@@ -2461,8 +2475,7 @@ fn derive_computed(
         overscroll_y_contains: overscroll(b.overscroll_behavior_y, "overscroll-behavior-y"),
         width: size(&position.width, "width"),
         height: size(&position.height, "height"),
-        pan_x_blocked: !pan_x || above.pan_x_blocked,
-        pan_y_blocked: !pan_y || above.pan_y_blocked,
+        pan_denied,
         text_transform: if style.get_inherited_text().text_transform.is_empty() {
             TextTransform::None
         } else {

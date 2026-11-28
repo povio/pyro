@@ -172,6 +172,14 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
                     return Some(out);
                 }
             }
+            // `pan-x pan-y pinch-zoom` is `manipulation` (Pointer Events 3: "manipulation" is
+            // defined as that value, and Chrome serializes it that way).
+            if name.eq_ignore_ascii_case("touch-action") {
+                use style::values::specified::box_::TouchAction;
+                if style.get_box().touch_action == TouchAction::PAN_X | TouchAction::PAN_Y | TouchAction::PINCH_ZOOM {
+                    return Some("manipulation".into());
+                }
+            }
             // Serialize resolved line-height in CSS pixels at the element's effective zoom.
             if name.eq_ignore_ascii_case("line-height") {
                 use style::values::generics::font::GenericLineHeight;

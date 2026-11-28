@@ -4373,10 +4373,15 @@ pub struct TouchSequence {
     /// pointerdown was canceled: the tap fires no compatibility mouse events.
     mouse_suppressed: bool,
     next_pointer_id: i32,
-    /// The first touch's `touch-action` pan restrictions (x, y blocked), read when it came down:
-    /// later changes of the style do not matter (WPT pointerevents
-    /// `pointerevent_touch-action-modified_touch`).
-    pan_blocked: (bool, bool),
+    /// The first touch's target and its flat-tree ancestors with the scroll directions each one's
+    /// own `touch-action` denies, read when it came down: later changes of the style do not
+    /// matter (WPT pointerevents `pointerevent_touch-action-modified_touch`). Empty when none
+    /// denies a pan (the usual `auto`).
+    pan_chain: Vec<(NodeId, u8)>,
+    /// The sequence's first move out of the slop region did not pan (`touch-action` denied its
+    /// direction): Chrome decides this once, at the gesture's start, so later moves in another
+    /// direction do not start one (WPT pointerevents `touch-action-with-swipe-dir-change`).
+    no_pan: bool,
     /// The pan that scrolls for the sequence's single touch, once it began.
     pan: Option<TouchPan>,
 }
@@ -4649,19 +4654,65 @@ fn fire_touch_event(
     fire(page, key, &ev)
 }
 
-/// The `touch-action` pan restrictions of `target` (x, y blocked).
-fn touch_pan_blocked(page: &PageDom, target: NodeId) -> (bool, bool) {
-    let style = page.layout().style().computed(&page.dom.borrow(), target);
-    style.map_or((false, false), |c| (c.pan_x_blocked, c.pan_y_blocked))
+/// `target` and its flat-tree ancestors (the root last), each with the scroll directions its own
+/// `touch-action` denies; empty when none denies any (every pan is allowed, nothing to check).
+fn touch_pan_chain(page: &PageDom, target: NodeId) -> Vec<(NodeId, u8)> {
+    let layout = page.layout();
+    let dom = page.dom.borrow();
+    let mut chain = Vec::new();
+    let mut cur = Some(target);
+    while let Some(el) = cur {
+        chain.push((el, layout.style().computed(&dom, el).map_or(0, |c| c.pan_denied)));
+        cur = flat_parent_element(&dom, el);
+    }
+    if chain.iter().all(|&(_, denied)| denied == 0) {
+        chain.clear();
+    }
+    chain
 }
 
-/// Whether `touch-action` (`blocked`: x, y) lets a move by (dx, dy) scroll.
-fn touch_pans(blocked: (bool, bool), dx: f64, dy: f64) -> bool {
-    if dx.abs() > dy.abs() {
-        !blocked.0
-    } else {
-        !blocked.1
+/// The scroll directions (`TOUCH_PAN_*`) `touch-action` denies a pan that scrolls `scroller` (`None`:
+/// the viewport): the intersection of the values from the touch target up to and including that
+/// scroll container. The ones above it do not count: a scroll container re-enables panning along
+/// its own axes inside an ancestor's `touch-action: none` (Pointer Events 3, "determining
+/// supported direct manipulation behavior"; WPT `touch-action-single-axis`).
+fn touch_pan_denied(chain: &[(NodeId, u8)], scroller: Option<NodeId>) -> u8 {
+    let mut denied = 0;
+    for &(node, own) in chain {
+        denied |= own;
+        if Some(node) == scroller {
+            break;
+        }
     }
+    denied
+}
+
+/// The direction the content scrolls toward when the finger moves by `finger` along `axis` (0: x):
+/// a finger moving right scrolls it left, one moving down scrolls it up.
+fn touch_pan_direction(axis: usize, finger: f64) -> u8 {
+    use pyro_dom::style::{TOUCH_PAN_DOWN, TOUCH_PAN_LEFT, TOUCH_PAN_RIGHT, TOUCH_PAN_UP};
+    match (axis, finger > 0.0) {
+        (0, true) => TOUCH_PAN_LEFT,
+        (0, false) => TOUCH_PAN_RIGHT,
+        (_, true) => TOUCH_PAN_UP,
+        (_, false) => TOUCH_PAN_DOWN,
+    }
+}
+
+/// Whether `touch-action` lets a finger that moved by (dx, dy) out of the slop region start a pan:
+/// its dominant axis, in its direction, as the scroller it would scroll first allows it.
+fn touch_pan_starts(page: &PageDom, chain: &[(NodeId, u8)], target: NodeId, dx: f64, dy: f64) -> bool {
+    use pyro_dom::layout::ScrollTarget;
+    if chain.is_empty() {
+        return true;
+    }
+    let axis = if dx.abs() > dy.abs() { 0 } else { 1 };
+    let axes = pyro_dom::style::ScrollAxes { x: axis == 0, y: axis == 1 };
+    let scroller = match page.layout().scroll_container(&page.dom.borrow(), target, axes) {
+        ScrollTarget::Container(c) => Some(c),
+        ScrollTarget::Viewport => None,
+    };
+    (touch_pan_denied(chain, scroller) & touch_pan_direction(axis, if axis == 0 { dx } else { dy })) == 0
 }
 
 /// A fling's reach: how long the finger's release velocity goes on, in seconds (one jump, as
@@ -4676,7 +4727,11 @@ const FLING_MIN_VELOCITY: f64 = 100.0;
 /// contains the overscroll, and the first that moves latches the axis for the rest of the
 /// gesture (Chrome's scroll latching). Moves are neither snapped nor smooth; snapping is the
 /// pan's end ([`finish_touch_pan`]). Queues `scroll` for each box that moved.
-fn pan_scroll(page: &Rc<PageDom>, start: NodeId, pan: &mut TouchPan, finger: (f64, f64)) {
+///
+/// `chain` is the touch-action of `start` and its ancestors ([`touch_pan_chain`]): an axis moves no
+/// scroller whose effective value denies the finger's direction, and a denied pan does not chain
+/// to an ancestor (it would be denied there too).
+fn pan_scroll(page: &Rc<PageDom>, start: NodeId, pan: &mut TouchPan, finger: (f64, f64), chain: &[(NodeId, u8)]) {
     use pyro_dom::layout::ScrollTarget;
     let mut moved: Vec<ScrollTarget> = Vec::new();
     {
@@ -4700,18 +4755,31 @@ fn pan_scroll(page: &Rc<PageDom>, start: NodeId, pan: &mut TouchPan, finger: (f6
                 continue;
             }
             let latched = pan.latch[axis];
+            let direction = touch_pan_direction(axis, d);
+            let allowed = |scroller: Option<NodeId>| chain.is_empty() || (touch_pan_denied(chain, scroller) & direction) == 0;
             let hit = match latched {
-                Some(latched) => latched.filter(|&t| step(&mut *layout, t, axis, amount)),
+                Some(latched) => latched.filter(|&t| {
+                    let node = match t {
+                        ScrollTarget::Viewport => None,
+                        ScrollTarget::Container(n) => Some(n),
+                    };
+                    allowed(node) && step(&mut *layout, t, axis, amount)
+                }),
                 None => {
                     let axes = pyro_dom::style::ScrollAxes { x: axis == 0, y: axis == 1 };
                     let mut chosen = None;
                     let mut contained = false;
+                    let mut denied = false;
                     let mut cur = Some(start);
                     while let Some(el) = cur {
                         let c = match layout.scroll_container(&dom, el, axes) {
                             ScrollTarget::Container(c) => c,
                             ScrollTarget::Viewport => break,
                         };
+                        if !allowed(Some(c)) {
+                            denied = true;
+                            break;
+                        }
                         if step(&mut *layout, ScrollTarget::Container(c), axis, amount) {
                             chosen = Some(ScrollTarget::Container(c));
                             break;
@@ -4722,7 +4790,7 @@ fn pan_scroll(page: &Rc<PageDom>, start: NodeId, pan: &mut TouchPan, finger: (f6
                         }
                         cur = flat_parent_element(&dom, c);
                     }
-                    if chosen.is_none() && !contained && step(&mut *layout, ScrollTarget::Viewport, axis, amount) {
+                    if chosen.is_none() && !contained && !denied && allowed(None) && step(&mut *layout, ScrollTarget::Viewport, axis, amount) {
                         chosen = Some(ScrollTarget::Viewport);
                     }
                     if chosen.is_some() || contained {
@@ -4910,7 +4978,12 @@ pub fn dispatch_touch(
             }
             // An uncanceled touchmove out of the slop region starts a scroll
             // (unless touch-action forbids it), which cancels the pointer.
-            if !seq.multi && !seq.scrolling && !canceled && touch_pans(seq.pan_blocked, dx, dy) {
+            let mut starts = false;
+            if !seq.multi && !seq.scrolling && !seq.no_pan && !canceled {
+                starts = touch_pan_starts(page, &seq.pan_chain, seq.active[0].target, dx, dy);
+                seq.no_pan = !starts;
+            }
+            if starts {
                 seq.scrolling = true;
                 seq.pan = Some(TouchPan {
                     last: seq.start,
@@ -4926,15 +4999,14 @@ pub fn dispatch_touch(
             if seq.scrolling && !seq.multi && !page.is_disposed() && seq.doc == Some(page.document()) {
                 if let Some(first) = seq.active.first() {
                     let (x, y, start) = (first.input.x, first.input.y, first.target);
-                    let blocked = seq.pan_blocked;
                     if let Some(pan) = seq.pan.as_mut() {
-                        let finger = (if blocked.0 { 0.0 } else { x - pan.last.0 }, if blocked.1 { 0.0 } else { y - pan.last.1 });
-                        pan.last = (if blocked.0 { x } else { pan.last.0 + finger.0.round() }, if blocked.1 { y } else { pan.last.1 + finger.1.round() });
+                        let finger = (x - pan.last.0, y - pan.last.1);
+                        pan.last = (pan.last.0 + finger.0.round(), pan.last.1 + finger.1.round());
                         pan.samples.push((std::time::Instant::now(), x, y));
                         if pan.samples.len() > 8 {
                             pan.samples.remove(0);
                         }
-                        pan_scroll(page, start, pan, finger);
+                        pan_scroll(page, start, pan, finger, &seq.pan_chain);
                     }
                 }
             }
@@ -4947,7 +5019,7 @@ pub fn dispatch_touch(
             seq.start = (input.x, input.y);
             // touch-action is what it is as the touch comes down (before pointerdown's
             // listeners run).
-            seq.pan_blocked = touch_pan_blocked(page, target);
+            seq.pan_chain = touch_pan_chain(page, target);
         } else {
             seq.multi = true;
         }
