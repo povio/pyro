@@ -181,6 +181,23 @@ pub(crate) enum Claim {
     Pending(u64, Instant),
 }
 
+/// The navigation to `nav` is served the response of a prefetch made for `entry_url`: the document
+/// commits at the URL the user navigated to (`location.href`, `document.URL`, the navigation
+/// entry's name), not at the URL the prefetch fetched, when a `No-Vary-Search` header made them
+/// equivalent. A prefetch that was redirected keeps its final URL (the navigation follows the
+/// redirect chain). The navigation's own fragment is kept.
+fn serve_at(prefetched: &mut Prefetched, entry_url: &Url, nav: &str) {
+    let (Ok(nav), Ok(fetched)) = (Url::parse(nav), Url::parse(&prefetched.resource.url)) else { return };
+    if without_fragment(fetched) != *entry_url {
+        return;
+    }
+    prefetched.resource.url = nav.to_string();
+    prefetched.head.url = nav.clone();
+    if let Some(report) = prefetched.resource.timing.as_mut() {
+        report.url = nav.to_string();
+    }
+}
+
 /// `url` without its fragment.
 fn without_fragment(mut url: Url) -> Url {
     url.set_fragment(None);
@@ -528,7 +545,11 @@ impl Browser {
         match (waiter, resource) {
             (Some((target, waiter)), resource) => {
                 // The navigation joined under the hint: the response may not allow its URL.
-                let resource = resource.filter(|_| nvs.equivalent(&entry.url, &target));
+                let resource = resource.filter(|_| nvs.equivalent(&entry.url, &without_fragment(target.clone())));
+                let resource = resource.map(|mut r| {
+                    serve_at(&mut r, &entry.url, target.as_str());
+                    r
+                });
                 if resource.is_some() {
                     self.apply_prefetch_cookies(&entry);
                 }
@@ -613,6 +634,7 @@ impl Browser {
         self.apply_prefetch_cookies(&entry);
         let State::Ready(mut prefetched) = entry.state else { return None };
         rebase_timing(&mut prefetched.resource, started);
+        serve_at(&mut prefetched, &entry.url, &opts.url);
         Some(Claim::Ready(prefetched))
     }
 
@@ -621,7 +643,7 @@ impl Browser {
     pub(crate) fn prefetch_wait(&mut self, id: u64, target: Url, waiter: Waiter) {
         if let Some(at) = self.prefetches.find(id) {
             if let State::Pending { waiter: slot, .. } = &mut self.prefetches.entries[at].state {
-                *slot = Some((without_fragment(target), waiter));
+                *slot = Some((target, waiter));
                 return;
             }
         }
