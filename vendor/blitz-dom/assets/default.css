@@ -1370,7 +1370,7 @@ iframe:fullscreen {
     height: 100% !important;
     transform: none !important;
     object-fit: contain;
-    overlay: auto;
+    overlay: auto !important;
 }
 
 :fullscreen::backdrop {
@@ -1654,11 +1654,17 @@ dialog:popover-open {
     -moz-top-layer: top;
 }
 
-/* pyro: css-position-4 overlay: what is in the top layer is rendered there (a discrete
-   transition of it keeps an element there past its removal). Not `!important` as in the spec:
-   the sampled transition values rank below important declarations here. */
+/* css-position-4 § overlay: what is in the top layer is rendered there (a discrete
+   transition of it keeps an element there past its removal), and `overlay` is `none` for every
+   other element whatever an author declares. Both `!important`: the Transitions cascade level
+   (sampled transition values) ranks above important declarations, so a running `overlay`
+   transition still shows through. */
+* {
+    overlay: none !important;
+}
+
 dialog:modal, :popover-open {
-    overlay: auto;
+    overlay: auto !important;
 }
 
 :popover-open::backdrop {

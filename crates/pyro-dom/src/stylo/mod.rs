@@ -25,6 +25,9 @@ pub(crate) fn enable_features() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         style_config::set_pref!("layout.css.anchor-positioning.enabled", true);
+        // pyro: the Transitions cascade level outranks important UA declarations (css-transitions-1 § 4:
+        // `* { overlay: none !important }` yields to an `overlay` transition).
+        style_config::set_pref!("layout.css.transitions-override-ua", true);
         // pyro: `container-type: scroll-state` and `@container scroll-state(scrollable)`.
         style_config::set_pref!("layout.css.scroll-state.enabled", true);
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
