@@ -694,8 +694,13 @@ impl JsClass for Range {
         });
         def.method("getBoundingClientRect", 0, |s, r, _a| crate::layout_api::range_rect(s, &r.page(), points(r)));
         def.method("getClientRects", 0, |s, r, _a| {
-            let rect = crate::layout_api::range_rect(s, &r.page(), points(r))?;
-            crate::canvas::rect_list(s, &r.page(), &[rect])
+            let page = r.page();
+            let rects = crate::layout_api::range_client_rects(&page, points(r))?;
+            let mut values = Vec::with_capacity(rects.len());
+            for rect in rects {
+                values.push(crate::canvas::rect_value(s, &page, false, rect.layout_units())?);
+            }
+            crate::canvas::rect_list(s, &page, &values)
         });
         def.method("deleteContents", 0, |s, r, _a| {
             let mut dom = r.page.dom.borrow_mut();

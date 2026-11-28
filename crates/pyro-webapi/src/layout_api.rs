@@ -40,6 +40,73 @@ pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s
     crate::canvas::rect_list(s, page, &vals.iter(s).collect::<Vec<_>>())
 }
 
+/// `Range.getClientRects()` (CSSOM View): for each element the range contains whose parent it
+/// does not contain, its own `getClientRects()`; for each Text node the range contains or
+/// partially contains (also when its boundary points are identical), the rects of its selected
+/// part, a boundary inside a surrogate pair moved out of it. In tree order; none for what has
+/// no boxes (a range in a detached tree, or crossing a shadow boundary, collapses to nothing).
+pub(crate) fn range_client_rects(
+    page: &Rc<PageDom>,
+    (start, start_offset, end, end_offset): (NodeId, u32, NodeId, u32),
+) -> JsResult<Vec<pyro_dom::layout::Rect>> {
+    use crate::range::compare_boundary_points_dom as compare;
+    use pyro_dom::NodeType;
+    crate::animation_events::layout_flush(page, start);
+    let layout = page.layout();
+    let dom = page.dom.borrow();
+    let Ok(common) = crate::range::common_ancestor(&dom, start, end) else { return Ok(Vec::new()) };
+    let length = |node: NodeId| -> JsResult<u32> {
+        Ok(match dom.node_type(node).js()? {
+            NodeType::Text => dom.char_length(node).js()?,
+            _ => dom.child_count(node).js()?,
+        })
+    };
+    // DOM "contained": after the start and before the end, strictly.
+    let contained = |node: NodeId| -> JsResult<bool> {
+        Ok(compare(&dom, (node, 0), (start, start_offset)) > 0 && compare(&dom, (node, length(node)?), (end, end_offset)) < 0)
+    };
+    let mut rects = Vec::new();
+    for node in dom.descendants(common).js()? {
+        match dom.node_type(node).js()? {
+            NodeType::Element => {
+                let parent_contained = match dom.parent(node).js()? {
+                    Some(parent) => contained(parent)?,
+                    None => false,
+                };
+                if !parent_contained && contained(node)? {
+                    rects.extend(layout.client_rects(&dom, node));
+                }
+            }
+            NodeType::Text => {
+                if !(node == start || node == end || contained(node)?) {
+                    continue;
+                }
+                let len = dom.char_length(node).js()?;
+                let (mut from, mut to) = (if node == start { start_offset } else { 0 }, if node == end { end_offset } else { len });
+                // A boundary between the two halves of a surrogate pair is moved out of it.
+                let data = dom.char_data(node).js()?;
+                let units: Vec<u16> = data.encode_utf16().collect();
+                let low = |i: u32| units.get(i as usize).is_some_and(|u| (0xDC00..0xE000).contains(u));
+                let high = |i: u32| i > 0 && units.get(i as usize - 1).is_some_and(|u| (0xD800..0xDC00).contains(u));
+                if from > 0 && low(from) && high(from) {
+                    from -= 1;
+                }
+                if to < len && low(to) && high(to) {
+                    to += 1;
+                }
+                let part = layout.text_range_rects(&dom, node, from.min(to), to.max(from));
+                if part.is_empty() && from == 0 && to == len && len > 0 {
+                    rects.extend(layout.text_rect(&dom, node));
+                } else {
+                    rects.extend(part);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(rects)
+}
+
 /// Range geometry for (start container, start offset, end container, end
 /// offset). A range in a text node, or selecting exactly one text node
 /// (`selectNode(text)`), reports that text's line-box rect when the layout
@@ -49,6 +116,15 @@ pub(crate) fn range_rect<'s>(
     page: &Rc<PageDom>,
     (start, start_offset, end, end_offset): (NodeId, u32, NodeId, u32),
 ) -> JsResult<Value<'s>> {
+    // CSSOM View getBoundingClientRect: no rects (so a zero rect) for a range with no layout: in a
+    // tree that is not in the document, or whose boundary points are in different trees (one
+    // crossing a shadow boundary).
+    {
+        let dom = page.dom.borrow();
+        if crate::range::common_ancestor(&dom, start, end).is_err() || !dom.is_connected(start).unwrap_or(false) {
+            return crate::canvas::rect_value(s, page, false, pyro_dom::layout::Rect::default());
+        }
+    }
     let text = {
         let dom = page.dom.borrow();
         if dom.node_type(start).js()? == pyro_dom::NodeType::Text {

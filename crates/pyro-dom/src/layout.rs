@@ -1868,6 +1868,59 @@ impl Layout {
         bounds.map(|rect| self.text_client_rect(dom, text, rect, result.texts[&text].1))
     }
 
+    /// The client rects of the part `[start, end)` (UTF-16) of text node `text`, one per line it
+    /// covers there (Range.getClientRects: "for each Text node selected or partially selected by
+    /// the range ... scaled DOMRect objects", as Chromium's per-line text quads). The words of a
+    /// line are united; a collapsed range gives its caret rect alone (see [`Self::text_range_rect`]).
+    /// Empty when the text has no boxes.
+    pub fn text_range_rects(&self, dom: &Dom, text: NodeId, start: u32, end: u32) -> Vec<Rect> {
+        if start == end {
+            return self.text_range_rect(dom, text, start, end).into_iter().collect();
+        }
+        let result = self.text_result(dom);
+        // (The rect of the covered part of each line, in order; a line's words share their box's
+        // block-axis extent.)
+        let mut lines: Vec<(Rect, bool)> = Vec::new();
+        for run in result.text_runs.iter().filter(|run| run.node == text && run.start <= end && start <= run.end) {
+            let mut covered: Option<Rect> = None;
+            for pair in run.edges().windows(2) {
+                let [(first, left), (last, right)] = [pair[0], pair[1]];
+                let (lo, hi) = (first.min(last), first.max(last));
+                if !(lo < end && start < hi) {
+                    continue;
+                }
+                let (left, right) = (left.min(right), left.max(right));
+                let rect = if run.vertical_edges {
+                    Rect { y: left, height: right - left, ..run.rect }
+                } else {
+                    Rect { x: left, width: right - left, ..run.rect }
+                };
+                covered = Some(match covered {
+                    None => rect,
+                    Some(prev) => {
+                        let x = prev.left().min(rect.left());
+                        let y = prev.top().min(rect.top());
+                        Rect { x, y, width: prev.right().max(rect.right()) - x, height: prev.bottom().max(rect.bottom()) - y }
+                    }
+                });
+            }
+            let Some(rect) = covered else { continue };
+            let same_line = lines.last().is_some_and(|&(prev, vertical)| {
+                vertical == run.vertical_edges
+                    && if vertical { prev.x == rect.x && prev.width == rect.width } else { prev.y == rect.y && prev.height == rect.height }
+            });
+            if let (true, Some((prev, _))) = (same_line, lines.last_mut()) {
+                let x = prev.left().min(rect.left());
+                let y = prev.top().min(rect.top());
+                *prev = Rect { x, y, width: prev.right().max(rect.right()) - x, height: prev.bottom().max(rect.bottom()) - y };
+            } else {
+                lines.push((rect, run.vertical_edges));
+            }
+        }
+        let fixed = result.texts.get(&text).is_some_and(|&(_, fixed)| fixed);
+        lines.into_iter().map(|(rect, _)| self.text_client_rect(dom, text, rect, fixed)).collect()
+    }
+
     fn text_client_rect(&self, dom: &Dom, text: NodeId, r: Rect, fixed: bool) -> Rect {
         let (dx, dy) = self.ancestor_scroll_offset(dom, text);
         let (kx, ky) = self.sticky_shift_lazy(dom, text);
