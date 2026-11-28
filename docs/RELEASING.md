@@ -30,7 +30,7 @@ it accepted 195,675,050 bytes (0.0.50-rc.6) and rejected 204,910,000 bytes with
 `413 Payload Too Large` (0.0.50-rc.8), so the budget stays under the largest
 size known to be accepted. To fit, the npm package's four browsers have no
 symbol table (macOS copies are signed again with the JIT entitlement), and the
-tarball is recompressed with `gzip -9`. Each build job smoke-runs its stripped
+tarball is recompressed with `zopfli --i5` (gzip format, about 3% smaller than `gzip -9`). Each build job smoke-runs its stripped
 copy where the runner can execute it (`eval` in a page; on macOS also the
 signature and the allow-jit entitlement), so a broken copy fails the release
 before anything is published. The Intel macOS copy cannot run on `lp-m1` (no
