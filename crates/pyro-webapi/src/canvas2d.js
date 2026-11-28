@@ -1137,6 +1137,9 @@
         let attrs = '';
         if ('tableValues' in f) {
           const table = filterSequence(f.tableValues, 'tableValues');
+          // One entry is the constant it names (Skia's table), which the SVG table of a single
+          // value (no interval to interpolate in) does not give: the same value twice does.
+          if (table.length === 1) table.push(table[0]);
           // An empty table is the identity (SVG feFunc).
           if (table.length) attrs += ` tableValues="${table.join(' ')}"`;
           else if (type === 'table' || type === 'discrete') type = 'identity';
