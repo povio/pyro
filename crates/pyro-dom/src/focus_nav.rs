@@ -274,12 +274,17 @@ impl<'a> FocusNavigation<'a> {
             let id = self.id_of(i);
             let style = layout.style().stylo_style(self.dom, id);
             if flow == ReadingFlow::GridOrder && style.as_ref().is_some_and(|s| s.get_box().display.inside() == DisplayInside::Contents) {
-                if let Some((reading, order)) = self.contents_order(i, layout) { return (reading, (0, 0), order); }
+                if let Some((reading, order)) = self.contents_order(i, layout) { return (false, reading, (0, 0), order); }
             }
             let reading = style.as_ref().map_or(0, |s| s.get_position().reading_order);
-            let order = if flow == ReadingFlow::SourceOrder { 0 } else { style.as_ref().map_or(0, |s| s.get_position().order) };
+            // CSS Display 4 reading-flow: a box out of the grid's flow (absolutely positioned) is
+            // no grid item: it is visited after every item that is in flow, in DOM order within
+            // its `reading-order` (its `order` does not place it).
+            let out_of_flow = flow == ReadingFlow::GridOrder
+                && style.as_ref().is_some_and(|s| s.get_box().position.is_absolutely_positioned());
+            let order = if flow == ReadingFlow::SourceOrder || out_of_flow { 0 } else { style.as_ref().map_or(0, |s| s.get_position().order) };
             let position = placements.get(&crate::snapshot::render_key(id)).copied().unwrap_or_default();
-            (reading, position, order)
+            (out_of_flow, reading, position, order)
         });
     }
 
