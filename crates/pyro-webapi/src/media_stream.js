@@ -35,7 +35,8 @@
   const EventTargetC = EventTarget;
   const MathC = Math;
   const setTimeoutC = setTimeout;
-  const queueMicrotaskC = queueMicrotask;
+  // (A page may have removed or replaced the global before this module is first used.)
+  const queueMicrotaskC = typeof queueMicrotask === 'function' ? queueMicrotask : (f) => { PromiseC.resolve().then(f); };
   const perfNow = () => performance.now();
   const resolve = (v) => PromiseC.resolve(v);
   const reject = (e) => PromiseC.reject(e);
