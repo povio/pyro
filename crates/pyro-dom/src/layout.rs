@@ -6318,7 +6318,9 @@ impl Layout {
             // `anchor()` / `anchor-size()` compute to pixels (css-anchor-position-1 § anchor-pos): the
             // used value of the layout engine, as getComputedStyle reports it.
             let mut used_value = false;
-            if css.contains("anchor(") || css.contains("anchor-size(") || (matches!(name, "top" | "left" | "right" | "bottom") && self.has_position_try_fallbacks(dom, el)) {
+            if css.contains("anchor(") || css.contains("anchor-size(") || (matches!(name, "top" | "left" | "right" | "bottom") && self.has_position_try_fallbacks(dom, el))
+                // (a size a fallback option sets: the declared `auto` is not what is in use)
+                || (matches!(name, "width" | "height") && css == "auto" && self.has_position_try_fallbacks(dom, el)) {
                 let used = self.computed_style_value(dom, el, name);
                 if used.ends_with("px") && !used.contains("anchor") {
                     css = used;
