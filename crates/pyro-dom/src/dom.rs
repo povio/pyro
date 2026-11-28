@@ -310,9 +310,6 @@ pub struct Dom {
     /// Only controls with registered ranges have an entry. Weak references
     /// let unobserved ranges die independently of their control.
     pub(crate) value_ranges: rustc_hash::FxHashMap<u32, Vec<std::rc::Weak<crate::forms::OpaqueRange>>>,
-    /// pyro: a "replace all" of a textarea's children is under way: the textarea's value is compared
-    /// before and after it, not at each step (`replace_all`, `tracked_textarea_value`).
-    pub(crate) textarea_replace_all: bool,
     /// An `<input>` whose type change left the value content attribute to
     /// set (value mode to default mode), set once the type mutation is queued.
     pub(crate) pending_input_value_attr: Option<(u32, String)>,
@@ -454,7 +451,6 @@ impl Dom {
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
             value_ranges: Default::default(),
-            textarea_replace_all: false,
             pending_input_value_attr: None,
             selectedcontent_seen: false,
             select_seen: false,
@@ -3130,11 +3126,6 @@ impl Dom {
         // child gave them.
         let batch = self.select_seen && !removed.is_empty() && self.options_before_remove_children(p);
         self.options_batch_removal |= batch;
-        // A clean textarea's value is that of its text children: replacing them with the same text
-        // leaves its value (and the ranges and selection over it) alone, the steps in between
-        // (no child, then the new one) are not changes of it.
-        let old_value = self.tracked_textarea_value(p);
-        let outer_batch = std::mem::replace(&mut self.textarea_replace_all, old_value.is_some());
         for &c in &removed {
             self.remove(c, true);
         }
@@ -3144,8 +3135,6 @@ impl Dom {
         if n != NIL {
             self.insert(n, p, NIL, true);
         }
-        self.textarea_replace_all = outer_batch;
-        self.update_tracked_textarea(old_value);
         if observed && (!added.is_empty() || !removed.is_empty()) {
             self.queue_child_list(p, &added, &removed, NIL, NIL);
         }
