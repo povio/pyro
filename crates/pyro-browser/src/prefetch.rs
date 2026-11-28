@@ -190,10 +190,12 @@ pub(crate) enum Claim {
 /// commits at the URL the user navigated to (`location.href`, `document.URL`, the navigation
 /// entry's name), not at the URL the prefetch fetched, when a `No-Vary-Search` header made them
 /// equivalent. A prefetch that was redirected keeps its final URL (the navigation follows the
-/// redirect chain). The navigation's own fragment is kept.
-fn serve_at(prefetched: &mut Prefetched, entry_url: &Url, nav: &str) {
+/// redirect chain). The navigation's own fragment is kept. A response made through a service
+/// worker is never a redirect (the worker saw `redirect: "manual"`; a response it made for another
+/// URL, `respondWith(fetch(otherUrl))`, does not rename the document either).
+fn serve_at(prefetched: &mut Prefetched, entry_url: &Url, nav: &str, via_worker: bool) {
     let (Ok(nav), Ok(fetched)) = (Url::parse(nav), Url::parse(&prefetched.resource.url)) else { return };
-    if without_fragment(fetched) != *entry_url {
+    if !via_worker && without_fragment(fetched) != *entry_url {
         return;
     }
     prefetched.resource.url = nav.to_string();
@@ -557,7 +559,7 @@ impl Browser {
                 // The navigation joined under the hint: the response may not allow its URL.
                 let resource = resource.filter(|_| nvs.equivalent(&entry.url, &without_fragment(target.clone())));
                 let resource = resource.map(|mut r| {
-                    serve_at(&mut r, &entry.url, target.as_str());
+                    serve_at(&mut r, &entry.url, target.as_str(), entry.via_worker);
                     r
                 });
                 if resource.is_some() {
@@ -645,7 +647,7 @@ impl Browser {
         self.apply_prefetch_cookies(&entry);
         let State::Ready(mut prefetched) = entry.state else { return None };
         rebase_timing(&mut prefetched.resource, started);
-        serve_at(&mut prefetched, &entry.url, &opts.url);
+        serve_at(&mut prefetched, &entry.url, &opts.url, entry.via_worker);
         Some(Claim::Ready(prefetched))
     }
 

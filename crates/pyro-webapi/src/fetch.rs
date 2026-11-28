@@ -638,12 +638,19 @@ pub(crate) fn parse_request<'s>(
         return Err(JsError::Type("Invalid no-cors method".into()));
     }
     let headers_init = option(s, init, "headers")?;
+    // Fetch "Request constructor" step 33 runs only when init is not empty: `fetch(request)` keeps
+    // the request's header list as it is. A script could not have made a header forbidden (the
+    // constructor drops them); only the browser's own request a service worker's FetchEvent shows
+    // can hold one (`Sec-Purpose: prefetch`), and `fetch(event.request)` must send it on. Any init
+    // (even `{referrer}`) refills the headers through the guard and drops it, as Chrome does.
+    // (An init that is an empty object counts as non-empty here: the stricter answer.)
+    let inherited = request_input.is_some() && (init.is_undefined() || init.is_null());
     let header_pairs = match (&request_input, headers_init.is_undefined()) {
         (Some(r), true) => r.header_pairs(s),
         _ => headers::from_init(s, headers_init)?.pairs(),
     };
     for (name, value) in header_pairs {
-        if forbidden_header(&name) {
+        if forbidden_header(&name) && !(inherited && name == "sec-purpose") {
             continue;
         }
         if matches!(name.as_str(), "x-http-method" | "x-http-method-override" | "x-method-override")
