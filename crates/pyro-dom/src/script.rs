@@ -228,7 +228,7 @@ impl Dom {
 
     /// `node` came into or is about to leave its parent: when that is a `<picture>`, a relevant
     /// mutation of the `<img>` itself, or of the picture's `<img>` children for a `<source>`.
-    fn note_picture_child_change(&mut self, node: u32) {
+    pub(crate) fn note_picture_child_change(&mut self, node: u32) {
         if !self.resources.enabled {
             return;
         }
