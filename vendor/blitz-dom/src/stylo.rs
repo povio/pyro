@@ -748,16 +748,34 @@ impl crate::document::BaseDocument {
             &pseudo.rule_map_key(),
             RuleInclusion::All,
             &primary,
-            false,
+            // A probe: `None` where no rule of the pseudo-element matches this element, so the ancestors
+            // that have none do not stand in as a parent highlight style.
+            true,
             pseudo.is_highlight().then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
             false,
         );
+        // The parent style of the cascade is the originating element's own style (so `em`, `cqw`, the
+        // container lookup and every property a highlight does not inherit come from the originating
+        // element, as for a pseudo-element without highlight inheritance), carrying only the parent
+        // highlight's values of the inherited properties highlights apply (css-pseudo-4 highlight inheritance).
+        let inheriting_parent = |parent: &ComputedValues| {
+            let mut composite = (*primary).clone();
+            let text = composite.mutate_inherited_text();
+            let from = parent.get_inherited_text();
+            text.copy_color_from(from);
+            text.copy_text_shadow_from(from);
+            text.copy_text_underline_offset_from(from);
+            text.copy_text_underline_position_from(from);
+            composite
+        };
         match (lazy, parent) {
+            // Nothing along the chain: the plain originating-element inheritance (the caller's) stands.
             (None, None) => None,
             (Some(style), None) => Some(style),
-            (None, Some(parent)) => Some(
-                style::properties::StyleBuilder::for_inheritance(self.stylist.device(), Some(&self.stylist), Some(&parent), Some(pseudo)).build(),
-            ),
+            (None, Some(parent)) => {
+                let composite = inheriting_parent(&parent);
+                Some(style::properties::StyleBuilder::for_inheritance(self.stylist.device(), Some(&self.stylist), Some(&composite), Some(pseudo)).build())
+            }
             (Some(style), Some(parent)) => {
                 // Only the rules carry over: the visited style is never exposed.
                 let inputs = style::context::CascadeInputs {
@@ -765,7 +783,13 @@ impl crate::document::BaseDocument {
                     flags: style.flags.for_cascade_inputs(),
                     ..Default::default()
                 };
-                Some(self.stylist.compute_pseudo_element_style_with_inputs(inputs, pseudo, &guards, Some(&parent), Some(node)))
+                let composite = inheriting_parent(&parent);
+                // `color: currentcolor` of a highlight is the originating element's colour, not the inherited one.
+                let originating_color = *primary.get_inherited_text().get_color();
+                let previous = style::values::specified::color::HIGHLIGHT_ORIGINATING_COLOR.replace(Some(originating_color));
+                let cascaded = self.stylist.compute_pseudo_element_style_with_inputs(inputs, pseudo, &guards, Some(&composite), Some(node));
+                style::values::specified::color::HIGHLIGHT_ORIGINATING_COLOR.set(previous);
+                Some(cascaded)
             }
         }
     }
