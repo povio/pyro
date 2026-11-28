@@ -82,6 +82,13 @@
 //! a document's ready entries keep at most [`MAX_DOCUMENT_BYTES`] of body together. Entries are
 //! swept when a task ends, when their page closes (`dispose_page`) and when a navigation commits
 //! (`commit_document`: the document that asked is gone).
+//!
+//! # Known gap: response headers of a cross-site prefetch
+//! Only `Set-Cookie` of a cross-site response waits for the navigation's commit. The other headers
+//! that change browser state on arrival (`Accept-CH`, `NEL`, `Use-As-Dictionary`,
+//! `Clear-Site-Data`) take effect at prefetch time, as for any fetch; Chrome's isolated context
+//! defers them. A page can make another site set those for the user before any navigation;
+//! deferring them needs the client to collect them per request, like `DeferredCookies`.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -105,6 +112,11 @@ const MAX_ENTRIES: usize = 64;
 /// not started until one is used or dropped. Chrome limits speculative prefetches per document
 /// too (50 for the eager rules, 2 for the others).
 const MAX_PER_DOCUMENT: usize = 50;
+/// At most this many new candidates one pass over a document's rules evaluates (the rest wait for
+/// the next change), and at most this many URLs are remembered as attempted across documents:
+/// a rule's `urls` list has no limit of its own.
+const MAX_CONSIDERED_PER_PASS: usize = 2 * MAX_PER_DOCUMENT;
+const MAX_ATTEMPTED: usize = 4096;
 /// The largest response body a prefetch keeps: a larger one fails the prefetch (the loader's
 /// `max_body`), so a navigation fetches it itself.
 pub(crate) const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
@@ -122,6 +134,30 @@ pub(crate) type Waiter = Box<dyn FnOnce(&mut Browser, Option<Prefetched>)>;
 pub(crate) struct Prefetched {
     pub resource: Resource,
     pub head: pyro_net::ResponseHead,
+    /// What happens when a navigation that used the response commits, and not before (a
+    /// navigation that is superseded, blocked or fails after claiming the response has no effect).
+    pub activation: Activation,
+}
+
+/// The effects of using a prefetched response, applied at the commit of the navigation that
+/// claimed it ([`Browser::prefetch_committed`]).
+pub(crate) struct Activation {
+    pub context: ContextId,
+    /// The `Set-Cookie` headers of a cross-site response, for the context's jar.
+    pub cookies: Vec<pyro_net::DeferredCookie>,
+    /// The activation beacon: the `On-Prefetch-Activation` URL (https, resolved against the
+    /// response's own URL) and the response's origin.
+    pub beacon: Option<(Url, String)>,
+}
+
+/// Speculation Rules "activation beacon": the `On-Prefetch-Activation` header of the response
+/// `head`, resolved against the URL the response came from (not the URL a navigation later
+/// commits under), when it names an https URL without credentials: an https document's prefetch
+/// must not make the browser reach an http (mixed or private-network) target.
+fn activation_beacon(head: &pyro_net::ResponseHead) -> Option<(Url, String)> {
+    let value = head.headers.get("on-prefetch-activation")?.to_str().ok()?;
+    let url = head.url.join(value.trim()).ok()?;
+    (url.scheme() == "https" && url.username().is_empty() && url.password().is_none()).then(|| (url, head.url.origin().ascii_serialization()))
 }
 
 enum State {
@@ -175,6 +211,9 @@ pub(crate) struct PrefetchCache {
     /// after their entry is gone (claimed, failed, expired): a rule set change must not start
     /// the same fetch again. A URL whose candidates went away is forgotten.
     attempted: HashSet<(PageId, String, String)>,
+    /// Claimed responses by the loader id of the navigation that claimed them, until it commits
+    /// ([`Browser::prefetch_committed`]); the oldest go when it never does.
+    activations: Vec<(String, Activation)>,
 }
 
 /// What a navigation got from the cache.
@@ -203,6 +242,38 @@ fn serve_at(prefetched: &mut Prefetched, entry_url: &Url, nav: &str, via_worker:
     if let Some(report) = prefetched.resource.timing.as_mut() {
         report.url = nav.to_string();
     }
+}
+
+/// The candidates a pass over `candidates` looks at, each with the tags of every rule that asked
+/// for its URL (the first request carries them all): one per distinct URL (without fragment) that
+/// `is_attempted` does not know, at most [`MAX_CONSIDERED_PER_PASS`] of them and none once
+/// `attempted` URLs are [`MAX_ATTEMPTED`]. Linear in `candidates`: the tags are grouped once.
+fn plan_pass<'a>(
+    candidates: &'a [Candidate],
+    is_attempted: impl Fn(&Url) -> bool,
+    attempted: usize,
+) -> Vec<(&'a Candidate, Vec<Option<String>>)> {
+    let mut tags: HashMap<Url, Vec<Option<String>>> = HashMap::new();
+    for c in candidates {
+        let key = without_fragment(c.url.clone());
+        tags.entry(key).or_default().extend(c.tags());
+    }
+    let mut room = MAX_ATTEMPTED.saturating_sub(attempted).min(MAX_CONSIDERED_PER_PASS);
+    let mut plan = Vec::new();
+    for c in candidates {
+        if room == 0 {
+            break;
+        }
+        let key = without_fragment(c.url.clone());
+        // Taking the entry out also drops the later candidates of the same URL.
+        let Some(tags) = tags.remove(&key) else { continue };
+        if is_attempted(&key) {
+            continue;
+        }
+        room -= 1;
+        plan.push((c, tags));
+    }
+    plan
 }
 
 /// `url` without its fragment.
@@ -302,15 +373,29 @@ impl Browser {
         if let SpeculationChange::Removed(set) = change {
             self.prefetch_rule_set_removed(page, &loader, set, &candidates);
         }
-        for candidate in &candidates {
-            // The tags of every rule that produced the URL (the first request carries them all).
-            let tags: Vec<Option<String>> = candidates
-                .iter()
-                .filter(|c| without_fragment(c.url.clone()) == without_fragment(candidate.url.clone()))
-                .flat_map(Candidate::tags)
-                .collect();
+        // Nothing to do for a document at its limit or under an override that keeps prefetches
+        // from being made (checked once, before any per-candidate work).
+        if self.prefetch_bypassed(page.page) || self.document_prefetches(page.page, &loader) >= MAX_PER_DOCUMENT {
+            return;
+        }
+        let plan = {
+            let attempted = &self.prefetches.attempted;
+            plan_pass(&candidates, |url| attempted.contains(&(page.page, loader.clone(), url.to_string())), attempted.len())
+        };
+        for (candidate, tags) in plan {
+            if self.document_prefetches(page.page, &loader) >= MAX_PER_DOCUMENT {
+                break;
+            }
+            // Every candidate a pass looks at is looked at once per document, started or not (an
+            // ineligible one would be judged again by each rule change otherwise).
+            self.prefetches.attempted.insert((page.page, loader.clone(), without_fragment(candidate.url.clone()).to_string()));
             self.start_prefetch_of(page, candidate, tag_header(&tags));
         }
+    }
+
+    /// The prefetches of the document `loader` of `page` that are in the cache.
+    fn document_prefetches(&self, page: PageId, loader: &str) -> usize {
+        self.prefetches.entries.iter().filter(|e| e.page == page && e.initiator_loader == loader).count()
     }
 
     /// The rule set `removed` left `page`'s document: its prefetches are cancelled and no longer
@@ -393,12 +478,20 @@ impl Browser {
             return;
         }
         self.sweep_prefetches();
-        if self.prefetches.entries.iter().filter(|e| e.page == page.page && e.initiator_loader == frame.loader_id.0).count() >= MAX_PER_DOCUMENT {
-            return;
-        }
-        if !self.prefetches.attempted.insert((page.page, frame.loader_id.0.clone(), url.to_string())) {
-            return;
-        }
+        // The initiating document's Content Security Policy and Connection-Allowlist govern the
+        // request as they do a `<link rel=prefetch>` (destination `prefetch`: `default-src` or any
+        // fetch directive that allows it; a violation is reported at the document), and the guard
+        // checks each redirect hop. A blocked candidate is dropped (it stays attempted).
+        let csp = match frame.page_dom.as_ref() {
+            Some(dom) => {
+                let check = pyro_net::csp::CspRequest::new(url.clone(), pyro_net::csp::RequestDest::Prefetch);
+                match pyro_webapi::csp::check_request(dom, check, None) {
+                    Ok(guard) => guard,
+                    Err(_) => return,
+                }
+            }
+            None => None,
+        };
         self.prefetches.make_room();
         let cookies = Arc::new(DeferredCookies::default());
         let head = Arc::new(PrefetchedHead::default());
@@ -423,7 +516,7 @@ impl Browser {
         });
         let request = FetchRequest {
             accept_signature: None,
-            csp: None,
+            csp,
             required_csp: None,
             required_connection_allowlist: None,
             purpose: Some(Purpose::Prefetch { cross_site, initiator_site: pyro_net::cookies::partition_key(&document_url), tags, cookies, head }),
@@ -442,7 +535,18 @@ impl Browser {
             module: None,
             part: None,
         };
-        let cancel = loader.fetch_cancellable(self, request, Box::new(move |b, result| b.prefetch_finished(id, result)));
+        // Redirect hops the guard refused are reported at the document when the fetch ends.
+        let reporting = request.csp.clone().zip(frame.page_dom.clone());
+        let cancel = loader.fetch_cancellable(
+            self,
+            request,
+            Box::new(move |b, result| {
+                if let Some((guard, dom)) = &reporting {
+                    pyro_webapi::csp::report_guard(dom, Some(guard), None);
+                }
+                b.prefetch_finished(id, result)
+            }),
+        );
         match self.prefetches.find(id).map(|at| &mut self.prefetches.entries[at].state) {
             Some(State::Pending { cancel: slot, .. }) => *slot = cancel,
             // It went away meanwhile (cleared, expired): the transport stops with the handle.
@@ -523,13 +627,35 @@ impl Browser {
         urls.iter().any(|u| net.has_cookies_for(u))
     }
 
-    /// A navigation uses `entry`'s response: the cookies its cross-site fetch received go into the
-    /// jar now (Chrome copies the isolated context's cookies on activation).
-    fn apply_prefetch_cookies(&self, entry: &Entry) {
-        let cookies = entry.cookies.take();
-        if let Some(net) = self.context_net(entry.context) {
-            net.apply_deferred_cookies(&cookies);
+    /// The navigation `loader` of `page` that claimed a prefetched response is about to be served
+    /// it: remembers what its commit applies.
+    pub(crate) fn prefetch_claimed(&mut self, loader: &str, activation: Activation) {
+        const MAX_UNCOMMITTED: usize = 16;
+        if self.prefetches.activations.len() >= MAX_UNCOMMITTED {
+            self.prefetches.activations.remove(0);
         }
+        self.prefetches.activations.push((loader.to_owned(), activation));
+    }
+
+    /// The navigation `loader` of `page` committed the document: the effects of the prefetched
+    /// response it used apply now: its cross-site cookies are stored and its activation beacon is
+    /// sent (credentials only for a same-origin target, no referrer).
+    pub(crate) fn prefetch_committed(&mut self, page: FrameKey, loader: &str) {
+        let Some(at) = self.prefetches.activations.iter().position(|(l, _)| l == loader) else { return };
+        let (_, activation) = self.prefetches.activations.remove(at);
+        if let Some(net) = self.context_net(activation.context) {
+            net.apply_deferred_cookies(&activation.cookies);
+        }
+        let Some((url, origin)) = activation.beacon else { return };
+        let Some(state) = self.page(page.page) else { return };
+        let Some(net) = self.context_net(state.context) else { return };
+        let mut req = pyro_net::Request::get(url, pyro_net::Destination::Beacon);
+        req.credentials = pyro_net::Credentials::SameOrigin;
+        req.origin = Some(origin);
+        req.referrer = None;
+        req.defaults = state.request_defaults.clone();
+        req.top_level_site = pyro_net::cookies::partition_key(&req.url);
+        net.fetch(req, Box::new(|_| {}));
     }
 
     /// The prefetch `id` got its result.
@@ -543,7 +669,15 @@ impl Browser {
             cancel.disarm();
         }
         // The response's `No-Vary-Search` replaces the rule's hint.
-        let nvs = result.as_ref().ok().and_then(|r| r.no_vary_search.clone()).unwrap_or_default();
+        // Only the response of the requested URL itself defines its variance: the final response of
+        // a redirect chain is another resource's (possibly another origin's) and says nothing about
+        // which queries of the first URL are the same page. After a redirect the match is exact.
+        let nvs = result
+            .as_ref()
+            .ok()
+            .filter(|r| Url::parse(&r.url).is_ok_and(|u| without_fragment(u) == entry.url))
+            .and_then(|r| r.no_vary_search.clone())
+            .unwrap_or_default();
         let head = entry.head.take();
         // A response whose head the loader did not keep cannot be reported as the navigation's.
         let resource = result.ok().filter(usable).filter(|r| {
@@ -553,18 +687,20 @@ impl Browser {
             // A cross-site response was made without cookies: not for a user who has some now.
             !self.prefetch_cleared(entry.context, entry.started, &urls) && !(entry.cross_site && self.prefetch_has_cookies(entry.context, &urls))
         });
-        let resource = resource.zip(head).map(|(resource, head)| Prefetched { resource, head });
+        let beacon = head.as_ref().and_then(activation_beacon);
+        let resource = resource
+            .zip(head)
+            .map(|(resource, head)| Prefetched { resource, head, activation: Activation { context: entry.context, cookies: Vec::new(), beacon } });
         match (waiter, resource) {
             (Some((target, waiter)), resource) => {
                 // The navigation joined under the hint: the response may not allow its URL.
                 let resource = resource.filter(|_| nvs.equivalent(&entry.url, &without_fragment(target.clone())));
+                // The cross-site response's cookies go to the jar when the navigation commits.
                 let resource = resource.map(|mut r| {
                     serve_at(&mut r, &entry.url, target.as_str(), entry.via_worker);
+                    r.activation.cookies = entry.cookies.take();
                     r
                 });
-                if resource.is_some() {
-                    self.apply_prefetch_cookies(&entry);
-                }
                 waiter(self, resource);
             }
             (None, Some(resource)) if self.prefetches.ready_bytes(&entry) + resource.resource.body.len() <= MAX_DOCUMENT_BYTES => {
@@ -644,8 +780,10 @@ impl Browser {
             return Some(Claim::Pending(entry.id, started));
         }
         let entry = self.prefetches.entries.remove(at);
-        self.apply_prefetch_cookies(&entry);
         let State::Ready(mut prefetched) = entry.state else { return None };
+        // The cookies of a cross-site response wait for the commit of the navigation that uses it
+        // (an interrupted or blocked navigation must not store a site's cookies).
+        prefetched.activation.cookies = entry.cookies.take();
         rebase_timing(&mut prefetched.resource, started);
         serve_at(&mut prefetched, &entry.url, &opts.url, entry.via_worker);
         Some(Claim::Ready(prefetched))
@@ -677,6 +815,33 @@ mod tests {
         assert!(!cross_site_policy_ok(ReferrerPolicy::UnsafeUrl));
         assert!(!cross_site_policy_ok(ReferrerPolicy::OriginWhenCrossOrigin));
         assert!(!cross_site_policy_ok(ReferrerPolicy::NoReferrerWhenDowngrade));
+    }
+
+    #[test]
+    fn a_huge_rule_list_is_planned_in_bounded_work() {
+        let candidates: Vec<Candidate> = (0..100_000)
+            .map(|i| Candidate {
+                set: RuleSetId(0),
+                action: Action::Prefetch,
+                url: Url::parse(&format!("https://a.test/{}#f", i % 70_000)).unwrap(),
+                eagerness: Eagerness::Immediate,
+                referrer_policy: None,
+                tag: Some("t".into()),
+                set_tag: None,
+                requires: Vec::new(),
+                expects_no_vary_search: None,
+                target_hint: None,
+            })
+            .collect();
+        let calls = std::cell::Cell::new(0usize);
+        let plan = plan_pass(&candidates, |_| { calls.set(calls.get() + 1); false }, 0);
+        // Work is bounded by the cap, not by the list (counts, not time).
+        assert_eq!(plan.len(), MAX_CONSIDERED_PER_PASS);
+        assert_eq!(calls.get(), MAX_CONSIDERED_PER_PASS);
+        // A document at the attempted bound plans nothing.
+        assert!(plan_pass(&candidates, |_| false, MAX_ATTEMPTED).is_empty());
+        // Tags of one URL are grouped (the duplicates of /0 are i = 0 and 70000).
+        assert_eq!(plan[0].1.len(), 2);
     }
 
     #[test]

@@ -1060,3 +1060,64 @@ fn review_cookie_set_by_earlier_script() {
     let has_cookie = s2.1.to_ascii_lowercase().contains("cookie: k=v");
     eprintln!("REVIEW cookie on speculated /s2.js: {has_cookie}");
 }
+
+/// Serves a page with speculation rules asking to prefetch `/p`, under `csp`, and records every
+/// request. (Speculation rules: the initiating document's CSP governs the prefetch like a
+/// `<link rel=prefetch>`, and an inline rule set needs script-src to allow it.)
+struct SpeculationLoader {
+    csp: Option<&'static str>,
+    requests: RefCell<Vec<String>>,
+}
+
+impl ResourceLoader for SpeculationLoader {
+    fn fetch(&self, browser: &mut Browser, request: FetchRequest, done: FetchDone) {
+        self.requests.borrow_mut().push(request.url.clone());
+        let id = browser.register_completion(done);
+        let url = request.url;
+        let csp = self.csp;
+        browser.scheduler().post(pyro_runtime::TaskSource::Networking, move |b| {
+            let body = if url.ends_with("/p") {
+                "<p>prefetched"
+            } else {
+                r#"<script type="speculationrules">{"prefetch":[{"source":"list","urls":["/p"]}]}</script>"#
+            };
+            let mut resource = ManualLoader::resource(&url, body);
+            if !url.ends_with("/p") {
+                resource.header_csp = csp.map(|c| format!("{c}\n"));
+            }
+            b.complete_fetch(id, Ok(resource));
+        });
+    }
+}
+
+fn prefetch_requests_under(csp: Option<&'static str>) -> Vec<String> {
+    let mut thread = crate::browser_thread().unwrap();
+    let loader = Rc::new(SpeculationLoader { csp, requests: RefCell::new(Vec::new()) });
+    thread.browser.set_loader(Some(loader.clone()));
+    let page = thread.browser.create_page().unwrap();
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://localhost/".to_owned())).unwrap();
+    thread.run_until_idle(Some(Instant::now() + Duration::from_millis(500)));
+    thread.run_until_idle(Some(Instant::now() + Duration::from_millis(500)));
+    let requests = loader.requests.borrow().clone();
+    requests
+}
+
+#[test]
+fn a_speculation_prefetch_is_made_without_a_policy() {
+    assert_eq!(prefetch_requests_under(None), ["http://localhost/", "http://localhost/p"]);
+}
+
+#[test]
+fn a_policy_without_prefetch_access_blocks_the_speculation_prefetch() {
+    // The rule set itself is allowed (script-src), the URL is not (default-src 'none').
+    let requests = prefetch_requests_under(Some("script-src 'unsafe-inline'; default-src 'none'"));
+    assert_eq!(requests, ["http://localhost/"]);
+}
+
+#[test]
+fn a_policy_that_blocks_inline_script_ignores_an_inline_rule_set() {
+    assert_eq!(prefetch_requests_under(Some("default-src 'none'")), ["http://localhost/"]);
+    // 'inline-speculation-rules' allows it (and the URL via default-src).
+    let requests = prefetch_requests_under(Some("script-src 'inline-speculation-rules'; default-src 'self'"));
+    assert_eq!(requests, ["http://localhost/", "http://localhost/p"]);
+}

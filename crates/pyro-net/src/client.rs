@@ -885,6 +885,13 @@ impl NetClient {
     /// URL the user has any cookie for, as its credential-less response would stand in for the
     /// logged-in page).
     pub fn has_cookies_for(&self, url: &Url) -> bool {
+        // Stored Basic credentials for the URL count as well: a navigation would send them, so a
+        // credential-less response must not stand in for it.
+        if self.inner.shared.basic_auth_stored.load(std::sync::atomic::Ordering::Relaxed)
+            && self.inner.shared.basic_auth.lock().unwrap().knows(url)
+        {
+            return true;
+        }
         let mut jar = self.inner.cookies.lock().unwrap();
         if jar.is_empty() {
             return false;

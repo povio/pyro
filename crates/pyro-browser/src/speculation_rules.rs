@@ -48,8 +48,7 @@
 //! by this module: the prerender lane adds it with its behaviour, and until then `prerender`
 //! rules start nothing and `'prerendering' in document` stays false.
 //!
-//! Left out here (named so a lane can pick it up): CSP `script-src` / `inline-speculation-rules`
-//! for inline sets, and rule sets in `document.write` markup (the written-markup script path in
+//! Inline sets are gated by CSP (`add_speculation_rules`); a header set is exempt. Left out here:  rule sets in `document.write` markup (the written-markup script path in
 //! pyro-webapi marks them started and drops them).
 
 // The accessors and types below are the interface of the fan-out lanes; until they land only
@@ -768,6 +767,17 @@ impl Browser {
         if info.src.is_some() {
             self.speculation_error_task(page, element, None);
             return;
+        }
+        // CSP: an inline rule set is inline script behaviour (Speculation Rules, "CSP integration"):
+        // allowed by the document's `script-src-elem` (or its fallbacks) through a nonce, a hash,
+        // 'unsafe-inline' or 'inline-speculation-rules'; else it is ignored and the violation is
+        // reported at the element. (The strict side of 'strict-dynamic': an inserted rule set gets
+        // no trust from the script that inserted it.)
+        if let Some(bindings) = self.doc(page).and_then(|d| d.main_frame.page_dom.clone()) {
+            let nonce = pyro_webapi::csp::element_nonce(&bindings, info.node);
+            if !pyro_webapi::csp::inline_allowed(&bindings, pyro_webapi::csp::InlineKind::SpeculationRules, &nonce, &info.inline_text, Some(info.node)) {
+                return;
+            }
         }
         // A base that is no URL (it always is one for a loaded document) resolves nothing.
         let base = url::Url::parse(base).unwrap_or_else(|_| url::Url::parse("about:blank").expect("about:blank is a URL"));

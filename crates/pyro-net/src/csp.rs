@@ -398,6 +398,9 @@ impl CheckOutcome {
 pub enum InlineKind {
     /// An inline `<script>`.
     Script,
+    /// An inline `<script type=speculationrules>` (Speculation Rules, CSP integration): checked as
+    /// a script, and also allowed by the `'inline-speculation-rules'` source expression.
+    SpeculationRules,
     /// An event handler content attribute.
     ScriptAttribute,
     /// A `javascript:` URL navigation.
@@ -412,7 +415,7 @@ impl InlineKind {
     /// CSP3 §6.8.2 "Get the effective directive for inline checks".
     pub fn effective_directive(self) -> &'static str {
         match self {
-            InlineKind::Script | InlineKind::Navigation => "script-src-elem",
+            InlineKind::Script | InlineKind::Navigation | InlineKind::SpeculationRules => "script-src-elem",
             InlineKind::ScriptAttribute => "script-src-attr",
             InlineKind::Style => "style-src-elem",
             InlineKind::StyleAttribute => "style-src-attr",
@@ -420,7 +423,7 @@ impl InlineKind {
     }
 
     fn is_script(self) -> bool {
-        matches!(self, InlineKind::Script | InlineKind::ScriptAttribute | InlineKind::Navigation)
+        matches!(self, InlineKind::Script | InlineKind::SpeculationRules | InlineKind::ScriptAttribute | InlineKind::Navigation)
     }
 }
 
@@ -1061,7 +1064,10 @@ fn element_matches_source_list(list: &[String], kind: InlineKind, nonce: &str, s
     if allows_all_inline(list, kind) {
         return true;
     }
-    let element = matches!(kind, InlineKind::Script | InlineKind::Style);
+    if kind == InlineKind::SpeculationRules && has_keyword(list, "'inline-speculation-rules'") {
+        return true;
+    }
+    let element = matches!(kind, InlineKind::Script | InlineKind::SpeculationRules | InlineKind::Style);
     if element && !nonce.is_empty() && nonce_matches(list, nonce) {
         return true;
     }

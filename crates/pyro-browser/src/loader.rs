@@ -3061,8 +3061,9 @@ impl Browser {
                         let mut opts = opts;
                         opts.url = resource.url.clone();
                         b.prepare_required_csp(page, required_csp, enforce);
-                        if let Err(e) = b.begin_document(page, &opts, loader_id.clone(), resource, history) {
-                            b.navigation_failed(page, &opts, loader_id, e.to_string());
+                        match b.begin_document(page, &opts, loader_id.clone(), resource, history) {
+                            Ok(()) => b.prefetch_committed(page, &loader_id.0),
+                            Err(e) => b.navigation_failed(page, &opts, loader_id, e.to_string()),
                         }
                     }
                     Ok(resource) => {
@@ -3140,8 +3141,9 @@ impl Browser {
         prefetched: crate::prefetch::Prefetched,
         done: FetchDone,
     ) {
-        let crate::prefetch::Prefetched { resource, head } = prefetched;
-        self.send_activation_beacon(page, &head);
+        let crate::prefetch::Prefetched { resource, head, activation } = prefetched;
+        // Its cookies and beacon wait for the commit of this navigation (`prefetch_committed`).
+        self.prefetch_claimed(&loader_id.0, activation);
         let network = self.report_prefetched_navigation(page, nav, &loader_id, &resource, head);
         let data_bytes = resource.body.len() as u64;
         self.scheduler().post(TaskSource::Networking, move |b| {
@@ -3155,29 +3157,6 @@ impl Browser {
             }
             done(b, Ok(resource));
         });
-    }
-
-    /// Speculation Rules "activation beacon": a prefetched response that names a URL in its
-    /// `On-Prefetch-Activation` header gets a GET to it (resolved against the response URL) once a
-    /// navigation uses the response, so its server learns the prefetch was not wasted. Fire and
-    /// forget, no referrer, cookies only for a same-origin target (the response's own site), and
-    /// only an http(s) URL: the header comes from the prefetched site, which must not make the
-    /// browser send credentials to anyone else.
-    fn send_activation_beacon(&self, page: FrameKey, head: &pyro_net::ResponseHead) {
-        let Some(value) = head.headers.get("on-prefetch-activation").and_then(|v| v.to_str().ok()) else { return };
-        let Ok(url) = head.url.join(value.trim()) else { return };
-        if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() || url.password().is_some() {
-            return;
-        }
-        let Some(state) = self.page(page.page) else { return };
-        let Some(net) = self.context_net(state.context) else { return };
-        let mut req = pyro_net::Request::get(url, pyro_net::Destination::Beacon);
-        req.credentials = pyro_net::Credentials::SameOrigin;
-        req.origin = Some(head.url.origin().ascii_serialization());
-        req.referrer = None;
-        req.defaults = state.request_defaults.clone();
-        req.top_level_site = pyro_net::cookies::partition_key(&head.url);
-        net.fetch(req, Box::new(|_| {}));
     }
 
     /// Publishes the Network events of `nav` answered by `resource` (see `deliver_prefetched`)
