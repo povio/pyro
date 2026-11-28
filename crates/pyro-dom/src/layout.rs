@@ -6285,7 +6285,13 @@ impl Layout {
         let value = crate::stylo::serialize(&style, &name).unwrap_or_default();
         // An `anchor()` / `anchor-size()` of a `::before` / `::after` resolves like the element's does
         // (`resolved_value`): the used value from its box in the layout engine (render key: pseudo 1 / 2).
-        if value.contains("anchor(") || value.contains("anchor-size(") {
+        // The same holds for an inset that is `auto` on a positioned pseudo-element, or that a
+        // `position-try-fallbacks` option may replace: the used value is the rendered option's
+        // (CSSOM: resolved value of an inset is its used value for a positioned box).
+        let positioned_inset = matches!(&*name, "top" | "left" | "right" | "bottom")
+            && style.get_box().position.is_absolutely_positioned()
+            && (value == "auto" || !style.get_position().position_try_fallbacks.value.0.is_empty());
+        if positioned_inset || value.contains("anchor(") || value.contains("anchor-size(") {
             let key = match pseudo {
                 style::selector_parser::PseudoElement::Before => Some(crate::snapshot::pseudo_render_key(el, 1)),
                 style::selector_parser::PseudoElement::After => Some(crate::snapshot::pseudo_render_key(el, 2)),

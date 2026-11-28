@@ -320,7 +320,10 @@ impl BaseDocument {
         match &pos.position_anchor.value {
             PositionAnchorKeyword::Ident(name) => self.anchor_rect(node,container,name,pos.position_anchor.scope),
             PositionAnchorKeyword::Auto | PositionAnchorKeyword::Normal if !pos.position_area.is_none() || matches!(pos.position_anchor.value,PositionAnchorKeyword::Auto) => {
-                let source = *self.popover_anchors.get(&node.id)?;
+                // pyro: the implicit anchor of a `::before` / `::after` is its originating element
+                // (css-anchor-position-1 § 2.3 implicit anchor element), of a popover its invoker.
+                let originating = node.parent.filter(|&p| self.nodes.get(p).is_some_and(|host| host.before() == Some(node.id) || host.after() == Some(node.id)));
+                let source = self.popover_anchors.get(&node.id).copied().or(originating)?;
                 self.nodes.get(source)?;
                 self.anchor_lookup_visits.set(self.anchor_lookup_visits.get().saturating_add(1));
                 self.anchor_geometry(node,container,source,Some(node.id))
@@ -365,6 +368,26 @@ impl BaseDocument {
         self.anchor_geometry(node, container, id, (!indexed).then_some(origin))
     }
 
+    /// pyro: the containing block of an out-of-flow box that no pass has hoisted yet. A box's
+    /// `oof_containing_block` is recorded once its claimer's whole out-of-flow pass has run
+    /// (`add_hoisted_children`), but an `anchor()` in that same pass reads the anchor's geometry
+    /// while the pass is running: the first layout of a `position: absolute` anchor nested in a
+    /// box (a `::before`, or a child of an in-flow div) found no containing block and walked its
+    /// parent chain instead, adding the in-flow parent's offset. A box that `container` claims and
+    /// that sits in its layout subtree is laid out relative to `container` (css-position-3 §3).
+    fn unhoisted_containing_block(&self, current: &Node, container: &Node) -> Option<crate::NodeId> {
+        if current.oof_containing_block.get().is_some() { return None; }
+        let claims = taffy::CoreStyle::is_containing_block(&container.layout_style());
+        if !claims.for_position(current.taffy_position()) { return None; }
+        let mut at = current.layout_parent.get();
+        for _ in 0..self.nodes.len() {
+            let id = at?;
+            if id == container.id { return Some(id); }
+            at = self.nodes[id].layout_parent.get();
+        }
+        None
+    }
+
     fn anchor_geometry(&self, node: &Node, container: &Node, id: crate::NodeId, mut check_order: Option<crate::NodeId>) -> Option<(crate::NodeId, taffy::Point<f32>, taffy::Size<f32>)> {
         let anchor = &self.nodes[id];
         if id == node.id || (!anchor.flags.is_in_document() && !anchor.is_anonymous()) {
@@ -404,7 +427,7 @@ impl BaseDocument {
             }
             let current = &self.nodes[cursor];
             if current.is_out_of_flow() && let Some(origin) = check_order.take() && !self.compare_document_order(id, origin).is_lt() { return None; }
-            let parent = if current.is_out_of_flow() { current.containing_block() } else { current.layout_parent.get() };
+            let parent = if current.is_out_of_flow() { self.unhoisted_containing_block(current, container).or_else(|| current.containing_block()) } else { current.layout_parent.get() };
             let Some(parent) = parent else { break };
             self.anchor_geometry_steps.set(self.anchor_geometry_steps.get().saturating_add(1));
             let layout = &self.anchor_physical_layout(current, &self.nodes[parent]);

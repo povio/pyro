@@ -103,6 +103,36 @@ pub(crate) const POS_CHILD_RELAYOUT: RestyleDamage =
     RestyleDamage::from_bits_retain(0b_0000_0001_0000_0000);
 
 impl BaseDocument {
+    /// pyro: the anchor-positioning state a node's style implies: its `anchor-name`s, whether it
+    /// queries anchors or has `position-try-fallbacks`, and the `@position-try` rules it depends on.
+    /// `propagate_damage_flags` refreshes it for each damaged node, and box construction for a
+    /// `::before` / `::after` it creates after that walk, so a pseudo-element anchors (and is
+    /// anchored) on its first layout.
+    pub(crate) fn refresh_anchor_state(&mut self, node_id: NodeId) {
+        let (options,visibility,out_of_flow,queries) = self.nodes[node_id].primary_styles().map_or((false,false,false,false),|style| {
+            let pos = style.get_position();
+            let positioned = style.get_box().position.is_absolutely_positioned() && !style.get_box().display.is_none();
+            (!pos.position_try_fallbacks.value.is_none(),pos.position_visibility.contains(style::values::computed::PositionVisibility::NO_OVERFLOW),positioned,positioned && Self::uses_anchor_queries(&style))
+        });
+        let node = &mut self.nodes[node_id];
+        node.flags.set(NodeFlags::POSITION_TRY_OPTIONS, options);
+        if !queries && !self.anchor_area_snapshots.get_mut().is_empty() { self.anchor_area_snapshots.get_mut().remove(&node_id); }
+        node.flags.set(NodeFlags::ANCHOR_QUERIES, queries);
+        node.flags.set(NodeFlags::POSITION_VISIBILITY_CHECK, visibility);
+        if !visibility || !out_of_flow { node.anchor_hidden.set(false); }
+        if !queries { node.anchor_scroll_axes.set((None,None)); node.anchor_visibility_target.set(None); node.anchor_invalid.set(false); }
+        let names = self.nodes[node_id].primary_styles().and_then(|s| {
+            let names = &s.get_box().anchor_name;
+            (!names.value.0.is_empty()).then(|| {
+                let scope = names.scope.get_shadow_root_for_scoped(&self.nodes[node_id]);
+                (scope.map(|root| root.id), names.value.clone())
+            })
+        });
+        self.update_anchor_names(node_id, names);
+        let rules = (options && out_of_flow).then(|| self.nodes[node_id].primary_styles().unwrap().get_position().position_try_fallbacks.value.clone());
+        self.update_anchor_rule_users(node_id, rules);
+    }
+
     /// Union `RestyleDamage` up the tree and clear the layout caches of every
     /// node whose subtree needs relayout.
     ///
@@ -134,28 +164,7 @@ impl BaseDocument {
                 }
                 *old = style.clone();
             }
-            let (options,visibility,out_of_flow,queries) = self.nodes[node_id].primary_styles().map_or((false,false,false,false),|style| {
-                let pos = style.get_position();
-                let positioned = style.get_box().position.is_absolutely_positioned() && !style.get_box().display.is_none();
-                (!pos.position_try_fallbacks.value.is_none(),pos.position_visibility.contains(style::values::computed::PositionVisibility::NO_OVERFLOW),positioned,positioned && Self::uses_anchor_queries(&style))
-            });
-            let node = &mut self.nodes[node_id];
-            node.flags.set(NodeFlags::POSITION_TRY_OPTIONS, options);
-            if !queries && !self.anchor_area_snapshots.get_mut().is_empty() { self.anchor_area_snapshots.get_mut().remove(&node_id); }
-            node.flags.set(NodeFlags::ANCHOR_QUERIES, queries);
-            node.flags.set(NodeFlags::POSITION_VISIBILITY_CHECK, visibility);
-            if !visibility || !out_of_flow { node.anchor_hidden.set(false); }
-            if !queries { node.anchor_scroll_axes.set((None,None)); node.anchor_visibility_target.set(None); node.anchor_invalid.set(false); }
-            let names = self.nodes[node_id].primary_styles().and_then(|s| {
-                let names = &s.get_box().anchor_name;
-                (!names.value.0.is_empty()).then(|| {
-                    let scope = names.scope.get_shadow_root_for_scoped(&self.nodes[node_id]);
-                    (scope.map(|root| root.id), names.value.clone())
-                })
-            });
-            self.update_anchor_names(node_id, names);
-            let rules = (options && out_of_flow).then(|| self.nodes[node_id].primary_styles().unwrap().get_position().position_try_fallbacks.value.clone());
-            self.update_anchor_rule_users(node_id, rules);
+            self.refresh_anchor_state(node_id);
         }
         self.nodes[node_id].flags.set(NodeFlags::OWN_DAMAGE, !own_damage.is_empty());
         self.nodes[node_id].flags.set(NodeFlags::OWN_LAYOUT_DAMAGE, reaches_layout(own_damage));

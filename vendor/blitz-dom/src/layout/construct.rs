@@ -1636,16 +1636,10 @@ pub(crate) fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
             // pyro: damage is set with its flag (`Node::mark_damaged`), which the walks
             // that follow damage rely on to skip a subtree (`Node::has_no_damage_below`).
             doc.nodes[new_node_id].mark_damaged();
-            // pyro: the damage walk that registers `anchor-name`s ran before this node existed, so
-            // register the pseudo-element's own names now (as `propagate_damage_flags` would).
-            {
-                let pe_names = &pe_style.get_box().anchor_name;
-                let names = (!pe_names.value.0.is_empty()).then(|| {
-                    let scope = pe_names.scope.get_shadow_root_for_scoped(&doc.nodes[new_node_id]);
-                    (scope.map(|root| root.id), pe_names.value.clone())
-                });
-                doc.update_anchor_names(new_node_id, names);
-            }
+            // pyro: the damage walk that registers `anchor-name`s and the anchor-query flags ran
+            // before this node existed: refresh them now (as `propagate_damage_flags` would), so the
+            // pseudo-element is an anchor and anchored on its first layout.
+            doc.refresh_anchor_state(new_node_id);
             sync_generated_children(doc, new_node_id, pe_style, pieces.as_deref().unwrap_or(&[]));
 
             let node = &mut doc.nodes[node_id];
@@ -1694,15 +1688,8 @@ pub(crate) fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
             if replaced {
                 doc.nodes[pe_node_id].update_layout_styles();
                 doc.pending_style_image_nodes.push(pe_node_id);
-                // pyro: re-register the pseudo-element's `anchor-name`s (see its creation above).
-                let names = doc.nodes[pe_node_id].primary_styles().and_then(|style| {
-                    let pe_names = &style.get_box().anchor_name;
-                    (!pe_names.value.0.is_empty()).then(|| {
-                        let scope = pe_names.scope.get_shadow_root_for_scoped(&doc.nodes[pe_node_id]);
-                        (scope.map(|root| root.id), pe_names.value.clone())
-                    })
-                });
-                doc.update_anchor_names(pe_node_id, names);
+                // pyro: refresh the pseudo-element's anchor state (see its creation above).
+                doc.refresh_anchor_state(pe_node_id);
             }
         }
     }

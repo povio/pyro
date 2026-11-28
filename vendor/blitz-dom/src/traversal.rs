@@ -350,6 +350,14 @@ impl BaseDocument {
         let parent_id = chain_a[common_depth - 1];
         let parent = &self.nodes[parent_id];
 
+        // pyro: a `::before` precedes its originating element's children and a `::after` follows
+        // them (css-anchor-position-1 § anchor-name: tree order includes pseudo-elements); neither is
+        // in `children`.
+        let rank = |id: NodeId| if parent.before() == Some(id) { 0 } else if parent.after() == Some(id) { 2 } else { 1 };
+        let (rank_a, rank_b) = (rank(divergent_a), rank(divergent_b));
+        if rank_a != rank_b {
+            return rank_a.cmp(&rank_b);
+        }
         for &child_id in &parent.children {
             if child_id == divergent_a {
                 return Ordering::Less;
