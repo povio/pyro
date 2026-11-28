@@ -900,12 +900,16 @@ impl BaseDocument {
                     return format_px(0.0);
                 }
             }
+            // pyro: an element that generates no box at all (`display: none`, or inside such a subtree, or not in
+            // the document) resolves to `none`, as Chrome (measured: `display:none; transform: translate(10px, 5px)`
+            // reads "none"; it has no LayoutObject); WPT transform-2d-getComputedStyle-001 accepts that or the matrix.
+            "transform" if !generates_box => return "none".to_string(),
             "transform" => {
                 let transform = &styles.get_box().transform;
                 if !transform.0.is_empty() {
                     // Used value: the transform list resolved to a matrix, with
-                    // percentages resolved against the border box (an empty one where there is
-                    // no box: a non-replaced inline, `display: none`; Chrome reports a matrix too)
+                    // percentages resolved against the border box (an empty one for a
+                    // non-replaced inline, which has no box of its own; Chrome reports a matrix there too)
                     let (width, height) = if has_layout_box {
                         let size = node.final_layout().size;
                         (size.width, size.height)

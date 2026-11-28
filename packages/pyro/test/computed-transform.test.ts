@@ -26,8 +26,8 @@ test('computed percentage transforms are matrices that DOMMatrix can consume', a
       el.style.transform = 'translate(50%,25%)';
       return { three, none, hidden: getComputedStyle(el).transform };
     })()`, 'variants')]);
-    expect(variants.values.variants).toEqual({ three: [false, 100, 20, 30], none: 'none', hidden: 'matrix(1, 0, 0, 1, 0, 0)' });
-    // A display:none element has no box: Chrome resolves the percentages against an empty reference box (d316767f2).
+    expect(variants.values.variants).toEqual({ three: [false, 100, 20, 30], none: 'none', hidden: 'none' });
+    // A display:none element has no box: Chrome reports `none` for its transform (measured in Chrome 158).
     const animated = await page.run([evaluate(`(() => {
       const el = document.body.appendChild(document.createElement('div'));
       el.style.cssText = 'width:200px;height:80px;transform:translateX(0%);transition:transform 1000s steps(2) -500s';
