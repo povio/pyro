@@ -73,7 +73,7 @@
   // after the call) and the runner maps the point through the frames around it (td/core.mjs `frameMap`), CSS transforms
   // of the frame elements included.
   let frameMarks = 0, originCount = 0;
-  const originRefs = new Map();
+  const originRefs = new Map(), frameMarkers = new Map();
   function point(el) {
     if (!(el instanceof Element) && !(el && el.nodeType === 1)) throw new Error('testdriver: not an element');
     if (!el.isConnected) throw new Error('testdriver: element is not attached');
@@ -98,10 +98,25 @@
         }
         if (w === w.top) at.frame = 'main';
         else {
-          const id = 'f' + ++frameMarks + Math.random().toString(36).slice(2, 8);
-          w.frameElement.setAttribute('data-pyro-td-frame', id);
-          undo.push(() => { try { w.frameElement.removeAttribute('data-pyro-td-frame'); } catch {} });
-          at.frame = id;
+          // A frame element is marked once however many users there are, and loses the marker with its last one. Users
+          // overlap: one sequence names several elements of the same frame (`pointerMove(.., {origin: target})` twice) and
+          // the runner resolves every marker only after the whole sequence is sent; and a call can still be in flight
+          // when the next starts (`trusted_click` races `test_driver.click` against the button's own click event). A
+          // marker overwritten, or removed by the first call's `undo`, is "the frame of the element is gone" for the other.
+          const fe = w.frameElement;
+          let mark = frameMarkers.get(fe);
+          if (!mark) {
+            mark = { id: 'f' + ++frameMarks + Math.random().toString(36).slice(2, 8), users: 0 };
+            frameMarkers.set(fe, mark);
+            fe.setAttribute('data-pyro-td-frame', mark.id);
+          }
+          mark.users++;
+          undo.push(() => {
+            if (--mark.users > 0) return;
+            frameMarkers.delete(fe);
+            try { fe.removeAttribute('data-pyro-td-frame'); } catch {}
+          });
+          at.frame = mark.id;
         }
       } catch { /* a window this one cannot reach: the point stays in this frame's viewport, as it always did */ }
     }
