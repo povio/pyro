@@ -1863,7 +1863,7 @@ impl Host for EngineHost {
                 }
                 Err(e) => out.send(msg::error_frame(Some(command.id), &e, command.session_id())),
             },
-            "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies" => {
+            "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies" | "Storage.runBounceTrackingMitigations" => {
                 match self.storage_command(command, context) {
                     Ok(result) => out.send(msg::result_frame(command.id, &result, command.session_id())),
                     Err(error) => out.send(msg::error_frame(Some(command.id), &error, command.session_id())),
