@@ -1968,9 +1968,11 @@ fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_ele
     // events for the element now under the stationary pointer. A removed
     // hovered element gets no out/leave; over/enter name it as relatedTarget
     // and no move events fire, about 100 ms later (Chromium measured 110 ms
-    // in the @povio/ui QueryAutocomplete case). Expectations follow Blink's
-    // BoundaryEventDispatcher::SendBoundaryEvents; they were not recorded
-    // from Chromium.
+    // in the @povio/ui QueryAutocomplete case). The ancestors that survived
+    // the removal (the cell, BODY, HTML, the document) were already entered, so
+    // only the new element gets an enter (WPT pointerevents
+    // pointerevent_after_target_removed, which Chrome passes; Blink's
+    // BoundaryEventDispatcher keeps the last known ancestor chain).
     let mut h = Harness::new();
     eval_value(
         &mut h,
@@ -2012,7 +2014,7 @@ fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_ele
     assert_eq!(
         eval_value(&mut h, "log.splice(0).join(' ')"),
         json!(
-            "pointerover@live<static pointerenter@#document<static pointerenter@HTML<static pointerenter@BODY<static pointerenter@cell<static pointerenter@live<static mouseover@live<static mouseenter@#document<static mouseenter@HTML<static mouseenter@BODY<static mouseenter@cell<static mouseenter@live<static"
+            "pointerover@live<static pointerenter@live<static mouseover@live<static mouseenter@live<static"
         )
     );
     // (`#live:hover`, not a bare `:hover`: about:blank is in quirks mode since 6efaefdaf, as in
