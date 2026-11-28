@@ -40,6 +40,7 @@ impl Browser {
             }
         };
         let old_orientation = state.main_frame.page_dom.as_ref().map(|b| pyro_webapi::window::screen_orientation(b));
+        let old_posture = state.viewport.device_posture_folded;
         if let Some(bindings) = &state.main_frame.page_dom {
             bindings.set_viewport(viewport.clone());
         }
@@ -81,6 +82,13 @@ impl Browser {
             }
             if pyro_webapi::window::screen_orientation(&bindings) != old_orientation {
                 for target in bindings.viewport_targets(pyro_webapi::window::ViewportTarget::Orientation) {
+                    let event = EventCore::trusted(&bindings, EventInterface::Event, "change", false, false);
+                    pyro_webapi::target::fire(&bindings, target, &event);
+                }
+            }
+            // Device Posture: `navigator.devicePosture` fires `change` when the posture the automation set differs.
+            if bindings.device_viewport().device_posture_folded != old_posture {
+                for target in bindings.viewport_targets(pyro_webapi::window::ViewportTarget::DevicePosture) {
                     let event = EventCore::trusted(&bindings, EventInterface::Event, "change", false, false);
                     pyro_webapi::target::fire(&bindings, target, &event);
                 }

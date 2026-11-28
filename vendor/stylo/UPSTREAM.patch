@@ -984,7 +984,7 @@ diff -ruN a/device/mod.rs b/device/mod.rs
          self.used_root_font_size.store(true, Ordering::Relaxed);
 diff -ruN a/device/servo.rs b/device/servo.rs
 --- a/device/servo.rs	2026-11-14 22:08:19
-+++ b/device/servo.rs	2026-11-23 06:58:46
++++ b/device/servo.rs	2026-11-28 18:09:30
 @@ -33,12 +33,37 @@
  use parking_lot::RwLock;
  use servo_arc::Arc;
@@ -1063,16 +1063,19 @@ diff -ruN a/device/servo.rs b/device/servo.rs
  }
  
  #[derive(Debug, MallocSizeOf, Clone, PartialEq)]
-@@ -80,6 +128,8 @@
+@@ -80,6 +128,11 @@
      /// Whether the user prefers light mode or dark mode
      #[ignore_malloc_size_of = "Pure stack type"]
      pub prefers_color_scheme: PrefersColorScheme,
 +    /// Whether motion reduction is requested by the emulated device.
 +    pub prefers_reduced_motion: bool,
++    /// pyro: whether the emulated device is folded (`device-posture: folded`; `continuous` otherwise), as set by
++    /// the Device Posture automation.
++    pub device_posture_folded: bool,
      /// The capabilities of the primary pointer input
      #[ignore_malloc_size_of = "Pure stack type"]
      pub primary_pointer_capabilities: PointerCapabilities,
-@@ -89,6 +139,35 @@
+@@ -89,6 +142,35 @@
  }
  
  impl Device {
@@ -1108,7 +1111,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
      /// Trivially construct a new `Device`.
      pub fn new(
          default_values: Arc<ComputedValues>,
-@@ -116,8 +195,14 @@
+@@ -116,8 +198,14 @@
              body_text_color: RwLock::new(AbsoluteColor::BLACK),
              submit_string,
              extra: ExtraDeviceData {
@@ -1123,7 +1126,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
              },
          }
      }
-@@ -132,8 +217,14 @@
+@@ -132,8 +220,14 @@
          _element: Option<()>,
      ) -> NonNegativeLength {
          (match font.line_height {
@@ -1140,7 +1143,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
              LineHeight::Number(number) => font.font_size.computed_size() * number.0,
              LineHeight::Length(length) => length.0,
          })
-@@ -149,10 +240,13 @@
+@@ -149,10 +243,13 @@
      /// base values of `random()` functions between document instances.
      #[inline]
      pub fn document_random_hasher(&self) -> impl Hasher {
@@ -1156,7 +1159,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
      /// Gets the base size given a generic font family.
      pub fn base_size_for_generic(&self, generic: GenericFontFamily) -> Length {
          self.extra
-@@ -160,6 +254,11 @@
+@@ -160,6 +257,11 @@
              .base_size_for_generic(generic)
      }
  
@@ -1168,7 +1171,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
      /// Whether a given animation name may be referenced from style.
      pub fn animation_name_may_be_referenced(&self, _: &KeyframesName) -> bool {
          // Assume it is, since we don't have any good way to prove it's not.
-@@ -222,9 +321,25 @@
+@@ -222,9 +324,25 @@
          self.used_viewport_size.store(true, Ordering::Relaxed);
          // Servo doesn't have dynamic UA interfaces that affect the viewport,
          // so we can just ignore the ViewportVariant.
@@ -1195,7 +1198,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
      /// Returns the number of app units per device pixel we're using currently.
      pub fn app_units_per_device_pixel(&self) -> i32 {
          (AU_PER_PX as f32 / self.extra.media_data.device_pixel_ratio.0) as i32
-@@ -283,6 +398,7 @@
+@@ -283,6 +401,7 @@
          track_usage: bool,
      ) -> FontMetrics {
          if track_usage {
@@ -1203,7 +1206,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
              self.used_font_metrics.store(true, Ordering::Relaxed);
          }
          self.extra
-@@ -361,7 +477,15 @@
+@@ -361,7 +480,15 @@
          self.extra.media_data.all_pointer_capabilities
      }
  
@@ -1219,7 +1222,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
          // Inspired by
          // https://searchfox.org/firefox-main/rev/0a7f146ccac85b8f413264042dcd764028d419ec/widget/nsXPLookAndFeel.cpp#1296
          let supports_dark_mode = color_scheme_flags.contains(ColorSchemeFlags::DARK);
-@@ -400,15 +524,17 @@
+@@ -400,15 +527,17 @@
                  | SystemColor::Activeborder
                  | SystemColor::Inactiveborder
                  | SystemColor::Threeddarkshadow
@@ -1240,7 +1243,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  SystemColor::Buttontext => srgb(245, 245, 245),
                  SystemColor::Canvas
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
-@@ -450,15 +576,17 @@
+@@ -450,15 +579,17 @@
                  | SystemColor::Activeborder
                  | SystemColor::Inactiveborder
                  | SystemColor::Threeddarkshadow
@@ -7014,7 +7017,7 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
              .entry(rules)
 diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 --- a/servo/media_features.rs	2026-11-11 19:55:57
-+++ b/servo/media_features.rs	2026-11-23 06:58:46
++++ b/servo/media_features.rs	2026-11-28 18:09:30
 @@ -7,8 +7,12 @@
  use crate::derives::*;
  use crate::queries::feature::{AllowsRanges, Evaluator, FeatureFlags, QueryFeatureDescription};
@@ -7028,7 +7031,7 @@ diff -ruN a/servo/media_features.rs b/servo/media_features.rs
  
  /// https://drafts.csswg.org/mediaqueries-4/#width
  fn eval_width(context: &Context) -> CSSPixelLength {
-@@ -157,11 +161,281 @@
+@@ -157,11 +161,299 @@
  fn eval_aspect_ratio(context: &Context) -> Ratio {
      let size = context.device().au_viewport_size();
      Ratio::new(size.width.0 as f32, size.height.0 as f32)
@@ -7233,8 +7236,26 @@ diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 +        Some(v) => v == DisplayMode::Browser,
 +        None => true,
 +    }
++}
++
++#[derive(Clone, Copy, Debug, FromPrimitive, Parse, PartialEq, ToCss)]
++#[repr(u8)]
++enum DevicePosture {
++    Continuous,
++    Folded,
  }
  
++/// https://w3c.github.io/device-posture/#the-device-posture-media-feature (pyro: the posture the embedder gives
++/// the device; a boolean context is true, as the feature always has a value).
++fn eval_device_posture(context: &Context, query_value: Option<DevicePosture>) -> bool {
++    let folded = context.device().media_data().device_posture_folded;
++    match query_value {
++        Some(DevicePosture::Folded) => folded,
++        Some(DevicePosture::Continuous) => !folded,
++        None => true,
++    }
++}
++
 +#[derive(Clone, Copy, Debug, FromPrimitive, Parse, PartialEq, ToCss)]
 +#[repr(u8)]
 +enum Scripting {
@@ -7288,7 +7309,7 @@ diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 +
  /// A list with all the media features that Servo supports.
 -pub static MEDIA_FEATURES: [QueryFeatureDescription; 15] = [
-+pub static MEDIA_FEATURES: LazyLock<[QueryFeatureDescription; 38]> = LazyLock::new(|| [
++pub static MEDIA_FEATURES: LazyLock<[QueryFeatureDescription; 39]> = LazyLock::new(|| [
      feature!(
 +        Atom::from("navigation-controls"),
 +        AllowsRanges::No,
@@ -7311,7 +7332,7 @@ diff -ruN a/servo/media_features.rs b/servo/media_features.rs
          atom!("width"),
          AllowsRanges::Yes,
          Evaluator::Length(eval_width),
-@@ -251,4 +525,124 @@
+@@ -251,4 +543,130 @@
          keyword_evaluator!(eval_prefers_color_scheme, PrefersColorScheme),
          FeatureFlags::empty(),
      ),
@@ -7434,6 +7455,12 @@ diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 +        Atom::from("scripting"),
 +        AllowsRanges::No,
 +        keyword_evaluator!(eval_scripting, Scripting),
++        FeatureFlags::empty(),
++    ),
++    feature!(
++        Atom::from("device-posture"),
++        AllowsRanges::No,
++        keyword_evaluator!(eval_device_posture, DevicePosture),
 +        FeatureFlags::empty(),
 +    ),
 +]);

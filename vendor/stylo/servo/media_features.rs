@@ -366,6 +366,24 @@ fn eval_display_mode(_: &Context, query_value: Option<DisplayMode>) -> bool {
 
 #[derive(Clone, Copy, Debug, FromPrimitive, Parse, PartialEq, ToCss)]
 #[repr(u8)]
+enum DevicePosture {
+    Continuous,
+    Folded,
+}
+
+/// https://w3c.github.io/device-posture/#the-device-posture-media-feature (pyro: the posture the embedder gives
+/// the device; a boolean context is true, as the feature always has a value).
+fn eval_device_posture(context: &Context, query_value: Option<DevicePosture>) -> bool {
+    let folded = context.device().media_data().device_posture_folded;
+    match query_value {
+        Some(DevicePosture::Folded) => folded,
+        Some(DevicePosture::Continuous) => !folded,
+        None => true,
+    }
+}
+
+#[derive(Clone, Copy, Debug, FromPrimitive, Parse, PartialEq, ToCss)]
+#[repr(u8)]
 enum Scripting {
     None,
     InitialOnly,
@@ -416,7 +434,7 @@ fn eval_resizable(_: &Context, value: Option<Resizable>) -> bool {
 }
 
 /// A list with all the media features that Servo supports.
-pub static MEDIA_FEATURES: LazyLock<[QueryFeatureDescription; 38]> = LazyLock::new(|| [
+pub static MEDIA_FEATURES: LazyLock<[QueryFeatureDescription; 39]> = LazyLock::new(|| [
     feature!(
         Atom::from("navigation-controls"),
         AllowsRanges::No,
@@ -643,6 +661,12 @@ pub static MEDIA_FEATURES: LazyLock<[QueryFeatureDescription; 38]> = LazyLock::n
         Atom::from("scripting"),
         AllowsRanges::No,
         keyword_evaluator!(eval_scripting, Scripting),
+        FeatureFlags::empty(),
+    ),
+    feature!(
+        Atom::from("device-posture"),
+        AllowsRanges::No,
+        keyword_evaluator!(eval_device_posture, DevicePosture),
         FeatureFlags::empty(),
     ),
 ]);

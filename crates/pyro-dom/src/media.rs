@@ -87,6 +87,9 @@ pub struct Viewport {
     pub color_scheme: ColorScheme,
     /// `prefers-reduced-motion: reduce`.
     pub reduced_motion: bool,
+    /// `device-posture: folded` (Device Posture automation, CDP `Emulation.setDevicePostureOverride`); the
+    /// posture is `continuous` otherwise.
+    pub device_posture_folded: bool,
     /// `hover: hover` (primary input can hover).
     pub hover: bool,
     pub pointer: Pointer,
@@ -117,6 +120,7 @@ impl Default for Viewport {
             screen_height: None,
             color_scheme: ColorScheme::Light,
             reduced_motion: false,
+            device_posture_folded: false,
             hover: true,
             pointer: Pointer::Fine,
             orientation: None,
@@ -564,6 +568,15 @@ fn eval_name_value(name: &[u8], value: &[u8], viewport: &Viewport) -> bool {
                 false
             }
         }
+        "device-posture" => {
+            if v.eq_ignore_ascii_case("folded") {
+                viewport.device_posture_folded
+            } else if v.eq_ignore_ascii_case("continuous") {
+                !viewport.device_posture_folded
+            } else {
+                false
+            }
+        }
         "hover" | "any-hover" => {
             if v.eq_ignore_ascii_case("hover") {
                 viewport.hover
@@ -598,6 +611,7 @@ fn eval_boolean(name: &[u8], viewport: &Viewport) -> bool {
         "orientation" => true,
         "prefers-color-scheme" => true,
         "prefers-reduced-motion" => viewport.reduced_motion,
+        "device-posture" => true,
         "hover" | "any-hover" => viewport.hover,
         "pointer" | "any-pointer" => viewport.pointer != Pointer::None,
         _ => false,

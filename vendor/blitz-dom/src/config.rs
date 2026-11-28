@@ -189,6 +189,8 @@ pub fn engine_field(nonce: &str, name: &markup5ever::QualName) -> Option<String>
 pub struct MediaEnvironment {
     pub screen: Option<(u32, u32)>,
     pub reduced_motion: bool,
+    /// pyro: `device-posture: folded` (the Device Posture automation); `continuous` otherwise.
+    pub device_posture_folded: bool,
 }
 
 /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)

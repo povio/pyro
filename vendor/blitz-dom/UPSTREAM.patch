@@ -2715,7 +2715,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
  use std::sync::Arc;
  use style::media_queries::MediaType;
  
-@@ -28,12 +28,185 @@
+@@ -28,12 +28,187 @@
      Sequential,
  }
  
@@ -2880,6 +2880,8 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +pub struct MediaEnvironment {
 +    pub screen: Option<(u32, u32)>,
 +    pub reduced_motion: bool,
++    /// pyro: `device-posture: folded` (the Device Posture automation); `continuous` otherwise.
++    pub device_posture_folded: bool,
 +}
 +
  /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)
@@ -2901,7 +2903,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// User Agent stylesheets, in cascade order. Defaults to `vec![UserAgentStylesheet::default_sheet()]`.
      ///
      /// The list is used as given, so replacing it removes the default sheet unless it is
-@@ -68,6 +241,28 @@
+@@ -68,6 +243,28 @@
      /// How deeply this document is nested within other documents
      /// (0 for a root document). Used to limit `<iframe>` nesting depth.
      pub subdocument_depth: usize,
@@ -2930,7 +2932,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// Devtools provider notified of DOM mutations (e.g. by a remote inspector)
      #[cfg(feature = "devtools")]
      pub devtools_provider: Option<Arc<dyn DevtoolsProvider>>,
-@@ -77,7 +272,11 @@
+@@ -77,7 +274,11 @@
      fn default() -> Self {
          Self {
              viewport: None,
@@ -2942,7 +2944,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
              ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
              net_provider: None,
              navigation_provider: None,
-@@ -89,6 +288,12 @@
+@@ -89,6 +290,12 @@
              incremental: None,
              abort_signal: None,
              subdocument_depth: 0,
@@ -67764,7 +67766,7 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
          MediaData {
              media_type,
              viewport_size,
-@@ -84,8 +101,9 @@
+@@ -84,8 +101,10 @@
                  ColorScheme::Light => PrefersColorScheme::Light,
                  ColorScheme::Dark => PrefersColorScheme::Dark,
              },
@@ -67772,6 +67774,7 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
 -            all_pointer_capabilities: PointerCapabilities::default(),
 +            primary_pointer_capabilities: pointer,
 +            prefers_reduced_motion: environment.reduced_motion,
++            device_posture_folded: environment.device_posture_folded,
 +            all_pointer_capabilities: pointer,
          },
      )

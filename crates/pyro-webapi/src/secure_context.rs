@@ -46,7 +46,7 @@ const GLOBALS: &[&str] = &[
     "PressureRecord",
     "Keyboard",
     "VirtualKeyboard",
-    "WakeLock", "WakeLockSentinel", "BatteryManager", "GeolocationPosition", "GeolocationCoordinates",
+    "DevicePosture", "WakeLock", "WakeLockSentinel", "BatteryManager", "GeolocationPosition", "GeolocationCoordinates",
     "Sensor", "SensorErrorEvent", "Accelerometer", "LinearAccelerationSensor", "GravitySensor", "Gyroscope", "AmbientLightSensor", "OrientationSensor", "AbsoluteOrientationSensor", "RelativeOrientationSensor", "DeviceMotionEvent", "DeviceOrientationEvent", "DeviceMotionEventAcceleration", "DeviceMotionEventRotationRate",
     // `[SecureContext] readonly attribute CacheStorage caches`: absent rather than an accessor
     // reading undefined, so a page's own `var caches = ...` (fetch/api/request/request-init-001)
@@ -54,7 +54,7 @@ const GLOBALS: &[&str] = &[
     "caches",
 ];
 /// `Navigator` members that exist only in a secure context.
-const NAVIGATOR: &[&str] = &["serviceWorker", "locks", "storageBuckets", "mediaDevices", "credentials", "wakeLock", "getBattery", "ml", "registerProtocolHandler", "unregisterProtocolHandler", "requestMediaKeySystemAccess", "keyboard", "virtualKeyboard"];
+const NAVIGATOR: &[&str] = &["serviceWorker", "locks", "storageBuckets", "mediaDevices", "credentials", "wakeLock", "devicePosture", "getBattery", "ml", "registerProtocolHandler", "unregisterProtocolHandler", "requestMediaKeySystemAccess", "keyboard", "virtualKeyboard"];
 
 /// A secure context (HTML): the document and every ancestor document are potentially trustworthy,
 /// as the embedder reports it (`PageHooks::is_secure_context`); without one, the realm's origin or the

@@ -86,6 +86,36 @@ impl EngineHost {
         Ok(())
     }
 
+    /// `Emulation.setDevicePostureOverride` / `clearDevicePostureOverride`: the device's posture (`continuous`, or
+    /// `folded`) lives on the page's viewport, so `navigator.devicePosture`, the `device-posture` media feature and
+    /// the `change` events follow it at once. A desktop device has no posture of its own: cleared is `continuous`.
+    pub(super) fn device_posture_override(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
+        let folded = if action == "clearDevicePostureOverride" {
+            false
+        } else {
+            #[derive(Deserialize)]
+            struct Posture {
+                r#type: String,
+            }
+            #[derive(Deserialize)]
+            struct P {
+                posture: Posture,
+            }
+            let p: P = cmd.command.params()?;
+            match p.posture.r#type.as_str() {
+                "continuous" => false,
+                "folded" => true,
+                other => return Err(CdpError::invalid_params(format!("Invalid posture type '{other}'"))),
+            }
+        };
+        let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let mut viewport =
+            self.thread.browser.page(id).ok_or_else(|| CdpError::server("page is gone"))?.viewport().clone();
+        viewport.device_posture_folded = folded;
+        self.thread.browser.set_viewport(id, viewport).map_err(remote::js_to_cdp)?;
+        Ok(Some(json!({})))
+    }
+
     /// Resizes the page's viewport (the `viewport` run step): `innerWidth`
     /// and `innerHeight` change at once, `resize` fires at the next safe point.
     pub(super) fn resize_viewport(&mut self, page: PageKey, width: u32, height: u32) -> CdpResult<()> {

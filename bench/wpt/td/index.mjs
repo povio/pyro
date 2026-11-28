@@ -29,12 +29,13 @@ import * as report from './report.mjs';
 import * as pressure from './pressure.mjs';
 import * as webauthn from './webauthn.mjs';
 import * as sensors from './sensors.mjs';
+import * as posture from './posture.mjs';
 import * as aria from './aria.mjs';
 import * as win from './window.mjs';
 import * as storageAccess from './storage_access.mjs';
 import * as bounce from './bounce.mjs';
 
-const GROUPS = [core, cookies, bidi, report, pressure, webauthn, sensors, aria, win, storageAccess, bounce];
+const GROUPS = [core, cookies, bidi, report, pressure, webauthn, sensors, posture, aria, win, storageAccess, bounce];
 
 export const commands = new Map();
 for (const g of GROUPS) {

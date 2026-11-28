@@ -173,6 +173,8 @@
   // WebDriver's Virtual Authenticators (td/webauthn.mjs).
   for (const name of ['add_virtual_authenticator', 'remove_virtual_authenticator', 'add_credential', 'get_credentials', 'remove_credential', 'remove_all_credentials', 'set_user_verified', 'set_credential_properties']) def(name);
   def('create_virtual_sensor'); def('update_virtual_sensor'); def('remove_virtual_sensor'); def('get_virtual_sensor_information');
+  // WebDriver's Device Posture commands (td/posture.mjs).
+  def('set_device_posture'); def('clear_device_posture');
 
   // WebDriver BiDi (td/bidi.mjs). `subscribe` returns the function that removes the subscription.
   const bidiError = (m) => new Error(`invalid argument: ${m}`);

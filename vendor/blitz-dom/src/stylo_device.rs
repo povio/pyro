@@ -103,6 +103,7 @@ pub(crate) fn make_device(
             },
             primary_pointer_capabilities: pointer,
             prefers_reduced_motion: environment.reduced_motion,
+            device_posture_folded: environment.device_posture_folded,
             all_pointer_capabilities: pointer,
         },
     )

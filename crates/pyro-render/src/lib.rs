@@ -52,6 +52,7 @@ pub fn media_environment(viewport: &pyro_dom::media::Viewport) -> MediaEnvironme
     MediaEnvironment {
         screen: Some((viewport.screen_width.unwrap_or(viewport.width), viewport.screen_height.unwrap_or(viewport.height))),
         reduced_motion: viewport.reduced_motion,
+        device_posture_folded: viewport.device_posture_folded,
     }
 }
 use kurbo::{Affine, Rect};

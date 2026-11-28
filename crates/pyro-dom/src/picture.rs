@@ -476,6 +476,7 @@ pub(crate) fn sizes_device(viewport: &Viewport) -> style::device::Device {
                 _ => style::queries::values::PrefersColorScheme::Light,
             },
             prefers_reduced_motion: viewport.reduced_motion,
+            device_posture_folded: viewport.device_posture_folded,
             primary_pointer_capabilities: pointer,
             all_pointer_capabilities: pointer,
         },

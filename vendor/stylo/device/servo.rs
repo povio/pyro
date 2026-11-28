@@ -130,6 +130,9 @@ pub struct MediaData {
     pub prefers_color_scheme: PrefersColorScheme,
     /// Whether motion reduction is requested by the emulated device.
     pub prefers_reduced_motion: bool,
+    /// pyro: whether the emulated device is folded (`device-posture: folded`; `continuous` otherwise), as set by
+    /// the Device Posture automation.
+    pub device_posture_folded: bool,
     /// The capabilities of the primary pointer input
     #[ignore_malloc_size_of = "Pure stack type"]
     pub primary_pointer_capabilities: PointerCapabilities,

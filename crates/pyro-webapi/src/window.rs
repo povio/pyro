@@ -624,6 +624,10 @@ impl JsClass for Navigator {
         // [SecureContext, SameObject]: removed from an insecure window's Navigator (secure_context.rs).
         def.getter("keyboard", |s, p| crate::navigator_extras::member(s, p, "keyboard"));
         def.getter("virtualKeyboard", |s, p| crate::navigator_extras::member(s, p, "virtualKeyboard"));
+        def.getter("devicePosture", |s, p| {
+            let key = viewport_identity(p, ViewportTarget::DevicePosture);
+            same_object(s, p, key, || s.wrap::<DevicePosture>(ViewportTargetData::new(p, ViewportTarget::DevicePosture), Some(key)))
+        });
         def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
         def.getter("storageBuckets", |s, p| crate::storage_buckets::manager(s, p));
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
@@ -820,6 +824,7 @@ pub fn screen_orientation(p: &PageDom) -> (String, f64) {
 pub enum ViewportTarget {
     VisualViewport,
     Orientation,
+    DevicePosture,
 }
 
 /// A realm's `visualViewport` or `screen.orientation` target, registered with
@@ -853,6 +858,7 @@ fn viewport_identity(page: &PageDom, kind: ViewportTarget) -> pyro_js::IdentityK
     let slot = match kind {
         ViewportTarget::VisualViewport => 3,
         ViewportTarget::Orientation => 4,
+        ViewportTarget::DevicePosture => 5,
     };
     pyro_js::IdentityKey(page.id() | (1 << 57), slot)
 }
@@ -868,6 +874,7 @@ pub(crate) fn viewport_target_object<'s>(
     let owns = match kind {
         ViewportTarget::VisualViewport => s.unwrap::<VisualViewport>(object.value()).map(|d| d.target.key),
         ViewportTarget::Orientation => s.unwrap::<ScreenOrientation>(object.value()).map(|d| d.target.key),
+        ViewportTarget::DevicePosture => s.unwrap::<DevicePosture>(object.value()).map(|d| d.target.key),
     };
     (owns == Some(key)).then_some(object)
 }
@@ -906,6 +913,35 @@ impl JsClass for ScreenOrientation {
             Ok(deferred.promise.get(s))
         });
         def.method("unlock", 0, |s, _d, _a| Ok(s.undefined()));
+        def.accessor(
+            "onchange",
+            |s, d| crate::target::event_handler(s, &d.target, "change"),
+            |s, d, v| crate::target::set_event_handler(s, &d.target, "change", v),
+        );
+    }
+}
+
+/// The device's posture, as the Device Posture automation sets it (`Emulation.setDevicePostureOverride`; a
+/// desktop device is `continuous` until then).
+pub fn device_posture(p: &PageDom) -> &'static str {
+    if p.device_viewport().device_posture_folded {
+        "folded"
+    } else {
+        "continuous"
+    }
+}
+
+/// `navigator.devicePosture` (https://w3c.github.io/device-posture/): an EventTarget whose `type` is the device's
+/// posture, live, and whose `change` fires when the embedder changes it (`Browser::set_viewport`). A
+/// `[SecureContext]` interface: removed from insecure windows (`crate::secure_context`).
+pub struct DevicePosture;
+impl JsClass for DevicePosture {
+    const NAME: &'static str = "DevicePosture";
+    type Data = ViewportTargetData;
+    type Parent = crate::target::EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|d: &ViewportTargetData| &d.target);
+        def.getter("type", |s, d| Ok(s.string(device_posture(d.page()))));
         def.accessor(
             "onchange",
             |s, d| crate::target::event_handler(s, &d.target, "change"),
@@ -1178,6 +1214,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<Screen>();
     engine.register::<VisualViewport>();
     engine.register::<ScreenOrientation>();
+    engine.register::<DevicePosture>();
 }
 
 /// `window.open(url, target, features)`. A new browsing context opens as a

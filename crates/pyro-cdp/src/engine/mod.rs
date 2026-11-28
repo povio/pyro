@@ -1245,6 +1245,7 @@ impl EngineHost {
             "setGeolocationOverride" | "clearGeolocationOverride" => self.geolocation_override(action, cmd),
             "setPressureSourceOverrideEnabled" | "setPressureStateOverride" | "setPressureDataOverride" => self.pressure_override(action, cmd),
             "setSensorOverrideEnabled" | "setSensorOverrideReadings" | "getOverriddenSensorInformation" => self.sensor_override(action, cmd),
+            "setDevicePostureOverride" | "clearDevicePostureOverride" => self.device_posture_override(action, cmd),
             "setVirtualTimePolicy" => self.set_virtual_time_policy(cmd),
             // Touch input (Input.dispatchTouchEvent) is always accepted, as in
             // Chrome; this sets `navigator.maxTouchPoints` (default 1) and,
