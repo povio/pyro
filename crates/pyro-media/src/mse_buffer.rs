@@ -581,13 +581,15 @@ mod tests {
         for mime in [
             "audio/mp4;codecs=",
             "video/mp4;codecs=\"\"",
-            "video/mp4;codecs=avc1.4D4001",
             "audio/mp4;codecs=avc1.42001e",
             "video/mp4;codecs=mp4a.40.5",
             "video/webm",
         ] {
             assert!(MediaType::parse(mime).is_none(), "{mime}");
         }
+        // Chrome accepts every non-zero H.264 level_idc (WPT's MSE helpers probe avc1.4D4001).
+        #[cfg(feature = "h264")]
+        assert!(MediaType::parse("video/mp4;codecs=avc1.4D4001").is_some());
         let mut audio = CodedBuffer::new(MediaType::parse("audio/mp4").unwrap());
         let input = include_bytes!("../tests/fixtures/fragmented-tone-pattern.mp4");
         assert_eq!(audio.append(input), Err(BufferError::Unsupported));
