@@ -1140,15 +1140,17 @@ fn element_zoom(page: &PageDom, el: NodeId) -> f64 {
 /// `scrollTop`, `scrollLeft` and `scroll*()` read and move the window: the
 /// page document's `scrollingElement` (the document element, or the body
 /// element in quirks mode).
-fn scrolls_viewport(page: &PageDom, el: NodeId) -> bool {
+fn scroll_role(page: &PageDom, el: NodeId) -> pyro_dom::layout::ScrollRole {
+    use pyro_dom::layout::ScrollRole;
+    let layout = page.layout();
     let dom = page.dom.borrow();
     let doc = page.document();
     if dom.node_document(el).ok() != Some(doc) {
-        return false;
+        return ScrollRole::Element;
     }
     let quirks = dom.document_data(doc).is_ok_and(|d| d.quirks == pyro_dom::QuirksMode::Quirks);
-    let scrolling = if quirks { dom.body(doc) } else { dom.document_element(doc) };
-    scrolling.ok().flatten() == Some(el)
+    // The document's `scrollingElement` candidates only: an element elsewhere scrolls as itself.
+    layout.scroll_role(&dom, el, quirks)
 }
 
 /// `Element.scroll()`, `scrollTo()` (`operation`) and `scrollBy()` (`by`): returns a scroll
@@ -1162,7 +1164,13 @@ pub(crate) fn scroll_to<'s>(
 ) -> JsResult<Value<'s>> {
     let (l, t, behavior) = scroll_options(&a, operation, "Element", to_scroll_number)?;
     let page = n.page();
-    let viewport = scrolls_viewport(page, n.id);
+    let role = scroll_role(page, n.id);
+    // CSSOM View scroll(): the root element in quirks mode, a body whose overflow went to the viewport:
+    // "terminate these steps".
+    if role == pyro_dom::layout::ScrollRole::Nothing {
+        return scroll_promise(s, page, None);
+    }
+    let viewport = role == pyro_dom::layout::ScrollRole::Viewport;
     let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
     let (css_l, css_t) = (l, t);
     let (l, t) = (l.map(|v| round_scroll_offset(v * zoom)), t.map(|v| round_scroll_offset(v * zoom)));
@@ -1187,7 +1195,12 @@ pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult
     // Reading a scroll offset sees the current layout (clamped to it).
     crate::animation_events::layout_flush(n.page(), n.id);
     clamp_scrolls(n.page(), false);
-    let viewport = scrolls_viewport(n.page(), n.id);
+    let role = scroll_role(n.page(), n.id);
+    // CSSOM View scrollTop/scrollLeft: zero for the root element in quirks mode and a body with no scrolling box.
+    if role == pyro_dom::layout::ScrollRole::Nothing {
+        return Ok(s.number(0.0));
+    }
+    let viewport = role == pyro_dom::layout::ScrollRole::Viewport;
     let layout = n.page().layout();
     Ok(s.number(match (viewport, top) {
         (true, true) => layout.scroll_y() as f64,
@@ -1201,7 +1214,11 @@ pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult
 pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) -> JsResult<()> {
     let value = to_scroll_number(v)?;
     let page = n.page();
-    let viewport = scrolls_viewport(page, n.id);
+    let role = scroll_role(page, n.id);
+    if role == pyro_dom::layout::ScrollRole::Nothing {
+        return Ok(());
+    }
+    let viewport = role == pyro_dom::layout::ScrollRole::Viewport;
     let zoom = if viewport { 1.0 } else { element_zoom(page, n.id) };
     let css = value;
     let value = round_scroll_offset(value * zoom);

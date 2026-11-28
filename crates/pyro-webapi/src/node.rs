@@ -2010,12 +2010,16 @@ impl JsClass for Document {
             node_value(s, n.page(), e)
         });
         // CSSOM View: the element whose scroll offsets are the viewport's:
-        // the document element, or the body element in quirks mode.
+        // the document element, or the body element in quirks mode (when it is not potentially scrollable).
         def.getter("scrollingElement", |s, n| {
             let e = {
+                // (The layout first: it may borrow the DOM itself to sync.)
+                let layout = n.page().layout();
                 let dom = n.page().dom.borrow();
                 if dom.document_data(n.id).js()?.quirks == pyro_dom::QuirksMode::Quirks {
-                    dom.body(n.id).js()?
+                    // CSSOM View: the body unless it is potentially scrollable (then no element
+                    // is: the viewport has none in quirks mode).
+                    dom.body(n.id).js()?.filter(|&body| !layout.body_potentially_scrollable(&dom, body))
                 } else {
                     dom.document_element(n.id).js()?
                 }

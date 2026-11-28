@@ -237,6 +237,17 @@ pub struct AxisState {
     pub explicit: bool,
 }
 
+/// What an element's scroll offsets are ([`Layout::scroll_role`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ScrollRole {
+    /// The viewport's.
+    Viewport,
+    /// None: the element has no scrolling box (its offsets read zero and writes end).
+    Nothing,
+    /// Its own, as any element's.
+    Element,
+}
+
 /// What a scroll along one axis lands on (Element.zig:1781-1784).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ScrollTarget {
@@ -1241,6 +1252,11 @@ impl Layout {
         if (self.html_local(dom, idx) == Some("body")) != self.is_quirks(dom) {
             return None;
         }
+        // CSSOM View clientWidth/scrollWidth...: a quirks-mode `<body>` that is potentially
+        // scrollable is an ordinary scroll container, with its own client and scrolling areas.
+        if self.html_local(dom, idx) == Some("body") && self.body_potentially_scrollable(dom, el) {
+            return None;
+        }
         let viewport = self.viewport();
         let (width, height) = self.without_scrollbars(dom, (viewport.width, viewport.height));
         Some(match axis {
@@ -1252,6 +1268,42 @@ impl Layout {
     fn without_scrollbars(&self, dom: &Dom, (width, height): (u32, u32)) -> (f64, f64) {
         let (bar_width, bar_height) = self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
         ((width as f64 - bar_width).max(0.0), (height as f64 - bar_height).max(0.0))
+    }
+
+    /// CSSOM View "potentially scrollable" for the `<body>` that is `el` (quirks mode's scrolling
+    /// element when it is not): it has a box, and both it and its parent element have an
+    /// `overflow-x` or `overflow-y` that is neither `visible` nor `clip` (so that its overflow is not the
+    /// viewport's).
+    pub fn body_potentially_scrollable(&self, dom: &Dom, el: NodeId) -> bool {
+        let Ok(idx) = dom.check(el) else { return false };
+        let parent = dom.n(idx).parent;
+        if parent == NIL || self.html_local(dom, idx) != Some("body") {
+            return false;
+        }
+        let scrolls = |idx: u32| self.style.computed(dom, dom.id_of(idx)).is_some_and(|c| c.scroll_container);
+        scrolls(idx) && scrolls(parent) && self.layout_box(dom, el).is_some()
+    }
+
+    /// What `el`'s scroll offsets and `scroll*()` methods are (CSSOM View "Element.scrollTop",
+    /// "scroll()"): the viewport's for the root element in standards mode and for the `<body>` in
+    /// quirks mode unless it is potentially scrollable; nothing for the root element in quirks mode
+    /// (it reads zero and a scroll of it ends) and for a `<body>` whose overflow went to the
+    /// viewport (standards mode, the root's overflow `visible`: no scrolling box). `quirks` is the
+    /// document's quirks mode.
+    pub fn scroll_role(&self, dom: &Dom, el: NodeId, quirks: bool) -> ScrollRole {
+        let Ok(idx) = dom.check(el) else { return ScrollRole::Element };
+        if !self.is_root_idx(dom, idx) {
+            return ScrollRole::Element;
+        }
+        if self.html_local(dom, idx) == Some("html") {
+            return if quirks { ScrollRole::Nothing } else { ScrollRole::Viewport };
+        }
+        if quirks {
+            return if self.body_potentially_scrollable(dom, el) { ScrollRole::Element } else { ScrollRole::Viewport };
+        }
+        let root = dom.id_of(dom.n(idx).parent);
+        let propagated = !self.style.overflow_clip_axes(dom, root).x && !self.style.overflow_clip_axes(dom, root).y;
+        if propagated { ScrollRole::Nothing } else { ScrollRole::Element }
     }
 
     /// Element.zig:1671-1675.
