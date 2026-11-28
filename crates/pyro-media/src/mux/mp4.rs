@@ -103,10 +103,13 @@ impl FragmentWriter {
         self.tracks[track].samples.push(sample);
     }
 
-    /// The pieces of file written for everything pushed since the last flush: [initialization segment
-    /// (the first time)], fragment. Empty when there are no samples, or while a declared track still
+    /// The pieces of file to deliver now. Empty when there are no samples, or while a declared track still
     /// lacks its configuration (unless `last`: a track that never produced anything is then left out of
-    /// the file).
+    /// the file). The first delivery is the initialization segment alone (the samples wait for the next
+    /// one), and a delivery that is not the last keeps back each track's newest sample: its duration is
+    /// the distance to the sample after it, so the fragments follow each other exactly (a nominal
+    /// duration would leave gaps and overlaps that split a player's buffered range). `last` writes
+    /// everything, the kept samples with their nominal duration.
     pub fn flush(&mut self, last: bool) -> Vec<Vec<u8>> {
         if self.tracks.iter().any(|t| t.config.is_none()) {
             if !last {
@@ -123,11 +126,30 @@ impl FragmentWriter {
             let mut init = Vec::new();
             write_init(&mut init, &self.tracks);
             parts.push(init);
+            if !last {
+                return parts;
+            }
         }
-        self.sequence += 1;
-        let mut fragment = Vec::new();
-        write_fragment(&mut fragment, &mut self.tracks, self.sequence);
-        parts.push(fragment);
+        let mut kept = Vec::new();
+        if !last {
+            for (i, t) in self.tracks.iter_mut().enumerate() {
+                if let Some(sample) = t.samples.pop() {
+                    if let Some(before) = t.samples.last_mut() {
+                        before.duration_us = sample.time_us.saturating_sub(before.time_us);
+                    }
+                    kept.push((i, sample));
+                }
+            }
+        }
+        if !self.tracks.iter().all(|t| t.samples.is_empty()) {
+            self.sequence += 1;
+            let mut fragment = Vec::new();
+            write_fragment(&mut fragment, &mut self.tracks, self.sequence);
+            parts.push(fragment);
+        }
+        for (i, sample) in kept {
+            self.tracks[i].samples.push(sample);
+        }
         parts
     }
 }
@@ -402,37 +424,42 @@ mod tests {
     }
 
     #[test]
-    fn writes_init_once_and_fragments_with_valid_offsets() {
+    fn delivers_the_header_alone_then_exact_fragments() {
         let mut w = FragmentWriter::new();
         let v = w.add_video(64, 32, *b"avc1");
         let a = w.add_audio(2);
         assert!(w.flush(false).is_empty(), "no samples");
         w.set_config(v, vec![1, 66, 0xc0, 30, 0xff, 0xe0, 0]);
-        w.push(v, Sample { data: vec![1; 10], time_us: 0, duration_us: 50_000, key: true });
+        w.push(v, Sample { data: vec![1; 10], time_us: 0, duration_us: 99_000, key: true });
         assert!(w.flush(false).is_empty(), "the audio track has no configuration yet");
         w.set_config(a, head());
         w.push(a, Sample { data: vec![2; 5], time_us: 0, duration_us: 20_000, key: true });
         w.push(a, Sample { data: vec![3; 6], time_us: 20_000, duration_us: 20_000, key: true });
-        let pieces = w.flush(false);
-        assert_eq!(pieces.len(), 2, "initialization segment, then the fragment");
-        let first = pieces.concat();
-        let top = boxes(&first);
-        let kinds: Vec<_> = top.iter().map(|b| &b.0).collect();
-        assert_eq!(kinds, [b"ftyp", b"moov", b"moof", b"mdat"]);
-        // The video trun's data offset points at the first mdat byte.
-        let moof_at = 8 + top[0].1.len() + 8 + top[1].1.len();
-        let mdat = &first[moof_at + 8 + top[2].1.len() + 8..];
-        let expected: Vec<u8> = [vec![1u8; 10], vec![2; 5], vec![3; 6]].concat();
-        assert_eq!(mdat, expected.as_slice());
-        let traf: Vec<_> = boxes(top[2].1).into_iter().filter(|b| &b.0 == b"traf").collect();
-        assert_eq!(traf.len(), 2);
-        let second_trun = boxes(traf[1].1).into_iter().find(|b| &b.0 == b"trun").unwrap().1;
-        let offset = u32::from_be_bytes(second_trun[8..12].try_into().unwrap()) as usize;
-        assert_eq!(first[moof_at + offset], 2, "audio data follows the video data");
+        let header = w.flush(false);
+        assert_eq!(header.len(), 1, "the initialization segment goes alone");
+        let kinds: Vec<_> = boxes(&header[0]).iter().map(|b| b.0).collect();
+        assert_eq!(kinds, [*b"ftyp", *b"moov"]);
         w.push(v, Sample { data: vec![4; 3], time_us: 50_000, duration_us: 50_000, key: false });
-        let next = w.flush(false).concat();
-        let kinds: Vec<_> = boxes(&next).iter().map(|b| b.0).collect();
+        let fragment = w.flush(false).concat();
+        let top = boxes(&fragment);
+        let kinds: Vec<_> = top.iter().map(|b| b.0).collect();
         assert_eq!(kinds, [*b"moof", *b"mdat"]);
+        // The newest sample of each track stays: the video track delivers its first picture with the
+        // exact distance to the second, the audio track its first packet.
+        let expected: Vec<u8> = [vec![1u8; 10], vec![2; 5]].concat();
+        assert_eq!(top[1].1, expected.as_slice());
+        let traf: Vec<_> = boxes(top[0].1).into_iter().filter(|b| &b.0 == b"traf").collect();
+        assert_eq!(traf.len(), 2);
+        let trun = |t: &[u8]| boxes(t).into_iter().find(|b| &b.0 == b"trun").unwrap().1.to_vec();
+        let video = trun(traf[0].1);
+        assert_eq!(u32::from_be_bytes(video[12..16].try_into().unwrap()), 4500, "50 ms at 90 kHz");
+        let audio = trun(traf[1].1);
+        let offset = u32::from_be_bytes(audio[8..12].try_into().unwrap()) as usize;
+        assert_eq!(fragment[offset], 2, "audio data follows the video data");
+        let rest = w.flush(true).concat();
+        let kinds: Vec<_> = boxes(&rest).iter().map(|b| b.0).collect();
+        assert_eq!(kinds, [*b"moof", *b"mdat"]);
+        assert_eq!(boxes(&rest)[1].1.len(), 3 + 6, "the kept samples");
         assert!(w.flush(true).is_empty());
     }
 
@@ -445,8 +472,10 @@ mod tests {
         w.push(a, Sample { data: vec![9; 4], time_us: 0, duration_us: 20_000, key: true });
         assert!(w.flush(false).is_empty());
         let file = w.flush(true).concat();
-        let moov = boxes(&file).into_iter().find(|b| &b.0 == b"moov").unwrap().1;
-        assert_eq!(boxes(moov).iter().filter(|b| &b.0 == b"trak").count(), 1);
+        let top = boxes(&file);
+        let kinds: Vec<_> = top.iter().map(|b| b.0).collect();
+        assert_eq!(kinds, [*b"ftyp", *b"moov", *b"moof", *b"mdat"]);
+        assert_eq!(boxes(top[1].1).iter().filter(|b| &b.0 == b"trak").count(), 1);
     }
 
     #[test]

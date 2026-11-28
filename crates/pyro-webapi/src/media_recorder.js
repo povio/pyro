@@ -217,12 +217,14 @@
   const fire = (st, event) => {
     if (isActive()) native.dispatchTrusted(st.object, event);
   };
-  // `parts`: the pieces of file of the chunk (null: an empty Blob). The timecode is the time of the chunk's
-  // first sample on the recording clock, and 0 for the first chunk (the initialization segment).
-  const fireBlob = (st, parts, mime, firstUs) => {
+  // `parts`: the pieces of file of the chunk (null: an empty Blob). The timecode is the time the chunk was
+  // made, on the recording clock (`nowUs`), relative to the first chunk (the initialization segment): 0 for
+  // that one, never going back.
+  const fireBlob = (st, parts, mime, nowUs) => {
     let timecode = st.lastTimecode;
     if (parts) {
-      timecode = st.sent ? MathC.max(st.lastTimecode, firstUs / 1000) : 0;
+      timecode = st.sent ? MathC.max(st.lastTimecode, nowUs / 1000 - st.sentAt) : 0;
+      if (!st.sent) st.sentAt = nowUs / 1000;
       st.sent = true;
     }
     st.lastTimecode = timecode;
@@ -231,16 +233,14 @@
   };
 
   // Takes the session's pending chunk: [pieces, firstUs] or null when nothing is ready. The initialization
-  // segment goes out alone first (the first fragment waits for the next chunk), so that a Blob timeline
-  // starts with a small header chunk, as a browser's recorder gives.
+  // segment goes out alone first (the muxer holds the samples back until the next chunk), so that a Blob
+  // timeline starts with a small header chunk, as a browser's recorder gives.
   const takeChunk = (s, last) => {
-    const pieces = s.held.concat(Array.from(s.handle('flush', last)));
-    s.held = [];
+    const pieces = Array.from(s.handle('flush', last));
     if (!pieces.length) return null;
-    if (!s.headerSent && !last && pieces.length > 1) {
+    if (!s.headerSent && !last && pieces.length === 1) {
       s.headerSent = true;
-      s.held = pieces.slice(1);
-      return [pieces.slice(0, 1), 0];
+      return [pieces, 0];
     }
     s.headerSent = true;
     const firstUs = s.chunkFirstUs;
@@ -272,7 +272,7 @@
         }
         s.handle('close');
         if (error) fire(st, new ErrorEventC('error', { error: domError(error, 'The recording was stopped because the stream changed.'), message: error }));
-        fireBlob(st, chunk && chunk[0], s.mime, chunk ? chunk[1] : 0);
+        fireBlob(st, chunk && chunk[0], s.mime, clockUs(s));
         fire(st, new EventC('stop'));
       });
     };
@@ -420,7 +420,7 @@
       if (s.timeslice !== undefined && (s.timeslice === 0 || perfNow() >= s.sliceAt)) {
         const chunk = takeChunk(s, false);
         s.sliceAt = perfNow() + s.timeslice;
-        if (chunk) fireBlob(st, chunk[0], s.mime, chunk[1]);
+        if (chunk) fireBlob(st, chunk[0], s.mime, now);
       }
     } catch (e) {
       return finish(st, s, 'EncodingError');
@@ -480,7 +480,7 @@
       recorders.set(this, {
         object: this, stream, mimeType, state: 'inactive', session: null, totalBps, keyMs, keyCount, mode,
         audioBitsPerSecond, videoBitsPerSecond, parsed: mimeType === '' ? null : parseType(mimeType),
-        sent: false, lastTimecode: 0,
+        sent: false, sentAt: 0, lastTimecode: 0,
       });
     }
     get stream() { return recOf(this, 'stream').stream; }
@@ -561,7 +561,7 @@
         videoTrack, audioTrack, width, height, audioRate, audioChannels, audioFrames: 0, audioBase: 0,
         pictureUs: 1000000 / (fps || 20), nextPicture: 0, videoBusy: false, inflight: 0, deliver: null,
         timer: 0, t0: perfNow(), pausedTotal: 0, pausedAt: 0, timeslice: slice, sliceAt: 0,
-        chunkFirstUs: null, held: [], headerSent: false, announce: null, waiters: [], closed: false, ctx: null,
+        chunkFirstUs: null, headerSent: false, announce: null, waiters: [], closed: false, ctx: null,
         period: audioTrack ? 20 : MathC.max(5, MathC.floor(1000 / (fps || 20))),
       };
       if (videoTrack) {
@@ -654,7 +654,8 @@
         } catch (e) {
           chunk = null;
         }
-        queue(() => fireBlob(st, chunk && chunk[0], s.mime, chunk ? chunk[1] : 0));
+        const at = clockUs(s);
+        queue(() => fireBlob(st, chunk && chunk[0], s.mime, at));
       };
       if (s.inflight > 0) s.waiters.push(give);
       else give();
