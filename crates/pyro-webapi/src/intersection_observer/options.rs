@@ -124,8 +124,11 @@ pub(super) fn parse(s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>) -> JsRe
     let len = array.get_atom("length")?.to_number()? as u32;
     let thresholds = (0..len).map(|i| array.get_index(i)?.to_number()).collect::<JsResult<Vec<_>>>()?;
     let track_visibility = get("trackVisibility")?.to_bool();
-    // A tracking observer notifies at most every 100 ms (IntersectionObserver v2).
-    let delay = if track_visibility { delay.max(100.0) } else { delay };
+    // A tracking observer notifies at most every 100 ms (IntersectionObserver v2): a smaller
+    // delay is refused, as Chrome does (NotSupportedError; 100 is fine, 99 and none are not).
+    if track_visibility && delay < 100.0 {
+        return Err(JsError::dom("NotSupportedError", "To enable trackVisibility option, you must also use a delay of at least 100"));
+    }
     Ok(Options { root, margin, margin_text, thresholds, scroll_margin, scroll_margin_text, track_visibility, delay })
 }
 

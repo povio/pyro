@@ -2511,8 +2511,11 @@ fn intersection_observer_options_conversion_and_explicit_limits() {
         failure(()=>new IntersectionObserver(()=>{},{rootMargin:'10em'}));
         failure(()=>new IntersectionObserver(()=>{},{rootMargin:'0'}));
         failure(()=>new IntersectionObserver(()=>{},{trackVisibility:true}));
-        failure(()=>new IntersectionObserver(()=>{},{delay:1}));
-        failure(()=>new IntersectionObserver(()=>{},{scrollMargin:'1px'}));
+        failure(()=>new IntersectionObserver(()=>{},{trackVisibility:true,delay:99}));
+        failure(()=>new IntersectionObserver(()=>{},{trackVisibility:true,delay:-5}));
+        new IntersectionObserver(()=>{},{delay:1});
+        new IntersectionObserver(()=>{},{scrollMargin:'1px'});
+        new IntersectionObserver(()=>{},{trackVisibility:true,delay:100});
         var io=new IntersectionObserver(()=>{}, {threshold:[],rootMargin:'10% -2px 3pt'});
         failure(()=>io.observe(document));failure(()=>io.unobserve());
         errors.join(',')+'|'+io.thresholds.join()+'|'+io.rootMargin
