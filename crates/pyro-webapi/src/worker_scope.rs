@@ -818,6 +818,13 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         let _ = dom.borrow_mut().inherit_csp_policies(document, &start.csp.inherited);
     }
     let page = PageDom::new(dom, document);
+    // A service worker's script was fetched by its registration: its response's CSP list is the
+    // global's (`fetch_script` records a dedicated or shared worker's).
+    if let Some(service) = &start.service {
+        if !service.csp_enforce.is_empty() || !service.csp_report_only.is_empty() {
+            let _ = page.dom.borrow_mut().set_trusted_types_policies(page.document(), &service.csp_enforce, &service.csp_report_only);
+        }
+    }
     // The same for the owner's `Connection-Allowlist`; a fetched script's own is its response's
     // (`fetch_script`; a service worker's, which its registration fetched, comes in `inherited_allowlist`).
     if matches!(start.url.scheme(), "data" | "blob") || start.service.is_some() {
@@ -1021,7 +1028,7 @@ fn load_main_bytes(page: &Rc<PageDom>, start: &WorkerStart, main: &MainRequest) 
             // A redirect (or a final response URL) the owner's CSP blocked or reported is
             // reported at the owner.
             if let Some(guard) = &start.csp.guard {
-                post_violations(start.id, &start.poster, guard.take_violations());
+                post_violations(&start.csp, start.id, &start.poster, guard.take_violations());
             }
             let (bytes, mime, response_url) = fetched.ok()?;
             // HTML "run a worker": a dedicated worker whose script's embedder policy is not
@@ -1272,8 +1279,15 @@ struct WorkerModuleFetcher {
 }
 
 /// Violations of the owner's CSP found on the worker's thread go to the owner's document.
-fn post_violations(id: u64, poster: &RemotePoster, violations: Vec<pyro_net::csp::Violation>) {
-    if !violations.is_empty() {
+/// A service worker version's id comes from its own counter, so it is not a key of
+/// `worker::deliver_up`: its violations go to the document that registered it.
+fn post_violations(csp: &crate::worker::WorkerCsp, id: u64, poster: &RemotePoster, violations: Vec<pyro_net::csp::Violation>) {
+    if violations.is_empty() {
+        return;
+    }
+    if csp.dest == pyro_net::csp::RequestDest::ServiceWorker {
+        poster(Box::new(move || crate::service_worker::deliver_violations(id, violations)));
+    } else {
         poster(Box::new(move || deliver_up(id, Up::Violations(violations))));
     }
 }
@@ -1306,7 +1320,7 @@ fn module_csp(
             let worker_dest = if dest == RequestDest::Script { csp.dest } else { dest };
             let check = CspRequest::new(url.clone(), worker_dest);
             let outcome = list.pre_request(&check);
-            post_violations(id, poster, outcome.violations);
+            post_violations(csp, id, poster, outcome.violations);
             if outcome.blocked {
                 return Err(crate::csp::Blocked);
             }
@@ -1437,7 +1451,7 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                                         if graph_request == GraphRequest::Dynamic || csp.owner.is_none() {
                                             crate::csp::report_guard(&page, Some(guard), None);
                                         } else {
-                                            post_violations(id, &poster, guard.take_violations());
+                                            post_violations(&csp, id, &poster, guard.take_violations());
                                         }
                                     }
                                     fetched

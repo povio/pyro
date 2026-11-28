@@ -43,6 +43,11 @@ pub(crate) struct ServiceStart {
     pub scope: String,
     pub script_url: String,
     pub update_via_cache: String,
+    /// The `Content-Security-Policy` and `-Report-Only` header values of the script's response,
+    /// each joined with `,`: the worker global's own CSP list (CSP3 §4.2.2 "initialize a global
+    /// object's CSP list": a service worker does not inherit its registrant's).
+    pub(crate) csp_enforce: String,
+    pub(crate) csp_report_only: String,
 }
 
 /// A request a controlled client made, on its way through the worker.

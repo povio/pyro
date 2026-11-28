@@ -24,7 +24,7 @@
 //! WebAssembly compilation ([`wasm_allowed`]) is gated at the JS level (install.js
 //! `wasmStreaming`, armed by [`sync_wasm_gate`] in realms whose policies need it).
 //!
-//! Not covered (explicitly): `report-uri` / `report-to` reports from workers; a local-scheme document
+//! Not covered (explicitly): a local-scheme document
 //! (`about:blank`, `about:srcdoc`, `blob:`, `data:`, a `javascript:` result) inherits its
 //! policies ([`InheritedCsp`]) from its parent, else its popup's creator (a `javascript:` result
 //! from the document it replaces), not from the document that started its navigation;
@@ -647,13 +647,11 @@ pub fn report(page: &Rc<PageDom>, violations: Vec<Violation>, target: Option<Nod
             if let Err(e) = dispatch(&s, &page, &violation, target) {
                 s.report_exception(&e);
             }
-            // CSP3 "report a violation": the reports follow the event in the same task. A
-            // worker sends none to endpoints yet (that belongs with the worker hooks), but its
-            // observers get theirs.
+            // CSP3 "report a violation": the reports follow the event in the same task, from a
+            // worker global as from a document (the global's own network and policies; WPT
+            // inside-worker/*-script-src check the `report-uri` reports of workers).
             let (report, targets) = report_parts(&violation);
-            if !crate::worker_scope::is_worker(&s) {
-                crate::csp_report::report_violation(&page, &report, &targets);
-            }
+            crate::csp_report::report_violation(&page, &report, &targets);
             crate::reporting::queue_csp_violation(&s, &page, &report);
         }));
     }

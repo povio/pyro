@@ -485,6 +485,9 @@ pub(crate) struct Version {
     /// The hooks that announced its CDP target (they outlive the page that
     /// registered it, which may go first), until the end is told.
     announced: RefCell<Option<Rc<dyn crate::page::PageHooks>>>,
+    /// The document that registered it: the owner policy's violations of its module graph's static
+    /// imports are reported there.
+    owner: Weak<PageDom>,
 }
 
 type Evaluated = Box<dyn FnOnce(bool)>;
@@ -1537,6 +1540,24 @@ fn register(
             ),
         ));
     }
+    // CSP3 "Does request violate policy?" for the registering document's policies, as for
+    // `new Worker`: `worker-src`, then `child-src`, `script-src`, `default-src`. A blocked script
+    // is a SecurityError (Chrome) and the violation is reported at the document. The script
+    // fetch's own redirects are an error mode here, so no guard is needed past this check.
+    if crate::csp::check_request(
+        page,
+        pyro_net::csp::CspRequest::new(script_url.clone(), pyro_net::csp::RequestDest::ServiceWorker),
+        None,
+    )
+    .is_err()
+    {
+        return Err(JsError::dom(
+            "SecurityError",
+            format!(
+                "{prefix}: Refused to load the service worker script '{script_url}' because it violates the document's Content Security Policy."
+            ),
+        ));
+    }
     if crate::worker::is_held() {
         return Err(JsError::dom(
             "NotSupportedError",
@@ -1863,7 +1884,13 @@ fn fetched_script(
     // The worker's own embedder policy is its script response's (HTML "run a worker"): its fetches
     // and the `Cache` it reads are subject to it.
     let embedder = crate::coep_report::obtain_embedder(&head.headers, &head.url);
-    start_version(page, registration, script_url, body, allowlist, embedder, settle);
+    // ... and so is its CSP list (CSP3 §4.2.2): `eval`, `importScripts`, `fetch` and WebAssembly in the
+    // worker follow it, and a service worker inherits nothing from the page that registered it.
+    let joined = |name: &str| {
+        head.headers.get_all(name).iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join(",")
+    };
+    let csp = (joined("content-security-policy"), joined("content-security-policy-report-only"));
+    start_version(page, registration, script_url, body, allowlist, embedder, csp, settle);
 }
 
 fn start_version(
@@ -1873,6 +1900,7 @@ fn start_version(
     script: Bytes,
     allowlist: Option<Arc<pyro_net::connection_allowlist::ConnectionPolicy>>,
     embedder: (pyro_net::EmbedderPolicy, pyro_net::EmbedderReporting),
+    csp: (String, String),
     settle: Settle,
 ) {
     if VERSIONS.with(|v| v.borrow().len()) >= MAX_VERSIONS {
@@ -1880,7 +1908,9 @@ fn start_version(
         end_update(registration);
         return;
     }
-    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    // A version's id is drawn from the workers' counter: it is a key of the up-messages that
+    // `worker::deliver_up` routes, which a dedicated worker's id must not share.
+    let id = crate::worker::NEXT_WORKER.fetch_add(1, Ordering::Relaxed);
     let shared = crate::worker::new_shared();
     let service = ServiceStart {
         version: id,
@@ -1891,6 +1921,8 @@ fn start_version(
         scope: registration.scope.clone(),
         script_url: script_url.to_string(),
         update_via_cache: registration.update_via_cache.clone(),
+        csp_enforce: csp.0,
+        csp_report_only: csp.1,
     };
     let start = WorkerStart::for_service(
         id,
@@ -1908,6 +1940,12 @@ fn start_version(
         return;
     };
     start.csp.inherited_allowlist = allowlist;
+    // The static imports of a module service worker answer to the registering document's policies
+    // (`worker-src`), as a dedicated worker's do; it inherits no policy from it otherwise.
+    if let Some(list) = crate::csp::policy_list(page) {
+        start.csp.owner = Some(list);
+        start.csp.dest = pyro_net::csp::RequestDest::ServiceWorker;
+    }
     (start.embedder_policy, start.embedder_reporting) = embedder;
     let version = Rc::new(Version {
         id,
@@ -1921,6 +1959,7 @@ fn start_version(
         evaluated: RefCell::new(None),
         queued: Arc::new(AtomicUsize::new(0)),
         announced: RefCell::new(None),
+        owner: Rc::downgrade(page),
     });
     VERSIONS.with(|v| v.borrow_mut().insert(id, Rc::downgrade(&version)));
     // The registration holds it until the job decides, then its slots do.
@@ -1964,6 +2003,15 @@ fn start_version(
                 next(false);
             }
         }
+    }
+}
+
+/// Violations of the registering document's CSP that version `id`'s thread found, reported at
+/// that document (if it is still there).
+pub(crate) fn deliver_violations(id: u64, violations: Vec<pyro_net::csp::Violation>) {
+    let version = VERSIONS.with(|v| v.borrow().get(&id).and_then(Weak::upgrade));
+    if let Some(page) = version.and_then(|v| v.owner.upgrade()).filter(|p| !p.is_disposed()) {
+        crate::csp::report(&page, violations, None);
     }
 }
 
