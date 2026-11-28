@@ -1217,6 +1217,16 @@ impl Layout {
         if let Some(v) = self.viewport_axis(dom, el, axis) {
             return v;
         }
+        // CSSOM View "clientWidth": the associated box of a table is its wrapper box, which has no
+        // border: the client area is the whole border box (`clientLeft`/`clientTop` stay the table's
+        // border), as Chrome answers (WPT table-with-border-client-width-height).
+        if self.style.stylo_style(dom, el).is_some_and(|style| {
+            style.slow_clone_display().inside() == style::values::specified::box_::DisplayInside::Table
+        }) && self.layout_box(dom, el).is_some()
+        {
+            let (width, height) = self.untransformed_size(dom, el);
+            return if axis == Axis::Width { width } else { height };
+        }
         self.layout_box(dom, el).map_or(0.0, |b| match axis {
             Axis::Width => b.client_width,
             Axis::Height => b.client_height,
