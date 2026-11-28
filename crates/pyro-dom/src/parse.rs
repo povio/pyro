@@ -544,6 +544,17 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             if d.root_idx(*nodes.0) != d.root_idx(*form) {
                 return;
             }
+            // A form that is an ancestor of the place the element goes to is found by the ancestor
+            // walk, and must not be remembered: the remembered one would outlive the element's
+            // removal with an ancestor and its insertion elsewhere in the form's tree (the element
+            // would keep a form it no longer is inside of; Chrome's form owner is null then).
+            let mut up = *nodes.0;
+            while up != NIL {
+                if up == *form {
+                    return;
+                }
+                up = d.n(up).parent;
+            }
             let form = d.id_of(*form);
             if let Some(e) = d.n_mut(*target).element_mut() {
                 e.parser_form = Some(form);
