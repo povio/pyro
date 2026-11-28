@@ -6128,9 +6128,24 @@ impl Layout {
         let flat_parent = |node: NodeId| flat_parent_element(dom, node);
         let mut cur = flat_parent(el);
         let mut target_owns_snap_area = script;
+        // CSSOM View "scroll an element into view": only the scroll containers in the element's
+        // containing block chain scroll it (an absolutely positioned box is not moved by a scroller
+        // between it and its containing block: the chain `for_each_clip` follows for clips).
+        let mut escape = self.clip_escape(dom, el);
         while let Some(node) = cur {
             if self.is_root_container(dom, node) {
                 break;
+            }
+            let held = self.computed(dom, node);
+            let in_chain = !held.display_contents
+                && match escape {
+                    ClipEscape::None => true,
+                    ClipEscape::Viewport => held.contains_fixed,
+                    ClipEscape::Positioned => held.contains_absolute,
+                };
+            if !in_chain {
+                cur = flat_parent(node);
+                continue;
             }
             // A scroll container scrolls on both axes: the other axis's
             // `visible` computes to `auto` and `clip` to `hidden`. `hidden`
@@ -6178,6 +6193,7 @@ impl Layout {
                     return moved;
                 }
             }
+            escape = self.clip_escape(dom, node);
             cur = flat_parent(node);
         }
         // Fixed boxes do not move with the window.
