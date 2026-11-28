@@ -147,6 +147,11 @@ struct Entry {
     /// The URL is of another site than the initiator: the request carried no cookies, so the
     /// response may only stand in for a navigation of a user who has none for it.
     cross_site: bool,
+    /// A service worker controlled the URL when the prefetch started, so its response came through
+    /// the worker's `fetch` event. A navigation uses it only while the worker still controls the
+    /// URL: a prefetch made before the worker was registered never reached it (and one made
+    /// through a worker that is gone may hold a response only that worker could make).
+    via_worker: bool,
     /// The `Set-Cookie` headers of a cross-site response, kept out of the jar until a navigation
     /// claims the entry (then applied to its context's jar) and dropped with it otherwise.
     cookies: Arc<DeferredCookies>,
@@ -376,7 +381,8 @@ impl Browser {
         // A same-site prefetch of a URL a service worker controls goes through its `fetch` event
         // (`loader`); a cross-site one is not made (Chrome: it would reach the worker without
         // the initiator's credentials context).
-        if cross_site && self.navigation_service_worker_controls(page.page, &url) {
+        let via_worker = self.navigation_service_worker_controls(page.page, &url);
+        if cross_site && via_worker {
             return;
         }
         // Chrome refuses a cross-site prefetch of a URL the user has cookies for: its response,
@@ -404,6 +410,7 @@ impl Browser {
             initiator_loader: frame.loader_id.0.clone(),
             initiator,
             cross_site,
+            via_worker,
             cookies: cookies.clone(),
             head: head.clone(),
             set: candidate.set,
@@ -589,7 +596,7 @@ impl Browser {
             return None;
         }
         // A service worker that controls the URL answers a navigation for itself, but only a
-        // same-site prefetch (made through the worker) may stand in for that.
+        // same-site prefetch made through that worker may stand in for that.
         let controlled = self.navigation_service_worker_controls(page.page, &target);
         let site = |u: &Url| pyro_net::cookies::partition_key(u);
         // The page that asked: the navigating page itself, or the page whose `window.open` made it
@@ -602,6 +609,7 @@ impl Browser {
                 && e.initiator == initiator
                 && !e.state.claimed()
                 && e.nvs.equivalent(&e.url, &target)
+                && controlled == e.via_worker
                 && (!controlled || site(&e.initiator) == site(&e.url))
         };
         // The entry of exactly this URL first, else one the variance makes equivalent.
@@ -688,6 +696,7 @@ mod tests {
                 initiator_loader: String::new(),
                 initiator: Url::parse("https://a.test/").unwrap(),
                 cross_site: false,
+                via_worker: false,
                 cookies: Default::default(),
                 head: Default::default(),
                 set: RuleSetId(0),
