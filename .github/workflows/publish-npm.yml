@@ -272,6 +272,7 @@ jobs:
   package:
     needs: [release, build, fork, linux-x64, linux-arm64]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
@@ -298,9 +299,22 @@ jobs:
         run: |
           mkdir -p ../../npm-package
           npm pack --pack-destination ../../npm-package
-          # npm pack compresses at a low level; gzip -9 makes the same tarball ~6 MB smaller.
+          # npm pack compresses at a low level; gzip -9 makes the same tarball ~6 MB smaller, and zopfli (a
+          # deflate encoder that writes the same gzip format, so npm and the registry see an ordinary .tgz)
+          # another 3.3% on top of that (rc.12's tarball: 189,187,178 -> 183,013,690 bytes; about 14 minutes
+          # on one core, the price of the gain).
+          # zopfli reads a named file only (stdin is not read: it prints "Please provide filename", writes an empty
+          # file and exits 0), so the tar goes through a file. A missing zopfli is a hard failure, never a fallback.
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends zopfli
           for file in ../../npm-package/*.tgz; do
-            gzip -dc "$file" | gzip -9 -n > "$file.9" && mv "$file.9" "$file"
+            gzip -dc "$file" > "$file.tar"
+            zopfli --i5 -c "$file.tar" > "$file.z"
+            test -s "$file.z"
+            gzip -t "$file.z"
+            cmp "$file.tar" <(gzip -dc "$file.z")
+            mv "$file.z" "$file"
+            rm "$file.tar"
             tar -tzf "$file" > /dev/null
           done
           # Our compressed-payload budget. npm sends the tarball base64-encoded in one request: the registry accepted
