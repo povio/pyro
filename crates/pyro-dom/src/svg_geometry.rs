@@ -1609,6 +1609,317 @@ fn shape_path(dom: &Dom, el: NodeId, tag: &str, allow_degenerate: bool, length: 
     Some(path)
 }
 
+/// One `SVGPathSegment` of the SVG Paths path data API: a command letter (case = absolute or
+/// relative) and its values; an arc's two flags are 0 or 1.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathSeg {
+    pub cmd: char,
+    pub values: Vec<f64>,
+}
+
+/// The number of values of path command `cmd` (None for a letter that is no command).
+pub fn path_command_arity(cmd: char) -> Option<usize> {
+    Some(match cmd.to_ascii_uppercase() {
+        'M' | 'L' | 'T' => 2,
+        'H' | 'V' => 1,
+        'C' => 6,
+        'S' | 'Q' => 4,
+        'A' => 7,
+        'Z' => 0,
+        _ => return None,
+    })
+}
+
+/// SVG Paths "parse path data" for `getPathData()`: the segments of `d` up to the first error
+/// (SVG 2 §9.5 error handling: render up to the error), with the implicit commands after a
+/// moveto/lineto/curve written out. Data that does not begin with a moveto has no segments.
+pub fn parse_path_data(d: &str) -> Vec<PathSeg> {
+    use svgtypes::PathSegment as S;
+    let mut out = Vec::new();
+    for segment in svgtypes::PathParser::from(d) {
+        let Ok(segment) = segment else { break };
+        let values = match segment {
+            S::MoveTo { x, y, .. } | S::LineTo { x, y, .. } | S::SmoothQuadratic { x, y, .. } => vec![x, y],
+            S::HorizontalLineTo { x, .. } => vec![x],
+            S::VerticalLineTo { y, .. } => vec![y],
+            S::CurveTo { x1, y1, x2, y2, x, y, .. } => vec![x1, y1, x2, y2, x, y],
+            S::SmoothCurveTo { x2, y2, x, y, .. } | S::Quadratic { x1: x2, y1: y2, x, y, .. } => vec![x2, y2, x, y],
+            S::EllipticalArc { rx, ry, x_axis_rotation, large_arc, sweep, x, y, .. } => {
+                vec![rx, ry, x_axis_rotation, f64::from(u8::from(large_arc)), f64::from(u8::from(sweep)), x, y]
+            }
+            S::ClosePath { .. } => Vec::new(),
+        };
+        // A closepath is "Z" whichever case it was written in (SVG Paths: it takes no values, so
+        // the case carries nothing).
+        let cmd = if values.is_empty() { 'Z' } else { char::from(segment.command()) };
+        out.push(PathSeg { cmd, values });
+    }
+    out
+}
+
+/// `d` text for `setPathData()`: commands and values separated by spaces, the values as the
+/// `float`s they were converted to, and a closepath always as "Z".
+pub fn serialize_path_data(segments: &[PathSeg]) -> String {
+    let mut out = String::new();
+    for segment in segments {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push(if segment.cmd == 'z' { 'Z' } else { segment.cmd });
+        for &value in &segment.values {
+            out.push(' ');
+            out.push_str(&(value as f32).to_string());
+        }
+    }
+    out
+}
+
+/// The cubic Béziers (control 1, control 2, end) of the SVG elliptical arc from `from` to `to`
+/// (SVG 2 appendix B.2.4 endpoint-to-center conversion, at most a quarter turn each). `None` for
+/// an arc that is a straight line (a zero radius): the caller draws a line. An arc whose
+/// endpoints coincide is omitted.
+fn arc_to_cubics(from: (f64, f64), to: (f64, f64), rx: f64, ry: f64, rotation: f64, large: bool, sweep: bool) -> Option<Vec<[f64; 6]>> {
+    if from == to {
+        return Some(Vec::new());
+    }
+    let svg_arc = kurbo::SvgArc {
+        from: kurbo::Point::new(from.0, from.1),
+        to: kurbo::Point::new(to.0, to.1),
+        radii: kurbo::Vec2::new(rx, ry),
+        x_rotation: rotation.to_radians(),
+        large_arc: large,
+        sweep,
+    };
+    let arc = kurbo::Arc::from_svg_arc(&svg_arc)?;
+    let (sin_r, cos_r) = arc.x_rotation.sin_cos();
+    let (rx, ry) = (arc.radii.x, arc.radii.y);
+    let point = |a: f64| {
+        let (s, c) = a.sin_cos();
+        (arc.center.x + cos_r * rx * c - sin_r * ry * s, arc.center.y + sin_r * rx * c + cos_r * ry * s)
+    };
+    let tangent = |a: f64| {
+        let (s, c) = a.sin_cos();
+        (-cos_r * rx * s - sin_r * ry * c, -sin_r * rx * s + cos_r * ry * c)
+    };
+    let count = ((arc.sweep_angle.abs() / std::f64::consts::FRAC_PI_2) - 1e-6).ceil().max(1.0) as usize;
+    let step = arc.sweep_angle / count as f64;
+    let k = 4.0 / 3.0 * (step / 4.0).tan();
+    let mut out = Vec::with_capacity(count);
+    for j in 0..count {
+        let a0 = arc.start_angle + step * j as f64;
+        let a1 = a0 + step;
+        let (p0, p3) = (point(a0), point(a1));
+        let (t0, t1) = (tangent(a0), tangent(a1));
+        let end = if j + 1 == count { to } else { p3 };
+        out.push([p0.0 + k * t0.0, p0.1 + k * t0.1, p3.0 - k * t1.0, p3.1 - k * t1.1, end.0, end.1]);
+    }
+    Some(out)
+}
+
+/// What `getPathData({normalize: true})` reduces `segments` to: absolute M, L, C and Z only
+/// (H/V become L, Q/T/S/A become C; a leading relative moveto is relative to the origin, so also
+/// absolute). Each output segment comes with the index of the input segment it was made from.
+fn normalize_with_origin(segments: &[PathSeg]) -> Vec<(usize, PathSeg)> {
+    let mut out = Vec::new();
+    let (mut x, mut y) = (0.0f64, 0.0f64);
+    let (mut start_x, mut start_y) = (0.0f64, 0.0f64);
+    // The reflection points of S/s and T/t: the previous C/S's second control point and the
+    // previous Q/T's control point (the current point when the previous command is another).
+    let mut last_cubic: Option<(f64, f64)> = None;
+    let mut last_quad: Option<(f64, f64)> = None;
+    let mut push = |index: usize, cmd: char, values: Vec<f64>| out.push((index, PathSeg { cmd, values }));
+    for (index, segment) in segments.iter().enumerate() {
+        let v = &segment.values;
+        if path_command_arity(segment.cmd) != Some(v.len()) {
+            continue;
+        }
+        let (ox, oy) = if segment.cmd.is_ascii_lowercase() { (x, y) } else { (0.0, 0.0) };
+        let mut cubic = None;
+        let mut quad = None;
+        match segment.cmd.to_ascii_uppercase() {
+            'M' => {
+                (x, y) = (ox + v[0], oy + v[1]);
+                (start_x, start_y) = (x, y);
+                push(index, 'M', vec![x, y]);
+            }
+            'L' => {
+                (x, y) = (ox + v[0], oy + v[1]);
+                push(index, 'L', vec![x, y]);
+            }
+            'H' => {
+                x = ox + v[0];
+                push(index, 'L', vec![x, y]);
+            }
+            'V' => {
+                y = oy + v[0];
+                push(index, 'L', vec![x, y]);
+            }
+            'C' => {
+                let c = [ox + v[0], oy + v[1], ox + v[2], oy + v[3], ox + v[4], oy + v[5]];
+                cubic = Some((c[2], c[3]));
+                (x, y) = (c[4], c[5]);
+                push(index, 'C', c.to_vec());
+            }
+            'S' => {
+                let (c1x, c1y) = last_cubic.map_or((x, y), |(px, py)| (2.0 * x - px, 2.0 * y - py));
+                let c = [c1x, c1y, ox + v[0], oy + v[1], ox + v[2], oy + v[3]];
+                cubic = Some((c[2], c[3]));
+                (x, y) = (c[4], c[5]);
+                push(index, 'C', c.to_vec());
+            }
+            'Q' | 'T' => {
+                let (control, end) = if segment.cmd.eq_ignore_ascii_case(&'Q') {
+                    ((ox + v[0], oy + v[1]), (ox + v[2], oy + v[3]))
+                } else {
+                    (last_quad.map_or((x, y), |(px, py)| (2.0 * x - px, 2.0 * y - py)), (ox + v[0], oy + v[1]))
+                };
+                // A quadratic raised to a cubic: the controls are 2/3 of the way to its control point.
+                let c = [
+                    x + 2.0 / 3.0 * (control.0 - x),
+                    y + 2.0 / 3.0 * (control.1 - y),
+                    end.0 + 2.0 / 3.0 * (control.0 - end.0),
+                    end.1 + 2.0 / 3.0 * (control.1 - end.1),
+                    end.0,
+                    end.1,
+                ];
+                quad = Some(control);
+                (x, y) = end;
+                push(index, 'C', c.to_vec());
+            }
+            'A' => {
+                let end = (ox + v[5], oy + v[6]);
+                match arc_to_cubics((x, y), end, v[0], v[1], v[2], v[3] != 0.0, v[4] != 0.0) {
+                    Some(cubics) => {
+                        for c in cubics {
+                            push(index, 'C', c.to_vec());
+                        }
+                    }
+                    None => push(index, 'L', vec![end.0, end.1]),
+                }
+                (x, y) = end;
+            }
+            _ => {
+                (x, y) = (start_x, start_y);
+                push(index, 'Z', Vec::new());
+            }
+        }
+        last_cubic = cubic;
+        last_quad = quad;
+    }
+    out
+}
+
+/// `getPathData({normalize: true})`: see [`normalize_with_origin`].
+pub fn normalize_path_data(segments: &[PathSeg]) -> Vec<PathSeg> {
+    normalize_with_origin(segments).into_iter().map(|(_, segment)| segment).collect()
+}
+
+/// `getPathSegmentAtLength()`: the index of the segment of `segments` that contains `distance`
+/// along the path, measured as the path is drawn (a moveto adds no length). The first segment
+/// whose end is at or past `distance`, so a distance on a boundary is in the earlier segment, a
+/// negative one in the first and one past the end in the last. None for an empty path.
+pub fn path_segment_index_at_length(segments: &[PathSeg], distance: f64) -> Option<usize> {
+    use kurbo::ParamCurveArclen;
+    if segments.is_empty() {
+        return None;
+    }
+    let mut lengths = vec![0.0f64; segments.len()];
+    let (mut x, mut y) = (0.0f64, 0.0f64);
+    let (mut start_x, mut start_y) = (0.0f64, 0.0f64);
+    for (index, segment) in normalize_with_origin(segments) {
+        let v = &segment.values;
+        lengths[index] += match segment.cmd {
+            'M' => {
+                (x, y) = (v[0], v[1]);
+                (start_x, start_y) = (x, y);
+                0.0
+            }
+            'L' => {
+                let length = (v[0] - x).hypot(v[1] - y);
+                (x, y) = (v[0], v[1]);
+                length
+            }
+            'C' => {
+                let curve = kurbo::CubicBez::new((x, y), (v[0], v[1]), (v[2], v[3]), (v[4], v[5]));
+                (x, y) = (v[4], v[5]);
+                curve.arclen(1e-6)
+            }
+            _ => {
+                let length = (start_x - x).hypot(start_y - y);
+                (x, y) = (start_x, start_y);
+                length
+            }
+        };
+    }
+    let mut end = 0.0;
+    for (index, length) in lengths.iter().enumerate() {
+        end += length;
+        if distance <= end {
+            return Some(index);
+        }
+    }
+    Some(segments.len() - 1)
+}
+
+#[cfg(test)]
+mod path_data_tests {
+    use super::*;
+
+    fn seg(cmd: char, values: &[f64]) -> PathSeg {
+        PathSeg { cmd, values: values.to_vec() }
+    }
+
+    #[test]
+    fn parse_stops_at_the_first_error_and_expands_implicit_commands() {
+        assert_eq!(parse_path_data("M 10 20 L"), vec![seg('M', &[10., 20.])]);
+        assert!(parse_path_data("Z").is_empty());
+        assert_eq!(
+            parse_path_data("M 0 0 100 100 L 10 10 20 20"),
+            vec![seg('M', &[0., 0.]), seg('L', &[100., 100.]), seg('L', &[10., 10.]), seg('L', &[20., 20.])]
+        );
+        assert_eq!(parse_path_data("m1 2a5 5 0 1010 10"), vec![seg('m', &[1., 2.]), seg('a', &[5., 5., 0., 1., 0., 10., 10.])]);
+    }
+
+    #[test]
+    fn normalize_reduces_to_absolute_m_l_c_z() {
+        let n = normalize_path_data(&parse_path_data("m 10 20 l 30 0 H 0 z"));
+        assert_eq!(n, vec![seg('M', &[10., 20.]), seg('L', &[40., 20.]), seg('L', &[0., 20.]), seg('Z', &[])]);
+        let n = normalize_path_data(&parse_path_data("M 0 0 Q 30 30 30 60 t 30 0"));
+        assert_eq!(n[1].values, vec![20., 20., 30., 40., 30., 60.]);
+        assert_eq!(n[2].values, vec![30., 80., 40., 80., 60., 60.]);
+        let n = normalize_path_data(&parse_path_data("M 6 10 A 10 10 10 0 0 15 10"));
+        let expected = [8.8305, 11.4263, 12.1695, 11.4263, 15.0, 10.0];
+        assert_eq!(n.len(), 2);
+        for (got, want) in n[1].values.iter().zip(expected) {
+            assert!((got - want).abs() < 0.0005, "{got} vs {want}");
+        }
+        let n = normalize_path_data(&parse_path_data("M 0 0 A 10 10 0 1 0 20 0"));
+        assert!(n.len() > 2 && n[1..].iter().all(|s| s.cmd == 'C'));
+        assert_eq!(&n.last().unwrap().values[4..], &[20., 0.]);
+    }
+
+    #[test]
+    fn segment_at_length_prefers_the_earlier_segment_on_a_boundary() {
+        let d = parse_path_data("M 0 0 L 100 0 L 100 100");
+        assert_eq!(path_segment_index_at_length(&d, 0.0), Some(0));
+        assert_eq!(path_segment_index_at_length(&d, 100.0), Some(1));
+        assert_eq!(path_segment_index_at_length(&d, 150.0), Some(2));
+        assert_eq!(path_segment_index_at_length(&d, -10.0), Some(0));
+        assert_eq!(path_segment_index_at_length(&d, 1000.0), Some(2));
+        assert_eq!(path_segment_index_at_length(&[], 1.0), None);
+        let z = parse_path_data("M 0 0 L 100 0 Z M 200 0 L 300 0");
+        assert_eq!(path_segment_index_at_length(&z, 150.0), Some(2));
+        assert_eq!(path_segment_index_at_length(&z, 250.0), Some(4));
+    }
+
+    #[test]
+    fn serialize_spaces_commands_and_writes_closepath_upper_case() {
+        let segments = vec![seg('m', &[5., 5.]), seg('l', &[3., 4.]), seg('z', &[])];
+        assert_eq!(serialize_path_data(&segments), "m 5 5 l 3 4 Z");
+        assert_eq!(serialize_path_data(&[seg('A', &[25., 25., 0., 1., 1., 50., 50.])]), "A 25 25 0 1 1 50 50");
+    }
+}
+
 #[cfg(test)]
 mod aspect_ratio_tests {
     use super::*;

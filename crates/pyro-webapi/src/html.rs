@@ -4680,7 +4680,120 @@ fn svg_rect_argument(value: Value<'_>) -> JsResult<pyro_dom::layout::Rect> {
     let n = |name: &'static str| -> JsResult<f64> { rect.get_atom(name)?.to_number() };
     Ok(pyro_dom::layout::Rect { x: n("x")?, y: n("y")?, width: n("width")?, height: n("height")? })
 }
-simple_class!(SvgPathElement, "SVGPathElement", SvgGeometryElement);
+/// An `SVGPathSegment` dictionary as a fresh plain object (`getPathData`, `getPathSegmentAtLength`);
+/// the values are `float`s.
+fn svg_path_segment_object<'s>(s: &Scope<'s>, segment: &pyro_dom::svg_geometry::PathSeg) -> JsResult<Value<'s>> {
+    let object = s.object();
+    object.set_atom("type", s.string(&segment.cmd.to_string()))?;
+    let values: Vec<Value<'s>> = segment.values.iter().map(|&v| s.number(f64::from(v as f32))).collect();
+    object.set_atom("values", s.array(&values)?.value())?;
+    Ok(object.value())
+}
+/// The `d` content attribute of a path (not the CSS `d` property, nor an animated value).
+fn svg_path_attribute_data(n: &NodeData) -> Vec<pyro_dom::svg_geometry::PathSeg> {
+    let page = n.page();
+    let dom = page.dom.borrow();
+    let d = dom.get_attribute(n.id, "d").ok().flatten().unwrap_or_default();
+    pyro_dom::svg_geometry::parse_path_data(&d)
+}
+/// One `SVGPathSegment` of `setPathData`'s sequence (WebIDL dictionary conversion: a required
+/// `DOMString type`, then a required `sequence<unrestricted float> values`).
+fn svg_path_segment_from_js(s: &Scope<'_>, value: Value<'_>) -> JsResult<pyro_dom::svg_geometry::PathSeg> {
+    let Some(object) = value.as_object() else {
+        return Err(JsError::Type("Failed to execute 'setPathData' on 'SVGPathElement': The provided value is not of type 'SVGPathSegment'.".into()));
+    };
+    let missing = |member: &str| JsError::Type(format!("Failed to execute 'setPathData' on 'SVGPathElement': Failed to read the '{member}' property from 'SVGPathSegment': Required member is undefined.").into());
+    let kind = object.get_atom("type")?;
+    if kind.is_undefined() {
+        return Err(missing("type"));
+    }
+    let kind = dom_string(kind)?;
+    let values = object.get_atom("values")?;
+    if values.is_undefined() {
+        return Err(missing("values"));
+    }
+    let list = s.sequence(values, "SVGPathSegment.values")?;
+    let len = list.get_atom("length")?.to_number()? as u32;
+    let mut numbers = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        // `unrestricted float`: ToNumber, then the nearest float (NaN and infinities allowed).
+        numbers.push(f64::from(list.get_index(i)?.to_number()? as f32));
+    }
+    // A type that is not exactly one command letter can never be valid; keep it as a marker the
+    // validation drops (a NUL is no command).
+    let mut chars = kind.chars();
+    let cmd = match (chars.next(), chars.next()) {
+        (Some(c), None) => c,
+        _ => '\0',
+    };
+    Ok(pyro_dom::svg_geometry::PathSeg { cmd, values: numbers })
+}
+simple_class!(SvgPathElement, "SVGPathElement", SvgGeometryElement, |def| {
+    // SVG Paths (https://svgwg.org/specs/paths/#InterfaceSVGPathData). They read the `d` content
+    // attribute, as `getAttribute("d")` does: not the CSS `d` property and not an animated value.
+    def.method("getPathData", 0, |s, n, args| {
+        let options = args.get(0);
+        // SVGPathDataSettings { boolean normalize = false }.
+        let normalize = if options.is_nullish() {
+            false
+        } else if let Some(options) = options.as_object() {
+            options.get_atom("normalize")?.to_bool()
+        } else {
+            return Err(JsError::Type("Failed to execute 'getPathData' on 'SVGPathElement': The provided value is not of type 'SVGPathDataSettings'.".into()));
+        };
+        let mut segments = svg_path_attribute_data(n);
+        if normalize {
+            segments = pyro_dom::svg_geometry::normalize_path_data(&segments);
+        }
+        let items = segments.iter().map(|segment| svg_path_segment_object(s, segment)).collect::<JsResult<Vec<_>>>()?;
+        Ok(s.array(&items)?.value())
+    });
+    def.method("setPathData", 1, |s, n, args| {
+        args.require(1, "SVGPathElement.setPathData")?;
+        // The whole sequence is converted (observably, in order) before any segment is judged.
+        let converted = s.convert_sequence(args.get(0), "SVGPathElement.setPathData", svg_path_segment_from_js)?;
+        // Valid-prefix semantics: the first invalid segment (not a command, the wrong number of
+        // values, a value that is not finite, or a first segment that is no moveto) and all that
+        // follow are dropped. An arc's flags are booleans.
+        let mut valid = Vec::with_capacity(converted.len());
+        for mut segment in converted {
+            let fits = pyro_dom::svg_geometry::path_command_arity(segment.cmd) == Some(segment.values.len())
+                && segment.values.iter().all(|v| v.is_finite())
+                && (!valid.is_empty() || segment.cmd.eq_ignore_ascii_case(&'m'));
+            if !fits {
+                break;
+            }
+            if segment.cmd.eq_ignore_ascii_case(&'a') {
+                for flag in &mut segment.values[3..5] {
+                    *flag = if *flag != 0.0 { 1.0 } else { 0.0 };
+                }
+            }
+            valid.push(segment);
+        }
+        let page = n.page();
+        // The same mutation as setAttribute("d", ...) / removeAttribute("d"): an empty path has no attribute.
+        if valid.is_empty() {
+            page.dom.borrow_mut().remove_attribute(n.id, "d").js()?;
+        } else {
+            let data = pyro_dom::svg_geometry::serialize_path_data(&valid);
+            page.dom.borrow_mut().set_attribute(n.id, "d", &data).js()?;
+        }
+        Ok(s.undefined())
+    });
+    def.method("getPathSegmentAtLength", 1, |s, n, args| {
+        args.require(1, "SVGPathElement.getPathSegmentAtLength")?;
+        // `float distance`: a non-finite value is a TypeError.
+        let distance = args.get(0).to_number()? as f32;
+        if !distance.is_finite() {
+            return Err(JsError::Type("Failed to execute 'getPathSegmentAtLength' on 'SVGPathElement': The provided float value is non-finite.".into()));
+        }
+        let segments = svg_path_attribute_data(n);
+        match pyro_dom::svg_geometry::path_segment_index_at_length(&segments, f64::from(distance)) {
+            Some(index) => svg_path_segment_object(s, &segments[index]),
+            None => Ok(s.null()),
+        }
+    });
+});
 fn svg_animated_points<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.getter("points", |s, n| collections::point_list(s, n, false));
     def.getter("animatedPoints", |s, n| collections::point_list(s, n, true));
