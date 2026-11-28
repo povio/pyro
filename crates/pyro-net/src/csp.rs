@@ -549,6 +549,17 @@ impl PolicyList {
             }
             // Chrome reports a redirected request by the URL it started with.
             let blocked = if request.redirected { &request.original_url } else { url };
+            // Chrome reports a blocked WebSocket by its HTTP URL (`ws:` as `http:`, `wss:` as
+            // `https:`), as Fetch's "request URL" of the handshake is (WPT securitypolicyviolation/
+            // blockeduri-ws-wss-scheme, inside-worker/*-connect-src).
+            let mut http_blocked;
+            let blocked = if request.dest == RequestDest::WebSocket && matches!(blocked.scheme(), "ws" | "wss") {
+                http_blocked = blocked.clone();
+                let _ = http_blocked.set_scheme(if blocked.scheme() == "wss" { "https" } else { "http" });
+                &http_blocked
+            } else {
+                blocked
+            };
             outcome.violations.push(self.violation(policy, directive, effective, blocked.as_str(), url.as_str(), ""));
             if policy.disposition == Disposition::Enforce {
                 outcome.blocked = true;
@@ -1431,6 +1442,18 @@ mod tests {
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].blocked_url, "https://a.test/m.js");
         assert_eq!(violations[0].checked_url, "https://evil.test/m.js");
+    }
+
+    #[test]
+    fn a_blocked_websocket_is_reported_by_its_http_url() {
+        let mut list = PolicyList::new(Some(&Url::parse("https://a.test/page.html").unwrap()));
+        list.add_header("connect-src 'none'", Disposition::Enforce);
+        let report = |url: &str| {
+            let request = CspRequest::new(Url::parse(url).unwrap(), RequestDest::WebSocket);
+            list.pre_request(&request).violations[0].blocked_url.clone()
+        };
+        assert_eq!(report("wss://b.test/echo"), "https://b.test/echo");
+        assert_eq!(report("ws://b.test:8080/echo"), "http://b.test:8080/echo");
     }
 
     #[test]

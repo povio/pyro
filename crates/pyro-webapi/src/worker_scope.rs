@@ -689,6 +689,21 @@ fn run(mut start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) 
             }));
         }
     };
+    // A module service worker's script has run once its evaluation promise settles (Service
+    // Workers "Run Service Worker": a graph that fails to fetch or link, or a script that throws,
+    // fails the registration): its version hears then, not when the evaluation starts. The
+    // promise may never settle if the worker ends first: then it failed.
+    let module_pending = Rc::new(Cell::new(false));
+    let on_settled: Option<Rc<dyn Fn(bool)>> = (service.is_some() && module && !phased).then(|| {
+        let (poster, version, pending) = (poster.clone(), service.unwrap_or_default(), module_pending.clone());
+        Rc::new(move |ok: bool| {
+            if pending.replace(false) {
+                poster(Box::new(move || {
+                    crate::service_worker::deliver(version, crate::service_worker::SwUp::Evaluated(ok))
+                }));
+            }
+        }) as Rc<dyn Fn(bool)>
+    });
     match set_up(&event_loop, start) {
         Ok((mut state, script)) => {
             if let Some(script) = script {
@@ -700,11 +715,28 @@ fn run(mut start: WorkerStart, ready: mpsc::SyncSender<LoopHandle<WorkerLoop>>) 
                 if unparsable {
                     load_failed(&poster, id);
                 }
+                module_pending.set(on_settled.is_some());
                 let ok = !unparsable
                     && !shared.closing.load(Ordering::Acquire)
-                    && if phased { start_module_graph(&state, &script) } else { run_script(&state, &script, module) };
-                evaluated(ok);
+                    && if phased {
+                        start_module_graph(&state, &script)
+                    } else {
+                        run_script(&state, &script, module, on_settled.clone())
+                    };
+                // The module case's promise may have settled already (then it told the version).
+                match (&on_settled, ok) {
+                    (Some(_), true) => {}
+                    (Some(_), false) => {
+                        if module_pending.replace(false) {
+                            evaluated(false);
+                        }
+                    }
+                    (None, _) => evaluated(ok),
+                }
                 run_collecting_when_quiet(&mut event_loop, &mut state, &shared);
+                if module_pending.replace(false) {
+                    evaluated(false);
+                }
                 // HTML "close a worker": `close()` only sets the closing flag; the task that
                 // called it runs on, and what it posted to the owner is still delivered. The
                 // owner learns the worker is gone after that, through the same queue (so after
@@ -1103,7 +1135,12 @@ fn sync_compile_gate(s: &Scope<'_>, state: &WorkerLoop) {
 
 /// Whether a classic script ran to its end (a module's evaluation is
 /// asynchronous: its failure is reported, and this says true).
-fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bool {
+fn run_script(
+    state: &WorkerLoop,
+    script: &(String, String),
+    module: bool,
+    on_settled: Option<Rc<dyn Fn(bool)>>,
+) -> bool {
     let Ok(s) = state.realm.scope() else { return false };
     sync_compile_gate(&s, state);
     if !module {
@@ -1139,17 +1176,24 @@ fn run_script(state: &WorkerLoop, script: &(String, String), module: bool) -> bo
     state.graph.mixed.set(true);
     let (started, failed) = (state.starting.clone(), state.starting.clone());
     let (graph_done, graph_failed) = (state.graph.clone(), state.graph.clone());
+    let (done_settled, failed_settled) = (on_settled.clone(), on_settled);
     let evaluated = s.eval_module(&script.0, &script.1).and_then(|promise| {
         s.then(
             promise,
             move |_, _| {
                 started.set(false);
                 graph_done.mixed.set(false);
+                if let Some(settled) = &done_settled {
+                    settled(true);
+                }
             },
             move |s, error| {
                 failed.set(false);
                 graph_failed.mixed.set(false);
-                s.report_exception(&JsError::thrown(pyro_js::Persistent::new(s, error)))
+                s.report_exception(&JsError::thrown(pyro_js::Persistent::new(s, error)));
+                if let Some(settled) = &failed_settled {
+                    settled(false);
+                }
             },
         )
     });
