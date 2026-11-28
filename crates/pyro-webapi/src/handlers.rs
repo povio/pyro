@@ -135,6 +135,8 @@ pub(crate) const PERMISSION_ELEMENT: &[&str] =
     &["stream", "track", "location", "promptaction", "promptdismiss", "validationstatuschange"];
 /// HTML-in-Canvas: `HTMLCanvasElement.onpaint` (see [`element_handler`]).
 pub(crate) const CANVAS_ELEMENT: &[&str] = &["paint"];
+/// Encrypted Media Extensions: `HTMLMediaElement.onencrypted` and `onwaitingforkey` (defined in `media.rs`).
+pub(crate) const MEDIA_ELEMENT: &[&str] = &["encrypted", "waitingforkey"];
 
 /// Whether the HTML element named `local` has its own event handler for `ty` beyond
 /// GlobalEventHandlers: the permission elements' (`HTMLUserMediaElement.onstream`, ...).
@@ -145,6 +147,7 @@ pub(crate) fn element_handler(local: &str, ty: &str) -> bool {
         "geolocation" => matches!(ty, "location" | "promptaction" | "promptdismiss" | "validationstatuschange"),
         "install" => ty == "validationstatuschange",
         "canvas" => ty == "paint",
+        "video" | "audio" => MEDIA_ELEMENT.contains(&ty),
         _ => false,
     }
 }
@@ -173,6 +176,7 @@ pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
         .chain(FULLSCREEN)
         .chain(PERMISSION_ELEMENT)
         .chain(CANVAS_ELEMENT)
+        .chain(MEDIA_ELEMENT)
         .find(|t| t.eq_ignore_ascii_case(ty))
         .copied()
 }
@@ -484,6 +488,7 @@ pub(crate) fn event_handler_attributes() -> &'static [String] {
             .chain(FULLSCREEN)
             .chain(PERMISSION_ELEMENT)
             .chain(CANVAS_ELEMENT)
+            .chain(MEDIA_ELEMENT)
             .copied()
             .chain(SVG_ANIMATION_ATTRIBUTES.iter().map(|(name, _)| *name))
             .map(|ty| format!("on{ty}"))

@@ -366,7 +366,7 @@ pub fn script_source_unverified(page: &PageDom, el: pyro_dom::NodeId, text: &str
 
 /// Whether `local` (case-sensitive: `onclick`) names an event handler content attribute of some
 /// element: GlobalEventHandlers, WindowEventHandlers (not only on `<body>`), the Fullscreen,
-/// SVG animation, permission element and canvas handlers. Trusted Types decides by the name alone
+/// SVG animation, permission element, canvas and media element (EME) handlers. Trusted Types decides by the name alone
 /// (`getAttributeType` and `setAttribute` agree), not by the element it is set on.
 pub(crate) fn is_event_handler_name(local: &str) -> bool {
     let Some(ty) = local.strip_prefix("on") else { return false };
@@ -375,6 +375,7 @@ pub(crate) fn is_event_handler_name(local: &str) -> bool {
         || crate::handlers::FULLSCREEN.contains(&ty)
         || crate::handlers::PERMISSION_ELEMENT.contains(&ty)
         || crate::handlers::CANVAS_ELEMENT.contains(&ty)
+        || crate::handlers::MEDIA_ELEMENT.contains(&ty)
         || crate::handlers::SVG_ANIMATION_ATTRIBUTES.iter().any(|(name, _)| *name == ty)
 }
 
