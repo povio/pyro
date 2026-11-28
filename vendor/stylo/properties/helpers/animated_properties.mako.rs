@@ -780,7 +780,10 @@ impl Animate for ClipRect {
         use crate::values::computed::LengthOrAuto;
         let animate_component = |this: &LengthOrAuto, other: &LengthOrAuto| {
             let result = this.animate(other, procedure)?;
-            if let Procedure::Interpolate { .. } = procedure {
+            // pyro: an `auto` component accumulates with an `auto` one (Web Animations 2, iteration
+            // composite `accumulate`: the sum of two `auto`s is `auto`; WPT web-animations
+            // effect-value-iteration-composite-operation, incompatible clip rects).
+            if matches!(procedure, Procedure::Interpolate { .. } | Procedure::Accumulate { .. }) {
                 return Ok(result);
             }
             if result.is_auto() {

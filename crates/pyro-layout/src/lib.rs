@@ -335,6 +335,7 @@ pub fn animation_frame(frame: &pyro_dom::animation::AnimationFrame) -> pyro_rend
         before: e.before,
         easing: e.easing.clone(),
         composite: composite(e.composite),
+        iteration_accumulate: e.iteration_accumulate,
         timeline: e.timeline.map(|t| b::TimelineDriven {
             index: t.index,
             iterations: t.iterations,

@@ -102,6 +102,9 @@ pub(crate) struct Progress {
     pub before: bool,
     /// In the before or active phase: the value moves as time goes on.
     pub moving: bool,
+    /// The current iteration (Web Animations 1, "calculating the current iteration"), 0 where it
+    /// is unresolved or infinite: the count `iterationComposite: accumulate` accumulates.
+    pub iteration: u64,
 }
 
 /// pyro: an animation's progress where it is in effect ([`Level::Animation`]), or, in its delay
@@ -128,7 +131,7 @@ fn in_effect_or_current_bounded(
     let end = (timing.delay + active + timing.end_delay).max(0.0);
     let before_phase = local < timing.delay.min(end).max(0.0);
     (!settled && rate > 0.0 && before_phase)
-        .then_some((Progress { progress: 0.0, before: true, moving: false }, Level::Current))
+        .then_some((Progress { progress: 0.0, before: true, moving: false, iteration: 0 }, Level::Current))
 }
 
 /// The iteration progress of an effect with `timing` at `local` time, for
@@ -196,7 +199,9 @@ pub(crate) fn progress_bounded(timing: &Timing, local: f64, rate: f64, (at_start
     };
     let directed = if forwards { simple } else { 1.0 - simple };
     let before = (phase_before && !backwards) || (phase_after && backwards);
-    Some(Progress { progress: directed, before, moving: !phase_after })
+    // (Infinite after a zero-duration infinite run only: nothing to accumulate there.)
+    let iteration = if iteration.is_finite() && iteration > 0.0 { iteration as u64 } else { 0 };
+    Some(Progress { progress: directed, before, moving: !phase_after, iteration })
 }
 
 /// An `Animation` object's state, as animations.js reports it.
@@ -229,6 +234,8 @@ pub(crate) struct Scripted {
     /// transitions only: a CSS animation's object without keyframes of its own (on a pseudo-element)
     /// reports it too.
     replaced_keyframes: bool,
+    /// Its keyframe effect's iteration composite operation is `accumulate` (Web Animations 2).
+    iteration_accumulate: bool,
 }
 
 /// A script animation's scroll or view progress timeline (`ScrollTimeline`, `ViewTimeline`).
@@ -382,6 +389,7 @@ pub(crate) fn report(page: &Rc<PageDom>, seq: u64, state: Option<ReportedState>)
                         pseudo: s.pseudo,
                         scroll: s.scroll,
                         replaced_keyframes: s.replaced_keyframes,
+                        iteration_accumulate: s.iteration_accumulate,
                     },
                 );
             }
@@ -422,6 +430,8 @@ pub(crate) struct ReportedState {
     /// transitions only: a CSS animation's object without keyframes of its own (on a pseudo-element)
     /// reports it too.
     pub replaced_keyframes: bool,
+    /// Its keyframe effect's iteration composite operation is `accumulate` (Web Animations 2).
+    pub iteration_accumulate: bool,
 }
 
 impl ReportedState {
@@ -698,6 +708,7 @@ fn walk_motion(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn 
             before: p.before,
             easing,
             composite: Composite::Replace,
+            iteration_accumulate: 0,
             timeline: None,
         };
         visit(el, level, effect);
@@ -725,6 +736,7 @@ fn walk_motion(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn 
                 before: false,
                 easing: None,
                 composite: Composite::Replace,
+                iteration_accumulate: 0,
                 timeline: Some(pyro_dom::animation::TimelineDriven {
                     index,
                     iterations: own_timing.iterations,
@@ -780,6 +792,7 @@ fn walk_motion(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn 
                 before: p.before,
                 easing: s.easing.clone(),
                 composite: s.composite,
+                iteration_accumulate: if s.iteration_accumulate { p.iteration } else { 0 },
                 timeline: None,
             },
             _ => Effect {
@@ -793,6 +806,7 @@ fn walk_motion(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn 
                 // The object's effect easing (`linear` unless script set one).
                 easing: overrides.get(&t.id()).and_then(|s| s.easing.clone()),
                 composite: Composite::Replace,
+                iteration_accumulate: 0,
                 timeline: None,
             },
         };
@@ -831,6 +845,7 @@ fn walk_motion(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn 
             before: p.before,
             easing: s.easing.clone(),
             composite: s.composite,
+            iteration_accumulate: if s.iteration_accumulate { p.iteration } else { 0 },
             timeline: None,
         };
         // An effect on a pseudo-element: its values in effect only.
@@ -1199,6 +1214,18 @@ mod tests {
         // A zero duration with `both` fills at its end once started.
         let t = timing(0.0, 0.0, 1.0, Fill::Both, Direction::Normal);
         assert_eq!(progress(&t, 0.0, 1.0).map(|p| p.progress), Some(1.0));
+    }
+
+    /// The current iteration `iterationComposite: accumulate` accumulates: the one the time is in,
+    /// and, at the end of a filling finite run, the last (not one past it).
+    #[test]
+    fn progress_reports_the_current_iteration() {
+        let t = timing(0.0, 1000.0, 3.0, Fill::Forwards, Direction::Normal);
+        assert_eq!(progress(&t, 250.0, 1.0).map(|p| p.iteration), Some(0));
+        assert_eq!(progress(&t, 2500.0, 1.0).map(|p| (p.iteration, p.progress)), Some((2, 0.5)));
+        assert_eq!(progress(&t, 9000.0, 1.0).map(|p| (p.iteration, p.progress)), Some((2, 1.0)));
+        let t = timing(0.0, 1000.0, f64::INFINITY, Fill::None, Direction::Alternate);
+        assert_eq!(progress(&t, 5250.0, 1.0).map(|p| p.iteration), Some(5));
     }
 
     /// An animation in its delay without a backwards fill is current (it makes a stacking context

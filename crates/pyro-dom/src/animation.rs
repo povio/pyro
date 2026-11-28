@@ -75,6 +75,10 @@ pub struct Effect {
     /// The effect's easing (`None`: `linear`).
     pub easing: Option<Arc<str>>,
     pub composite: Composite,
+    /// The current iteration when the effect's iteration composite operation is `accumulate`
+    /// (Web Animations 2), else 0: the value at offset 1 is accumulated this many times onto the
+    /// interpolated value.
+    pub iteration_accumulate: u64,
     /// A CSS animation driven by a scroll or view progress timeline: the layout engine takes its
     /// progress from the scroll position (`progress` is unused).
     pub timeline: Option<TimelineDriven>,

@@ -116,6 +116,10 @@ pub struct Effect {
     pub easing: Option<Arc<str>>,
     /// The effect's composite operation (keyframes without one of their own).
     pub composite: Composite,
+    /// pyro: the current iteration when the effect's iteration composite operation is `accumulate`
+    /// (Web Animations 2), else 0: the value at offset 1 is accumulated this many times onto the
+    /// interpolated value.
+    pub iteration_accumulate: u64,
     /// pyro: a CSS animation driven by a scroll or view progress timeline (`animation-timeline`):
     /// its progress comes from the scroll position at each sample (`scroll_timeline`), not from
     /// `progress`.
@@ -517,7 +521,7 @@ impl BaseDocument {
                 Keyframes::Text(Arc::new(TextKeyframes { frames:vec![TextKeyframe { offset:0.0,easing:Some(easing),composite:None,declarations:css.clone() },TextKeyframe {offset:1.0,easing:None,composite:None,declarations:String::new()}] }))
             } else { continue; };
             state.resolved.push((keyframes.clone(),resolve(self,node,&base,&keyframes,&mut context,&mut easings)));
-            state.effects.animations.push(Effect {keyframes,progress,before:false,easing:None,composite:Composite::Replace,timeline:None});
+            state.effects.animations.push(Effect {keyframes,progress,before:false,easing:None,composite:Composite::Replace,iteration_accumulate:0,timeline:None});
         }
         if let Some(values) = sample(&state,&mut easings).animations {
             let block = ServoArc::new(self.guard.wrap(PropertyDeclarationBlock::from_animation_value_map(&values)));
@@ -1349,7 +1353,7 @@ fn sample(
             for (i, (property, base)) in resolved.properties.iter().enumerate() {
                 let underlying = map.get(property).cloned().or_else(|| base.clone());
                 if let Some(value) =
-                    sample_property(resolved, i, progress, underlying.as_ref(), effect.composite, effect.before)
+                    sample_property(resolved, i, progress, underlying.as_ref(), effect.composite, effect.iteration_accumulate, effect.before)
                 {
                     map.insert(property.clone(), value);
                 }
@@ -1417,6 +1421,7 @@ fn sample_property(
     progress: f64,
     underlying: Option<&AnimationValue>,
     effect_composite: Composite,
+    accumulate: u64,
     before: bool,
 ) -> Option<AnimationValue> {
     struct Frame<'a> {
@@ -1479,6 +1484,25 @@ fn sample_property(
                 value,
             },
         );
+    }
+    // pyro: the iteration composite operation (Web Animations 2, "the effect value of a keyframe
+    // effect"): with `accumulate`, in iteration N > 0, every keyframe's value becomes the value at
+    // offset 1 accumulated N times onto it (the neutral keyframes included); the keyframes then
+    // interpolate as usual. (Done per keyframe, not on the result: for lists whose functions do not
+    // match, or `clip` rects that do not, the accumulation and the interpolation do not commute.)
+    // Stylo's `Accumulate { count }` weights its receiver `count` times and the argument once.
+    if accumulate > 0 {
+        if let Some(last) = frames.iter().rev().find(|f| f.offset == 1.0).map(|f| f.value.clone()) {
+            for f in frames.iter_mut() {
+                if let Ok(value) = last.animate_with_size_policy(
+                    &f.value,
+                    Procedure::Accumulate { count: accumulate },
+                    resolved.allow_size_keywords,
+                ) {
+                    f.value = value;
+                }
+            }
+        }
     }
     let at = |offset: f64| frames.iter().filter(|f| f.offset == offset).count();
     if progress < 0.0 && at(0.0) > 1 {

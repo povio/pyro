@@ -1358,6 +1358,7 @@ pub(crate) fn walk(page: &PageDom, now: Option<f64>, visit: &mut dyn FnMut(NodeI
             easing: None,
             // `additive="sum"`: the values add to the value below (Web Animations' `add`).
             composite: if css.additive || (a.additive_sum && a.kind != Kind::Set) { Composite::Add } else { Composite::Replace },
+            iteration_accumulate: 0,
             timeline: None,
         };
         let constant = |v: &str| {

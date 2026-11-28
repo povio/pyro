@@ -369,6 +369,8 @@
   // ----- keyframes ----------------------------------------------------------
 
   const COMPOSITES = ['replace', 'add', 'accumulate'];
+  // IterationCompositeOperation (Web Animations 2): `add` is a composite operation only.
+  const ITERATION_COMPOSITES = ['replace', 'accumulate'];
   // Properties no animation type is defined for (CSS Animations / Transitions, contain, writing
   // mode and the like): members naming them are not read when processing keyframes.
   const NOT_ANIMATABLE = /^(?:animation|transition|scroll-timeline|view-timeline|timeline-scope)(?:-|$)|^(?:contain|direction|text-combine-upright|text-orientation|unicode-bidi|will-change|writing-mode)$/;
@@ -1090,6 +1092,12 @@
             if (!COMPOSITES.includes(c)) throw new TypeError(`'${c}' is not a valid value for composite`);
             st.composite = c;
           }
+          // (Dictionary members in lexicographic order: composite, iterationComposite, pseudoElement.)
+          if (options.iterationComposite !== undefined) {
+            const c = String(options.iterationComposite);
+            if (!ITERATION_COMPOSITES.includes(c)) throw new TypeError(`'${c}' is not a valid value for iterationComposite`);
+            st.iterationComposite = c;
+          }
           if (options.pseudoElement !== undefined && options.pseudoElement !== null) {
             st.pseudo = pseudoElement(options.pseudoElement);
           }
@@ -1124,7 +1132,8 @@
     set iterationComposite(value) {
       const st = brand(effects, this, 'a KeyframeEffect');
       const c = String(value);
-      if (COMPOSITES.includes(c)) st.iterationComposite = c;
+      if (ITERATION_COMPOSITES.includes(c)) st.iterationComposite = c;
+      effectChanged(st);
     }
     getKeyframes() {
       const st = brand(effects, this, 'a KeyframeEffect');
@@ -1521,6 +1530,8 @@
       gone ? 1 : 0, pseudo, scrollRef,
       // A CSS run's object whose keyframes script replaced (even with none).
       a.css !== undefined && e.cssFrames == null && !e.cssFrameSource ? 1 : 0,
+      // (Only a keyframe effect has an iteration composite operation; a CSS run's own keeps `replace`.)
+      e.iterationComposite === 'accumulate' ? 1 : 0,
     ]);
   }
 

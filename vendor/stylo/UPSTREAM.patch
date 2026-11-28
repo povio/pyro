@@ -2663,7 +2663,7 @@ diff -ruN a/properties/font_face_descriptors.toml b/properties/font_face_descrip
  [font-display]
 diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/animated_properties.mako.rs
 --- a/properties/helpers/animated_properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/helpers/animated_properties.mako.rs	2026-11-23 06:58:46
++++ b/properties/helpers/animated_properties.mako.rs	2026-11-28 18:13:56
 @@ -183,6 +183,20 @@
  }
  
@@ -2699,13 +2699,14 @@ diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/
              ${" |\n".join("PropertyDeclaration::{}(ref value)".format(prop.camel_case) for prop in props)} => {
                  let decl_repr = unsafe {
                      &*(decl as *const _ as *const PropertyDeclarationVariantRepr<${specified_ty}>)
-@@ -291,11 +306,17 @@
+@@ -290,12 +305,18 @@
+                 if let Some(sf) = value.get_system() {
                      gecko::system_font::resolve_system_font(sf, context)
                  }
-                 % endif
++                % endif
 +                % if font_affecting:
 +                let previous_font_basis = std::mem::replace(&mut context.for_font_affecting_property, true);
-+                % endif
+                 % endif
                  % if boxed:
                  let value = (**value).to_computed_value(context);
                  % else:
@@ -2717,14 +2718,10 @@ diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/
                  % if to_animated:
                  let value = value.to_animated_value(&crate::values::animated::Context { style });
                  % endif
-@@ -506,6 +527,31 @@
-                     None => style.custom_properties.remove(registration, name),
-                 }
-             },
-+        }
-+    }
-+}
-+
+@@ -510,6 +531,31 @@
+     }
+ }
+ 
 +impl AnimationValue {
 +    /// pyro: [`Self::set_in_style_for_servo`] for longhands, without a style context (a custom
 +    /// property's value is left as it is): `getComputedStyle` of a transitioning element.
@@ -2746,9 +2743,25 @@ diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/
 +            % endif
 +            % endfor
 +            AnimationValue::Custom(..) => {},
-         }
-     }
- }
++        }
++    }
++}
++
+ fn animate_discrete<T: Clone>(this: &T, other: &T, procedure: Procedure) -> Result<T, ()> {
+     if let Procedure::Interpolate { progress } = procedure {
+         Ok(if progress < 0.5 { this.clone() } else { other.clone() })
+@@ -734,7 +780,10 @@
+         use crate::values::computed::LengthOrAuto;
+         let animate_component = |this: &LengthOrAuto, other: &LengthOrAuto| {
+             let result = this.animate(other, procedure)?;
+-            if let Procedure::Interpolate { .. } = procedure {
++            // pyro: an `auto` component accumulates with an `auto` one (Web Animations 2, iteration
++            // composite `accumulate`: the sum of two `auto`s is `auto`; WPT web-animations
++            // effect-value-iteration-composite-operation, incompatible clip rects).
++            if matches!(procedure, Procedure::Interpolate { .. } | Procedure::Accumulate { .. }) {
+                 return Ok(result);
+             }
+             if result.is_auto() {
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
 --- a/properties/helpers.mako.rs	2026-11-11 19:55:57
 +++ b/properties/helpers.mako.rs	2026-11-27 22:59:03
