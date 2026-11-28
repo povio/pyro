@@ -35,9 +35,18 @@
 //!
 //! When there is a URL change and a paint (in any order) the context reports its entry: `name` the
 //! URL, `startTime` the interaction event's `timeStamp`, `navigationId` new (`TimelineBuffers::
-//! begin_navigation_id`), `interactionId` the Event Timing id of the interaction, `paintTime` and
-//! `presentationTime` of the frame that painted, `navigationType` `push`, `replace` or `traverse`.
-//! The context then closes. It also closes ten seconds after it opened.
+//! allocate_navigation_id`, taken when the interaction began and adopted by the document), `interactionId` the Event Timing id of the interaction, `paintTime` and
+//! `presentationTime` those of the largest paint so far (else of the frame that painted),
+//! `navigationType` `push`, `replace` or `traverse`. One entry per interaction.
+//!
+//! # Interaction Contentful Paint
+//!
+//! Independent of the URL: each frame in which the painted candidates under the touched nodes include
+//! one larger (by LCP's size rule, `lcp::size_of`) than every earlier one of the interaction queues an
+//! `interaction-contentful-paint` entry holding a `LargestContentfulPaint` object for it
+//! (`lcp::make_entry`), until the context ends: ten seconds after it opened, or when it has been
+//! judged 300 times. The soft navigation's `getLargestInteractionContentfulPaint()` is the latest of
+//! them. A context whose touched nodes are judged and unchanged costs nothing in the frames after.
 //!
 //! # Idle behaviour and cost
 //!
@@ -46,12 +55,11 @@
 //! off (a mutation tests one `Option`), the scheduler adds one thread-local read per task posted and
 //! one write per task run. After an interaction, a mutation under an attribution costs a thread-local
 //! read and a push (at most 1024 kept between frames); a task that ends under an attribution asks for
-//! one rendering update; a frame judges, per context awaiting its paint, the subtrees of at most 256
-//! touched nodes, at most [`scan::SUBTREE_NODE_CAP`] nodes in all (the 60,000 nodes of a large document
-//! are never walked for this: a script that appends 60,000 nodes in one interaction has them
-//! judged up to the cap, then the paint check passes if any visible one was met), and asks for another
-//! frame only while a context with touched nodes still awaits its paint, 300 frames at most per
-//! context.
+//! one rendering update; a frame judges, per context with touched nodes whose layout changed since it
+//! was last judged, the subtrees of at most 256 touched nodes, at most [`scan::SUBTREE_NODE_CAP`]
+//! nodes (the 60,000 nodes of a large document are never walked for this; the cap bounds a script that
+//! appends 60,000 nodes in one interaction), and asks for another frame only while a context with
+//! touched nodes has painted nothing yet, 300 judgements at most per context.
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -59,18 +67,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use pyro_dom::NodeId;
-use pyro_js::{ClassDef, IdentityKey, JsClass, JsResult, Scope, Value};
+use pyro_js::{ClassDef, IdentityKey, JsClass, JsResult, Persistent, Scope, Value};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::page::PageDom;
 use crate::performance::{PerformanceEntry, PerformanceEntryData};
 
+use super::lcp::{self, LcpEntry};
 use super::scan;
 use super::timeline::{queue_entry, request_rendering, TimelineEntry};
 use super::FrameInfo;
 
 /// Entry types this module makes real.
-pub const ENTRY_TYPES: &[&str] = &["soft-navigation"];
+pub const ENTRY_TYPES: &[&str] = &["soft-navigation", "interaction-contentful-paint"];
 /// Flip to true when the module really works: only then are its types in
 /// `supportedEntryTypes`, its classes registered and its hooks called.
 pub const ENABLED: bool = true;
@@ -81,12 +90,15 @@ const MAX_CONTEXTS: usize = 32;
 const MAX_ROOTS: usize = 256;
 /// How long a context lives.
 const LIFETIME: Duration = Duration::from_secs(10);
-/// Frames a context may ask for while it awaits its paint.
+/// How many times a context is judged.
 const MAX_FRAMES: u32 = 300;
+/// How long a context that has no URL change and no touched node lives.
+const IDLE_LIFETIME: Duration = Duration::from_secs(2);
 
 /// Registers the module's classes (`JsClass`es); called once per engine when ENABLED.
 pub fn register(engine: &pyro_js::Engine) {
     engine.register::<PerformanceSoftNavigation>();
+    engine.register::<InteractionContentfulPaint>();
 }
 
 static NEXT_CONTEXT: AtomicU64 = AtomicU64::new(1);
@@ -96,6 +108,9 @@ struct Context {
     /// The attribution number (`pyro_runtime::ambient`), process-unique, never 0.
     id: u64,
     interaction_id: u32,
+    /// The navigation id the interaction's entries carry (`TimelineBuffers::allocate_navigation_id`);
+    /// the document's once the soft navigation is detected.
+    navigation_id: u64,
     /// The interaction event's `timeStamp`.
     start: f64,
     opened: Instant,
@@ -104,8 +119,22 @@ struct Context {
     touched: Vec<NodeId>,
     /// `(paintTime, presentationTime)` of the first frame that painted what was touched.
     painted: Option<(f64, f64)>,
+    /// Frames this context was judged in.
     frames: u32,
+    /// The `soft-navigation` entry was queued.
+    emitted: bool,
+    /// The size of the largest interaction contentful paint so far.
+    icp_largest: f64,
+    /// The latest interaction contentful paint: what the soft navigation's
+    /// `getLargestInteractionContentfulPaint()` returns (shared with its entry).
+    largest: LargestIcp,
+    /// The layout stamp and touched count of the last judgement that found something painted: the next
+    /// one is skipped while neither moved.
+    settled: Option<(Stamp, usize)>,
 }
+
+type Stamp = ((u64, u64, u32, u32), u64);
+type LargestIcp = Rc<RefCell<Option<Rc<IcpEntry>>>>;
 
 struct State {
     page: Weak<PageDom>,
@@ -170,7 +199,12 @@ fn open(page: &PageDom, start: f64) -> DispatchToken {
         let mut states = states.borrow_mut();
         states.retain(|_, s| s.page.upgrade().is_some_and(|p| !p.is_disposed()));
         let state = states.entry(page.id()).or_insert_with(|| State { page: page.weak_self(), contexts: Vec::new(), frame_pending: false });
-        state.contexts.retain(|c| c.opened.elapsed() < LIFETIME);
+        // (A context that did nothing in two seconds, as most of those a click's `pointerup` and `mouseup` open,
+        // goes.)
+        state.contexts.retain(|c| {
+            let age = c.opened.elapsed();
+            age < LIFETIME && (age < IDLE_LIFETIME || c.url.is_some() || !c.touched.is_empty())
+        });
         if let Some(c) = state.contexts.iter().find(|c| c.start == start) {
             return c.id;
         }
@@ -178,7 +212,21 @@ fn open(page: &PageDom, start: f64) -> DispatchToken {
             state.contexts.remove(0);
         }
         let id = NEXT_CONTEXT.fetch_add(1, Ordering::Relaxed);
-        state.contexts.push(Context { id, interaction_id: 0, start, opened: Instant::now(), url: None, touched: Vec::new(), painted: None, frames: 0 });
+        state.contexts.push(Context {
+            id,
+            interaction_id: 0,
+            navigation_id: page.timeline().allocate_navigation_id(),
+            start,
+            opened: Instant::now(),
+            url: None,
+            touched: Vec::new(),
+            painted: None,
+            frames: 0,
+            emitted: false,
+            icp_largest: 0.0,
+            largest: Rc::default(),
+            settled: None,
+        });
         id
     });
     // Mutations attributed to a context are recorded from now on.
@@ -244,7 +292,7 @@ pub fn url_changed(page: &Rc<PageDom>, url: &str, kind: &'static str) {
         state.contexts[i].url = Some((url.to_owned(), kind));
         // The later URL change wins: an earlier context that had its own and is still unreported
         // is abandoned.
-        state.contexts.retain(|c| c.id == id || c.url.is_none());
+        state.contexts.retain(|c| c.id == id || c.url.is_none() || c.emitted);
         true
     });
     if known {
@@ -316,30 +364,64 @@ pub fn on_frame(page: &Rc<PageDom>, frame: &FrameInfo) {
     }
     contexts.retain(|c| c.opened.elapsed() < LIFETIME);
     let mut again = false;
-    let mut done: Vec<u64> = Vec::new();
     for c in contexts.iter_mut() {
-        // The paint criterion: something under the touched nodes is painted now.
-        if c.painted.is_none() && !c.touched.is_empty() {
-            c.frames += 1;
+        // The paint criterion and the interaction contentful paints: what is painted under the touched nodes.
+        let mut new_icp: Option<Rc<IcpEntry>> = None;
+        if !c.touched.is_empty() && c.frames < MAX_FRAMES {
             let roots = roots_of(page, &c.touched);
-            if !roots.is_empty() {
+            let stamp = page.layout().observation_stamp(&page.dom.borrow());
+            if !roots.is_empty() && c.settled != Some((stamp, c.touched.len())) {
+                c.frames += 1;
                 let scan = scan::painted_candidates_in(page, frame, &roots);
-                if !scan.candidates.is_empty() {
-                    c.painted = Some((frame.paint_time, frame.presented));
+                if scan.candidates.is_empty() {
+                    // Still awaiting it (an image loading, a layout to come): another frame.
+                    again |= c.painted.is_none();
+                } else {
+                    c.painted.get_or_insert((frame.paint_time, frame.presented));
+                    c.settled = Some((stamp, c.touched.len()));
+                    let mut best: Option<(f64, &scan::Candidate)> = None;
+                    for candidate in &scan.candidates {
+                        let Some(size) = lcp::size_of(page, candidate, scan.viewport) else { continue };
+                        if size > c.icp_largest && best.is_none_or(|(b, _)| size > b) {
+                            best = Some((size, candidate));
+                        }
+                    }
+                    if let Some((size, candidate)) = best {
+                        if let Some(entry) = lcp::make_entry(page, frame, candidate, size) {
+                            c.icp_largest = size;
+                            new_icp = Some(Rc::new(IcpEntry { lcp: entry, interaction_id: c.interaction_id, navigation_id: c.navigation_id }));
+                        }
+                    }
                 }
-                // Still awaiting it (an image loading, a layout to come): another frame, up to the cap.
-                again |= c.painted.is_none() && c.frames < MAX_FRAMES;
             }
         }
-        if let (Some((url, kind)), Some((paint_time, presented))) = (c.url.clone(), c.painted) {
-            let navigation_id = page.timeline().begin_navigation_id();
-            debug_assert!(navigation_id != 0);
-            let entry = SoftNavEntry { url, start: c.start, navigation_type: kind, interaction_id: c.interaction_id, paint_time, presentation_time: presented };
+        // A URL change and a paint, in either order: the soft navigation (before the paint it made, so that
+        // that paint is of its navigation).
+        if let (false, Some((url, kind)), Some((painted, presented))) = (c.emitted, c.url.clone(), c.painted) {
+            c.emitted = true;
+            page.timeline().adopt_navigation_id(c.navigation_id);
+            let latest = new_icp.clone().or_else(|| c.largest.borrow().clone());
+            let (paint_time, presentation_time) = match latest {
+                Some(icp) => (icp.lcp.paint_time, icp.lcp.presentation_time.unwrap_or(icp.lcp.paint_time)),
+                None => (painted, presented),
+            };
+            let entry = SoftNavEntry {
+                url,
+                start: c.start,
+                navigation_type: kind,
+                interaction_id: c.interaction_id,
+                navigation_id: c.navigation_id,
+                paint_time,
+                presentation_time,
+                largest: c.largest.clone(),
+            };
             queue_entry(page, Rc::new(SoftNavTiming(Rc::new(entry))));
-            done.push(c.id);
+        }
+        if let Some(icp) = new_icp {
+            *c.largest.borrow_mut() = Some(icp.clone());
+            queue_entry(page, Rc::new(IcpTiming(icp)));
         }
     }
-    contexts.retain(|c| !done.contains(&c.id));
     let empty = STATES.with(|states| {
         let mut states = states.borrow_mut();
         let Some(state) = states.get_mut(&page.id()) else { return true };
@@ -368,8 +450,85 @@ pub struct SoftNavEntry {
     start: f64,
     navigation_type: &'static str,
     interaction_id: u32,
+    navigation_id: u64,
     paint_time: f64,
     presentation_time: f64,
+    /// The interaction's latest contentful paint (it can still change after the entry was made).
+    largest: LargestIcp,
+}
+
+/// What an `interaction-contentful-paint` entry holds.
+pub struct IcpEntry {
+    lcp: Rc<LcpEntry>,
+    interaction_id: u32,
+    /// The navigation the entry was made in.
+    navigation_id: u64,
+}
+
+pub struct IcpData {
+    entry: Rc<IcpEntry>,
+    base: PerformanceEntryData,
+    /// The `largestContentfulPaint` object ([SameObject]).
+    lcp: RefCell<Option<Persistent>>,
+}
+
+fn icp_data(entry: &Rc<IcpEntry>) -> IcpData {
+    let mut base = PerformanceEntryData::new("", "interaction-contentful-paint", entry.lcp.start(), 0.0);
+    base.navigation_id = entry.navigation_id;
+    IcpData { entry: entry.clone(), base, lcp: RefCell::new(None) }
+}
+
+/// `InteractionContentfulPaint`.
+pub struct InteractionContentfulPaint;
+
+impl JsClass for InteractionContentfulPaint {
+    const NAME: &'static str = "InteractionContentfulPaint";
+    type Data = IcpData;
+    type Parent = PerformanceEntry;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|d: &IcpData| &d.base);
+        def.getter("largestContentfulPaint", |s, d| {
+            if let Some(cached) = &*d.lcp.borrow() {
+                return Ok(cached.get(s));
+            }
+            let object = lcp::wrap_lcp(s, &d.entry.lcp, d.entry.navigation_id)?;
+            *d.lcp.borrow_mut() = Some(Persistent::new(s, object));
+            Ok(object)
+        });
+        def.getter("interactionId", |s, d| Ok(s.number(f64::from(d.entry.interaction_id))));
+        // PaintTimingMixin.
+        def.getter("paintTime", |s, d| Ok(s.number(d.entry.lcp.paint_time)));
+        def.getter("presentationTime", |s, d| Ok(d.entry.lcp.presentation_time.map_or(s.null(), |t| s.number(t))));
+        def.method("toJSON", 0, |s, d, _a| {
+            let e = &d.entry;
+            let o = s.object();
+            o.set("name", s.string(""))?;
+            o.set("entryType", s.string("interaction-contentful-paint"))?;
+            o.set("startTime", s.number(e.lcp.start()))?;
+            o.set("duration", s.number(0.0))?;
+            o.set("navigationId", s.number(e.navigation_id as f64))?;
+            o.set("interactionId", s.number(f64::from(e.interaction_id)))?;
+            o.set("largestContentfulPaint", lcp::wrap_lcp(s, &e.lcp, e.navigation_id)?)?;
+            o.set("paintTime", s.number(e.lcp.paint_time))?;
+            o.set("presentationTime", e.lcp.presentation_time.map_or(s.null(), |t| s.number(t)))?;
+            Ok(o.value())
+        });
+    }
+}
+
+struct IcpTiming(Rc<IcpEntry>);
+
+impl TimelineEntry for IcpTiming {
+    fn entry_type(&self) -> &'static str {
+        "interaction-contentful-paint"
+    }
+    fn start_time(&self) -> f64 {
+        self.0.lcp.start()
+    }
+    fn wrap<'s>(&self, s: &Scope<'s>, key: IdentityKey) -> JsResult<Value<'s>> {
+        Ok(s.wrap::<InteractionContentfulPaint>(icp_data(&self.0), Some(key))?.value())
+    }
 }
 
 pub struct SoftNavData {
@@ -392,6 +551,13 @@ impl JsClass for PerformanceSoftNavigation {
         // PaintTimingMixin.
         def.getter("paintTime", |s, d| Ok(s.number(d.entry.paint_time)));
         def.getter("presentationTime", |s, d| Ok(s.number(d.entry.presentation_time)));
+        def.method("getLargestInteractionContentfulPaint", 0, |s, d, _a| {
+            let latest = d.entry.largest.borrow().clone();
+            match latest {
+                Some(icp) => Ok(s.wrap::<InteractionContentfulPaint>(icp_data(&icp), None)?.value()),
+                None => Ok(s.null()),
+            }
+        });
         def.method("toJSON", 0, |s, d, _a| {
             let e = &d.entry;
             let o = s.object();
@@ -399,7 +565,7 @@ impl JsClass for PerformanceSoftNavigation {
             o.set("entryType", s.string("soft-navigation"))?;
             o.set("startTime", s.number(e.start))?;
             o.set("duration", s.number(0.0))?;
-            o.set("navigationId", s.number(d.base.navigation_id as f64))?;
+            o.set("navigationId", s.number(e.navigation_id as f64))?;
             o.set("navigationType", s.string(e.navigation_type))?;
             o.set("interactionId", s.number(f64::from(e.interaction_id)))?;
             o.set("paintTime", s.number(e.paint_time))?;
@@ -419,8 +585,9 @@ impl TimelineEntry for SoftNavTiming {
         self.0.start
     }
     fn wrap<'s>(&self, s: &Scope<'s>, key: IdentityKey) -> JsResult<Value<'s>> {
-        let data = SoftNavData { entry: self.0.clone(), base: PerformanceEntryData::new(&self.0.url, "soft-navigation", self.0.start, 0.0) };
-        Ok(s.wrap::<PerformanceSoftNavigation>(data, Some(key))?.value())
+        let mut base = PerformanceEntryData::new(&self.0.url, "soft-navigation", self.0.start, 0.0);
+        base.navigation_id = self.0.navigation_id;
+        Ok(s.wrap::<PerformanceSoftNavigation>(SoftNavData { entry: self.0.clone(), base }, Some(key))?.value())
     }
 }
 

@@ -140,7 +140,7 @@ pub(super) fn transparent(value: &str) -> bool {
 }
 
 /// The size LCP gives `c`, or `None` when it is not eligible. See the module docs.
-fn size_of(page: &PageDom, c: &Candidate, viewport: (f64, f64)) -> Option<f64> {
+pub(super) fn size_of(page: &PageDom, c: &Candidate, viewport: (f64, f64)) -> Option<f64> {
     let covers_viewport = c.area >= viewport.0 * viewport.1 && viewport.0 * viewport.1 > 0.0;
     let size = match c.kind {
         Kind::Svg | Kind::Canvas => return None,
@@ -181,15 +181,15 @@ pub struct LcpEntry {
     node: NodeRef,
     id: String,
     url: String,
-    size: f64,
+    pub(super) size: f64,
     render_time: f64,
     load_time: f64,
-    paint_time: f64,
-    presentation_time: Option<f64>,
+    pub(super) paint_time: f64,
+    pub(super) presentation_time: Option<f64>,
 }
 
 impl LcpEntry {
-    fn start(&self) -> f64 {
+    pub(super) fn start(&self) -> f64 {
         if self.render_time > 0.0 {
             self.render_time
         } else {
@@ -255,6 +255,36 @@ impl TimelineEntry for LcpTimingEntry {
     }
 }
 
+/// The entry for candidate `c` (of `size`, from [`size_of`]) painted in `frame`: what a
+/// `largest-contentful-paint` entry holds, and Interaction Contentful Paint's `largestContentfulPaint`.
+/// `None` when its element is gone.
+pub(super) fn make_entry(page: &Rc<PageDom>, frame: &FrameInfo, c: &Candidate, size: f64) -> Option<Rc<LcpEntry>> {
+    let image = c.kind != Kind::Text;
+    let source = if image { c.url.as_deref() } else { None };
+    let url = source.map(|u| if u.starts_with("data:") { u.chars().take(100).collect::<String>() } else { u.to_owned() });
+    let (render_time, paint_time, presentation_time) = render_times(page, frame, source, c.load_time);
+    let id = page.dom.borrow().get_attribute(c.node, "id").ok().flatten().unwrap_or("").to_owned();
+    let node = NodeRef::new(page, c.node)?;
+    Some(Rc::new(LcpEntry {
+        node,
+        id,
+        url: url.unwrap_or_default(),
+        size,
+        render_time,
+        load_time: if image { c.load_time.unwrap_or(0.0) } else { 0.0 },
+        paint_time,
+        presentation_time,
+    }))
+}
+
+/// `entry` as a `LargestContentfulPaint` object in `s`'s realm (a new one each call), made in the
+/// navigation `navigation_id`.
+pub(super) fn wrap_lcp<'s>(s: &Scope<'s>, entry: &Rc<LcpEntry>, navigation_id: u64) -> JsResult<Value<'s>> {
+    let mut base = PerformanceEntryData::new("", "largest-contentful-paint", entry.start(), 0.0);
+    base.navigation_id = navigation_id;
+    Ok(s.wrap::<LargestContentfulPaint>(LcpData { entry: entry.clone(), base }, None)?.value())
+}
+
 /// The end of a rendering update of `page`'s document; called when ENABLED.
 pub fn on_frame(page: &Rc<PageDom>, frame: &FrameInfo) {
     if page.is_hidden() || with_state(page, |s| s.stopped) {
@@ -278,24 +308,9 @@ pub fn on_frame(page: &Rc<PageDom>, frame: &FrameInfo) {
         }
     }
     if let Some((size, c)) = best {
-        let image = c.kind != Kind::Text;
-        let source = if image { c.url.as_deref() } else { None };
-        let url = source.map(|u| if u.starts_with("data:") { u.chars().take(100).collect::<String>() } else { u.to_owned() });
-        let (render_time, paint_time, presentation_time) = render_times(page, frame, source, c.load_time);
-        let id = page.dom.borrow().get_attribute(c.node, "id").ok().flatten().unwrap_or("").to_owned();
-        if let Some(node) = NodeRef::new(page, c.node) {
+        if let Some(entry) = make_entry(page, frame, c, size) {
             with_state(page, |s| s.largest = size);
-            let entry = LcpEntry {
-                node,
-                id,
-                url: url.unwrap_or_default(),
-                size,
-                render_time,
-                load_time: if image { c.load_time.unwrap_or(0.0) } else { 0.0 },
-                paint_time,
-                presentation_time,
-            };
-            queue_entry(page, Rc::new(LcpTimingEntry(Rc::new(entry))));
+            queue_entry(page, Rc::new(LcpTimingEntry(entry)));
         }
     }
     // A CSS image or poster is on its way and nothing in the document will say so.

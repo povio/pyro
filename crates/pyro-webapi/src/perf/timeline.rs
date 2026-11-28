@@ -157,12 +157,17 @@ impl TimelineBuffers {
         self.initial_navigation_id.get()
     }
 
-    /// A soft navigation starts: entries made from now on carry a new id, which is returned.
-    pub fn begin_navigation_id(&self) -> u64 {
+    /// A new navigation id, not yet the document's: a user interaction that may become a soft navigation
+    /// is given one when it starts, its entries carry it, and the document adopts it
+    /// ([`TimelineBuffers::adopt_navigation_id`]) when the soft navigation is detected.
+    pub fn allocate_navigation_id(&self) -> u64 {
         self.navigation_id();
-        let id = NEXT_NAVIGATION_ID.fetch_add(1, Ordering::Relaxed);
+        NEXT_NAVIGATION_ID.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// A soft navigation was detected: entries made from now on carry `id` (from `allocate_navigation_id`).
+    pub fn adopt_navigation_id(&self, id: u64) {
         self.navigation_id.set(id);
-        id
     }
 
     /// The document is disposed: its buffered entries go. LCP, element timing and layout shift
