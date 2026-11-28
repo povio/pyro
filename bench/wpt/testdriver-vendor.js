@@ -88,7 +88,14 @@
     const { w, at } = point(el);
     if (w !== window) {
       try {
-        if (w === w.top && w.top !== window.top) throw new Error('another page');
+        if (w === w.top && w.top !== window.top) {
+          // The top window of another page (a popup this page opened): the click goes to that page, in its own viewport.
+          const id = String(++marks);
+          w.__pyroTdWindow = id;
+          undo.push(() => { try { delete w.__pyroTdWindow; } catch {} });
+          at.window = id;
+          return at;
+        }
         if (w === w.top) at.frame = 'main';
         else {
           const id = 'f' + ++frameMarks + Math.random().toString(36).slice(2, 8);

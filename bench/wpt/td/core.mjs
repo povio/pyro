@@ -315,6 +315,13 @@ const keyboardOf = (ctx) => keyboard(ctx.page, ctx.session, ctx.shared('kbd-held
 
 export const commands = {
   async click(ctx, c) {
+    if (c.at.window) {
+      // An element of a popup this page opened (testdriver-vendor.js `center`): click in that page's viewport.
+      const page = await ctx.windowPage({ window: c.at.window });
+      if (!page) throw new Error('no such window');
+      await page.mouse.click(c.at.x, c.at.y);
+      return;
+    }
     const m = c.at.frame === undefined ? await ctx.off() : await frameMap(await markedFrame(ctx.page, c.at.frame));
     const at = apply(m, c.at.x, c.at.y);
     await ctx.page.mouse.click(at.x, at.y);
