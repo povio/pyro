@@ -303,9 +303,18 @@ jobs:
           # deflate encoder that writes the same gzip format, so npm and the registry see an ordinary .tgz)
           # another 3.3% on top of that (rc.12's tarball: 189,187,178 -> 183,013,690 bytes; about 14 minutes
           # on one core, the price of the gain).
+          # zopfli reads a named file only (stdin is not read: it prints "Please provide filename", writes an empty
+          # file and exits 0), so the tar goes through a file. A missing zopfli is a hard failure, never a fallback.
+          set -euo pipefail
           sudo apt-get install -y --no-install-recommends zopfli
           for file in ../../npm-package/*.tgz; do
-            gzip -dc "$file" | zopfli --i5 -c > "$file.z" && mv "$file.z" "$file"
+            gzip -dc "$file" > "$file.tar"
+            zopfli --i5 -c "$file.tar" > "$file.z"
+            test -s "$file.z"
+            gzip -t "$file.z"
+            cmp "$file.tar" <(gzip -dc "$file.z")
+            mv "$file.z" "$file"
+            rm "$file.tar"
             tar -tzf "$file" > /dev/null
           done
           # Our compressed-payload budget. npm sends the tarball base64-encoded in one request: the registry accepted
