@@ -7201,7 +7201,10 @@ fn the_turn_after_an_action_that_does_not_settle_delivers_its_scroll_event() {
     );
     assert!(r.get("error").is_none(), "{r}");
     assert_eq!(r["result"]["reads"]["focused"], "scroll:true", "{r}");
-    assert_eq!(r["result"]["reads"]["pressed"], "scroll,open", "{r}");
+    // The focus's own `scroll` first, then the key's `keydown` (the point of the test), then the
+    // `scroll` of the arrow's default action: ArrowDown on a focused button scrolls the pane that holds
+    // it (the keyboard scrolling default action, 789285ebd; Chrome scrolls it too).
+    assert_eq!(r["result"]["reads"]["pressed"], "scroll,open,scroll", "{r}");
 }
 
 /// A settle waits for the requests its own action started, not for as many
