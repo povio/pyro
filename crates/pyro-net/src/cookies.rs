@@ -369,10 +369,11 @@ fn trim_wsp(s: &str) -> &str {
 /// malformed attributes are ignored, and a control character other than
 /// tab rejects the whole string.
 fn parse_set_cookie(header: &str) -> Option<ParsedSetCookie<'_>> {
-    // As Chrome: a NUL, CR or LF in the name-value pair ends the cookie line there
-    // (`test=13\nZYX` is `test=13`); one in an attribute rejects the line below.
+    // As Chrome: a CR or LF in the name-value pair ends the cookie line there
+    // (`test=13\nZYX` is `test=13`); a NUL anywhere rejects the line (`b=A\0Z` sets nothing,
+    // the check below), as does a control character in an attribute.
     let pair_end = header.find(';').unwrap_or(header.len());
-    let header = match header.as_bytes()[..pair_end].iter().copied().position(|b| matches!(b, 0 | b'\r' | b'\n')) {
+    let header = match header.as_bytes()[..pair_end].iter().copied().position(|b| matches!(b, b'\r' | b'\n')) {
         Some(end) => &header[..end],
         None => header,
     };
