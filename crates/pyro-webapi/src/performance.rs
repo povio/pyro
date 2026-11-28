@@ -726,6 +726,15 @@ pub fn observer_module<'s>(
         Ok(s.undefined())
     })?;
     natives.set_atom("reportException", report.value())?;
+    // Soft Navigations' task attribution (`pyro_runtime::ambient`): an observer remembers the attribution it
+    // began observing under and its callback runs under it.
+    let ambient = s.function("ambient", |s, _this, _a| Ok(s.number(pyro_runtime::ambient() as f64)))?;
+    natives.set_atom("ambient", ambient.value())?;
+    let set_ambient = s.function("setAmbient", |s, _this, a| {
+        pyro_runtime::set_ambient(a.get(0).to_number()? as u64);
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("setAmbient", set_ambient.value())?;
     let page_rc = page.clone();
     let page = Rc::downgrade(page);
     let dropped = s.function("droppedResources", move |s, _this, _a| {

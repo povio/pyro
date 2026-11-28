@@ -11,17 +11,20 @@
 //! `requestAnimationFrame` callback posted meanwhile carries it and has it set when it runs
 //! (`pyro-runtime`), and so do the tasks they post, which is how `setTimeout(..)`, a `hashchange`
 //! or a `popstate` queued by `history.back()`, or a promise continuation that runs in such a task
-//! stay attributed. Not carried: network completions (`fetch`, `XMLHttpRequest`), element load
-//! events (`<link>`/`<script>`/`<img>` `load`), `MessageChannel`/`postMessage` deliveries and
-//! callbacks of observers (their tasks are posted by the embedder from another thread or by
-//! queues that do not remember who asked); a DOM change or a URL change made there is not
-//! attributed, which Chrome's task attribution would follow.
+//! stay attributed, and so do the callbacks of a `PerformanceObserver` that was observing when the
+//! context was current (`performance_observer.js` sets the attribution it captured at `observe()`
+//! around its callback). Not carried: network completions (`fetch`, `XMLHttpRequest`), element load
+//! events (`<link>`/`<script>`/`<img>` `load`), `MessageChannel`/`postMessage` deliveries (their
+//! tasks are posted by the embedder from another thread), and the continuation of an `await` whose
+//! promise is settled by code that is not attributed (the attribution is the settler's, not the
+//! awaiter's: JavaScriptCore keeps no continuation context); a DOM change or a URL change made
+//! there is not attributed, which Chrome's task attribution would follow.
 //!
 //! What a context collects while it is current:
 //! - a same-document URL change that differs from the document's URL (`pushState`/`replaceState`
 //!   with a new URL, a fragment navigation, an intercepted Navigation API navigation, a
 //!   traversal): `nav.rs` calls [`url_changed`] (it reads the ambient context and does nothing
-//!   without one). Its URL is the latest one; when another context of the document gets its URL
+//!   without one). Its URL is the first one; when another context of the document gets its URL
 //!   change while this one has not been reported, this one is abandoned (the later URL change wins:
 //!   two interactions racing to the same document produce one entry, the later's);
 //! - the nodes a mutation touched under its attribution (`pyro_dom::Dom::set_touch_watch`: the node
@@ -102,6 +105,8 @@ pub fn register(engine: &pyro_js::Engine) {
 }
 
 static NEXT_CONTEXT: AtomicU64 = AtomicU64::new(1);
+/// First half of the identity key of an interaction contentful paint's object (second half: [`IcpEntry::id`]).
+const ICP_KEY: u64 = 0x5065_7249_6370_0000;
 
 /// One user interaction being followed.
 struct Context {
@@ -125,6 +130,9 @@ struct Context {
     emitted: bool,
     /// The size of the largest interaction contentful paint so far.
     icp_largest: f64,
+    /// The elements an interaction contentful paint was made for: one per element and interaction (text
+    /// that grows later does not make another).
+    reported: Vec<NodeId>,
     /// The latest interaction contentful paint: what the soft navigation's
     /// `getLargestInteractionContentfulPaint()` returns (shared with its entry).
     largest: LargestIcp,
@@ -208,6 +216,9 @@ fn open(page: &PageDom, start: f64) -> DispatchToken {
         if let Some(c) = state.contexts.iter().find(|c| c.start == start) {
             return c.id;
         }
+        // A new interaction ends the paints of the soft navigations before it (their entries are made; what
+        // the next interaction changes is its own).
+        state.contexts.retain(|c| !c.emitted);
         if state.contexts.len() >= MAX_CONTEXTS {
             state.contexts.remove(0);
         }
@@ -224,6 +235,7 @@ fn open(page: &PageDom, start: f64) -> DispatchToken {
             frames: 0,
             emitted: false,
             icp_largest: 0.0,
+            reported: Vec::new(),
             largest: Rc::default(),
             settled: None,
         });
@@ -289,6 +301,11 @@ pub fn url_changed(page: &Rc<PageDom>, url: &str, kind: &'static str) {
         let mut states = states.borrow_mut();
         let Some(state) = states.get_mut(&page.id()) else { return false };
         let Some(i) = state.contexts.iter().position(|c| c.id == id) else { return false };
+        // Only the first URL change of an interaction counts (a push followed by a replace is a push to
+        // the first URL).
+        if state.contexts[i].url.is_some() {
+            return false;
+        }
         state.contexts[i].url = Some((url.to_owned(), kind));
         // The later URL change wins: an earlier context that had its own and is still unreported
         // is abandoned.
@@ -382,14 +399,15 @@ pub fn on_frame(page: &Rc<PageDom>, frame: &FrameInfo) {
                     let mut best: Option<(f64, &scan::Candidate)> = None;
                     for candidate in &scan.candidates {
                         let Some(size) = lcp::size_of(page, candidate, scan.viewport) else { continue };
-                        if size > c.icp_largest && best.is_none_or(|(b, _)| size > b) {
+                        if size > c.icp_largest && !c.reported.contains(&candidate.node) && best.is_none_or(|(b, _)| size > b) {
                             best = Some((size, candidate));
                         }
                     }
                     if let Some((size, candidate)) = best {
                         if let Some(entry) = lcp::make_entry(page, frame, candidate, size) {
                             c.icp_largest = size;
-                            new_icp = Some(Rc::new(IcpEntry { lcp: entry, interaction_id: c.interaction_id, navigation_id: c.navigation_id }));
+                            c.reported.push(candidate.node);
+                            new_icp = Some(Rc::new(IcpEntry { id: NEXT_CONTEXT.fetch_add(1, Ordering::Relaxed), lcp: entry, start: c.start, interaction_id: c.interaction_id, navigation_id: c.navigation_id }));
                         }
                     }
                 }
@@ -399,12 +417,11 @@ pub fn on_frame(page: &Rc<PageDom>, frame: &FrameInfo) {
         // that paint is of its navigation).
         if let (false, Some((url, kind)), Some((painted, presented))) = (c.emitted, c.url.clone(), c.painted) {
             c.emitted = true;
+            // From the detection on, the document's entries (element timing, layout shifts) carry the
+            // interaction's id: this runs before the other modules' `on_frame`s, so those of this frame do.
             page.timeline().adopt_navigation_id(c.navigation_id);
-            let latest = new_icp.clone().or_else(|| c.largest.borrow().clone());
-            let (paint_time, presentation_time) = match latest {
-                Some(icp) => (icp.lcp.paint_time, icp.lcp.presentation_time.unwrap_or(icp.lcp.paint_time)),
-                None => (painted, presented),
-            };
+            // (The paint times of the first paint of the interaction, which a later, larger one follows.)
+            let (paint_time, presentation_time) = (painted, presented);
             let entry = SoftNavEntry {
                 url,
                 start: c.start,
@@ -459,7 +476,11 @@ pub struct SoftNavEntry {
 
 /// What an `interaction-contentful-paint` entry holds.
 pub struct IcpEntry {
+    /// Process-unique: the identity of the entry's object (the observers' and `getLargest...()`'s are one).
+    id: u64,
     lcp: Rc<LcpEntry>,
+    /// The interaction's start (an ICP entry's `startTime`).
+    start: f64,
     interaction_id: u32,
     /// The navigation the entry was made in.
     navigation_id: u64,
@@ -473,7 +494,7 @@ pub struct IcpData {
 }
 
 fn icp_data(entry: &Rc<IcpEntry>) -> IcpData {
-    let mut base = PerformanceEntryData::new("", "interaction-contentful-paint", entry.lcp.start(), 0.0);
+    let mut base = PerformanceEntryData::new("", "interaction-contentful-paint", entry.start, 0.0);
     base.navigation_id = entry.navigation_id;
     IcpData { entry: entry.clone(), base, lcp: RefCell::new(None) }
 }
@@ -505,7 +526,7 @@ impl JsClass for InteractionContentfulPaint {
             let o = s.object();
             o.set("name", s.string(""))?;
             o.set("entryType", s.string("interaction-contentful-paint"))?;
-            o.set("startTime", s.number(e.lcp.start()))?;
+            o.set("startTime", s.number(e.start))?;
             o.set("duration", s.number(0.0))?;
             o.set("navigationId", s.number(e.navigation_id as f64))?;
             o.set("interactionId", s.number(f64::from(e.interaction_id)))?;
@@ -524,10 +545,10 @@ impl TimelineEntry for IcpTiming {
         "interaction-contentful-paint"
     }
     fn start_time(&self) -> f64 {
-        self.0.lcp.start()
+        self.0.start
     }
-    fn wrap<'s>(&self, s: &Scope<'s>, key: IdentityKey) -> JsResult<Value<'s>> {
-        Ok(s.wrap::<InteractionContentfulPaint>(icp_data(&self.0), Some(key))?.value())
+    fn wrap<'s>(&self, s: &Scope<'s>, _key: IdentityKey) -> JsResult<Value<'s>> {
+        Ok(s.wrap::<InteractionContentfulPaint>(icp_data(&self.0), Some(IdentityKey(ICP_KEY, self.0.id)))?.value())
     }
 }
 
@@ -554,7 +575,7 @@ impl JsClass for PerformanceSoftNavigation {
         def.method("getLargestInteractionContentfulPaint", 0, |s, d, _a| {
             let latest = d.entry.largest.borrow().clone();
             match latest {
-                Some(icp) => Ok(s.wrap::<InteractionContentfulPaint>(icp_data(&icp), None)?.value()),
+                Some(icp) => Ok(s.wrap::<InteractionContentfulPaint>(icp_data(&icp), Some(IdentityKey(ICP_KEY, icp.id)))?.value()),
                 None => Ok(s.null()),
             }
         });

@@ -14,6 +14,7 @@
 //   dropped(type): entries of a native type the full buffer dropped.
 //   reportException(error): HTML "report an exception" (a callback threw).
 //   droppedResources(): resource entries the buffer dropped so far.
+//   ambient(), setAmbient(id): the task attribution of the code running (Soft Navigations); optional.
 // A worker's timeline has no `paint` or `navigation` entries.
 // Callbacks run in a task after the entries were queued, as in Chrome.
 (function (performance, native, supported) {
@@ -108,11 +109,15 @@
         options.droppedEntriesCount = dropped;
         d.requiresDropped = false;
       }
+      // The callback descends from the code that began observing, when that was attributed.
+      const outer = d.attribution !== 0 ? native.ambient() : 0;
+      if (d.attribution !== 0) native.setAmbient(d.attribution);
       try {
         d.callback.call(observer, list, observer, options);
       } catch (e) {
         native.reportException(e);
       }
+      if (d.attribution !== 0) native.setAmbient(outer);
     }
   };
   const schedule = () => {
@@ -155,7 +160,7 @@
       if (typeof callback !== 'function') {
         throw new TypeErrorC("Failed to construct 'PerformanceObserver': parameter 1 is not of type 'Function'.");
       }
-      data.set(this, { callback, mode: null, types: new Set(), buffer: [], requiresDropped: false, threshold: DEFAULT_THRESHOLD, soft: false });
+      data.set(this, { callback, mode: null, types: new Set(), buffer: [], requiresDropped: false, threshold: DEFAULT_THRESHOLD, soft: false, attribution: 0 });
     }
     static get supportedEntryTypes() {
       return SUPPORTED;
@@ -184,6 +189,10 @@
           'InvalidModificationError');
       }
       d.requiresDropped = true;
+      if (native.ambient !== undefined) {
+        const attribution = native.ambient();
+        if (attribution !== 0) d.attribution = attribution;
+      }
       if (mode === 'multiple') {
         if (entryTypes === null || typeof entryTypes !== 'object' || typeof entryTypes[Symbol.iterator] !== 'function') {
           throw observeError("Failed to read the 'entryTypes' property from 'PerformanceObserverInit': The provided value cannot be converted to a sequence.");

@@ -49,7 +49,7 @@
 //!
 //! | Hook | Called by | When |
 //! |---|---|---|
-//! | `<m>::on_frame(page, &FrameInfo)` | [`rendering_update`], from `run_animation_frame` (`pyro-browser/src/window.rs`) | at the end of every rendering update (animation frame) of the document's window, after rAF callbacks, the style updates, ResizeObserver step, focus fixup and the canvas paint step; order: shift, paint, element, lcp, event, loaf, softnav. Frames only run when something asked for one (rAF, an animation, a client command, or `timeline::request_rendering`); a render-blocked document runs none |
+//! | `<m>::on_frame(page, &FrameInfo)` | [`rendering_update`], from `run_animation_frame` (`pyro-browser/src/window.rs`) | at the end of every rendering update (animation frame) of the document's window, after rAF callbacks, the style updates, ResizeObserver step, focus fixup and the canvas paint step; order: softnav, shift, paint, element, lcp, event, loaf. Frames only run when something asked for one (rAF, an animation, a client command, or `timeline::request_rendering`); a render-blocked document runs none |
 //! | `longtask::on_task(page, &TaskInfo)`, `loaf::on_task(page, &TaskInfo)` | [`task_finished`], from `Browser::task_finished` (`LoopState::task_finished`, `pyro-runtime`) | after every event-loop task (also frame timers, idle timers), before the checkpoint (`after_task`). Called only for the documents whose script ran in the task (`ran_script`); a task in which no realm was entered (`pyro_js::entered_any()`) visits no document and allocates nothing; times are in that document's clock. Tasks under 50 ms are skipped as well unless `loaf` is enabled (`TASK_BOOKKEEPING`). Cost per task: two `Instant::now()`, one depth read and one thread-local length read when no script ran; with script, one `Vec` of page ids, one `ran_script` check per document (a realm-map lookup and a list search of at most 64 entries) and, for each document that ran script, its `TaskInfo` and the hooks' few numbers |
 //! | `event::dispatch_begin(page, &EventData) -> Option<DispatchToken>`, `event::dispatch_end(page, &EventData, DispatchToken)`; `softnav::dispatch_begin/end` the same | [`dispatch_begin`] / [`dispatch_end`], from `target.rs dispatch_at` | around the listeners of every TRUSTED event (not synthetic `dispatchEvent` ones: `event.state.is_trusted`), every type: the module decides which types matter. The token is yours to carry between the two calls. Callers that skip dispatching for an event nobody listens to (`target::unheard`) never reach it: the module also gets them through `event::note_unheard(page, &UnheardEvent)` (see [`note_unheard`]), so `eventCounts` and the entries count every trusted input event, heard or not |
 //! | `event::event_counts(s, page) -> JsResult<Value>`, `event::interaction_count(page) -> u32` | `performance.eventCounts` / `performance.interactionCount` getters of the window's `Performance` (`pyro-browser/src/nav.rs`), defined only when `event::ENABLED` | on property read |
@@ -338,6 +338,11 @@ pub fn rendering_update(page: &Rc<PageDom>, frame: &FrameInfo) {
     if page.is_disposed() {
         return;
     }
+    // First: a soft navigation detected in this frame gives the entries the other modules make in it its
+    // navigation id (`softnav::on_frame`).
+    if softnav::ENABLED {
+        softnav::on_frame(page, frame);
+    }
     if shift::ENABLED {
         shift::on_frame(page, frame);
     }
@@ -355,9 +360,6 @@ pub fn rendering_update(page: &Rc<PageDom>, frame: &FrameInfo) {
     }
     if loaf::ENABLED {
         loaf::on_frame(page, frame);
-    }
-    if softnav::ENABLED {
-        softnav::on_frame(page, frame);
     }
 }
 
