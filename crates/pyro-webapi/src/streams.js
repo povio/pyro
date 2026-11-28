@@ -979,13 +979,8 @@
         if (shuttingDown) return;
         readerRead(reader, {
           chunk(value) {
-            // Streams "ReadableStreamPipeTo" chunk steps: queue a microtask before writing, so
-            // that `controller.enqueue()` never runs the sink's write() before it returns.
-            microtask(() => {
-              if (shuttingDown) return;
-              currentWrite = then(writerWrite(writer, value), undefined, noop);
-              step();
-            });
+            currentWrite = then(writerWrite(writer, value), undefined, noop);
+            step();
           },
           close: noop,
           error: noop,
