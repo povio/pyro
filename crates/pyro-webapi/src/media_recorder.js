@@ -605,6 +605,13 @@
           return;
         }
         tick(st, s);
+        if (st.session !== s) {
+          // The recording ended in that first tick (its tracks were already stopped): `start` still comes
+          // before the data and `stop` that finish() queued.
+          s.announce = null;
+          fire(st, new EventC('start'));
+          return;
+        }
         if (s.inflight === 0) settled(s);
       });
     }
