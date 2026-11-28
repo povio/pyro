@@ -44,8 +44,7 @@
 //! `HTMLScriptElement.supports('speculationrules')` answers [`SUPPORTED`]
 //! (`pyro_webapi::html::SPECULATION_RULES_SUPPORTED`, the single constant), which is `true` since
 //! `prefetch.rs` starts real prefetches from `prefetch` rules (it must not be true for a feature
-//! without behaviour). Scripts are processed (parsed, registered, events fired) whatever the
-//! switch says, as the registry is what the lanes consume. `document.prerendering` is not defined
+//! without behaviour). Scripts and header rule sets are only processed when the switch is true (loader.rs gates both), as the registry is what the lanes consume. `document.prerendering` is not defined
 //! by this module: the prerender lane adds it with its behaviour, and until then `prerender`
 //! rules start nothing and `'prerendering' in document` stays false.
 //!
