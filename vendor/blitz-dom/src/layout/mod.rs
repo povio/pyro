@@ -3581,6 +3581,14 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
             if box_.overflow_x.is_scrollable() || box_.overflow_y.is_scrollable() {
                 return false;
             }
+            // pyro: a box that is, or sits in, an unbreakable chain (`break-inside: avoid`) breaks
+            // nowhere while it fits a column, so it aligns its content as in any block (css-align-3
+            // § 5.1 applies per fragment; WPT css-align `blocks/align-content-block-002..011`).
+            // One taller than the column would still be cut: the cut is at the column end, the
+            // alignment stays that of the whole box.
+            if super::layout::multicol::avoids_column_break_inside(&style) {
+                return false;
+            }
             use style::values::specified::box_::DisplayInside;
             if !matches!(style.clone_display().inside(), DisplayInside::Flow | DisplayInside::FlowRoot) {
                 return false;

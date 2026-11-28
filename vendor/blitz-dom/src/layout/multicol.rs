@@ -3528,7 +3528,7 @@ struct Found {
 
 /// pyro: whether `style`'s `break-inside` avoids column breaks (`avoid`, `avoid-column`; not
 /// `avoid-page`, which is for pages only: CSS Fragmentation 3 § 3.2).
-fn avoids_column_break_inside(style: &ComputedValues) -> bool {
+pub(crate) fn avoids_column_break_inside(style: &ComputedValues) -> bool {
     matches!(style.get_box().break_inside, BreakWithin::Avoid | BreakWithin::AvoidColumn)
 }
 
