@@ -14,6 +14,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyro_js::{IdentityKey, JsResult, Persistent, RealmId, Scope, Value, WeakRealm};
 use rustc_hash::FxHashMap;
@@ -74,7 +75,8 @@ fn policy(entry_type: &str) -> Option<Policy> {
 
 #[derive(Default)]
 struct TypeBuffer {
-    entries: Vec<(u64, Rc<dyn TimelineEntry>)>,
+    /// `(sequence number, navigationId when it was queued, entry)`.
+    entries: Vec<(u64, u64, Rc<dyn TimelineEntry>)>,
     dropped: u32,
 }
 
@@ -108,6 +110,10 @@ pub struct TimelineBuffers {
     /// Paint entries modules reported (`report_paint`).
     paint: RefCell<Vec<PaintRecord>>,
     wants_rendering: Cell<bool>,
+    /// The `navigationId` entries made now carry (0: not taken yet, see [`TimelineBuffers::navigation_id`]).
+    navigation_id: Cell<u64>,
+    /// The id of the document's own (hard) navigation.
+    initial_navigation_id: Cell<u64>,
     /// Document-clock time of the last trusted user input that Layout
     /// Instability (`hadRecentInput`, `lastInputTime`) and LCP (stop at the
     /// first input) count; see `perf::note_input`.
@@ -123,7 +129,39 @@ pub struct TimelineBuffers {
     pub(super) loaf: super::loaf::LoafState,
 }
 
+/// Navigation ids are process-unique and never 0 (0 reads as "absent": a worker's entries).
+static NEXT_NAVIGATION_ID: AtomicU64 = AtomicU64::new(1);
+
 impl TimelineBuffers {
+    /// The `navigationId` of entries made now (Performance Timeline `PerformanceEntry.navigationId`):
+    /// the id of the document's navigation, or of its latest soft navigation. Taken on first use, so a
+    /// document nobody reads it from does nothing.
+    pub fn navigation_id(&self) -> u64 {
+        let id = self.navigation_id.get();
+        if id != 0 {
+            return id;
+        }
+        let id = NEXT_NAVIGATION_ID.fetch_add(1, Ordering::Relaxed);
+        self.navigation_id.set(id);
+        self.initial_navigation_id.set(id);
+        id
+    }
+
+    /// The id of the document's own navigation: the one its `navigation`, `paint` and first
+    /// `largest-contentful-paint` entries carry however many soft navigations followed.
+    pub fn initial_navigation_id(&self) -> u64 {
+        self.navigation_id();
+        self.initial_navigation_id.get()
+    }
+
+    /// A soft navigation starts: entries made from now on carry a new id, which is returned.
+    pub fn begin_navigation_id(&self) -> u64 {
+        self.navigation_id();
+        let id = NEXT_NAVIGATION_ID.fetch_add(1, Ordering::Relaxed);
+        self.navigation_id.set(id);
+        id
+    }
+
     /// The document is disposed: its buffered entries go. LCP, element timing and layout shift
     /// entries hold a reference in the document's DOM to the node they name (`NodeRef`), and a
     /// closed popup's page lingers while its opener keeps a function of its realm: the nodes stay in
@@ -167,9 +205,9 @@ impl TimelineBuffers {
     pub fn buffered<'s>(&self, s: &Scope<'s>, entry_type: &str, include_soft_navigation: bool) -> JsResult<Value<'s>> {
         let entries = self.buffers.borrow().get(entry_type).map(|b| b.entries.clone()).unwrap_or_default();
         let mut values: Vec<Value<'s>> = Vec::new();
-        for (seq, entry) in &entries {
+        for (seq, navigation_id, entry) in &entries {
             if include_soft_navigation || !entry.soft_navigation() {
-                values.push(wrap_entry(s, *seq, entry)?);
+                values.push(wrap_entry(s, *seq, *navigation_id, entry)?);
             }
         }
         Ok(s.array(&values)?.value())
@@ -222,12 +260,15 @@ impl TimelineBuffers {
     }
 }
 
-fn wrap_entry<'s>(s: &Scope<'s>, seq: u64, entry: &Rc<dyn TimelineEntry>) -> JsResult<Value<'s>> {
+/// `navigation_id`: the document's `navigationId` when the entry was queued. The entry's `wrap` makes
+/// its `PerformanceEntryData` with `PerformanceEntryData::new`, which takes the id from
+/// `with_navigation_id`, so no module's `wrap` needs to know about it.
+fn wrap_entry<'s>(s: &Scope<'s>, seq: u64, navigation_id: u64, entry: &Rc<dyn TimelineEntry>) -> JsResult<Value<'s>> {
     let key = IdentityKey(ENTRY_KEY, seq);
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    entry.wrap(s, key)
+    crate::performance::with_navigation_id(navigation_id, || entry.wrap(s, key))
 }
 
 /// Performance Timeline "queue a PerformanceEntry" of `page`'s document:
@@ -245,6 +286,7 @@ pub fn queue_entry(page: &PageDom, entry: Rc<dyn TimelineEntry>) {
     let seq = timeline.next_seq.get();
     timeline.next_seq.set(seq + 1);
     let soft = entry.soft_navigation();
+    let navigation_id = timeline.navigation_id();
     let targets: Vec<(WeakRealm, Rc<Persistent>)> = {
         let mut watchers = timeline.watchers.borrow_mut();
         watchers.retain(|w| w.weak.upgrade().is_some_and(|r| !r.is_disposed()));
@@ -254,7 +296,7 @@ pub fn queue_entry(page: &PageDom, entry: Rc<dyn TimelineEntry>) {
         let Some(realm) = realm.upgrade() else { continue };
         let Ok(s) = realm.scope() else { continue };
         let Some(f) = queue.get(&s).as_object() else { continue };
-        let queued = wrap_entry(&s, seq, &entry)
+        let queued = wrap_entry(&s, seq, navigation_id, &entry)
             .and_then(|object| f.call(None, &[s.string(entry_type), object, s.boolean(soft)]));
         if let Err(e) = queued {
             s.report_exception(&e);
@@ -265,7 +307,7 @@ pub fn queue_entry(page: &PageDom, entry: Rc<dyn TimelineEntry>) {
             let mut buffers = timeline.buffers.borrow_mut();
             let buffer = buffers.entry(entry_type).or_default();
             if buffer.entries.len() < policy.limit {
-                buffer.entries.push((seq, entry));
+                buffer.entries.push((seq, navigation_id, entry));
             } else {
                 buffer.dropped = buffer.dropped.saturating_add(1);
             }
@@ -281,6 +323,8 @@ pub fn wrap_paint<'s>(s: &Scope<'s>, slot: u64, record: &PaintRecord) -> JsResul
         return Ok(o.value());
     }
     let mut data = PerformanceEntryData::new(record.name, "paint", record.start, 0.0);
+    // Paint timing is only emitted by the initial load.
+    data.navigation_id = crate::target::page_of(s)?.timeline().initial_navigation_id();
     data.paint_time = Some(record.paint_time);
     data.presentation_time = record.presentation_time;
     Ok(s.wrap::<PerformancePaintTiming>(data, Some(key))?.value())

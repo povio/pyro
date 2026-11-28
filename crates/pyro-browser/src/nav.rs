@@ -2626,6 +2626,8 @@ fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
     }
     let mut entry = PerformanceEntryData::new(&url, "navigation", 0.0, values.load_end);
     entry.navigation = Some(Box::new(values));
+    // The document's own navigation: a soft navigation does not change what its load reported.
+    entry.navigation_id = p.target.page.timeline().initial_navigation_id();
     Some(entry)
 }
 

@@ -19,6 +19,8 @@
 //!   older than the page;
 //! - `popup::COOP_REPORTING_DOCUMENTS`, the number of documents naming a COOP reporting endpoint:
 //!   the embedder keeps it balanced as documents come and go, so the crate does not reset it;
+//! - `performance::WRAP_NAVIGATION_ID`: the `navigationId` of the entry being wrapped, set and
+//!   restored around one wrap call;
 //! - `custom::REACTION_STACK_BASE`, `perf::NESTED_MS` and `element::LAST`: scratch values of a call
 //!   or a cache keyed by the process-unique page id, rewritten before they are read (the latter two
 //!   are cleared anyway);
@@ -63,6 +65,7 @@ pub const STATICS: &[&str] = &[
     "page::PENDING_FRAME_RESIZES",
     "paint_worklet::FORCE_GRAPH_FALLBACK",
     "perf::NESTED_MS",
+    "performance::WRAP_NAVIGATION_ID",
     "pointer_capture::TOUCH_CAPTURE",
     "popover::CANCELING",
     "popup::COOP_REPORTING_DOCUMENTS",

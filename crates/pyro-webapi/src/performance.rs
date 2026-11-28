@@ -38,6 +38,33 @@ pub struct PerformanceEntryData {
     pub paint_time: Option<f64>,
     /// A `paint` entry's `presentationTime`; `None` reads as null.
     pub presentation_time: Option<f64>,
+    /// `PerformanceEntry.navigationId`: the navigation (hard or soft) the entry was made in; 0 is
+    /// "absent" (a worker's entries).
+    pub navigation_id: u64,
+}
+
+thread_local! {
+    /// The `navigationId` [`PerformanceEntryData::new`] gives the entries it makes: set by
+    /// [`with_navigation_id`] around the wrapping of an entry the timeline queued, so a module's
+    /// `TimelineEntry::wrap` needs no knowledge of it. 0 everywhere else.
+    static WRAP_NAVIGATION_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Runs `f` with `id` as the `navigationId` of the entries it makes through `PerformanceEntryData::new`.
+pub(crate) fn with_navigation_id<R>(id: u64, f: impl FnOnce() -> R) -> R {
+    let previous = WRAP_NAVIGATION_ID.with(|c| c.replace(id));
+    let result = f();
+    WRAP_NAVIGATION_ID.with(|c| c.set(previous));
+    result
+}
+
+/// The `navigationId` an entry made now in `s`'s realm has: the document's current one; 0 in a
+/// worker ("0 indicates the absence of a navigation id").
+pub(crate) fn current_navigation_id(s: &Scope<'_>) -> u64 {
+    if crate::worker_scope::is_worker(s) {
+        return 0;
+    }
+    crate::target::page_of(s).map_or(0, |page| page.timeline().navigation_id())
 }
 
 impl PerformanceEntryData {
@@ -52,6 +79,7 @@ impl PerformanceEntryData {
             resource: None,
             paint_time: None,
             presentation_time: None,
+            navigation_id: WRAP_NAVIGATION_ID.with(|c| c.get()),
         }
     }
     /// The fetch phases: a resource entry's, or the navigation entry's
@@ -70,6 +98,7 @@ pub fn resource_object<'s>(s: &Scope<'s>, entry: Rc<ResourceEntry>) -> JsResult<
     }
     let mut data = PerformanceEntryData::new("", "resource", entry.start, entry.duration());
     data.name = entry.name.clone();
+    data.navigation_id = current_navigation_id(s);
     data.resource = Some(entry);
     Ok(s.wrap::<PerformanceResourceTiming>(data, Some(key))?.value())
 }
@@ -117,6 +146,7 @@ fn entry_json<'s>(s: &Scope<'s>, e: &PerformanceEntryData, detail: bool) -> JsRe
     o.set("entryType", s.string(e.entry_type))?;
     o.set("startTime", s.number(e.start))?;
     o.set("duration", s.number(e.duration))?;
+    o.set("navigationId", s.number(e.navigation_id as f64))?;
     if detail {
         o.set("detail", e.detail.as_ref().map_or(s.null(), |d| d.get(s)))?;
     }
@@ -236,6 +266,7 @@ impl JsClass for PerformanceEntry {
         def.getter("entryType", |s, e| Ok(s.string(e.entry_type)));
         def.getter("startTime", |s, e| Ok(s.number(e.start)));
         def.getter("duration", |s, e| Ok(s.number(e.duration)));
+        def.getter("navigationId", |s, e| Ok(s.number(e.navigation_id as f64)));
         def.method("toJSON", 0, |s, e, _a| entry_json(s, e, false));
     }
 }
@@ -425,6 +456,7 @@ pub fn mark_data<'s>(s: &Scope<'s>, name: &str, options: Value<'s>, now: f64) ->
         resource: None,
         paint_time: None,
         presentation_time: None,
+        navigation_id: current_navigation_id(s),
     })
 }
 
@@ -569,6 +601,7 @@ impl UserTiming {
             resource: None,
             paint_time: None,
             presentation_time: None,
+            navigation_id: current_navigation_id(s),
         };
         let object = s.wrap::<PerformanceMeasure>(data, None)?.value();
         self.entries.borrow_mut().push(UserEntry {
