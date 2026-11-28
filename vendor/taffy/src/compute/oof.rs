@@ -1034,7 +1034,7 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
     };
 
     if trial || tree.checks_position_overflow(candidate.node) {
-        let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset(candidate.node, container));
+        let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset_in_layout_axes(candidate.node, container));
         let visual_axis = |mut axis: OofAxis, delta: f32, anchored_start: bool, anchored_end: bool| {
             if anchored_start { axis.inset.start = axis.inset.start.map(|start| start - delta); }
             if anchored_end { axis.inset.end = axis.inset.end.map(|end| end + delta); }

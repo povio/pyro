@@ -2881,6 +2881,16 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
     }
     fn checks_position_overflow(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::POSITION_VISIBILITY_CHECK) }
 
+    /// pyro: the fit test of `position-try-fallbacks` runs in the out-of-flow pass's axes, which a
+    /// vertical container's writing mode transposes (`oof_anchor_insets`, `oof_position_area`): its
+    /// physical scroll offset is mapped the same way, or a horizontal scroll moves the box along the
+    /// block axis (WPT `anchor-scroll-position-try-007` to `-010`).
+    fn position_try_scroll_offset_in_layout_axes(&self, candidate: NodeId, container: NodeId) -> taffy::Point<f32> {
+        use stylo_taffy::WritingModeExt;
+        let offset = self.position_try_scroll_offset(candidate, container);
+        self.node_from_id(container).primary_styles().map_or(offset, |style| style.writing_mode.logical_point(offset))
+    }
+
     fn position_try_scroll_offset(&self, candidate: NodeId, container: NodeId) -> taffy::Point<f32> {
         let node = self.node_from_id(container);
         let offset = self.timeline_scroll.as_ref().map_or_else(|| {

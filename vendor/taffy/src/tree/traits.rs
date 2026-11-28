@@ -242,6 +242,9 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
     fn checks_position_overflow(&self, _node: NodeId) -> bool { false }
     fn position_try_scroll_offset(&self, _node: NodeId, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
+    /// [`Self::position_try_scroll_offset`] in the axes the out-of-flow pass lays out in (a vertical writing
+    /// mode of the container swaps them).
+    fn position_try_scroll_offset_in_layout_axes(&self, node: NodeId, container: NodeId) -> crate::Point<f32> { self.position_try_scroll_offset(node, container) }
 
     fn oof_anchor_center(&self, _node: NodeId, _container: NodeId) -> crate::Point<Option<f32>> { crate::Point { x:None,y:None } }
 

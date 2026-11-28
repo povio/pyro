@@ -6317,13 +6317,16 @@ impl Layout {
             let mut css = self.style.computed_value(dom, el, name)?;
             // `anchor()` / `anchor-size()` compute to pixels (css-anchor-position-1 § anchor-pos): the
             // used value of the layout engine, as getComputedStyle reports it.
+            let mut used_value = false;
             if css.contains("anchor(") || css.contains("anchor-size(") || (matches!(name, "top" | "left" | "right" | "bottom") && self.has_position_try_fallbacks(dom, el)) {
                 let used = self.computed_style_value(dom, el, name);
                 if used.ends_with("px") && !used.contains("anchor") {
                     css = used;
+                    used_value = true;
                 }
             }
-            if css.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.') {
+            // (The style's own typed value is the declared one, not the fallback option's used one.)
+            if !used_value && css.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.') {
                 if let Some(value) = self.style.stylo_style(dom, el)
                     .and_then(|style| crate::stylo::precise_typed_numeric(&style, name, &css)) {
                     return Some(value);
