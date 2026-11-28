@@ -2973,7 +2973,7 @@ impl BaseDocument {
     /// text of the document has a code point in: a face no character of the document falls in is
     /// never downloaded (CSS Fonts 4 § 4.5), and one whose text arrives later is fetched then. The
     /// text is that of the document's text nodes, those of its generated content boxes included, less
-    /// the sources of `<style>`, `<script>` and `<title>`, and the values of text fields; a node
+    /// the sources of `<style>`, `<script>` and `<title>`, and the values of text fields; white space counts as the code point it is drawn as (`U+0020` for an ASCII space); a node
     /// removed from the tree and not yet dropped counts too (a face is then fetched that need not be).
     pub fn start_pending_fonts(&mut self) {
         if self.pending_fonts.is_empty() {
@@ -2981,9 +2981,13 @@ impl BaseDocument {
         }
         let mut seen = std::collections::HashSet::<u32>::new();
         let mut fresh: Vec<u32> = Vec::new();
+        // White space is a code point of the text too: `U+00A0` and the other non-ASCII spaces as they are,
+        // a collapsible ASCII space, tab or line feed as the `U+0020` it is drawn as (a node of only such
+        // white space may be drawn too, in `white-space: pre` or an inline-block, so it counts).
         let note = |text: &str, seen: &mut std::collections::HashSet<u32>, fresh: &mut Vec<u32>| {
             for c in text.chars() {
-                if !c.is_whitespace() && seen.insert(c as u32) {
+                let c = if c.is_ascii_whitespace() { ' ' } else { c };
+                if seen.insert(c as u32) {
                     fresh.push(c as u32);
                 }
             }
