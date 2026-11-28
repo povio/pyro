@@ -753,3 +753,19 @@ fn auto_min_size_of_an_unrendered_grid_child_resolves_to_zero() {
         assert_eq!(used(selector, "min-height"), expected, "{selector}");
     }
 }
+
+#[test]
+fn a_dialog_leaving_the_top_layer_loses_its_modal_ua_styles() {
+    // WPT html/semantics/interactive-elements/the-dialog-element/top-layer-removal-invalidates-ua-styles:
+    // the UA sheet's `dialog:-moz-topmost-modal` rule (fixed, `overflow:auto`) stops applying once
+    // the dialog is no longer modal; its state bit is cleared with the other state tokens.
+    let page = Page::new(r#"<!doctype html><dialog id=d open style="display:block"></dialog>"#);
+    let dialog = page.find("#d");
+    assert_eq!(page.value("#d", "position"), "absolute");
+    page.dom.borrow_mut().set_modal(dialog, true).unwrap();
+    assert_eq!(page.value("#d", "position"), "fixed");
+    assert_eq!(page.value("#d", "overflow-x"), "auto");
+    page.dom.borrow_mut().set_modal(dialog, false).unwrap();
+    assert_eq!(page.value("#d", "position"), "absolute");
+    assert_eq!(page.value("#d", "overflow-x"), "visible");
+}

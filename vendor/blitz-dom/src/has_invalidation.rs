@@ -55,6 +55,11 @@ pub(crate) const PYRO_STATES: ElementState = ElementState::VALID
     .union(ElementState::DEFAULT)
     .union(ElementState::OPEN)
     .union(ElementState::MODAL)
+    // The `dialog-in-top-layer` token sets it (`pyro_state_bits`): it has to be in the mask that
+    // is cleared before the tokens are applied again, or a dialog that was once modal keeps
+    // matching the UA sheet's `dialog:-moz-topmost-modal` rule (fixed, `overflow:auto`) after it
+    // leaves the top layer (css-position-4 §4.1 top-layer styling stops applying).
+    .union(ElementState::TOPMOST_MODAL)
     .union(ElementState::POPOVER_OPEN)
     .union(ElementState::INRANGE)
     .union(ElementState::OUTOFRANGE)
