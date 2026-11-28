@@ -763,6 +763,9 @@ impl Dom {
                                     html && self.frame_documents.contains_key(&n)
                                 }
                                 ("img", "src") => image_source.is_some() || image_deferred,
+                                // pyro: a lazy `<video>` whose load waits has no `poster` there either: the
+                                // renderer would fetch the poster at its first layout, far below the viewport.
+                                ("video", "poster") => html && self.image_deferred(id),
                                 // pyro: a script-made template's `shadowrootmode` would reparse as
                                 // a declarative shadow root of its parent in the renderer.
                                 ("template", "shadowrootmode") => html,

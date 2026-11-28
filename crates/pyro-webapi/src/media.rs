@@ -1055,14 +1055,28 @@ fn defer_lazy(page: &Rc<PageDom>, node: NodeId) -> bool {
         return false;
     }
     if with(page, node, |st| std::mem::take(&mut st.lazy_approved)) {
+        set_poster_deferred(page, node, false);
         return false;
     }
-    let mut lazy = page.media.lazy.borrow_mut();
-    if !lazy.contains(&node) {
-        lazy.push(node);
+    {
+        let mut lazy = page.media.lazy.borrow_mut();
+        if !lazy.contains(&node) {
+            lazy.push(node);
+        }
     }
+    // The poster is part of the load that waits: the renderer is not given it meanwhile.
+    set_poster_deferred(page, node, true);
     page.media.lazy_checked.set(None);
     true
+}
+
+/// A lazy `<video>`'s poster is fetched with its load, not before (HTML "lazy loading attributes"):
+/// while the load waits, the render snapshot carries no `poster` ([`pyro_dom::Dom::set_image_deferred`]).
+fn set_poster_deferred(page: &Rc<PageDom>, node: NodeId, deferred: bool) {
+    let video = page.dom.borrow().element(node).is_ok_and(|e| e.is_html() && &*e.name.local == "video");
+    if video {
+        page.dom.borrow_mut().set_image_deferred(node, deferred);
+    }
 }
 
 fn is_lazy_media(dom: &pyro_dom::Dom, node: NodeId) -> bool {
@@ -1104,6 +1118,7 @@ pub(crate) fn lazy_after_task(page: &Rc<PageDom>) {
         let go = !lazy || (connected && loaded && crate::intersection_observer::lazy_load_intersects(page, node));
         if go {
             page.media.lazy.borrow_mut().retain(|n| *n != node);
+            set_poster_deferred(page, node, false);
             with(page, node, |st| st.lazy_approved = true);
             resource_selection(page, node);
         }
