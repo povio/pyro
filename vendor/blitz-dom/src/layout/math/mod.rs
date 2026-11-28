@@ -516,9 +516,14 @@ impl LayoutPassState<'_> {
         }
 
         let content_box_width = (output.size.width - inset.left - inset.right).max(0.0);
-        // `display: block math` centres its content in the box (Chromium's row algorithm).
-        let centred = (self.nodes[dom_id].element_data().is_some_and(|element| *element.name.local == *"math")
-            && self.nodes[dom_id].display_style().is_some_and(|display| display.outside() == DisplayOutside::Block))
+        // `display: block math` centres its content in the box (Chromium's row algorithm). Only the
+        // user agent sheet's `math[display=block]` makes it: an author's `display: block` on a
+        // `math` without the attribute is a plain block, whose content starts at the box's start
+        // (WPT css-flexbox/flex-item-z-ordering-004).
+        let centred = (self.nodes[dom_id].element_data().is_some_and(|element| {
+            *element.name.local == *"math"
+                && element.attr(LocalName::from("display")).is_some_and(|value| value.eq_ignore_ascii_case("block"))
+        }) && self.nodes[dom_id].display_style().is_some_and(|display| display.outside() == DisplayOutside::Block))
             // A table cell centres its content in the width the column gives it (`text-align: center`).
             || kind == MathKind::Table(TableKind::Cell);
         let centre = if centred { ((content_box_width - layout.content_width) / 2.0).max(0.0) } else { 0.0 };
