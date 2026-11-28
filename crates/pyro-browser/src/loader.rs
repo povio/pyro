@@ -5474,7 +5474,14 @@ impl Browser {
                         return;
                     }
                     if let Some(element) = &element {
-                        b.script_ran(page, element, event.filter(|_| !fired.get()));
+                        // The element's event fires once: whichever of this task and the
+                        // evaluation's late rejection report gets there first fires it (a
+                        // module awaiting at top level rejects long after this task).
+                        let event = event.filter(|_| !fired.get());
+                        if event.is_some() {
+                            fired.set(true);
+                        }
+                        b.script_ran(page, element, event);
                     }
                     // The handler may have replaced the document.
                     if b.frame_loader(page) != loader_id {
