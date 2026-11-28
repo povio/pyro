@@ -697,10 +697,19 @@ fn local(dom: &Dom, id: NodeId) -> Option<String> {
 }
 
 /// The `href` of an SVG `a` element (`href`, else `xlink:href`): a hyperlink
-/// as an HTML `a` is (SVG 2 "Links out of SVG content").
+/// as an HTML `a` is (SVG 2 "Links out of SVG content"); or of a MathML `a`
+/// with an `href`, which is one too (HTML "Links" lists it among the elements
+/// that create hyperlinks, MathML Core "Attributes common to HTML and MathML
+/// elements": a click follows it by the same activation behavior; no `xlink`).
 fn svg_link_href(dom: &Dom, el: NodeId) -> Option<&str> {
     let e = dom.element(el).ok()?;
-    if e.name.ns != markup5ever::ns!(svg) || &*e.name.local != "a" {
+    if &*e.name.local != "a" {
+        return None;
+    }
+    if e.name.ns == markup5ever::ns!(mathml) {
+        return dom.get_attribute(el, "href").ok().flatten();
+    }
+    if e.name.ns != markup5ever::ns!(svg) {
         return None;
     }
     dom.get_attribute(el, "href")
