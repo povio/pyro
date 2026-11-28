@@ -239,6 +239,11 @@ impl ViewRanges {
 
 fn view_ranges(doc: &BaseDocument, subject: NodeId, resolved: &Resolved, scroll: &Scroll) -> Option<ViewRanges> {
     let subject_node = doc.get_node(subject)?;
+    // pyro: a subject that generates no box (`display: none`) makes the view timeline inactive
+    // (Scroll-driven Animations § 4.2), not one measured from its stale layout.
+    if !subject_node.has_boxes() {
+        return None;
+    }
     let size = subject_node.final_layout().size;
     let subject_size = if resolved.vertical { size.height } else { size.width } as f64;
     // The subject's start edge in the scroll container's content coordinates (at scroll offset 0).
