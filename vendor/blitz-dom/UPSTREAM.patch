@@ -62334,19 +62334,23 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
                                  _ => unreachable!(),
                              };
                              return format_used_px(used);
-@@ -673,23 +900,36 @@
+@@ -673,23 +900,40 @@
                      return format_px(0.0);
                  }
              }
 -            "transform" if has_layout_box => {
++            // pyro: an element that generates no box at all (`display: none`, or inside such a subtree, or not in
++            // the document) resolves to `none`, as Chrome (measured: `display:none; transform: translate(10px, 5px)`
++            // reads "none"; it has no LayoutObject); WPT transform-2d-getComputedStyle-001 accepts that or the matrix.
++            "transform" if !generates_box => return "none".to_string(),
 +            "transform" => {
                  let transform = &styles.get_box().transform;
                  if !transform.0.is_empty() {
                      // Used value: the transform list resolved to a matrix, with
 -                    // percentages resolved against the border box
 -                    let layout = node.final_layout();
-+                    // percentages resolved against the border box (an empty one where there is
-+                    // no box: a non-replaced inline, `display: none`; Chrome reports a matrix too)
++                    // percentages resolved against the border box (an empty one for a
++                    // non-replaced inline, which has no box of its own; Chrome reports a matrix there too)
 +                    let (width, height) = if has_layout_box {
 +                        let size = node.final_layout().size;
 +                        (size.width, size.height)
@@ -62382,7 +62386,7 @@ diff --git a/packages/blitz-dom/src/scroll_timeline.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/scroll_timeline.rs
-@@ -0,0 +1,740 @@
+@@ -0,0 +1,745 @@
 +//! pyro: scroll-driven animations (CSS Scroll-driven Animations 1). An animation whose
 +//! `animation-timeline` is `scroll()`, `view()` or a timeline name takes its progress from a scroll
 +//! position, not from time: this module resolves the timeline (its scroll container, axis and, for a
@@ -62624,6 +62628,11 @@ new file mode 100644
 +
 +fn view_ranges(doc: &BaseDocument, subject: NodeId, resolved: &Resolved, scroll: &Scroll) -> Option<ViewRanges> {
 +    let subject_node = doc.get_node(subject)?;
++    // pyro: a subject that generates no box (`display: none`) makes the view timeline inactive
++    // (Scroll-driven Animations § 4.2), not one measured from its stale layout.
++    if !subject_node.has_boxes() {
++        return None;
++    }
 +    let size = subject_node.final_layout().size;
 +    let subject_size = if resolved.vertical { size.height } else { size.width } as f64;
 +    // The subject's start edge in the scroll container's content coordinates (at scroll offset 0).
