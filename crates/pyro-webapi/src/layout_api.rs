@@ -530,7 +530,7 @@ pub fn record_remembered_sizes(page: &PageDom) {
 /// before script that waits a frame scrolls it), running smooth scrolls advance a frame, the
 /// queued scroll events fire, and so do the snap events of snap targets that changed without a
 /// scroll to report them (the initial snap's, as Chromium; CSS Scroll Snap 2 § 5.1).
-pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
+pub fn run_frame_scroll_steps(page: &Rc<PageDom>, deliver_scrolls: bool) {
     if page.is_disposed() {
         return;
     }
@@ -574,7 +574,9 @@ pub fn run_frame_scroll_steps(page: &Rc<PageDom>) {
         clamp_scrolls(page, true);
     }
     crate::smooth_scroll::step(page);
-    flush_pending_scrolls(page);
+    if deliver_scrolls {
+        flush_pending_scrolls(page);
+    }
     fire_snap_events(page);
 }
 

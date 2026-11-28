@@ -76,6 +76,10 @@ struct AnimationFrame {
     backup: Option<TimerId>,
     /// Chain depth of the frame callback running now, if any.
     running: Option<u32>,
+    /// The waiting frame was asked for by the performance-entry modules alone
+    /// (`request_rendering_frame`): nothing else waits for it. Any other request
+    /// (`schedule_animation_frame`) clears it.
+    rendering_only: bool,
 }
 
 pub struct WindowData {
@@ -844,6 +848,7 @@ fn request_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, cb: Persistent) ->
 }
 
 fn schedule_animation_frame(s: &Scope<'_>, w: &WindowData, frame: &mut AnimationFrame) {
+    frame.rendering_only = false;
     if frame.timer.is_none() {
         // Timers must not keep a disposed realm alive: hold it weakly.
         let realm_weak = s.realm().downgrade();
@@ -903,6 +908,7 @@ pub(crate) fn request_rendering_frame(realm: &Realm) {
     if frame.timer.is_some() {
         return;
     }
+    frame.rendering_only = true;
     let realm_weak = realm.downgrade();
     frame.timer = Some(w.sched.set_frame_timer(Duration::from_millis(FRAME_MS), true, move |browser: &mut Browser| {
         let Some(realm) = realm_weak.upgrade() else { return };
@@ -984,7 +990,12 @@ fn run_animation_frame(scope: &Scope<'_>, browser: &Browser) {
     pyro_webapi::PageDom::run_pending_frame_resizes();
     // The scroll steps: the initial snap, running smooth scrolls advance a frame (CSSOM View
     // § 4.1), then the scroll and snap events.
-    pyro_webapi::layout_api::run_frame_scroll_steps(&w.target.page);
+    // (A rendering update that only the performance entries asked for, after a change made a
+    // moment ago, leaves the `scroll` events script queued to their own frame-paced delivery:
+    // Chromium's next frame after a scroll is not the one a paint scan happened to schedule
+    // earlier, and a client that scrolls and clicks at once must not see the event first.)
+    let rendering_only = std::mem::take(&mut w.animation.borrow_mut().rendering_only);
+    pyro_webapi::layout_api::run_frame_scroll_steps(&w.target.page, !rendering_only);
     // pyro: the frame determines `content-visibility: auto` relevance anew (CSS Contain 2 § 4.1).
     pyro_webapi::layout_api::content_visibility_frame(&w.target.page);
     // The style update of the frame before this one, when the document changed since and none
