@@ -933,6 +933,11 @@ pub struct Browser {
     /// The CSP the next document committed in this frame inherits instead of what its URL would
     /// give (a `javascript:` result: the document it replaces), taken by that commit.
     csp_inherit_next: Option<(FrameKey, pyro_webapi::csp::InheritedCsp)>,
+    /// Connection-Allowlist: the guard of a popup navigation its opener's allowlist let through
+    /// (opener page, URL, the opener's document for its reports), which the popup's first
+    /// navigation to that URL takes so each redirect hop is checked against the OPENER's list.
+    /// Bounded; `start_document_fetch` takes its entry.
+    pub(crate) popup_allowlist_guards: Vec<(PageId, String, std::rc::Rc<pyro_webapi::PageDom>, std::sync::Arc<pyro_net::csp::RequestCsp>)>,
     /// The Document-Isolation-Policy of the document a frame's navigation is about to commit
     /// (`Browser::commit_document` takes it).
     isolation_next: Option<(FrameKey, u8)>,
@@ -1249,6 +1254,7 @@ impl BrowserThread {
             ready_responses: Default::default(),
             prefetches: Default::default(),
             csp_inherit_next: None,
+            popup_allowlist_guards: Vec::new(),
             isolation_next: None,
             csp_sandbox_next: None,
             document_rules: Default::default(),
@@ -2456,6 +2462,10 @@ impl Browser {
         }
         if let Some(policy) = &required_csp {
             csp_embedded::enforce_on_document(self, page, policy);
+        }
+        // Connection-Allowlist embedded enforcement: the same for the frame's `connectionallowlist`.
+        if let Some(required) = ca_embedded::requirement(self, page) {
+            ca_embedded::enforce_on_blank(self, page, &required);
         }
         self.finish_blank_document(page);
         Ok(loader_id)

@@ -286,12 +286,19 @@ impl ConnectionAllowlist {
     }
 }
 
-/// A document's allowlists: the enforced one and the report-only one (either may be missing).
+/// A document's allowlists: the enforced ones and the report-only one. A response delivers at most
+/// one enforced list; a frame whose embedder requires one ([`ConnectionPolicy::with_required`]) has
+/// that too, and a request must pass EVERY enforced list (the intersection), so a requirement can
+/// only narrow what a document restricted itself to, never widen it.
 #[derive(Debug)]
 pub struct ConnectionPolicy {
-    enforce: Option<ConnectionAllowlist>,
-    report_only: Option<ConnectionAllowlist>,
+    enforce: Vec<Arc<ConnectionAllowlist>>,
+    report_only: Option<Arc<ConnectionAllowlist>>,
 }
+
+/// The longest value an iframe's `connectionallowlist` attribute may have (and so the longest
+/// `Sec-Required-Connection-Allowlist` the browser sends).
+pub const MAX_REQUIRED_LENGTH: usize = 8192;
 
 impl ConnectionPolicy {
     /// The policy of a response from `response_url` with these header values (`None`: absent),
@@ -299,42 +306,45 @@ impl ConnectionPolicy {
     pub fn from_headers(enforce: Option<&str>, report_only: Option<&str>, response_url: &Url) -> Option<Arc<ConnectionPolicy>> {
         let enforce = enforce.and_then(|v| ConnectionAllowlist::parse(v, Disposition::Enforce, response_url));
         let report_only = report_only.and_then(|v| ConnectionAllowlist::parse(v, Disposition::Report, response_url));
-        (enforce.is_some() || report_only.is_some()).then(|| Arc::new(ConnectionPolicy { enforce, report_only }))
+        (enforce.is_some() || report_only.is_some()).then(|| {
+            Arc::new(ConnectionPolicy { enforce: enforce.into_iter().map(Arc::new).collect(), report_only: report_only.map(Arc::new) })
+        })
     }
 
-    /// Whether the enforced list of this policy is at least as strict as `required`, a value of the
-    /// embedding `iframe`'s `connectionallowlist` attribute read against `response_url` (Embedded
-    /// Enforcement: a framed document delivers a list that subsumes it). No enforced list, or a
-    /// `required` that is not a valid value: not subsumed.
+    /// Whether one of the enforced lists of this policy is at least as strict as `required`, a value
+    /// of the embedding `iframe`'s `connectionallowlist` attribute read against `response_url`
+    /// (Embedded Enforcement: a framed document delivers a list that subsumes it; the lists are
+    /// intersected, so one subset is enough). No enforced list, or a `required` that is not a valid
+    /// value: not subsumed.
     pub fn subsumes(&self, required: &str, response_url: &Url) -> bool {
         let Some(required) = ConnectionAllowlist::parse(required, Disposition::Enforce, response_url) else { return false };
-        self.enforce.as_ref().is_some_and(|own| own.subsumed_by(&required))
+        self.enforce.iter().any(|own| own.subsumed_by(&required))
     }
 
-    /// This policy with the enforced list replaced by `required` (the policy of a framed document
-    /// that opted in to its embedder's requirement and delivered no list as strict): its
-    /// report-only list is kept. `None` when `required` is not a valid value.
+    /// This policy (`None`: a document with none) with `required` added as one more enforced list
+    /// (a framed document that opted in to its embedder's requirement, or a local-scheme one that
+    /// has it): what it already enforced, its `redirects` and `report-to` parameters and its
+    /// report-only list stay. `None` when `required` is not a valid value.
     pub fn with_required(this: Option<&Arc<ConnectionPolicy>>, required: &str, response_url: &Url) -> Option<Arc<ConnectionPolicy>> {
-        let enforce = ConnectionAllowlist::parse(required, Disposition::Enforce, response_url)?;
-        let report_only = this.and_then(|p| p.report_only.as_ref()).and_then(|r| {
-            // `ConnectionAllowlist` is not `Clone`: the report-only list is parsed again from its text.
-            ConnectionAllowlist::parse(&r.text, Disposition::Report, response_url)
-        });
-        Some(Arc::new(ConnectionPolicy { enforce: Some(enforce), report_only }))
+        let required = Arc::new(ConnectionAllowlist::parse(required, Disposition::Enforce, response_url)?);
+        let mut enforce = this.map(|p| p.enforce.clone()).unwrap_or_default();
+        enforce.push(required);
+        Some(Arc::new(ConnectionPolicy { enforce, report_only: this.and_then(|p| p.report_only.clone()) }))
     }
 
     /// Whether `value` is a Structured Field inner list `Connection-Allowlist` reads (an iframe's
-    /// `connectionallowlist` attribute is held to the same grammar: CR, LF and anything else that is
-    /// not one list never become a request header).
+    /// `connectionallowlist` attribute is held to the same grammar and to
+    /// [`MAX_REQUIRED_LENGTH`]: CR, LF and anything else that is not one list never become a
+    /// request header).
     pub fn is_valid_value(value: &str) -> bool {
-        parse_inner_list(value).is_some()
+        value.len() <= MAX_REQUIRED_LENGTH && parse_inner_list(value).is_some()
     }
 
     /// The check of a request for `url`, which started as one for `original_url` (a redirect's
-    /// violation names the URL before its redirects). Blocked when the enforced list refuses it.
+    /// violation names the URL before its redirects). Blocked when an enforced list refuses it.
     pub fn check(&self, url: &Url, original_url: &Url, redirected: bool) -> CheckOutcome {
         let mut outcome = CheckOutcome::default();
-        for list in [&self.enforce, &self.report_only].into_iter().flatten() {
+        for list in self.enforce.iter().chain(self.report_only.iter()) {
             if !list.allows(url, redirected) {
                 outcome.violations.push(list.violation(original_url));
                 if list.disposition == Disposition::Enforce {
@@ -396,6 +406,33 @@ mod tests {
         let blocked = Url::parse("http://www.a.test:8000/").unwrap();
         assert!(enforced.check(&blocked, &blocked, false).blocked);
         assert!(enforced.check(&url, &url, false).allowed());
+        // The attribute is capped.
+        assert!(!ConnectionPolicy::is_valid_value(&format!("(\"http://a.test/{}\")", "x".repeat(MAX_REQUIRED_LENGTH))));
+    }
+
+    /// A requirement narrows, never widens: a document that restricted itself to b.test and whose
+    /// embedder requires c.test may connect to neither, and keeps its own `redirects` and `report-to`.
+    #[test]
+    fn required_list_is_added_to_the_delivered_one() {
+        let url = Url::parse("http://a.test:8000/page").unwrap();
+        let delivered = policy("(\"http://b.test:8000/*\");redirects=allow;report-to=ep");
+        let both = ConnectionPolicy::with_required(Some(&delivered), "(\"http://c.test:8000/*\")", &url).unwrap();
+        let (b, c, own) = (
+            Url::parse("http://b.test:8000/x").unwrap(),
+            Url::parse("http://c.test:8000/x").unwrap(),
+            Url::parse("http://a.test:8000/x").unwrap(),
+        );
+        // Alone, the delivered list allows b and the requirement allows c.
+        assert!(delivered.check(&b, &b, false).allowed());
+        assert!(ConnectionPolicy::with_required(None, "(\"http://c.test:8000/*\")", &url).unwrap().check(&c, &c, false).allowed());
+        // Together neither does, nor the document's own origin.
+        for target in [&b, &c, &own] {
+            assert!(both.check(target, target, false).blocked);
+        }
+        // A redirect needs both lists to allow redirects: the requirement does not.
+        assert!(both.check(&b, &b, true).blocked);
+        let violations = both.check(&c, &c, false).violations;
+        assert!(violations.iter().any(|v| v.report_to.as_deref() == Some("ep")));
     }
 
     #[test]

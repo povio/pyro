@@ -1318,13 +1318,19 @@ fn run_navigation(b: &mut Browser, task: NavigationTask, stops: Option<u64>, mut
         // document has no allowlist the popup's own load would be checked against
         // (`Browser::navigate_frame_with_handling` guards a navigation by its frame's document).
         // A refused one still opens the window, but on about:blank: the violation is reported to
-        // the initiator and the URL is never requested. (A redirect of an allowed popup
-        // navigation is not checked: the popup has no guard to follow it.)
-        let refused = b
-            .doc(page)
-            .and_then(|p| p.main_frame.page_dom.clone())
-            .is_some_and(|dom| pyro_webapi::csp::allowlist_refuses_navigation(&dom, &request.url));
+        // the initiator and the URL is never requested. An allowed one keeps the guard for the popup's
+        // first navigation (`Browser::popup_allowlist_guards`), which checks each redirect hop.
+        let initiator = b.doc(page).and_then(|p| p.main_frame.page_dom.clone());
+        let guard = initiator.as_ref().and_then(|dom| pyro_webapi::csp::allowlist_navigation_guard(dom, &request.url));
+        let refused = guard.as_ref().is_some_and(|guard| guard.blocks_request());
         let url = if refused { "about:blank".to_owned() } else { request.url };
+        // An allowed one: the popup's first navigation takes the guard, so its redirects are checked.
+        if let (Some(dom), Some(guard), false) = (initiator, guard, refused) {
+            if b.popup_allowlist_guards.len() >= 64 {
+                b.popup_allowlist_guards.remove(0);
+            }
+            b.popup_allowlist_guards.push((page.page, url.clone(), dom, guard));
+        }
         if let Some((frame_id, false)) = frame {
             b.emit(
                 page.page,

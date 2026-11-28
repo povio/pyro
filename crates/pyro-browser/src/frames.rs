@@ -2874,6 +2874,10 @@ impl Browser {
         };
         let (resource, enforce) =
             crate::csp_embedded::judge(self, key, requirement.as_ref(), resource).map_err(JsError::type_error)?;
+        // Connection-Allowlist embedded enforcement: likewise, its creator's allowlist plus the requirement.
+        let required_allowlist = crate::ca_embedded::requirement(self, key);
+        let resource =
+            crate::ca_embedded::judge(self, key, required_allowlist.as_deref(), resource).map_err(JsError::type_error)?;
         self.prepare_required_csp(key, requirement.map(|r| r.policy), enforce);
         self.begin_document(key, &opts, loader.clone(), resource, history)?;
         Ok(loader)

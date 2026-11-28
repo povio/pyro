@@ -246,8 +246,15 @@ pub fn allowlist_guard(page: &Rc<PageDom>, url: &url::Url) -> Option<Arc<Request
 /// the load against. The violation is reported to `page`. False without an allowlist, or for a URL
 /// that does not parse (the navigation fails on its own).
 pub fn allowlist_refuses_navigation(page: &Rc<PageDom>, url: &str) -> bool {
-    let Ok(url) = url::Url::parse(url) else { return false };
-    allowlist_guard(page, &url).is_some_and(|guard| guard.blocks_request())
+    allowlist_navigation_guard(page, url).is_some_and(|guard| guard.blocks_request())
+}
+
+/// [`allowlist_guard`] for a navigation of another browsing context `page` asks for at `url`
+/// (see [`allowlist_refuses_navigation`]): when it does not block, the guard checks each redirect
+/// hop of the navigation. `None` without an allowlist or for a URL that does not parse.
+pub fn allowlist_navigation_guard(page: &Rc<PageDom>, url: &str) -> Option<Arc<RequestCsp>> {
+    let url = url::Url::parse(url).ok()?;
+    allowlist_guard(page, &url)
 }
 
 /// CSP3 "Should element's inline type behavior be blocked?" for `page`: an inline `<script>`

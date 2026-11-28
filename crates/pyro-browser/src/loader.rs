@@ -2486,6 +2486,49 @@ fn frame_options(value: &str) -> FrameOptions {
     }
 }
 
+/// Whether an ENFORCED policy of `header_csp` (`Resource::header_csp`: enforced policies joined by
+/// `,`, a newline, report-only ones) has a `frame-ancestors` directive: a directive name, not text
+/// that merely mentions it (a `report-uri` or a source host).
+fn enforces_frame_ancestors(header_csp: Option<&str>) -> bool {
+    let enforced = header_csp.map_or("", |csp| csp.split_once('\n').map_or(csp, |(e, _)| e));
+    enforced.split(',').any(|policy| {
+        pyro_net::csp::Policy::parse(policy, pyro_net::csp::PolicySource::Header, pyro_net::csp::Disposition::Enforce)
+            .directive("frame-ancestors")
+            .is_some()
+    })
+}
+
+/// The decision of HTML "check a navigation response's adherence to X-Frame-Options" for a child
+/// frame's response at `response_url` with header lines `value`, and `header_csp`; `ancestors`: the
+/// origins above the frame, parent first (`None`: the chain could not be read). Every unknown
+/// fails closed: an unparsable response URL or chain blocks. An enforced `frame-ancestors`
+/// directive supersedes the header; `about:`, `blob:` and `data:` responses are not governed.
+/// `DENY` blocks; `SAMEORIGIN` blocks unless the response's origin is the origin of EVERY ancestor
+/// up to the top (an opaque origin is never the same); conflicting values block ([`frame_options`]).
+fn x_frame_options_blocks(value: &str, response_url: &str, header_csp: Option<&str>, ancestors: Option<&[Option<url::Url>]>) -> bool {
+    let options = frame_options(value);
+    if options == FrameOptions::Allow {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(response_url) else { return true };
+    if matches!(url.scheme(), "about" | "blob" | "data") || enforces_frame_ancestors(header_csp) {
+        return false;
+    }
+    match options {
+        FrameOptions::Allow => false,
+        FrameOptions::Deny => true,
+        FrameOptions::SameOrigin => {
+            let origin = url.origin();
+            match ancestors {
+                None => true,
+                Some(all) => {
+                    !origin.is_tuple() || all.iter().any(|a| a.as_ref().map(url::Url::origin).as_ref() != Some(&origin))
+                }
+            }
+        }
+    }
+}
+
 /// A response's `Allow-CSP-From` values joined by `, ` (`None`: absent); a value that is not
 /// ASCII makes it empty, which allows nothing.
 fn allow_csp_from_header(headers: &http::HeaderMap) -> Option<String> {
@@ -2802,6 +2845,26 @@ impl Browser {
         );
     }
 
+    /// The guard `run_navigation` kept for the first navigation of popup `page` to `url`, with its
+    /// opener's document (where its violations are reported): only for a window still on its
+    /// initial about:blank document and made by that opener.
+    fn take_popup_guard(
+        &mut self,
+        page: FrameKey,
+        url: &str,
+    ) -> Option<(std::rc::Rc<pyro_webapi::PageDom>, std::sync::Arc<pyro_net::csp::RequestCsp>)> {
+        if page.child.is_some() || self.popup_allowlist_guards.is_empty() || !self.doc(page)?.nav.is_first_blank() {
+            return None;
+        }
+        let creator = self.page(page.page).and_then(|p| p.popup_creator);
+        let at = self
+            .popup_allowlist_guards
+            .iter()
+            .position(|(opener, guarded, ..)| guarded == url && creator.is_none_or(|c| c == *opener))?;
+        let (_, _, dom, guard) = self.popup_allowlist_guards.remove(at);
+        Some((dom, guard))
+    }
+
     /// Starts fetching a document for a non-blank navigation.
     pub(crate) fn start_document_fetch(
         &mut self,
@@ -2860,6 +2923,9 @@ impl Browser {
                 let guard = pyro_webapi::csp::allowlist_guard(&dom, &url)?;
                 Some((dom, guard))
             });
+        // A popup's first navigation: the guard its opener's allowlist made for it (`run_navigation`),
+        // so the redirects of an allowed URL are checked against the opener's list too.
+        let nav_guard = nav_guard.or_else(|| self.take_popup_guard(page, &opts.url));
         let req = FetchRequest {
             csp: nav_guard.as_ref().map(|(_, guard)| guard.clone()),
             required_csp: requirement.as_ref().map(|r| r.policy.clone()),
@@ -3207,7 +3273,8 @@ impl Browser {
         let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));
         list.add_header(enforce, pyro_net::csp::Disposition::Enforce);
         list.add_header(report_only, pyro_net::csp::Disposition::Report);
-        let ancestors = self.ancestor_origins(page);
+        // A chain that cannot be read is refused by every source list (an opaque ancestor).
+        let ancestors = self.ancestor_origins(page).unwrap_or_else(|| vec![None]);
         let outcome = list.frame_ancestors_check(&ancestors);
         if !outcome.violations.is_empty() {
             // The frame's current document supplies the network the reports go out on.
@@ -3219,46 +3286,31 @@ impl Browser {
     }
 
     /// The origins of every frame above child frame `page`, parent first (an opaque one, a
-    /// sandboxed frame's, as `None`).
-    fn ancestor_origins(&self, page: FrameKey) -> Vec<Option<url::Url>> {
+    /// sandboxed frame's, as `None`). `None` for the whole list when a frame of the chain cannot
+    /// be looked up: a truncated list would let a check over "every ancestor" pass over fewer, so
+    /// callers fail closed.
+    fn ancestor_origins(&self, page: FrameKey) -> Option<Vec<Option<url::Url>>> {
         let mut ancestors = Vec::new();
-        let mut next = self.doc(page).and_then(|p| p.main_frame.parent.clone());
+        let mut next = self.doc(page)?.main_frame.parent.clone();
         while let Some(id) = next.take() {
-            let Some(frame) = self.frame(page.page, &id) else { break };
+            let frame = self.frame(page.page, &id)?;
             ancestors.push(if frame.origin == "null" { None } else { url::Url::parse(&frame.origin).ok() });
             next = frame.parent;
         }
-        ancestors
+        Some(ancestors)
     }
 
     /// Whether `X-Frame-Options` blocks `resource`, the response of child frame `page`'s
-    /// navigation (HTML "check a navigation response's adherence to X-Frame-Options"). Not for a
-    /// page that bypasses CSP, a local-scheme response, or one with an enforced `frame-ancestors`
-    /// directive, which supersedes it. `DENY` blocks; `SAMEORIGIN` blocks unless the response's
-    /// origin is the origin of EVERY ancestor up to the top (an opaque origin is never the same);
-    /// conflicting values block, unknown ones allow ([`frame_options`]). A blocked response commits
-    /// the opaque error document, as `frame-ancestors` does.
+    /// navigation (HTML "check a navigation response's adherence to X-Frame-Options"): the
+    /// decision is [`x_frame_options_blocks`]. It is not CSP, so `Page.setBypassCSP` does not skip
+    /// it. A blocked response commits the opaque error document, as `frame-ancestors` does.
     fn x_frame_options_block(&self, page: FrameKey, resource: &Resource) -> bool {
         let Some(value) = resource.x_frame_options.as_deref() else { return false };
-        if page.child.is_none() || self.page(page.page).is_some_and(|p| p.bypass_csp) {
+        if page.child.is_none() {
             return false;
         }
-        let Ok(url) = url::Url::parse(&resource.url) else { return false };
-        if matches!(url.scheme(), "about" | "blob" | "data") {
-            return false;
-        }
-        let enforced = resource.header_csp.as_deref().map_or("", |csp| csp.split_once('\n').map_or(csp, |(e, _)| e));
-        if enforced.to_ascii_lowercase().contains("frame-ancestors") {
-            return false;
-        }
-        match frame_options(value) {
-            FrameOptions::Allow => false,
-            FrameOptions::Deny => true,
-            FrameOptions::SameOrigin => {
-                let origin = url.origin();
-                !origin.is_tuple() || self.ancestor_origins(page).iter().any(|a| a.as_ref().map(url::Url::origin).as_ref() != Some(&origin))
-            }
-        }
+        let ancestors = self.ancestor_origins(page);
+        x_frame_options_blocks(value, &resource.url, resource.header_csp.as_deref(), ancestors.as_deref())
     }
 
     /// The document request of a navigation failed on the network. A new
@@ -6213,6 +6265,38 @@ mod disposition_tests {
         assert_eq!(frame_options("\"DENY\""), Allow);
         assert_eq!(frame_options("ALLOW-FROM https://example.com/"), Allow);
         assert_eq!(frame_options("\u{b}DENY"), Allow);
+    }
+
+    /// The decision of `X-Frame-Options` over the frame chain (reviewer findings: substring match of
+    /// `frame-ancestors`, a truncated chain, an unparsable URL).
+    #[test]
+    fn x_frame_options_decision() {
+        fn blocks(value: &str, url: &str, csp: Option<&str>, chain: Option<Vec<Option<url::Url>>>) -> bool {
+            super::x_frame_options_blocks(value, url, csp, chain.as_deref())
+        }
+        let u = |s: &str| Some(url::Url::parse(s).unwrap());
+        let a = "http://a.test:8000/p";
+        // DENY with a CSP that only MENTIONS frame-ancestors (report-uri path, a host) still blocks;
+        // a real enforced directive supersedes it; a report-only one does not.
+        assert!(blocks("DENY", a, Some("report-uri /frame-ancestors-report\n"), Some(vec![u("http://a.test:8000/")])));
+        assert!(blocks("DENY", a, Some("connect-src https://frame-ancestors.example\n"), Some(vec![])));
+        assert!(!blocks("DENY", a, Some("frame-ancestors 'self'\n"), Some(vec![])));
+        assert!(!blocks("DENY", a, Some("default-src 'none', Frame-Ancestors *\n"), Some(vec![])));
+        assert!(blocks("DENY", a, Some("\nframe-ancestors *"), Some(vec![])));
+        // SAMEORIGIN: every ancestor up to the top must be the response's origin.
+        let same = || Some(vec![u("http://a.test:8000/"), u("http://a.test:8000/")]);
+        assert!(!blocks("SAMEORIGIN", a, None, same()));
+        // A -> B -> A: the middle ancestor differs from the response's origin.
+        assert!(blocks("SAMEORIGIN", a, None, Some(vec![u("http://b.test:8000/"), u("http://a.test:8000/")])));
+        // An opaque (sandboxed) parent, an unreadable chain and an unparsable response URL block.
+        assert!(blocks("SAMEORIGIN", a, None, Some(vec![None])));
+        assert!(blocks("SAMEORIGIN", a, None, None));
+        assert!(blocks("SAMEORIGIN", "not a url", None, same()));
+        assert!(blocks("DENY", "not a url", None, same()));
+        // No header value that restricts: nothing blocks, whatever the chain.
+        assert!(!blocks("ALLOWALL", "not a url", None, None));
+        // Local-scheme responses are not governed.
+        assert!(!blocks("DENY", "data:text/html,x", None, Some(vec![])));
     }
 
     /// Subresource Integrity refuses an opaque response (a no-cors request whose redirect chain
