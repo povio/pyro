@@ -463,6 +463,14 @@ fn make<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         Ok(s.string(permission_state(&page, &name).as_str()))
     })?;
     native.set_atom("permissionState", state.value())?;
+    // active(): the realm's document is fully active. topLevel(): it is the document of a top-level browsing
+    // context (Keyboard Lock only works from one).
+    let active = s.function("active", |s, _, _| Ok(s.boolean(crate::target::page_of(s)?.is_fully_active())))?;
+    native.set_atom("active", active.value())?;
+    let top_level = s.function("topLevel", |s, _, _| {
+        Ok(s.boolean(matches!(crate::target::page_of(s)?.container(), crate::page::FrameContainer::Top)))
+    })?;
+    native.set_atom("topLevel", top_level.value())?;
     // policy(feature): whether the document's permissions policy lets it use `feature`; a refusal is
     // also reported (`crate::permissions_policy::check_feature`).
     let policy = s.function("policy", |s, _, args| {

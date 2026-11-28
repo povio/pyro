@@ -581,15 +581,207 @@
   if (native.worker) delete Notification.requestPermission;
   tag(Notification, 'Notification');
 
+  // WebIDL: operations and attributes of an interface are enumerable properties of its prototype, and an interface
+  // without a constructor operation has an interface object of length 0 (these classes take a private token).
+  const enumerate = (C) => {
+    for (const k of O.getOwnPropertyNames(C.prototype)) {
+      if (k === 'constructor') continue;
+      const d = O.getOwnPropertyDescriptor(C.prototype, k);
+      d.enumerable = true;
+      defineProperty(C.prototype, k, d);
+    }
+    defineProperty(C, 'length', { value: 0, configurable: true });
+  };
+  // An `on<type>` EventHandler attribute of an EventTarget of this module; `records` maps each instance to
+  // its `{ handler, installed }`. The accessors are made with computed names so they read `get on<type>`.
+  const defineHandler = (C, type, records) => {
+    const name = 'on' + type;
+    const bad = (what) => new TypeErrorC(`Failed to ${what} the '${name}' property on '${C.name}': Illegal invocation`);
+    const d = O.getOwnPropertyDescriptor({
+      get [name]() {
+        const r = records.get(this);
+        if (r === undefined) throw bad('read');
+        return r.handler;
+      },
+      set [name](v) {
+        const r = records.get(this);
+        if (r === undefined) throw bad('set');
+        // EventHandler is a callback function type: anything that is not callable becomes null.
+        r.handler = typeof v === 'function' ? v : null;
+        if (r.handler !== null && !r.installed) {
+          r.installed = true;
+          addListener.call(this, type, (e) => {
+            const h = r.handler;
+            if (h !== null) h.call(this, e);
+          });
+        }
+      },
+    }, name);
+    d.enumerable = true;
+    defineProperty(C.prototype, name, d);
+  };
+  const illegalOp = (what, iface) => new TypeErrorC(`Failed to execute '${what}' on '${iface}': Illegal invocation`);
+
+  // Keyboard Lock (https://wicg.github.io/keyboard-lock/) and Keyboard Map (https://wicg.github.io/keyboard-map/).
+  // A headless Pyro has no shell that claims keys (Escape, F11, Ctrl+W, ...): every key already reaches the page, so a
+  // lock request is the promise state machine the spec defines plus the set of locked codes it records, exactly what
+  // headless Chrome reports. The layout is the US layout Pyro's own key dispatcher types (pyro-cdp engine/keyboard.rs),
+  // printable keys only, as Chrome reports them.
+  const LAYOUT = (() => {
+    const entries = [];
+    for (const c of 'abcdefghijklmnopqrstuvwxyz') entries.push(['Key' + c.toUpperCase(), c]);
+    for (const c of '0123456789') entries.push(['Digit' + c, c]);
+    entries.push(['Backquote', '`'], ['Minus', '-'], ['Equal', '='], ['BracketLeft', '['], ['BracketRight', ']'],
+      ['Backslash', '\\'], ['Semicolon', ';'], ['Quote', "'"], ['Comma', ','], ['Period', '.'], ['Slash', '/']);
+    return entries;
+  })();
+  const MapC = Map;
+  const mapData = new WeakMap();
+  const mapOf = (self, what) => {
+    const m = mapData.get(self);
+    if (m === undefined) throw illegalOp(what, 'KeyboardLayoutMap');
+    return m;
+  };
+  class KeyboardLayoutMap {
+    constructor(t, entries) {
+      if (t !== token) throw illegal('KeyboardLayoutMap');
+      mapData.set(this, new MapC(entries));
+    }
+    get size() {
+      return mapOf(this, 'size').size;
+    }
+    entries() {
+      return mapOf(this, 'entries').entries();
+    }
+    keys() {
+      return mapOf(this, 'keys').keys();
+    }
+    values() {
+      return mapOf(this, 'values').values();
+    }
+    forEach(callback, thisArg = undefined) {
+      const m = mapOf(this, 'forEach');
+      if (arguments.length === 0) throw new TypeErrorC("Failed to execute 'forEach' on 'KeyboardLayoutMap': 1 argument required, but only 0 present.");
+      if (typeof callback !== 'function') throw new TypeErrorC("Failed to execute 'forEach' on 'KeyboardLayoutMap': The callback provided as parameter 1 is not a function.");
+      for (const [k, v] of m) callback.call(thisArg, v, k, this);
+    }
+    get(key) {
+      const m = mapOf(this, 'get');
+      if (arguments.length === 0) throw new TypeErrorC("Failed to execute 'get' on 'KeyboardLayoutMap': 1 argument required, but only 0 present.");
+      return m.get(`${key}`);
+    }
+    has(key) {
+      const m = mapOf(this, 'has');
+      if (arguments.length === 0) throw new TypeErrorC("Failed to execute 'has' on 'KeyboardLayoutMap': 1 argument required, but only 0 present.");
+      return m.has(`${key}`);
+    }
+  }
+  defineProperty(KeyboardLayoutMap.prototype, Symbol.iterator, {
+    value: KeyboardLayoutMap.prototype.entries, writable: true, configurable: true,
+  });
+  enumerate(KeyboardLayoutMap);
+  tag(KeyboardLayoutMap, 'KeyboardLayoutMap');
+
+  const keyboardData = new WeakMap();
+  // WebIDL `sequence<DOMString>` (a string, null or a non-iterable object is no sequence).
+  const keyCodesOf = (v) => {
+    if (v === null || typeof v !== 'object' || typeof v[Symbol.iterator] !== 'function') {
+      throw new TypeErrorC("Failed to execute 'lock' on 'Keyboard': The provided value cannot be converted to a sequence.");
+    }
+    const out = [];
+    for (const code of v) out.push(`${code}`);
+    return out;
+  };
+  class Keyboard extends EventTargetC {
+    constructor(t) {
+      if (t !== token) throw illegal('Keyboard');
+      super();
+      ownTag(this, 'Keyboard');
+      // locked: the codes of the settled request (null: none; an empty set: every key); request: the pending
+      // lock() ({ reject, cancelled }), map: the getLayoutMap() promise while it is pending.
+      keyboardData.set(this, { handler: null, installed: false, locked: null, request: null, map: null });
+    }
+    // Keyboard Lock: "lock keyboard" and the outermost-frame rule (the request may only come from the document of a
+    // top-level browsing context that is fully active).
+    lock(keyCodes = []) {
+      const d = keyboardData.get(this);
+      if (d === undefined) return rejected(illegalOp('lock', 'Keyboard'));
+      let codes;
+      try {
+        codes = keyCodesOf(keyCodes);
+      } catch (e) {
+        return rejected(e);
+      }
+      if (!native.active() || !native.topLevel()) {
+        return rejected(new DOMExceptionC("Failed to execute 'lock' on 'Keyboard': lock() may only be called from the outermost main frame.", 'InvalidStateError'));
+      }
+      // A newer request supersedes the pending one (which is rejected, as Chrome does).
+      const previous = d.request;
+      d.request = null;
+      if (previous !== null) previous.reject(new DOMExceptionC('This request was superseded by a subsequent lock() call.', 'AbortError'));
+      return new PromiseC((resolve, reject) => {
+        const request = { reject, cancelled: false };
+        d.request = request;
+        // The request is applied after the calling script, so a second lock() in the same task finds the first
+        // one still pending.
+        resolved().then(() => {
+          if (d.request !== request) return;
+          d.request = null;
+          if (!request.cancelled) d.locked = new Set(codes);
+          resolve(undefined);
+        });
+      });
+    }
+    // "Cancel keyboard lock": the locked codes go; a request still pending resolves but is not applied.
+    unlock() {
+      const d = keyboardData.get(this);
+      if (d === undefined) throw illegalOp('unlock', 'Keyboard');
+      if (d.request !== null) d.request.cancelled = true;
+      d.locked = null;
+    }
+    // Keyboard Map: every document that may use `keyboard-map` (the default allowlist is 'self': a cross-origin frame
+    // needs `allow="keyboard-map"`); concurrent calls get the same pending promise.
+    getLayoutMap() {
+      const d = keyboardData.get(this);
+      if (d === undefined) return rejected(illegalOp('getLayoutMap', 'Keyboard'));
+      if (!native.active()) {
+        return rejected(new DOMExceptionC("Failed to execute 'getLayoutMap' on 'Keyboard': The document is not fully active.", 'InvalidStateError'));
+      }
+      if (!native.policy('keyboard-map')) {
+        return rejected(new DOMExceptionC("Failed to execute 'getLayoutMap' on 'Keyboard': getLayoutMap() must be called from a top-level browsing context or allowed by the permissions policy.", 'SecurityError'));
+      }
+      if (d.map === null) {
+        const promise = new PromiseC((resolve) => {
+          resolved().then(() => {
+            d.map = null;
+            resolve(new KeyboardLayoutMap(token, LAYOUT));
+          });
+        });
+        d.map = promise;
+      }
+      return d.map;
+    }
+  }
+  defineHandler(Keyboard, 'layoutchange', keyboardData);
+  enumerate(Keyboard);
+  tag(Keyboard, 'Keyboard');
+
+  // The navigator's [SameObject] members, made when first read.
+  let keyboard = null;
   return {
     geolocation: new Geolocation(token),
     userAgentData: new NavigatorUAData(token),
     permissions: new Permissions(token),
     clipboard: new Clipboard(token),
+    get keyboard() {
+      return keyboard ??= new Keyboard(token);
+    },
     ClipboardItem,
     Notification,
     Clipboard,
     Permissions,
     PermissionStatus,
+    Keyboard,
+    KeyboardLayoutMap,
   };
 })
