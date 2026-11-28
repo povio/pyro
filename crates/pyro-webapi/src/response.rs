@@ -204,7 +204,7 @@ fn body_stream<'s>(s: &Scope<'s>, d: &ResponseData) -> JsResult<Value<'s>> {
     }
     let page = crate::target::page_of(s)?;
     let source = s.wrap::<BodySource>(
-        StreamData { body: d.body.clone(), used: d.used.clone(), opened: Cell::new(false) },
+        StreamData::new(d.body.clone(), d.used.clone()),
         None,
     )?;
     d.source_made.set(true);
@@ -633,10 +633,12 @@ pub struct StreamData {
     used: Rc<Cell<bool>>,
     /// The stream owns the body consumer from the first read on.
     opened: Cell<bool>,
+    /// This stream's position in the body (a clone's stream has its own).
+    state: Rc<crate::fetch::StreamState>,
 }
 impl StreamData {
     pub(crate) fn new(body: Rc<Body>, used: Rc<Cell<bool>>) -> StreamData {
-        StreamData { body, used, opened: Cell::new(false) }
+        StreamData { body, used, opened: Cell::new(false), state: Rc::default() }
     }
     /// False when `text()` and the like already took the body.
     fn open(&self) -> bool {
@@ -648,7 +650,7 @@ impl StreamData {
         }
         self.opened.set(true);
         self.used.set(true);
-        self.body.open_stream();
+        self.body.open_stream(&self.state);
         true
     }
 }
@@ -669,11 +671,11 @@ impl JsClass for BodySource {
         def.not_exposed();
         def.method("read", 0, |s, d, _a| {
             d.open();
-            d.body.stream_read(s)
+            d.body.stream_read(s, &d.state)
         });
         def.method("cancel", 0, |s, d, _a| {
             if d.open() {
-                d.body.cancel_consumer_stream();
+                d.body.cancel_consumer_stream(&d.state);
             }
             let deferred = s.deferred()?;
             deferred.resolve(s, s.undefined())?;

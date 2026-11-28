@@ -248,6 +248,17 @@ fn read_result<'s>(s: &Scope<'s>, value: Value<'s>, done: bool) -> JsResult<Valu
     result.set_atom("done", s.boolean(done))?;
     Ok(result.value())
 }
+/// One `response.body` stream over a native [`Body`]: a Response and its clone each have their
+/// own over the one body, each with the position it has delivered up to.
+#[derive(Default)]
+pub(crate) struct StreamState {
+    /// The stream holds a consumer until it closes, errors or is canceled.
+    open: Cell<bool>,
+    /// Bytes the stream delivered while another consumer (a clone that will
+    /// read the whole body) kept the chunks: they stay buffered for it.
+    cursor: Cell<usize>,
+}
+
 pub(crate) struct Body {
     wire: Arc<Mutex<Wire>>,
     visible_terminal: RefCell<Option<Result<(), NetError>>>,
@@ -256,12 +267,10 @@ pub(crate) struct Body {
     realm_id: RealmId,
     readers: RefCell<Vec<Reader>>,
     /// Pending `ReadableStreamDefaultReader.read()` promises, in order.
-    stream_reads: RefCell<Vec<(WeakRealm, Deferred)>>,
-    /// The stream holds a consumer until it closes, errors or is canceled.
-    stream_open: Cell<bool>,
-    /// Bytes the stream delivered while another consumer (a clone that will
-    /// read the whole body) kept the chunks: they stay buffered for it.
-    stream_cursor: Cell<usize>,
+    stream_reads: RefCell<Vec<(WeakRealm, Deferred, Rc<StreamState>)>>,
+    /// The body's open streams (a Response and its clone each have one over the one native
+    /// body): each holds a consumer until it closes, errors or is canceled.
+    streams: RefCell<Vec<Rc<StreamState>>>,
     consumers: Cell<usize>,
     abort_registration: RefCell<Option<AbortRegistration>>,
     /// The aborting signal's own wrapper reference, for its reason. None without a signal.
@@ -1065,8 +1074,7 @@ fn fetch_call<'s>(
                 realm_id: s.realm_id(),
                 readers: RefCell::new(Vec::new()),
                 stream_reads: RefCell::new(Vec::new()),
-                stream_open: Cell::new(false),
-                stream_cursor: Cell::new(0),
+                streams: RefCell::new(Vec::new()),
                 consumers: Cell::new(0),
                 abort_registration: RefCell::new(None),
                 abort_signal: RefCell::new(None),
@@ -1415,8 +1423,7 @@ impl Body {
             realm_id: s.realm_id(),
             readers: RefCell::new(Vec::new()),
             stream_reads: RefCell::new(Vec::new()),
-            stream_open: Cell::new(false),
-            stream_cursor: Cell::new(0),
+            streams: RefCell::new(Vec::new()),
             consumers: Cell::new(0),
             abort_registration: RefCell::new(None),
             abort_signal: RefCell::new(None),
@@ -1657,51 +1664,75 @@ impl Body {
         }
         drop(readers);
         drop(self.stream_reads.take());
-        self.close_stream();
+        self.close_streams();
     }
 
     // ----- response.body (ReadableStream) ------------------------------------
 
     /// Starts streaming delivery for a `response.body` reader. The stream
     /// takes over the Response's body consumer.
-    pub(crate) fn open_stream(&self) {
-        self.stream_open.set(true);
+    pub(crate) fn open_stream(&self, stream: &Rc<StreamState>) {
+        if !stream.open.replace(true) {
+            self.streams.borrow_mut().push(stream.clone());
+        }
         self.wire.lock().unwrap().streaming = true;
     }
-    fn close_stream(&self) {
-        if self.stream_open.replace(false) {
-            self.wire.lock().unwrap().streaming = false;
+    fn close_stream(&self, stream: &Rc<StreamState>) {
+        if stream.open.replace(false) {
+            stream.cursor.set(0);
+            let none_left = {
+                let mut streams = self.streams.borrow_mut();
+                streams.retain(|s| !Rc::ptr_eq(s, stream));
+                streams.is_empty()
+            };
+            if none_left {
+                self.wire.lock().unwrap().streaming = false;
+            }
             self.release_consumer();
         }
     }
+    /// Every stream of the body closes (the body is gone).
+    fn close_streams(&self) {
+        let streams = self.streams.borrow().clone();
+        for stream in &streams {
+            self.close_stream(stream);
+        }
+    }
     /// `ReadableStreamDefaultReader.read()`: the bytes received since the
-    /// previous read, `done` once the body completed, or the body's error.
-    pub(crate) fn stream_read<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
+    /// previous read of this stream, `done` once the body completed, or the body's error.
+    pub(crate) fn stream_read<'s>(&self, s: &Scope<'s>, stream: &Rc<StreamState>) -> JsResult<Value<'s>> {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
-        if !self.stream_open.get() {
+        if !stream.open.get() {
             deferred.resolve(s, read_result(s, s.undefined(), true)?)?;
             return Ok(promise);
         }
-        self.stream_reads.borrow_mut().push((s.realm().downgrade(), deferred));
+        self.stream_reads.borrow_mut().push((s.realm().downgrade(), deferred, stream.clone()));
         self.settle_stream_reads();
         Ok(promise)
     }
     /// Resolves pending reads from buffered chunks, then completion or error.
     pub(crate) fn settle_stream_reads(&self) {
+        // The read at `at`; a read that cannot be answered yet stays where it is, and the ones
+        // after it (another stream's, over the same body) are still tried.
+        let mut at = 0;
         loop {
-            if self.stream_reads.borrow().is_empty() {
-                return;
-            }
-            let (weak, deferred) = self.stream_reads.borrow_mut().remove(0);
+            let entry = {
+                let mut reads = self.stream_reads.borrow_mut();
+                if at >= reads.len() {
+                    return;
+                }
+                reads.remove(at)
+            };
+            let (weak, deferred, stream) = entry;
             let Some(realm) = weak.upgrade() else { continue };
             let Ok(s) = realm.scope() else { continue };
-            // A clone of the Response still reads the whole body: the stream
+            // Another consumer (a clone of the Response) still reads the body: the stream
             // copies what it has not delivered and leaves the chunks buffered.
             let shared = self.consumers.get() > 1;
             let chunk = {
                 let mut wire = self.wire.lock().unwrap();
-                let skip = self.stream_cursor.get();
+                let skip = stream.cursor.get();
                 if wire.chunks.is_empty() || wire.bytes <= skip {
                     None
                 } else if shared {
@@ -1714,14 +1745,14 @@ impl Body {
                         }
                         offset = end;
                     }
-                    self.stream_cursor.set(wire.bytes);
+                    stream.cursor.set(wire.bytes);
                     Some(bytes)
                 } else {
                     let chunks = std::mem::take(&mut wire.chunks);
                     let len: usize = chunks.iter().map(Bytes::len).sum();
                     wire.bytes = wire.bytes.saturating_sub(len);
                     wire.budget.used.fetch_sub(len, Ordering::AcqRel);
-                    self.stream_cursor.set(0);
+                    stream.cursor.set(0);
                     let mut bytes = Vec::with_capacity(len);
                     for c in &chunks {
                         bytes.extend_from_slice(c);
@@ -1733,8 +1764,9 @@ impl Body {
             let error = self.error(&s);
             let done = self.is_null() || matches!(*self.visible_terminal.borrow(), Some(Ok(())));
             if chunk.is_none() && error.is_none() && !done {
-                self.stream_reads.borrow_mut().insert(0, (weak, deferred));
-                return;
+                self.stream_reads.borrow_mut().insert(at, (weak, deferred, stream));
+                at += 1;
+                continue;
             }
             let settled = (|| -> JsResult<()> {
                 if let Some(bytes) = chunk.filter(|_| error.is_none()) {
@@ -1742,15 +1774,15 @@ impl Body {
                     deferred.resolve(&s, read_result(&s, value, false)?)?;
                 } else if let Some(error) = error {
                     deferred.reject(&s, error)?;
-                    self.close_stream();
+                    self.close_stream(&stream);
                 } else {
                     deferred.resolve(&s, read_result(&s, s.undefined(), true)?)?;
-                    self.close_stream();
+                    self.close_stream(&stream);
                 }
                 Ok(())
             })();
             if settled.is_err() {
-                self.close_stream();
+                self.close_stream(&stream);
             }
         }
     }
@@ -1758,18 +1790,17 @@ impl Body {
     /// consumer (a clone of the Response) still reads the whole body, which
     /// keeps the bytes; this stream just closes, its pending reads dropped
     /// (the canceled stream ignores them) and its cursor reset.
-    pub(crate) fn cancel_consumer_stream(&self) {
+    pub(crate) fn cancel_consumer_stream(&self, stream: &Rc<StreamState>) {
         if self.consumers.get() > 1 {
-            drop(self.stream_reads.take());
-            self.stream_cursor.set(0);
-            self.close_stream();
+            self.stream_reads.borrow_mut().retain(|(_, _, s)| !Rc::ptr_eq(s, stream));
+            self.close_stream(stream);
             return;
         }
-        self.cancel_stream();
+        self.cancel_stream(stream);
     }
     /// `ReadableStream.cancel()` / reader `cancel()`: stops the request,
     /// drops buffered bytes and finishes pending reads as done.
-    pub(crate) fn cancel_stream(&self) {
+    pub(crate) fn cancel_stream(&self, stream: &Rc<StreamState>) {
         {
             let mut wire = self.wire.lock().unwrap();
             wire.closed = true;
@@ -1788,7 +1819,7 @@ impl Body {
             page.fetch_state.jobs.borrow_mut().remove(&self.id);
         }
         self.settle_stream_reads();
-        self.close_stream();
+        self.close_stream(stream);
     }
 }
 
