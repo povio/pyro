@@ -352,6 +352,10 @@ impl JsClass for Window {
         });
         // No COOP/COEP isolation here.
         def.getter("crossOriginIsolated", |s, _w| Ok(s.boolean(false)));
+        // WindowOrWorkerGlobalScope `crossOriginEmbedderPolicy`: the document's own enforced policy.
+        def.getter("crossOriginEmbedderPolicy", |s, w| {
+            Ok(s.string(pyro_webapi::coep_report::embedder_policy_value(w.target.page.embedder_policy())))
+        });
         // HTML "credentialless": the document is in a credentialless iframe tree.
         def.getter("credentialless", |s, w| Ok(s.boolean(w.target.page.is_credentialless())));
         def.method("queueMicrotask", 1, |s, _w, a| {

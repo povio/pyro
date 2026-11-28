@@ -146,6 +146,16 @@ fn report_url(page: &PageDom) -> String {
     }
 }
 
+/// The `crossOriginEmbedderPolicy` attribute of a global (WindowOrWorkerGlobalScope): the string value of the
+/// policy the global's embedder policy holds.
+pub fn embedder_policy_value(policy: EmbedderPolicy) -> &'static str {
+    match policy {
+        EmbedderPolicy::UnsafeNone => "unsafe-none",
+        EmbedderPolicy::RequireCorp => "require-corp",
+        EmbedderPolicy::Credentialless => "credentialless",
+    }
+}
+
 /// HTML "obtain an embedder policy" of a response for `url`: the `Cross-Origin-Embedder-Policy` header as a
 /// structured-field token (parameters allowed, so `require-corp; report-to="x"` is `require-corp`;
 /// a repeated header, a string or byte-sequence item or a malformed field is none), `unsafe-none` when

@@ -1748,6 +1748,11 @@ impl JsClass for WorkerGlobalScope {
         def.getter("isSecureContext", |s, g| Ok(s.boolean(g.secure)));
         // No COOP/COEP isolation here.
         def.getter("crossOriginIsolated", |s, _g| Ok(s.boolean(false)));
+        // `crossOriginEmbedderPolicy`: the worker global's policy, its script response's (set before the script
+        // runs) or its owner's for a `blob:`/`data:` script.
+        def.getter("crossOriginEmbedderPolicy", |s, g| {
+            Ok(s.string(crate::coep_report::embedder_policy_value(g.target.page.embedder_policy())))
+        });
         def.method_this("reportError", 1, |s, _g, this, a| {
             crate::report_error::report_error(s, this, &a, "WorkerGlobalScope", false)
         });
