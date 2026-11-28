@@ -81,23 +81,23 @@ impl OwnerEmbedder {
     /// `page`'s policies, when its worker's script has to be compatible with them: none for an owner without
     /// a (report-only) policy or one with a Document-Isolation-Policy (its workers inherit it).
     ///
-    /// `shared`: the owner of a shared worker is enforced only when its policy is `require-corp`. The spec
-    /// would refuse a `credentialless` owner a worker without a policy too, but Chrome does not
-    /// (html/cross-origin-embedder-policy/credentialless/shared-worker.https.window.js expects a
-    /// credentialless window's `unsafe-none` shared worker to run), and the page is the proxy for Chrome.
+    /// `shared`: nothing is checked for a shared worker, whatever its owner's policy. The spec would refuse a
+    /// `require-corp` or `credentialless` owner a worker without a policy, but Chrome does not: a shared worker
+    /// is in an agent cluster of its own and runs (html/cross-origin-embedder-policy/credentialless/
+    /// shared-worker.https.window.js, fs/opfs-shared-worker-coep.https.window.js expect a `require-corp` or
+    /// `credentialless` window's `unsafe-none` shared worker to run), and the page is the proxy for Chrome.
     pub(crate) fn of(page: &PageDom, shared: bool) -> Option<OwnerEmbedder> {
+        if shared {
+            return None;
+        }
         let owner_reporting = page.embedder_reporting();
         if owner_reporting.dip || owner_reporting.report_only_dip {
             return None;
         }
         let mut owner = pyro_net::RequestDefaults::default();
         page.apply_embedder_defaults(&mut owner);
-        let enforced = if shared && owner.embedder_policy != pyro_net::EmbedderPolicy::RequireCorp {
-            pyro_net::EmbedderPolicy::UnsafeNone
-        } else {
-            owner.embedder_policy
-        };
-        owner.corp_report.map(|report| OwnerEmbedder { policy: enforced, report_only: report.report_only, report: Some(report) })
+        let policy = owner.embedder_policy;
+        owner.corp_report.map(|report| OwnerEmbedder { policy, report_only: report.report_only, report: Some(report) })
     }
 }
 
