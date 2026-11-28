@@ -73,6 +73,13 @@ pub fn on_frame(page: &Rc<PageDom>, frame: &FrameInfo) {
         return;
     }
     let scan = scan::painted_candidates(page, frame);
+    if !scan::judge_paint(page, &scan) {
+        // The scan this module judged already (nothing changed since): the verdict is the same.
+        if scan.waiting && scan::stale(page) {
+            request_rendering(page);
+        }
+        return;
+    }
     let contentful = !scan.candidates.is_empty() || text_control_painted(page, scan.viewport);
     // Content implies a first paint; a document with none looks for boxes that paint.
     let painted = !has("first-paint") && (contentful || non_default_paint(page, scan.viewport));

@@ -175,6 +175,11 @@ pub(crate) struct ScanState {
     /// Identity -> `presented` of the frame it was first painted in.
     first: FxHashMap<(NodeId, Kind, Option<String>), f64>,
     walks: u64,
+    /// The scan `paint` last judged (first paint, first contentful paint): the same scan again is
+    /// the same document, so it is not judged again ([`judge_paint`]).
+    paint_judged: Option<Rc<FrameScan>>,
+    /// How many scans `paint` judged (a counter, see [`paint_judgements`]).
+    paint_judgements: u64,
 }
 
 /// An image request of `el` for `src` finished (`PageDom::image_loaded`).
@@ -206,6 +211,25 @@ pub(crate) fn note_fetch_finished(page: &PageDom) {
 /// How many times the document was walked (a counter: tests assert on it, never on time).
 pub fn walks(page: &PageDom) -> u64 {
     page.timeline().scan.borrow().walks
+}
+
+/// How many scans `paint` judged: its own walks of the document (text controls, boxes that paint)
+/// run once per scan, not once per frame (a counter: tests assert on it, never on time).
+pub fn paint_judgements(page: &PageDom) -> u64 {
+    page.timeline().scan.borrow().paint_judgements
+}
+
+/// Whether `paint` has to judge `scan`: false for the scan it judged last (the document did not
+/// change since: no frame of an animation that moves nothing else re-walks a large document for
+/// a paint that is not there).
+pub(crate) fn judge_paint(page: &PageDom, scan: &Rc<FrameScan>) -> bool {
+    let mut state = page.timeline().scan.borrow_mut();
+    if state.paint_judged.as_ref().is_some_and(|last| Rc::ptr_eq(last, scan)) {
+        return false;
+    }
+    state.paint_judged = Some(scan.clone());
+    state.paint_judgements += 1;
+    true
 }
 
 /// Whether a scan now could find something the last one did not: the document was never
@@ -452,11 +476,15 @@ fn walk(page: &Rc<PageDom>, frame: &FrameInfo) -> FrameScan {
     // Document order of the elements (text blocks come where their container does).
     drop(state);
     drop(layout);
-    let order: FxHashMap<NodeId, usize> = dom
-        .descendants(page.document())
-        .map(|nodes| nodes.enumerate().map(|(i, n)| (n, i)).collect::<FxHashMap<NodeId, usize>>())
-        .unwrap_or_default();
-    candidates.sort_by_key(|c| order.get(&c.node).copied().unwrap_or(usize::MAX));
+    // (Nothing to put in order below two candidates: a document that shows nothing, or one thing,
+    // does not number every node.)
+    if candidates.len() > 1 {
+        let order: FxHashMap<NodeId, usize> = dom
+            .descendants(page.document())
+            .map(|nodes| nodes.enumerate().map(|(i, n)| (n, i)).collect::<FxHashMap<NodeId, usize>>())
+            .unwrap_or_default();
+        candidates.sort_by_key(|c| order.get(&c.node).copied().unwrap_or(usize::MAX));
+    }
     drop(dom);
     // First painted: remember the frame an identity was first seen painted in.
     let mut state = page.timeline().scan.borrow_mut();

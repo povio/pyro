@@ -623,6 +623,38 @@ fn review_a_journal_overflow_falls_back_to_every_candidate() {
 }
 
 #[test]
+fn review_a_large_document_with_no_observer_costs_no_per_element_work_per_frame() {
+    // Count work, not time: with nothing observing performance entries, a frame of a document of
+    // 66,000 empty boxes reads the style of (almost) none of them (layout-shift looks at boxes
+    // with an area only), and a frame of a document that did not change walks and judges nothing.
+    let mut t = crate::browser_thread().unwrap();
+    let id = t.browser.create_page().unwrap();
+    let root = t.browser.page(id).unwrap().main_frame.main_realm().unwrap().clone();
+    let page_dom = t.browser.page(id).unwrap().main_frame.page_dom.clone().unwrap();
+    eval(
+        &root,
+        "document.head.appendChild(document.createElement('style')).textContent = '.k span { color: red }';
+         const f = document.createDocumentFragment(); for (let i = 0; i < 66000; i++) f.appendChild(document.createElement('span'));
+         document.body.appendChild(f);
+         globalThis.frames = (n, change) => { globalThis.ticks = 0; const tick = () => { if (change) document.body.classList.toggle('k'); if (++ticks < n) requestAnimationFrame(tick); }; requestAnimationFrame(tick); };
+         frames(6, true); 0",
+    );
+    run_until(&mut t, &root, "globalThis.ticks >= 6");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
+    let (walks, reads) = pyro_webapi::perf::shift::work(&page_dom);
+    assert!(walks > 0, "the module walked {walks} times");
+    assert!(reads <= 16 * walks, "{reads} style reads in {walks} walks of 66,000 empty boxes");
+    // Frames of an unchanged document: no walk at all, no new judgement of the scan.
+    let (scans, judged) = (pyro_webapi::perf::scan::walks(&page_dom), pyro_webapi::perf::scan::paint_judgements(&page_dom));
+    eval(&root, "frames(6, false); 0");
+    run_until(&mut t, &root, "globalThis.ticks >= 6");
+    t.run_until_idle(Some(Instant::now() + Duration::from_millis(60)));
+    assert_eq!(pyro_webapi::perf::shift::work(&page_dom), (walks, reads));
+    assert_eq!(pyro_webapi::perf::scan::walks(&page_dom), scans);
+    assert_eq!(pyro_webapi::perf::scan::paint_judgements(&page_dom), judged);
+}
+
+#[test]
 fn review_an_iframe_candidate_under_display_none_does_not_transition() {
     let (mut t, root) = transition_page(TRANSITION_CSS);
     eval(
