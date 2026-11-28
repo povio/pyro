@@ -21,6 +21,11 @@ if [[ "$(uname -s)" == Darwin ]]; then
 fi
 # llvm-profdata from rustup's llvm-tools component: it must match rustc's LLVM (the Command Line
 # Tools' copy cannot read rustc's .profraw format).
+if [[ "$HOST" == aarch64-unknown-linux-gnu ]]; then
+    # lld, as .cargo/config.toml (this script's RUSTFLAGS replace it): GNU ld cannot reach the profile runtime from
+    # an instrumented binary's .text.unlikely (relocation truncated to fit: R_AARCH64_CALL26).
+    LINKER_FLAG="-Clink-arg=-fuse-ld=lld"
+fi
 PROFDATA="$(rustc --print sysroot)/lib/rustlib/$HOST/bin/llvm-profdata"
 # sccache does not hash the profile file, and instrumented objects are not worth caching: build
 # without the wrapper (an empty RUSTC_WRAPPER disables it).

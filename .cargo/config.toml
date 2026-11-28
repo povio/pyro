@@ -26,6 +26,13 @@ rustflags = ["-C", "link-arg=-Bscripts/macos/linker"]
 [target.x86_64-apple-darwin]
 rustflags = ["-C", "link-arg=-Bscripts/macos/linker"]
 
+# Linux arm64 links with lld (scripts/linux/setup.sh installs it as ld.lld). A bl reaches 128 MB: the PGO-instrumented
+# browser outgrew that, and GNU ld placed no veneer for calls out of .text.unlikely to the profile runtime
+# (relocation truncated to fit: R_AARCH64_CALL26 against __llvm_profile_instrument_memop). lld adds range-extension
+# thunks. scripts/pgo/common.sh repeats the flag: its RUSTFLAGS replace these.
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
 # Tests under the `test-fast` profile (Cargo.toml). `cargo t -p pyro-dom [filter]`
 # tests one crate; `cargo tall` is the full pass: every crate, render feature on.
 # Both still need PYRO_JSC_DIR (or PYRO_JSC=system) as for builds.
