@@ -45,6 +45,27 @@ impl PageDom {
         };
     }
 
+    /// [`Self::apply_embedder_defaults`] for the request of a nested navigation. Fetch's cross-origin
+    /// resource policy check of a navigation applies the embedding document's embedder policy, and a
+    /// Document-Isolation-Policy constrains the subresources of a document, not the frames it embeds
+    /// (see `embedder_policy_blocks`): such a policy, enforced or report-only, is left out of the
+    /// request.
+    pub fn apply_embedder_navigation_defaults(&self, defaults: &mut RequestDefaults) {
+        self.apply_embedder_defaults(defaults);
+        let reporting = self.embedder_reporting();
+        if reporting.dip {
+            defaults.embedder_policy = EmbedderPolicy::UnsafeNone;
+        }
+        if reporting.report_only_dip || reporting.dip {
+            let report_only = if reporting.report_only_dip { EmbedderPolicy::UnsafeNone } else { reporting.report_only };
+            defaults.corp_report = if defaults.embedder_policy != EmbedderPolicy::UnsafeNone || report_only != EmbedderPolicy::UnsafeNone {
+                self.corp_report(report_only)
+            } else {
+                None
+            };
+        }
+    }
+
     fn corp_report(&self, report_only: EmbedderPolicy) -> Option<CorpReport> {
         let poster = self.remote_poster()?;
         let id = self.id();

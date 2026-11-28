@@ -572,7 +572,11 @@ impl ResourceLoader for NetLoader {
                     req.defaults.insecure = d.insecure_policy();
                     // Its cross-origin embedder policy: a no-cors subresource's response check, and
                     // for a nested navigation the embedding document's (HTML § 7.1.4).
-                    d.apply_embedder_defaults(&mut req.defaults);
+                    if request.kind == ResourceKind::Iframe {
+                        d.apply_embedder_navigation_defaults(&mut req.defaults);
+                    } else {
+                        d.apply_embedder_defaults(&mut req.defaults);
+                    }
                 }
                 // A credentialless document's requests (and its frames' navigations) use the
                 // cookie jar of its anonymous partition, never the normal one. Taken from the frame
