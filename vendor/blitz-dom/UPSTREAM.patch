@@ -7102,7 +7102,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
  impl core::fmt::Debug for BlitzFontMetricsProvider {
      fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
          write!(f, "BlitzFontMetricsProvider")
-@@ -48,12 +53,242 @@
+@@ -48,12 +53,253 @@
  }
  
  impl FontMetricsProvider for BlitzFontMetricsProvider {
@@ -7200,13 +7200,13 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
 +        font_size: f32,
 +        text_char: char,
 +    ) -> Option<(f32, f32, f32, f32)> {
-+        self.extents_and_family_for(font_styles, font_size, text_char).map(|(extents, _)| extents)
++        self.extents_and_family_for(font_styles, font_size, text_char, false).map(|(extents, _)| extents)
 +    }
 +
 +    /// pyro: the ascent, descent and line gap of [`Self::extents_for`]'s font, and whether its
 +    /// family is Times, Helvetica or Courier (which Chromium gives a taller ascent).
 +    fn line_extents_for(&self, font_styles: &FontStyles, font_size: f32, text_char: char) -> Option<(f32, f32, f32, bool)> {
-+        self.extents_and_family_for(font_styles, font_size, text_char)
++        self.extents_and_family_for(font_styles, font_size, text_char, true)
 +            .map(|((ascent, descent, gap, _), adjusted)| (ascent, descent, gap, adjusted))
 +    }
 +
@@ -7215,6 +7215,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
 +        font_styles: &FontStyles,
 +        font_size: f32,
 +        text_char: char,
++        face_overrides: bool,
 +    ) -> Option<((f32, f32, f32, f32), bool)> {
 +        use parley::fontique::{QueryFont, QueryStatus};
 +        use skrifa::instance::{LocationRef, Size};
@@ -7245,13 +7246,23 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
 +                .iter()
 +                .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
 +        );
++        // pyro: at the size the face is used at (`size-adjust`, not where `font-size-adjust` sets
++        // the size) and with the ascent, descent and line gap its `@font-face` rule overrides
++        // (CSS Fonts 5 § 4.6-4.8), as layout's line boxes have them: `lh` and `normal` agree
++        // with the laid-out line (WPT css-conditional container-queries `style-range-dynamic`).
++        let size_adjust = face_overrides && font_styles.font_size_adjust == style::values::computed::font::FontSizeAdjust::None;
++        let font_size = if size_adjust { font_size * font.synthesis.size_adjust() } else { font_size };
++        let face = &if face_overrides { *font.synthesis.face_metrics() } else { Default::default() };
 +        let metrics = Metrics::new(&font_ref, Size::new(font_size), LocationRef::from(&location));
-+        let cap_height = metrics.cap_height.unwrap_or(metrics.ascent);
++        let ascent = face.ascent.map_or(metrics.ascent, |a| a * font_size);
++        let descent = face.descent.map_or(-metrics.descent, |d| d * font_size);
++        let leading = face.line_gap.map_or(metrics.leading, |g| g * font_size);
++        let cap_height = metrics.cap_height.unwrap_or(ascent);
 +        let adjusted = font_ref
 +            .localized_strings(skrifa::string::StringId::FAMILY_NAME)
 +            .english_or_first()
 +            .is_some_and(|family| ["Times", "Helvetica", "Courier"].iter().any(|name| family.chars().eq(name.chars())));
-+        Some(((metrics.ascent, -metrics.descent, metrics.leading, cap_height), adjusted))
++        Some(((ascent, descent, leading, cap_height), adjusted))
 +    }
 +
 +    /// pyro: the math parameters (MathML Core § 3.1.3) of the first available font of
@@ -7346,7 +7357,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
      ) -> FontMetrics {
          use parley::fontique::{Query, QueryFont, QueryStatus};
          use skrifa::instance::{LocationRef, Size};
-@@ -70,6 +305,9 @@
+@@ -70,6 +316,9 @@
          // query.set_fallbacks(fontique::FallbackKey::new(fb_script, fb_language.as_ref()));
  
          let variations = stylo_to_parley::font_variations(font_styles, font_size.px());
@@ -7356,7 +7367,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
          // let features = self.rcx.features(style.font_features).unwrap_or(&[]);
  
          // fn name_of(font_ref: &skrifa::FontRef) -> String {
-@@ -87,6 +325,10 @@
+@@ -87,6 +336,10 @@
              query.matches_with(|q_font: &QueryFont| {
                  use skrifa::MetadataProvider;
  
@@ -7367,7 +7378,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index)
                  else {
                      return QueryStatus::Continue;
-@@ -111,8 +353,11 @@
+@@ -111,8 +364,11 @@
              ch: char,
              font_size: f32,
              variations: &[FontVariation],
@@ -7379,7 +7390,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -134,10 +379,14 @@
+@@ -134,10 +390,14 @@
          fn metrics_of(
              query: &mut Query,
              ch: char,
@@ -7395,7 +7406,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -145,14 +394,61 @@
+@@ -145,14 +405,61 @@
                      .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
              );
              let location_ref = LocationRef::from(&location);
@@ -7462,7 +7473,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  .unwrap_or((0.0, None, None));
  
          FontMetrics {
-@@ -165,15 +461,4 @@
+@@ -165,15 +472,4 @@
              script_script_percent_scale_down: None,
          }
      }
@@ -19503,7 +19514,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                              output.oof_candidates.translate(location);
                              oof_candidates.append(&mut output.oof_candidates);
                          }
-@@ -1297,20 +2804,134 @@
+@@ -1297,20 +2804,131 @@
          // println!("known_dimensions: w: {:?} h: {:?}", inputs.known_dimensions.width, inputs.known_dimensions.height);
          // println!("\n");
  
@@ -19577,13 +19588,10 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                    let m = line.metrics();
 +                    // pyro: Blink's `FontMetrics` rounds the font's ascent and descent to whole pixels
 +                    // each, and the central baseline is half of their sum from the top of the content
-+                    // area. When the sum is odd that is a half pixel, and Blink rounds the central
-+                    // baseline up to a whole pixel (measured against Chrome for font sizes 8..40: its
-+                    // offset equals the floor of the half-pixel one; WPT css-flexbox
-+                    // `flex-align-baseline-001`, css-grid `grid-align-baseline-001`).
++                    // area: a whole or a half pixel (WPT css-flexbox `flex-align-baseline-001`).
 +                    let ascent = ((m.baseline - m.content_block_min_coord) / scale).round();
 +                    let descent = ((m.content_block_max_coord - m.baseline) / scale).round();
-+                    let central = m.content_block_min_coord / scale + ((ascent + descent) / 2.0).ceil();
++                    let central = m.content_block_min_coord / scale + (ascent + descent) / 2.0;
 +                    let central = if wm.intersects(stylo_taffy::WritingMode::LINE_INVERTED) {
 +                        (m.block_min_coord + m.block_max_coord) / scale - central
 +                    } else {
@@ -19641,7 +19649,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
          }
  
          // Put layout back
-@@ -1320,12 +2941,7 @@
+@@ -1320,12 +2938,7 @@
              .unwrap()
              .inline_layout_data = Some(inline_layout);
  
@@ -19655,7 +19663,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
  
          LayoutOutput {
              size: final_size,
-@@ -1360,14 +2976,19 @@
+@@ -1360,14 +2973,19 @@
                  )
              },
              baselines: taffy::Baselines {
@@ -19678,7 +19686,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
              oof_candidates,
              oof_positioning_area: Some(OofPositioningArea {
                  size: final_size - oof_position_inset.sum_axes(),
-@@ -1384,3 +3005,306 @@
+@@ -1384,3 +3002,306 @@
  fn f32_max(a: f32, b: f32) -> f32 {
      a.max(b)
  }
@@ -58282,7 +58290,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          // Re-resolve the hover node from the pointer position against the fresh
          // layout. This must run *after* the damage/dirty flags are cleared
-@@ -144,220 +368,2286 @@
+@@ -144,220 +368,2308 @@
          let mut subdoc_is_animating = false;
          for &node_id in &self.sub_document_nodes {
              let node = &mut self.nodes[node_id];
@@ -59291,6 +59299,13 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            edges.set(ScrollableEdges::RIGHT, offset.x < max.x - EPSILON);
 +            edges.set(ScrollableEdges::TOP, offset.y > min.y + EPSILON);
 +            edges.set(ScrollableEdges::BOTTOM, offset.y < max.y - EPSILON);
++            // A `body` whose `overflow` went to the viewport is no scroll container itself: its
++            // own overflow is `visible` (CSS Overflow 3 § 3.3; WPT scroll-state
++            // `scroll-state-scrollable-body-002`). The viewport's scroll is the root's.
++            let propagated = self.nodes.get(id).is_some_and(|node| node.flags.contains(crate::node::NodeFlags::OVERFLOW_TO_VIEWPORT));
++            if propagated {
++                edges = ScrollableEdges::empty();
++            }
 +            // `scrolled`: the direction of the last scroll that moved on each axis (CSS Conditional
 +            // 5 § 7.3.2), kept until the next one on that axis.
 +            let mut scrolled = ScrollableEdges::empty();
@@ -59315,7 +59330,10 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                stuck.set(ScrollableEdges::BOTTOM, bits & 4 != 0);
 +                stuck.set(ScrollableEdges::LEFT, bits & 8 != 0);
 +            }
-+            let entry = crate::tree::ScrollStateEntry { scrollable: edges, scrolled, snapped, stuck };
++            let logical_sides = self.nodes.get(id).and_then(|node| node.primary_styles()).map_or((0, 0), |style| {
++                (style.writing_mode.block_start_physical_side() as u8, style.writing_mode.inline_start_physical_side() as u8)
++            });
++            let entry = crate::tree::ScrollStateEntry { scrollable: edges, scrolled, snapped, stuck, logical_sides };
 +            let mut queries = self.nodes.scroll_state_queries.lock().unwrap();
 +            if let Some(previous) = queries.get_mut(&id)
 +                && *previous != entry
@@ -59359,6 +59377,12 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                both || (inline && values.writing_mode.is_horizontal()),
 +                both || (inline && !values.writing_mode.is_horizontal()),
 +            );
++            // pyro: a writing-mode change swaps what the logical features measure while the
++            // physical size stays: its descendants' queries are evaluated again (WPT
++            // container-queries `size-container-writing-mode-change`).
++            let vertical = !values.writing_mode.is_horizontal();
++            let mode_changed = entry.vertical != vertical;
++            entry.vertical = vertical;
 +            let display = values.clone_display();
 +            let mut rendered = node.flags.is_in_document()
 +                && node.element_data().is_some_and(|element| element.layout_data.is_some())
@@ -59387,7 +59411,13 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                ancestor = parent.parent;
 +            }
 +            let size = if rendered {
-+                let layout = node.final_layout();
++                // pyro: the unrounded box, physical: a container of 100.5px matches
++                // `(width = 100.5px)` (CSS Conditional 5 § 4; Chrome compares the LayoutUnit size,
++                // WPT container-queries `size-feature-fractional`). `final_layout` is pixel-rounded.
++                #[cfg(feature = "writing-mode")]
++                let layout = self.physical_unrounded_layout(*id);
++                #[cfg(not(feature = "writing-mode"))]
++                let layout = *node.unrounded_layout();
 +                // pyro: less its scrollbar gutters (`Node::container_query_gutters`)
 +                let g = node.container_query_gutters();
 +                euclid::default::Size2D::new(
@@ -59397,7 +59427,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            } else {
 +                Default::default()
 +            };
-+            if entry.size != size {
++            if entry.size != size || mode_changed {
 +                entry.size = size;
 +                changed_ids.push(*id);
 +            }
@@ -60716,7 +60746,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
          #[cfg(not(feature = "parallel-construct"))]
-@@ -367,9 +2657,9 @@
+@@ -367,9 +2679,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -60729,7 +60759,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +2676,14 @@
+@@ -386,7 +2698,14 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -60745,7 +60775,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +2692,13 @@
+@@ -395,18 +2714,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -60765,7 +60795,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +2711,7 @@
+@@ -419,10 +2733,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -60777,7 +60807,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -430,39 +2719,1243 @@
+@@ -430,39 +2741,1243 @@
          self.deferred_construction_nodes.clear();
      }
  
@@ -65262,7 +65292,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_html_document_body_element(&self) -> bool {
-@@ -917,42 +1828,257 @@
+@@ -917,42 +1828,258 @@
          root_element.children.contains(&self.id)
      }
  
@@ -65399,6 +65429,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        if self.element_data().is_some_and(|element| element.layout_data.is_some()) {
 +            if let Some(values) = self.primary_styles() {
 +                use style::values::specified::ContainerType;
++                entry.vertical = !values.writing_mode.is_horizontal();
 +                let kind = values.get_box().slow_clone_container_type();
 +                let both = kind.intersects(ContainerType::SIZE);
 +                let inline = kind.intersects(ContainerType::INLINE_SIZE);
@@ -65542,7 +65573,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  
              if value.len() == 6 {
                  let r = u8::from_str_radix(&value[0..2], 16).ok()?;
-@@ -1083,6 +2209,65 @@
+@@ -1083,6 +2210,65 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
  
@@ -65608,7 +65639,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1092,6 +2277,78 @@
+@@ -1092,6 +2278,78 @@
                  attr.name.local == local_name!("type") && attr.value.eq_ignore_ascii_case("image")
              });
  
@@ -65687,7 +65718,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // https://html.spec.whatwg.org/multipage/#the-lang-and-xml:lang-attributes
          let accepts_lang = elem.name.ns == ns!(html) || elem.name.ns == ns!(svg);
          let mut lang = None;
-@@ -1100,6 +2357,40 @@
+@@ -1100,6 +2358,40 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -65728,7 +65759,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,12 +2416,42 @@
+@@ -1125,12 +2417,42 @@
                  }
              }
  
@@ -65771,7 +65802,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                      _ => None,
                  };
  
-@@ -1139,6 +2460,67 @@
+@@ -1139,6 +2461,67 @@
                  }
              }
  
@@ -65839,7 +65870,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `valign` on HTML table row groups, rows and cells maps to
              // `vertical-align`, matched ASCII case-insensitively. `vertical-align`
              // is a shorthand in Stylo, so push the three longhands each keyword
-@@ -1164,7 +2546,7 @@
+@@ -1164,7 +2547,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -65848,7 +65879,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2652,9 @@
+@@ -1270,7 +2653,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -65859,7 +65890,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1307,6 +2691,21 @@
+@@ -1307,6 +2692,21 @@
                  }
              }
  
@@ -65881,7 +65912,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              // `body` carries four legacy margin attributes, as pixel lengths:
              // marginwidth and marginheight set both sides of an axis, and
              // leftmargin and topmargin set one side each.
-@@ -1358,6 +2757,16 @@
+@@ -1358,6 +2758,16 @@
                  }
              }
  
@@ -65898,7 +65929,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1367,154 +2776,107 @@
+@@ -1367,154 +2777,107 @@
                  }
              }
  
@@ -66134,7 +66165,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2889,50 @@
+@@ -1527,6 +2890,50 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -66185,7 +66216,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2940,209 @@
+@@ -1534,11 +2941,209 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -66395,7 +66426,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +3150,273 @@
+@@ -1546,14 +3151,273 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -66669,7 +66700,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +3460,12 @@
+@@ -1597,6 +3461,12 @@
      }
  }
  
@@ -66682,7 +66713,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +3538,41 @@
+@@ -1669,12 +3539,41 @@
                      .push(pe_node_id);
              }
          }
@@ -66724,7 +66755,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3587,46 @@
+@@ -1689,24 +3588,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -66779,7 +66810,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3657,842 @@
+@@ -1737,3 +3658,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
@@ -69980,7 +70011,7 @@ diff --git a/packages/blitz-dom/src/tree.rs b/packages/blitz-dom/src/tree.rs
  
  use blitz_traits::node_id::NodeId;
  use slotmap::{Key as _, KeyData, SlotMap};
-@@ -24,6 +26,24 @@
+@@ -24,6 +26,32 @@
      NodeId::from_u64(key.data().as_ffi())
  }
  
@@ -69988,6 +70019,9 @@ diff --git a/packages/blitz-dom/src/tree.rs b/packages/blitz-dom/src/tree.rs
 +pub(crate) struct ContainerQuerySize {
 +    pub axes: euclid::default::Size2D<bool>,
 +    pub size: euclid::default::Size2D<Option<app_units::Au>>,
++    /// pyro: the container's writing mode was vertical when last refreshed: a change moves its
++    /// logical axes (`inline-size` is the height) under an unchanged physical size.
++    pub vertical: bool,
 +}
 +
 +/// pyro: what the scroll-state features of one query container read at its last layout
@@ -70000,12 +70034,17 @@ diff --git a/packages/blitz-dom/src/tree.rs b/packages/blitz-dom/src/tree.rs
 +    pub(crate) snapped: style::stylesheets::container_rule::SnappedAxes,
 +    /// The edges it is stuck to when it is a sticky box (`stuck`).
 +    pub(crate) stuck: style::stylesheets::container_rule::ScrollableEdges,
++    /// The physical sides its block start and inline start are at (its writing mode and
++    /// direction): they resolve the logical `<scroll-state>` values, and a change of them changes
++    /// what the queries match while every physical edge stays (WPT scroll-state
++    /// `stuck-writing-direction`).
++    pub(crate) logical_sides: (u8, u8),
 +}
 +
  /// The versioned map in which the nodes of the DOM tree are stored, backed by
  /// a [`slotmap::SlotMap`].
  ///
-@@ -32,23 +52,70 @@
+@@ -32,23 +60,70 @@
  /// referring to the dropped node no longer resolve ([`NodeTree::get`] returns
  /// `None`, and indexing panics) instead of aliasing the new occupant.
  pub struct NodeTree {
@@ -70077,7 +70116,7 @@ diff --git a/packages/blitz-dom/src/tree.rs b/packages/blitz-dom/src/tree.rs
          }
      }
  
-@@ -72,11 +139,22 @@
+@@ -72,11 +147,22 @@
          self.geometry_generation.fetch_add(1, Ordering::Relaxed);
      }
  
@@ -70100,7 +70139,7 @@ diff --git a/packages/blitz-dom/src/tree.rs b/packages/blitz-dom/src/tree.rs
      pub fn is_empty(&self) -> bool {
          self.map.is_empty()
      }
-@@ -103,6 +181,9 @@
+@@ -103,6 +189,9 @@
  
      /// Remove the node with the given id, returning it if it was still live.
      pub(crate) fn remove(&mut self, id: NodeId) -> Option<Node> {
