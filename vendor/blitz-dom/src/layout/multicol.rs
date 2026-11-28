@@ -1958,6 +1958,23 @@ impl LayoutPassState<'_> {
         // pyro: a table cell's `vertical-align` (as `align-content`) moves its columns down in a
         // taller cell (`stylo_taffy::convert::table_cell_vertical_align`).
         let free = height - pb_sum.height - columns_height;
+        // pyro: `align-content` on the container itself aligns all its column rows (spanners
+        // included) as one unit in its content box (css-align-3 § 5.1 "Block containers",
+        // distribution-multicol; WPT css-align `multicol/align-content-multicol`).
+        let own_align = {
+            let item = self.nodes[dom_id].layout_style();
+            taffy::BlockContainerStyle::align_content(&item)
+        };
+        let is_cell = self.nodes[dom_id].primary_styles().is_some_and(|style| style.clone_display().inside() == DisplayInside::TableCell);
+        if let Some(shift) = (own_align.keyword != taffy::AlignContentKeyword::Normal && !vertical && !is_cell)
+            .then(|| taffy::compute_block_align_content_offset(own_align, free))
+            .filter(|shift| shift.abs() > EPSILON)
+        {
+            let shift = snap(shift);
+            for fragment in &mut fragments {
+                fragment.offset.y += shift;
+            }
+        }
         if free > EPSILON
             && let Some(style) = self.nodes[dom_id].primary_styles()
             && style.clone_display().inside() == DisplayInside::TableCell
@@ -3450,20 +3467,22 @@ impl BaseDocument {
                     found.parallel = previous_parallel;
                     found.parallel_end = previous_end;
                 }
-            } else if let Some(bands) = (!held_whole(child, &style))
+            } else if let Some(bands) = (!held_whole(child, &style) && !avoids_column_break_inside(&style))
                 .then(|| self.grid_row_bands(child_id, child_top))
                 .flatten()
                 .filter(|b| b.len() > 1)
             {
                 // pyro: a grid breaks between its rows as a table does (Chromium fragments grids; WPT
-                // css-grid `alignment/grid-item-mixed-baseline-004`).
+                // css-grid `alignment/grid-item-mixed-baseline-004`), unless it avoids breaks inside
+                // (`break-inside: avoid`: kept whole below, as a column is grown to hold it; WPT
+                // css-multicol `balance-grid-001`).
                 for &band in &bands {
                     found.strict.push(band);
                     found.loose.push(band);
                 }
                 found.strict.push((child_top, bands[0].1));
                 found.strict.push((bands[bands.len() - 1].0, child_bottom));
-            } else if let Some(bands) = child.flags.is_table_root().then(|| self.table_row_bands(child_id, child_top)).filter(|b| b.len() > 1) {
+            } else if let Some(bands) = (child.flags.is_table_root() && !avoids_column_break_inside(&style)).then(|| self.table_row_bands(child_id, child_top)).filter(|b| b.len() > 1) {
                 // pyro: a table breaks between its rows (Chromium fragments tables): each row,
                 // and its first and last rows with the table's edges, kept together.
                 for &band in &bands {

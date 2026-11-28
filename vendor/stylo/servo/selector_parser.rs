@@ -279,7 +279,7 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
     // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
     // of a `::before` or `::after` box that is a list item.
     fn valid_after_before_or_after(&self) -> bool {
-        matches!(self, Self::Marker | Self::ScrollMarker)
+        matches!(self, Self::Marker | Self::ScrollMarker | Self::Column)
     }
 
     // pyro: `::column` lets `::scroll-marker` follow it as `::before` and `::after` let
@@ -290,10 +290,10 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
 
     // pyro: `::scroll-marker:target-current`, `::scroll-button(*):disabled`, and the user action
     // states, match the pseudo-element's own state (its box node's, `blitz-dom`). `::column`
-    // accepts them too, or the parser would reject them after its `::scroll-marker` as well
-    // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
+    // does not (`::column:hover` is invalid, Multi-column 2 § 4.8): `::column::scroll-marker:target-current`
+    // stays valid because the selector parser lets a stateful pseudo-element clear the flag.
     fn accepts_state_pseudo_classes(&self) -> bool {
-        self.is_in_pseudo_element_tree() || self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::FileSelectorButton | Self::Column | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
+        self.is_in_pseudo_element_tree() || self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::FileSelectorButton | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
     }
 
     // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),

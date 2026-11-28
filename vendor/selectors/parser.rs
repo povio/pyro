@@ -3460,6 +3460,11 @@ where
                 }
                 if !p.accepts_state_pseudo_classes() {
                     state.insert(SelectorParsingState::AFTER_NON_STATEFUL_PSEUDO_ELEMENT);
+                } else {
+                    // pyro: user action and state pseudo-classes apply to the LAST pseudo-element
+                    // of a chain, so a stateful one after a non-stateful one (`::column::scroll-marker:hover`)
+                    // takes them again.
+                    state.remove(SelectorParsingState::AFTER_NON_STATEFUL_PSEUDO_ELEMENT);
                 }
                 if p.is_in_pseudo_element_tree() {
                     state.insert(SelectorParsingState::IN_PSEUDO_ELEMENT_TREE);
