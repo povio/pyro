@@ -1658,7 +1658,12 @@ impl Layout {
             return None;
         }
         let idx = dom.check(el).ok()?;
-        if matches!(self.html_local(dom, idx), Some("html" | "body")) {
+        // CSSOM View offsetParent: null for the root element and any `<body>`; an `<html>` element
+        // that is not the root (one inserted under it) is computed as any other
+        // (csswg-drafts#12834).
+        if matches!(self.html_local(dom, idx), Some("body"))
+            || (self.html_local(dom, idx) == Some("html") && matches!(dom.n(dom.n(idx).parent).kind, NodeKind::Document(_)))
+        {
             return None;
         }
         let self_position = self.position_of(dom, el);
@@ -1700,7 +1705,14 @@ impl Layout {
             if self.position_of(dom, dom.id_of(node)).is_positioned() {
                 return Some(dom.id_of(node));
             }
-            if fixed && self.computed(dom, dom.id_of(node)).contains_absolute {
+            // An ancestor that is the containing block of absolute descendants (a transform, filter,
+            // containment, `perspective`, `transform-style: preserve-3d` ...) is a candidate for any
+            // element, as Chromium's `CanContainAbsolutePositionObjects` (WPT offsetParent_element_test).
+            let holds_absolute = self.computed(dom, dom.id_of(node)).contains_absolute
+                || self.style.stylo_style(dom, dom.id_of(node)).is_some_and(|style| {
+                    style.get_box().transform_style == style::computed_values::transform_style::T::Preserve3d
+                });
+            if holds_absolute {
                 return Some(dom.id_of(node));
             }
             if self_static && matches!(tag, Some("td" | "th" | "table")) {
