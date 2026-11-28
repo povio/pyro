@@ -144,6 +144,9 @@ function tiltOf(altitude, azimuth) {
   return { tiltX: Math.round(f(Math.cos(azimuth))), tiltY: Math.round(f(Math.sin(azimuth))) };
 }
 
+// Key of the mouse's last position in `devices` (not a source id: ids are strings the page chooses).
+const MOUSE_AT = Symbol('mouse position');
+
 // Perform Actions: tick by tick across the sources, each tick as long as its longest pause or move.
 //
 // A pointer source with `parameters.pointerType: 'touch'` plays as touch through Input.dispatchTouchEvent (`touch`: the
@@ -174,7 +177,13 @@ async function actions(env, sources) {
     } else {
       // Click count, as Chrome's WebDriver counts it: a press of the same button at the same spot within 500 ms of the
       // last one counts one more (a double click's second press carries detail 2).
-      if (!devices.has(s.id)) devices.set(s.id, { x: 0, y: 0, buttons: new Set(), button: 'none', last: null, clicks: 1 });
+      // A mouse source the page has not named before starts where the mouse is: there is one mouse, and an action
+      // sequence with a new source id (each `new test_driver.Actions()` makes one) that only releases the button
+      // releases it where the last sequence left the pointer, as in Chrome (`MOUSE_AT` below keeps that point).
+      if (!devices.has(s.id)) {
+        const at = s.parameters?.pointerType === 'pen' ? undefined : devices.get(MOUSE_AT);
+        devices.set(s.id, { x: at?.x ?? 0, y: at?.y ?? 0, buttons: new Set(), button: 'none', last: null, clicks: 1, mouse: s.parameters?.pointerType !== 'pen' });
+      }
       pointers.set(s, devices.get(s.id));
     }
   }
@@ -258,6 +267,7 @@ async function actions(env, sources) {
             for (let k = 1; k <= steps; k++) await cdp(dev, false, 'mouseMoved', a, from.x + ((t.x - from.x) * k) / steps, from.y + ((t.y - from.y) * k) / steps, dev.button);
           } else await page.mouse.move(t.x, t.y, { steps });
           dev.x = t.x; dev.y = t.y;
+          if (dev.mouse) devices.set(MOUSE_AT, { x: t.x, y: t.y });
           wait = Math.max(wait, d);
           break;
         }
