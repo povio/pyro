@@ -1101,9 +1101,11 @@ fn fire_scroll_targets(page: &Rc<PageDom>, moved: Vec<pyro_dom::layout::ScrollTa
 
 /// `checkVisibility(options)`: `checkOpacity` / `opacityProperty` add the
 /// opacity:0 test, `checkVisibilityCSS` / `visibilityProperty` the
-/// visibility test (CSSOM View, CheckVisibilityOptions).
+/// visibility test, `contentVisibilityAuto` the `content-visibility: auto` skipped contents test
+/// (CSSOM View, CheckVisibilityOptions).
 pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     let mut opts = CheckVisibilityOptions::default();
+    let mut content_visibility_auto = false;
     let arg = a.get(0);
     if !arg.is_undefined() && !arg.is_null() {
         let o = arg.as_object().ok_or_else(|| {
@@ -1113,13 +1115,14 @@ pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> 
         let flag = |k: &str| o.get(k).map(|v| v.to_bool());
         let check_opacity = flag("checkOpacity")?;
         let check_visibility_css = flag("checkVisibilityCSS")?;
+        content_visibility_auto = flag("contentVisibilityAuto")?;
         let opacity_property = flag("opacityProperty")?;
         let visibility_property = flag("visibilityProperty")?;
         opts.check_opacity = check_opacity || opacity_property;
         opts.check_visibility = check_visibility_css || visibility_property;
     }
     let page = &owner_page(n);
-    let v = page.layout().check_visibility(&page.dom.borrow(), n.id, opts);
+    let v = page.layout().check_visibility_script(&page.dom.borrow(), n.id, opts, content_visibility_auto);
     Ok(s.boolean(v))
 }
 

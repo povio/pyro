@@ -1148,6 +1148,40 @@ impl Layout {
         !self.style.is_hidden(dom, el, opts)
     }
 
+    /// `Element.checkVisibility()` as script asks it (CSSOM View, CSS Contain 2 § 4.1):
+    /// [`Self::check_visibility`] and: an element with no box (`display: contents`) is not
+    /// visible; nor is one in the skipped contents of a `content-visibility: hidden` ancestor (the
+    /// element itself is: its contents are what is skipped); and with `content_visibility_auto`
+    /// (the `contentVisibilityAuto` option) nor one in contents a `content-visibility: auto`
+    /// ancestor skips.
+    pub fn check_visibility_script(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        opts: CheckVisibilityOptions,
+        content_visibility_auto: bool,
+    ) -> bool {
+        if !self.check_visibility(dom, el, opts) || self.computed(dom, el).display_contents {
+            return false;
+        }
+        if self.in_hidden_contents(dom, el) {
+            return false;
+        }
+        if content_visibility_auto {
+            let skipped: rustc_hash::FxHashSet<NodeId> =
+                self.content_visibility_auto_states(dom).into_iter().filter(|&(_, skipped)| skipped).map(|(id, _)| id).collect();
+            let mut cur = flat_parent_element(dom, el);
+            while !skipped.is_empty() {
+                let Some(node) = cur else { break };
+                if skipped.contains(&node) {
+                    return false;
+                }
+                cur = flat_parent_element(dom, node);
+            }
+        }
+        true
+    }
+
     /// pyro: whether `el` is in contents a `content-visibility: hidden` ancestor skips (display
     /// locked: the engine displays them, but no one sees them). Speculation rules' document
     /// rules take no link of such contents.
