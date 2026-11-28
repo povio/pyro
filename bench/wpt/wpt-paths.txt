@@ -146,6 +146,8 @@ css/css-fonts/resources/markA.ttf
 css/css-fonts/support/font-family-keywords.js
 css/css-values/resources/ExTest-NoSpace.woff
 domparsing/resources/dummy-xml.xml
+# The reference of css/css-grid/grid-item-percentage-quirk-001 and -002 (reftest baseline pages).
+quirks/reference/green-100px-square-no-red.html
 html/browsers/browsing-the-web/navigating-across-documents/resources/unknown-protocol-reload-crash-frame.html
 html/canvas/resources/wait-for-canvas-paint.js
 html/semantics/embedded-content/the-iframe-element/resources/hello-world.html
