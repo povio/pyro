@@ -1738,6 +1738,43 @@ fn drag(h: &mut Harness, kind: &str, at: &Value, data: &Value) -> Value {
 }
 
 #[test]
+fn plain_mouse_events_start_and_drive_a_native_drag_like_chromium() {
+    // No Input.setInterceptDrags: the browser runs the drag loop itself (chromedriver's actions
+    // are plain mouse events). Chrome sends pointercancel at its start and no mouse event after;
+    // its target sees the source's effectAllowed, "uninitialized" while the source assigned none.
+    let mut h = Harness::new();
+    let (src, dst, _) = drag_page(&mut h);
+    let types = "text/plain+application/x-custom";
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    let events = mouse(&mut h, "mouseMoved", &src, 5.0, 1);
+    assert!(!events.iter().any(|e| e["method"] == "Input.dragIntercepted"), "{events:?}");
+    mouse(&mut h, "mouseMoved", &dst, 0.0, 1);
+    mouse(&mut h, "mouseReleased", &dst, 0.0, 0);
+    // (Recorded from /Applications/Google Chrome.app headless over CDP, no setInterceptDrags: the
+    // same events and values, with its dragenter/dragover reading dropEffect copy and effectAllowed
+    // all, and only the drop's target store reading what the source left unassigned.)
+    assert_eq!(
+        eval_value(&mut h, "[log.splice(0), moves]"),
+        json!([[
+            "dragstart@src[none,uninitialized,,] b1 c",
+            "pointercancel@src b0",
+            format!("drag@src[none,uninitialized,{types},] b1 c"),
+            format!("dragenter@src[copy,all,{types},] b1 c"),
+            format!("dragover@src[copy,all,{types},] b1 c"),
+            format!("drag@src[none,uninitialized,{types},] b1 c"),
+            format!("dragenter@dst[copy,all,{types},] b1 c"),
+            format!("dragleave@src[none,all,{types},] b1"),
+            format!("dragover@dst[copy,all,{types},] b1 c"),
+            format!("drop@dst[copy,uninitialized,{types},payload] b1 c"),
+            format!("dragend@src[copy,uninitialized,{types},] b0"),
+        ], 1])
+    );
+    // The drag is over: a later move is a plain one again.
+    mouse(&mut h, "mouseMoved", &dst, 0.0, 0);
+    assert_eq!(eval_value(&mut h, "moves"), json!(2));
+}
+
+#[test]
 fn input_set_intercept_drags_keeps_pointer_drags_on_mouse_events() {
     // Playwright 1.59 wraps every left-button mouse.move in
     // setInterceptDrags(true/false); pointer-driven drags (column resizing,
@@ -1760,12 +1797,6 @@ fn input_set_intercept_drags_keeps_pointer_drags_on_mouse_events() {
 fn input_intercepted_native_drag_matches_chromium_event_sequence() {
     let mut h = Harness::new();
     let (src, dst, _) = drag_page(&mut h);
-    // Without interception there is no OS drag loop: no dragstart.
-    mouse(&mut h, "mousePressed", &src, 0.0, 1);
-    mouse(&mut h, "mouseMoved", &src, 10.0, 1);
-    mouse(&mut h, "mouseReleased", &src, 10.0, 0);
-    assert_eq!(eval_value(&mut h, "log.splice(0).join('|')"), json!("mouseup@src b0 c|click@src b0 c"));
-
     // A move below the 3px threshold does not start a drag; past it,
     // dragstart fires and Input.dragIntercepted reports the data.
     mouse(&mut h, "mousePressed", &src, 0.0, 1);
