@@ -164,6 +164,8 @@ notifications/resources/helpers.js
 webmcp/resources/helpers.js
 webtransport/handlers/echo-request-headers.py
 webtransport/resources/webtransport-test-helpers.sub.js
+# The page wptserve.test.mjs requests over the h2 port (a .sub. page that carries {{ports[h2][0]}}).
+infrastructure/server/wpt-server-wpt-flags.sub.html
 # WPT's own server (wptserve.mjs: reftests and crashtests run under it, with testdriver): the `wpt` entry point, the
 # command manifests it reads at start, the server and the libraries tools/localpaths.py puts on its path that it
 # imports (5 MB; the whole of tools/ is 89 MB, most of it hpack's test data). Its Python needs
